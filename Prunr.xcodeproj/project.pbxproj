@@ -18,6 +18,7 @@
 		BBE11586E07D04E351431DBD /* ScanError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6001A5F6F87F3C900008091D /* ScanError.swift */; };
 		BFC7F6EF7E04A2F54EA30890 /* PrunrApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C7B37F7B6230A30C77B7C62 /* PrunrApp.swift */; };
 		C1B816875E44D7EE2D9CED35 /* DatabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14CFD6B00057E08E333E4BCA /* DatabaseManager.swift */; };
+		CF108B3C9788F1F1C26CF774 /* DeltaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */; };
 		D708B58DF59CBCD995F25398 /* Delta.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1FD965ED095B5AD6BC9CE03 /* Delta.swift */; };
 /* End PBXBuildFile section */
 
@@ -30,6 +31,7 @@
 		38637F37D3A1771F44AD4C7F /* Prunr.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Prunr.entitlements; sourceTree = "<group>"; };
 		3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanService.swift; sourceTree = "<group>"; };
 		40E989B2BA4D011B5C20B82D /* FileScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileScanner.swift; sourceTree = "<group>"; };
+		5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeltaService.swift; sourceTree = "<group>"; };
 		6001A5F6F87F3C900008091D /* ScanError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanError.swift; sourceTree = "<group>"; };
 		9E245227FBA99587A6DF0C4A /* Snapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Snapshot.swift; sourceTree = "<group>"; };
 		E1FD965ED095B5AD6BC9CE03 /* Delta.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Delta.swift; sourceTree = "<group>"; };
@@ -86,6 +88,7 @@
 		A2C90757D9C5F1EB240440BB /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */,
 				40E989B2BA4D011B5C20B82D /* FileScanner.swift */,
 				3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */,
 			);
@@ -186,6 +189,7 @@
 				BAF569B1BC54BB35391AC26A /* ContentView.swift in Sources */,
 				C1B816875E44D7EE2D9CED35 /* DatabaseManager.swift in Sources */,
 				D708B58DF59CBCD995F25398 /* Delta.swift in Sources */,
+				CF108B3C9788F1F1C26CF774 /* DeltaService.swift in Sources */,
 				8D1CA082042D60BC7B5D588C /* FileScanner.swift in Sources */,
 				BFC7F6EF7E04A2F54EA30890 /* PrunrApp.swift in Sources */,
 				BBE11586E07D04E351431DBD /* ScanError.swift in Sources */,
