@@ -110,13 +110,13 @@ extension DatabaseManager {
         }
     }
 
-    /// Adds multiple entries to a snapshot using batch transactions
+    /// Adds multiple entries to a snapshot using batch inserts
     /// - Parameters:
     ///   - snapshotId: The snapshot ID to add entries to
     ///   - entries: Array of ScanResult values to insert
     ///
     /// Uses batch size of 2000 per research (sweet spot between 1000-5000)
-    /// Calls Task.yield() between batches to prevent blocking
+    /// Note: dbPool.write already runs in a transaction, no need for inTransaction
     func addEntries(to snapshotId: Int64, entries: [ScanResult]) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
@@ -129,18 +129,16 @@ extension DatabaseManager {
             let endIndex = min(startIndex + batchSize, entries.count)
             let batch = entries[startIndex..<endIndex]
 
-            // Convert ScanResult to SnapshotEntry and insert in transaction
+            // Convert ScanResult to SnapshotEntry and insert
+            // dbPool.write already provides transaction context
             try await dbPool.write { db in
-                try db.inTransaction {
-                    for scanResult in batch {
-                        var entry = SnapshotEntry(
-                            snapshotId: snapshotId,
-                            path: scanResult.path,
-                            sizeBytes: scanResult.sizeBytes
-                        )
-                        try entry.insert(db)
-                    }
-                    return .commit
+                for scanResult in batch {
+                    var entry = SnapshotEntry(
+                        snapshotId: snapshotId,
+                        path: scanResult.path,
+                        sizeBytes: scanResult.sizeBytes
+                    )
+                    try entry.insert(db)
                 }
             }
 
@@ -217,31 +215,34 @@ extension DatabaseManager {
             // - Second LEFT JOIN: entries only in 'after' snapshot (excluding matches)
             // - COLLATE NOCASE: macOS filesystem is case-insensitive
             // - COALESCE: treat NULL sizes as 0 for arithmetic
-            // - HAVING: filter unchanged items at SQL level
+            // - Wrap in CTE to filter unchanged items after UNION
             let query = """
-            SELECT
-                COALESCE(after.path, before.path) as path,
-                before.sizeBytes as oldSizeBytes,
-                after.sizeBytes as newSizeBytes,
-                COALESCE(after.sizeBytes, 0) - COALESCE(before.sizeBytes, 0) as changeBytes
-            FROM snapshotEntry before
-            LEFT JOIN snapshotEntry after
-                ON before.path = after.path COLLATE NOCASE
-                AND after.snapshotId = ?
-            WHERE before.snapshotId = ?
-            UNION
-            SELECT
-                after.path as path,
-                before.sizeBytes as oldSizeBytes,
-                after.sizeBytes as newSizeBytes,
-                COALESCE(after.sizeBytes, 0) - COALESCE(before.sizeBytes, 0) as changeBytes
-            FROM snapshotEntry after
-            LEFT JOIN snapshotEntry before
-                ON after.path = before.path COLLATE NOCASE
-                AND before.snapshotId = ?
-            WHERE after.snapshotId = ?
-                AND before.path IS NULL
-            HAVING changeBytes != 0
+            WITH combined AS (
+                SELECT
+                    COALESCE(after.path, before.path) as path,
+                    before.sizeBytes as oldSizeBytes,
+                    after.sizeBytes as newSizeBytes,
+                    COALESCE(after.sizeBytes, 0) - COALESCE(before.sizeBytes, 0) as changeBytes
+                FROM snapshotEntry before
+                LEFT JOIN snapshotEntry after
+                    ON before.path = after.path COLLATE NOCASE
+                    AND after.snapshotId = ?
+                WHERE before.snapshotId = ?
+                UNION
+                SELECT
+                    after.path as path,
+                    before.sizeBytes as oldSizeBytes,
+                    after.sizeBytes as newSizeBytes,
+                    COALESCE(after.sizeBytes, 0) - COALESCE(before.sizeBytes, 0) as changeBytes
+                FROM snapshotEntry after
+                LEFT JOIN snapshotEntry before
+                    ON after.path = before.path COLLATE NOCASE
+                    AND before.snapshotId = ?
+                WHERE after.snapshotId = ?
+                    AND before.path IS NULL
+            )
+            SELECT * FROM combined
+            WHERE changeBytes != 0
             ORDER BY ABS(changeBytes) DESC
             """
             return try Delta.fetchAll(db, sql: query, arguments: [afterId, beforeId, beforeId, afterId])
