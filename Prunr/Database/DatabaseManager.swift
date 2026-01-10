@@ -212,28 +212,39 @@ extension DatabaseManager {
         }
 
         return try await dbPool.read { db in
-            // SQL FULL OUTER JOIN comparing two snapshots
-            // - COALESCE for path: use new.path if exists, else old.path
+            // SQLite doesn't support FULL OUTER JOIN, so we use UNION of LEFT JOINs
+            // - First LEFT JOIN: all entries from 'before' snapshot with matching 'after' entries
+            // - Second LEFT JOIN: entries only in 'after' snapshot (excluding matches)
             // - COLLATE NOCASE: macOS filesystem is case-insensitive
-            // - COALESCE for sizes: treat NULL as 0 for arithmetic
+            // - COALESCE: treat NULL sizes as 0 for arithmetic
             // - HAVING: filter unchanged items at SQL level
-            // - ORDER BY ABS: sort by magnitude of change
             let query = """
             SELECT
-                COALESCE(new.path, old.path) as path,
-                old.sizeBytes as oldSizeBytes,
-                new.sizeBytes as newSizeBytes,
-                COALESCE(new.sizeBytes, 0) - COALESCE(old.sizeBytes, 0) as changeBytes
-            FROM snapshotEntry old
-            FULL OUTER JOIN snapshotEntry new
-                ON old.path = new.path COLLATE NOCASE
-                AND old.snapshotId = ?
-                AND new.snapshotId = ?
-            WHERE old.snapshotId = ? OR new.snapshotId = ?
+                COALESCE(after.path, before.path) as path,
+                before.sizeBytes as oldSizeBytes,
+                after.sizeBytes as newSizeBytes,
+                COALESCE(after.sizeBytes, 0) - COALESCE(before.sizeBytes, 0) as changeBytes
+            FROM snapshotEntry before
+            LEFT JOIN snapshotEntry after
+                ON before.path = after.path COLLATE NOCASE
+                AND after.snapshotId = ?
+            WHERE before.snapshotId = ?
+            UNION
+            SELECT
+                after.path as path,
+                before.sizeBytes as oldSizeBytes,
+                after.sizeBytes as newSizeBytes,
+                COALESCE(after.sizeBytes, 0) - COALESCE(before.sizeBytes, 0) as changeBytes
+            FROM snapshotEntry after
+            LEFT JOIN snapshotEntry before
+                ON after.path = before.path COLLATE NOCASE
+                AND before.snapshotId = ?
+            WHERE after.snapshotId = ?
+                AND before.path IS NULL
             HAVING changeBytes != 0
             ORDER BY ABS(changeBytes) DESC
             """
-            return try Delta.fetchAll(db, sql: query, arguments: [beforeId, afterId, beforeId, afterId])
+            return try Delta.fetchAll(db, sql: query, arguments: [afterId, beforeId, beforeId, afterId])
         }
     }
 }

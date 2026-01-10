@@ -92,7 +92,7 @@ struct MainView: View {
 
     // MARK: - Subviews
 
-    /// Error banner with dismiss button
+    /// Error banner with dismiss and copy buttons
     @ViewBuilder
     private func errorBanner(_ message: String) -> some View {
         HStack {
@@ -100,7 +100,17 @@ struct MainView: View {
                 .foregroundStyle(.yellow)
             Text(message)
                 .font(.callout)
+                .lineLimit(3)
             Spacer()
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(message, forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Copy error to clipboard")
             Button {
                 viewModel.dismissError()
             } label: {

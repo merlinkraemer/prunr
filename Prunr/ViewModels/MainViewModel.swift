@@ -50,23 +50,28 @@ final class MainViewModel {
     func scan(path: String) async {
         guard !isScanning else { return }
 
+        print("[DEBUG] Starting scan of: \(path)")
         isScanning = true
         scanProgress = "Starting scan..."
         errorMessage = nil
 
         do {
-            _ = try await scanService.scan(path: path) { [weak self] progress in
+            let snapshot = try await scanService.scan(path: path) { [weak self] progress in
                 Task { @MainActor in
                     self?.scanProgress = progress.currentPath
                 }
             }
+            print("[DEBUG] Scan completed, snapshot ID: \(snapshot.id ?? -1)")
 
             // Reload snapshots after successful scan
             await loadSnapshots()
             autoSelectSnapshots()
 
         } catch {
-            errorMessage = "Scan failed: \(error.localizedDescription)"
+            let errorMsg = "Scan failed: \(error.localizedDescription)"
+            print("[ERROR] \(errorMsg)")
+            print("[ERROR] Full error: \(error)")
+            errorMessage = errorMsg
         }
 
         isScanning = false
@@ -83,10 +88,16 @@ final class MainViewModel {
             return
         }
 
+        print("[DEBUG] Comparing snapshots: beforeId=\(beforeId), afterId=\(afterId)")
+
         do {
             deltas = try await deltaService.compare(beforeId: beforeId, afterId: afterId)
+            print("[DEBUG] Comparison successful: \(deltas.count) deltas")
         } catch {
-            errorMessage = "Failed to compare snapshots: \(error.localizedDescription)"
+            let errorMsg = "Failed to compare snapshots: \(error.localizedDescription)"
+            print("[ERROR] \(errorMsg)")
+            print("[ERROR] Full error: \(error)")
+            errorMessage = errorMsg
             deltas = []
         }
     }
