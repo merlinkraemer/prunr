@@ -1,0 +1,35 @@
+name: Prunr
+options:
+  bundleIdPrefix: com.prunr
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 7.0.0
+
+targets:
+  Prunr:
+    type: application
+    platform: macOS
+    sources:
+      - Prunr
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.prunr.app
+        PRODUCT_NAME: Prunr
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+    dependencies:
+      - package: GRDB
+    entitlements:
+      path: Prunr/Prunr.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
