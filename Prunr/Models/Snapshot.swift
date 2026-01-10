@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 /// Represents a single storage scan snapshot
-struct Snapshot: Codable, Identifiable {
+struct Snapshot: Codable, Identifiable, Equatable, Hashable {
     /// Auto-increment primary key
     var id: Int64?
 
