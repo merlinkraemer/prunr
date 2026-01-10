@@ -11,6 +11,8 @@ struct PrunrApp: App {
         } catch {
             print("Failed to initialize database: \(error)")
         }
+
+        // ScanService.shared is now ready to use for scanning operations
     }
 
     var body: some Scene {
