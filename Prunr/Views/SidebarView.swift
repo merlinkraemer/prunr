@@ -7,15 +7,10 @@ struct SidebarView: View {
     @Binding var selectedPath: TrackedPath?
 
     /// Path manager for handling tracked paths
-    private let pathManager: PathManager
+    @State private var pathManager = PathManager()
 
     /// Controls file importer for adding new paths
     @State private var isImporting = false
-
-    init(selectedPath: Binding<TrackedPath?>, pathManager: PathManager = PathManager()) {
-        self._selectedPath = selectedPath
-        self.pathManager = pathManager
-    }
 
     var body: some View {
         List(selection: $selectedPath) {
@@ -113,9 +108,7 @@ struct PathRow: View {
 // MARK: - Preview
 
 #Preview {
-    let samplePath = TrackedPath.defaultPaths.first ?? TrackedPath(url: FileManager.default.homeDirectoryForCurrentUser, displayName: "Home")
-    return SidebarView(
-        selectedPath: .constant(samplePath),
-        pathManager: PathManager()
+    SidebarView(
+        selectedPath: .constant(TrackedPath.defaultPaths.first ?? TrackedPath(url: FileManager.default.homeDirectoryForCurrentUser, displayName: "Home"))
     )
 }

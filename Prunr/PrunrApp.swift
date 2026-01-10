@@ -3,13 +3,6 @@ import GRDB
 
 @main
 struct PrunrApp: App {
-    @FocusedValue(\.scanAction) private var scanAction
-    @FocusedValue(\.refreshAction) private var refreshAction
-
-    #if DEBUG
-    @FocusedValue(\.generateTestDataAction) private var generateTestDataAction
-    #endif
-
     init() {
         // Initialize the database on app launch
         do {
@@ -24,14 +17,14 @@ struct PrunrApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MainView()
-                .frame(minWidth: 600, minHeight: 400)
+            RootView()
+                .frame(minWidth: 800, minHeight: 500)
         }
-        .defaultSize(width: 800, height: 600)
+        .defaultSize(width: 1000, height: 600)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Scan Test Folder") {
-                    scanAction?()
+                    AppActions.shared.scanAction?()
                 }
                 .keyboardShortcut("r", modifiers: .command)
 
@@ -39,7 +32,7 @@ struct PrunrApp: App {
                 Divider()
 
                 Button("Generate Test Data") {
-                    generateTestDataAction?()
+                    AppActions.shared.generateTestDataAction?()
                 }
                 .keyboardShortcut("t", modifiers: [.command, .option])
                 #endif
@@ -47,7 +40,7 @@ struct PrunrApp: App {
 
             CommandGroup(after: .toolbar) {
                 Button("Refresh Snapshots") {
-                    refreshAction?()
+                    AppActions.shared.refreshAction?()
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             }
