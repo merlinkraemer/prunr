@@ -82,7 +82,10 @@ Plans:
 - Custom HStack of Lists for 3-column view (or NSBrowser via NSViewRepresentable)
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 5 to break down)
+- [x] 05-01: TrackedPath and PathManager models
+- [x] 05-02: Sidebar View with NavigationSplitView
+- [ ] 05-03: Three-Column View
+- [ ] 05-04: Simplified Comparison
 
 ### Phase 6: Cleanup Actions
 **Goal**: Add delete/move functionality to free disk space directly from Prunr
@@ -111,5 +114,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. Scanner & Storage | 2/2 | Complete | 2026-01-10 |
 | 3. Delta Engine | 1/1 | Complete | 2026-01-10 |
 | 4. UI & Polish | 2/2 | Complete | 2026-01-10 |
-| 5. Finder-Style Redesign | 0/0 | Research Complete | — |
+| 5. Finder-Style Redesign | 2/4 | In progress | — |
 | 6. Cleanup Actions | 0/0 | Future | — |
