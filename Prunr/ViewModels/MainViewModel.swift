@@ -33,6 +33,15 @@ final class MainViewModel {
     private let scanService = ScanService.shared
     private let deltaService = DeltaService.shared
     private let db = DatabaseManager.shared
+    private let fileManager = FileManager.default
+
+    #if DEBUG
+    /// Test folder path for development testing - uses Desktop/PrunrTest
+    var testFolderPath: String {
+        return NSSearchPathForDirectoriesInDomains(.desktopDirectory, .userDomainMask, true).first!
+            .appending("/PrunrTest")
+    }
+    #endif
 
     // MARK: - Public Methods
 
@@ -141,4 +150,52 @@ final class MainViewModel {
             await compareSnapshots()
         }
     }
+
+    #if DEBUG
+    /// Generates test data in the PrunrTest folder for development testing
+    /// Creates folders and files with changing sizes to demonstrate delta tracking
+    func generateTestData() async {
+        let testPath = testFolderPath
+        print("[DEBUG] Generating test data in: \(testPath)")
+
+        do {
+            // Create test folder if it doesn't exist
+            if !fileManager.fileExists(atPath: testPath) {
+                try fileManager.createDirectory(atPath: testPath, withIntermediateDirectories: true)
+            }
+
+            // Helper to write data to a file
+            func writeData(_ data: Data, to file: String) throws {
+                try data.write(to: URL(fileURLWithPath: testPath).appendingPathComponent(file))
+            }
+
+            // Create some test files with varying sizes
+            // Delete old files first if they exist
+            let oldFiles = ["old_folder.txt", "changed_file.txt", "stable_file.txt"]
+            for file in oldFiles {
+                let filePath = (testPath as NSString).appendingPathComponent(file)
+                try? fileManager.removeItem(atPath: filePath)
+            }
+
+            // Delete old "shrunk" folder
+            try? fileManager.removeItem(atPath: (testPath as NSString).appendingPathComponent("shrunk_folder"))
+
+            // Create fresh test data
+            try writeData(Data(repeating: 0xAA, count: 1_000_000), to: "stable_file.txt")      // 1 MB - stays same
+            try writeData(Data(repeating: 0xBB, count: 2_000_000), to: "changed_file.txt")     // 2 MB - will change
+            try writeData(Data(repeating: 0xCC, count: 500_000), to: "new_file.txt")          // 0.5 MB - new
+
+            // Create a folder with files
+            let folderPath = (testPath as NSString).appendingPathComponent("test_folder")
+            try fileManager.createDirectory(atPath: folderPath, withIntermediateDirectories: true)
+            try Data(repeating: 0xDD, count: 3_000_000).write(to: URL(fileURLWithPath: folderPath).appendingPathComponent("large.bin"))
+
+            errorMessage = nil
+            print("[DEBUG] Test data generated successfully")
+        } catch {
+            errorMessage = "Failed to generate test data: \(error.localizedDescription)"
+            print("[ERROR] \(errorMessage)")
+        }
+    }
+    #endif
 }

@@ -6,6 +6,10 @@ struct PrunrApp: App {
     @FocusedValue(\.scanAction) private var scanAction
     @FocusedValue(\.refreshAction) private var refreshAction
 
+    #if DEBUG
+    @FocusedValue(\.generateTestDataAction) private var generateTestDataAction
+    #endif
+
     init() {
         // Initialize the database on app launch
         do {
@@ -26,10 +30,19 @@ struct PrunrApp: App {
         .defaultSize(width: 800, height: 600)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Scan Home Folder") {
+                Button("Scan Test Folder") {
                     scanAction?()
                 }
                 .keyboardShortcut("r", modifiers: .command)
+
+                #if DEBUG
+                Divider()
+
+                Button("Generate Test Data") {
+                    generateTestDataAction?()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .option])
+                #endif
             }
 
             CommandGroup(after: .toolbar) {

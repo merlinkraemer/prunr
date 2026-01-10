@@ -10,6 +10,12 @@ struct RefreshActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
 
+#if DEBUG
+struct GenerateTestDataActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+#endif
+
 extension FocusedValues {
     var scanAction: (() -> Void)? {
         get { self[ScanActionKey.self] }
@@ -20,6 +26,13 @@ extension FocusedValues {
         get { self[RefreshActionKey.self] }
         set { self[RefreshActionKey.self] = newValue }
     }
+
+    #if DEBUG
+    var generateTestDataAction: (() -> Void)? {
+        get { self[GenerateTestDataActionKey.self] }
+        set { self[GenerateTestDataActionKey.self] = newValue }
+    }
+    #endif
 }
 
 /// Main window displaying snapshot comparison and delta list
@@ -88,8 +101,8 @@ struct MainView: View {
         .focusedValue(\.scanAction) {
             Task {
                 #if DEBUG
-                let testPath = (NSHomeDirectory() as NSString).appendingPathComponent("Desktop")
-                await viewModel.scan(path: testPath)
+                // Dev mode: scan test folder inside project
+                await viewModel.scan(path: viewModel.testFolderPath)
                 #else
                 await viewModel.scan(path: NSHomeDirectory())
                 #endif
@@ -100,6 +113,13 @@ struct MainView: View {
                 await viewModel.refreshSnapshots()
             }
         }
+        #if DEBUG
+        .focusedValue(\.generateTestDataAction) {
+            Task {
+                await viewModel.generateTestData()
+            }
+        }
+        #endif
     }
 
     // MARK: - Subviews
