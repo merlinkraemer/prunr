@@ -18,6 +18,7 @@ None
 - [x] **Phase 2: Scanner & Storage** - Disk scanner + SQLite snapshot storage
 - [x] **Phase 3: Delta Engine** - Compare snapshots to show growth/shrinkage
 - [x] **Phase 4: UI & Polish** - SwiftUI main window displaying growth data
+- [ ] **Phase 5: Frontend Redesign** - Complete UX overhaul with improved visual hierarchy and polish
 
 ## Phase Details
 
@@ -59,10 +60,28 @@ Plans:
 - [x] 04-01: Main window UI
 - [x] 04-02: App chrome + build for distribution
 
+### Phase 5: Frontend Redesign
+**Goal**: Complete UX overhaul with improved visual hierarchy, better data presentation, and polished app experience
+**Depends on**: Phase 4
+**Research**: Likely (explore modern macOS UI patterns, data visualization best practices)
+**Plans**: 3
+
+Plans:
+- [ ] 05-01: Layout & Visual Hierarchy
+- [ ] 05-02: Delta List Redesign
+- [ ] 05-03: Polish & Visual Feedback
+
+**Details:**
+Complete redesign focusing on:
+- Main window layout rethink
+- Delta list presentation improvements
+- Visual feedback enhancements
+- Overall polish and professional feel
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -70,3 +89,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 2. Scanner & Storage | 2/2 | Complete | 2026-01-10 |
 | 3. Delta Engine | 1/1 | Complete | 2026-01-10 |
 | 4. UI & Polish | 2/2 | Complete | 2026-01-10 |
+| 5. Frontend Redesign | 0/3 | Ready to Start | — |
