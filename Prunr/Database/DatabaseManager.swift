@@ -191,6 +191,53 @@ extension DatabaseManager {
     }
 }
 
+// MARK: - Delta Calculation
+
+extension DatabaseManager {
+
+    /// Calculates deltas between two snapshots using SQL FULL OUTER JOIN
+    ///
+    /// Returns paths that changed in size between the two snapshots, sorted by
+    /// absolute change magnitude (largest changes first). Unchanged paths are
+    /// filtered out at the SQL level for performance.
+    ///
+    /// - Parameters:
+    ///   - beforeId: The earlier snapshot ID
+    ///   - afterId: The later snapshot ID
+    /// - Returns: Array of Deltas sorted by |changeBytes| descending
+    /// - Throws: DatabaseError.notInitialized if database not ready
+    func calculateDeltas(beforeId: Int64, afterId: Int64) async throws -> [Delta] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            // SQL FULL OUTER JOIN comparing two snapshots
+            // - COALESCE for path: use new.path if exists, else old.path
+            // - COLLATE NOCASE: macOS filesystem is case-insensitive
+            // - COALESCE for sizes: treat NULL as 0 for arithmetic
+            // - HAVING: filter unchanged items at SQL level
+            // - ORDER BY ABS: sort by magnitude of change
+            let query = """
+            SELECT
+                COALESCE(new.path, old.path) as path,
+                old.sizeBytes as oldSizeBytes,
+                new.sizeBytes as newSizeBytes,
+                COALESCE(new.sizeBytes, 0) - COALESCE(old.sizeBytes, 0) as changeBytes
+            FROM snapshotEntry old
+            FULL OUTER JOIN snapshotEntry new
+                ON old.path = new.path COLLATE NOCASE
+                AND old.snapshotId = ?
+                AND new.snapshotId = ?
+            WHERE old.snapshotId = ? OR new.snapshotId = ?
+            HAVING changeBytes != 0
+            ORDER BY ABS(changeBytes) DESC
+            """
+            return try Delta.fetchAll(db, sql: query, arguments: [beforeId, afterId, beforeId, afterId])
+        }
+    }
+}
+
 // MARK: - Custom Errors
 
 extension DatabaseManager {
