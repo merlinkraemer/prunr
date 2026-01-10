@@ -109,4 +109,25 @@ final class MainViewModel {
     func dismissError() {
         errorMessage = nil
     }
+
+    /// Refreshes the snapshot list while preserving current selections
+    /// After reloading, attempts to restore the previously selected snapshots by ID,
+    /// then triggers a comparison if both selections are still valid.
+    func refreshSnapshots() async {
+        // Preserve current selection IDs
+        let beforeId = selectedBeforeSnapshot?.id
+        let afterId = selectedAfterSnapshot?.id
+
+        // Reload snapshots
+        await loadSnapshots()
+
+        // Restore selections by finding snapshots with matching IDs
+        selectedBeforeSnapshot = snapshots.first { $0.id == beforeId }
+        selectedAfterSnapshot = snapshots.first { $0.id == afterId }
+
+        // If we have valid selections, trigger comparison
+        if selectedBeforeSnapshot != nil && selectedAfterSnapshot != nil {
+            await compareSnapshots()
+        }
+    }
 }

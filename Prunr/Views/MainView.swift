@@ -85,7 +85,7 @@ struct MainView: View {
         }
         .focusedValue(\.refreshAction) {
             Task {
-                await viewModel.loadSnapshots()
+                await viewModel.refreshSnapshots()
             }
         }
     }
