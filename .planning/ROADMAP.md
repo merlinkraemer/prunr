@@ -15,8 +15,8 @@ None
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 - [x] **Phase 1: Foundation** - Xcode project setup with GRDB dependency
-- [ ] **Phase 2: Scanner & Storage** - Disk scanner + SQLite snapshot storage
-- [ ] **Phase 3: Delta Engine** - Compare snapshots to show growth/shrinkage
+- [x] **Phase 2: Scanner & Storage** - Disk scanner + SQLite snapshot storage
+- [x] **Phase 3: Delta Engine** - Compare snapshots to show growth/shrinkage
 - [ ] **Phase 4: UI & Polish** - SwiftUI main window displaying growth data
 
 ## Phase Details
@@ -37,8 +37,8 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 02-01: Disk scanner implementation
-- [ ] 02-02: SQLite schema + snapshot storage
+- [x] 02-01: Disk scanner implementation
+- [x] 02-02: SQLite schema + snapshot storage
 
 ### Phase 3: Delta Engine
 **Goal**: Compare two snapshots and calculate what grew/shrank between them
@@ -47,7 +47,7 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 03-01: Delta calculation + sorting by change
+- [x] 03-01: Delta calculation + sorting by change
 
 ### Phase 4: UI & Polish
 **Goal**: SwiftUI window showing growth data sorted by change, ready to ship
@@ -67,6 +67,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 1/1 | Complete | 2026-01-10 |
-| 2. Scanner & Storage | 0/2 | Not started | - |
-| 3. Delta Engine | 0/1 | Not started | - |
+| 2. Scanner & Storage | 2/2 | Complete | 2026-01-10 |
+| 3. Delta Engine | 1/1 | Complete | 2026-01-10 |
 | 4. UI & Polish | 0/2 | Not started | - |
