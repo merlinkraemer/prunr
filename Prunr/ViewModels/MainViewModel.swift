@@ -36,10 +36,41 @@ final class MainViewModel {
     private let fileManager = FileManager.default
 
     #if DEBUG
-    /// Test folder path for development testing - uses Desktop/PrunrTest
+    /// Test folder path inside project directory for development testing
     var testFolderPath: String {
-        return NSSearchPathForDirectoriesInDomains(.desktopDirectory, .userDomainMask, true).first!
-            .appending("/PrunrTest")
+        // Start from bundle path and navigate up to find project
+        var path = Bundle.main.bundlePath
+        for _ in 0..<10 {  // Limit iterations to prevent infinite loop
+            let projectCheck = (path as NSString).appendingPathComponent("Prunr.xcodeproj")
+            if fileManager.fileExists(atPath: projectCheck) {
+                let result = (path as NSString).appendingPathComponent("PrunrTest")
+                print("[DEBUG] Found project at: \(path)")
+                print("[DEBUG] Test folder path: \(result)")
+                return result
+            }
+            let parent = (path as NSString).deletingLastPathComponent
+            if parent == path { break }
+            path = parent
+        }
+
+        // Fallback - use cwd and search up
+        var cwd = fileManager.currentDirectoryPath
+        for _ in 0..<10 {
+            let projectCheck = (cwd as NSString).appendingPathComponent("Prunr.xcodeproj")
+            if fileManager.fileExists(atPath: projectCheck) {
+                let result = (cwd as NSString).appendingPathComponent("PrunrTest")
+                print("[DEBUG] Found project from cwd at: \(cwd)")
+                return result
+            }
+            let parent = (cwd as NSString).deletingLastPathComponent
+            if parent == cwd || parent.isEmpty { break }
+            cwd = parent
+        }
+
+        // Last resort - just use cwd + PrunrTest
+        let result = fileManager.currentDirectoryPath.appending("/PrunrTest")
+        print("[DEBUG] Using fallback path: \(result)")
+        return result
     }
     #endif
 
