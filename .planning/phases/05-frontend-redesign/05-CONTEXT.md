@@ -1,105 +1,76 @@
-# Phase 5: Frontend Redesign - Context
+# Phase 5: Finder-Style Redesign - Context
 
-**Created:** 2025-01-10
-**User Requirements Provided**
+**Gathered:** 2025-01-10
+**Status:** Ready for planning
 
-## Vision
+<vision>
+## How This Should Work
 
-Complete redesign of Prunr's UI to follow macOS Finder patterns - sidebar for path management, column view for navigation, and simplified time-based comparison.
+Complete redesign following macOS Finder patterns. When you open Prunr, you see a familiar Finder-like interface:
 
-## Detailed Requirements
+**Left Sidebar:** A list of scan locations like Finder's sidebar (Home, Documents, Downloads, Desktop, etc.). You can add/remove paths, and it remembers your choices between launches. Click a path to scan it.
 
-### 1. Left Sidebar (Scan Paths)
-**Like Finder's sidebar:**
-- Customizable list of paths to watch/scan
-- Default list included (Home, Documents, Downloads, Desktop, etc.)
-- Add/remove paths functionality
-- Persistent (saved to UserDefaults or database)
+**Right Main Area:** A 3-column view for browsing what changed:
+- **Column 1** shows categories: Apps, Packages, Containers, Caches, Developer, Other
+- **Column 2** shows the items within that category that grew/shrank
+- **Column 3** shows details about the selected item (size, delta, growth percentage)
 
-**UI Pattern:** Finder-style sidebar with:
-- Section headers (Favorites, Devices, etc.)
-- Clickable path items
-- Add/remove buttons (or drag-drop)
-- Visual indication of currently selected path
+**Top Bar:** Simplified controls - just a "Rescan" button and a "Compare Since" dropdown (1h, 12h, 24h, 3d, 7d, Custom). No more picking two snapshots - always compares "since X ago" vs "current state."
 
-### 2. Right Main Area (Column View)
-**Like Finder's Column View:**
-- Column 1: Categories (Files/Folders, Apps, Packages, Containers, etc.)
-- Column 2: Specific items within selected category
-- Column 3: Details about selected item (size, growth, delta info)
+The feel should be Finder-inspired (not exact replication). Think "using Finder to explore what ate your disk space" rather than a custom interface.
 
-**Navigation:**
-- Click category → shows items in next column
-- Click item → shows details in next column
-- Arrow keys navigate between columns
-- Back/forward navigation support
+</vision>
 
-### 3. Top Bar (Comparison Controls)
-**Simplified from current 2-snapshot picker:**
-- "Rescan" button
-- "Compare Since" dropdown with presets:
-  - 1 hour ago
-  - 12 hours ago
-  - 24 hours ago
-  - 3 days ago
-  - 7 days ago
-  - Custom date picker
-- Always compares: "since X" vs "current state" (no need to select 2 snapshots)
+<essential>
+## What Must Be Nailed
 
-### 4. Future Features (Out of Scope for Phase 5)
-- Cleanup actions (delete, move to trash)
-- Add to roadmap as future phase
+- **Everything together** - The sidebar + column view + simplified comparison work as a cohesive whole. The value is in the complete Finder-like experience, not individual pieces.
 
-## Technical Implications
+- **Fixed categories** - Column 1 uses predefined categories (Apps, Packages, Containers, Caches, Developer, Other). No custom categories for now.
 
-### Data Model Changes Needed
-1. **Tracked Paths Model**
-   - Store user's scan paths
-   - Persist order and sections
-   - Mark default vs user-added
+- **"Since X ago" comparison** - Always compare a historical scan vs current state. User doesn't pick two snapshots anymore.
 
-2. **Categorization Logic**
-   - Determine item category (App, Package, Container, regular file/folder)
-   - Group deltas by category for Column 1
+</essential>
 
-3. **Comparison Model**
-   - Change from "snapshot A vs snapshot B" to "since X vs current"
-   - Always compare latest scan vs historical scan at time X
-   - May need to create "current" state on-demand if no scan exists
+<boundaries>
+## What's Out of Scope
 
-### SwiftUI Components to Research
-1. **NavigationSplitView** - For sidebar + main content layout
-2. **OutlineGroup** or **List** - For sidebar structure
-3. **Custom column view** - Not a stock SwiftUI component (need to build)
-4. **UserDefaults** or **AppStorage** - For persisting paths
-5. **Toolbar** - For top bar controls
+- **Cleanup actions** - Delete, move to trash, file operations. That's Phase 6.
+- **Custom categories** - Fixed categories only. User customization can come later.
+- **Exact Finder replication** - Inspired by Finder, simpler behavior is fine.
+- **Heavy polish** - Function over form. Animations, hover states, refined styling deferred if needed for shipping.
+- **NSBrowser complexity** - If NSBrowser is too complex, custom HStack of Lists is acceptable.
 
-## Open Questions
+</boundaries>
 
-1. **Column View Implementation**: SwiftUI doesn't have a stock "column view" like NSBrowser. Options:
-   - Build custom with HStack of Lists
-   - Use NSBrowser wrapped via NSViewRepresentable
-   - Use NavigationSplitView with depth
+<specifics>
+## Specific Ideas
 
-2. **Categorization**: How to detect item type?
-   - Bundle inspection for .app
-   - File extension checking
-   - Path pattern matching (~/Library/Containers/*)
-   - MIME type detection
+- **Sidebar:** Like Finder's sidebar with section headers. Default paths: Home, Documents, Downloads, Desktop, Developer. User can add/remove.
+- **Categories:** Apps (.app bundles), Packages (.pkg, .app bundles in disguise), Containers (~/Library/Containers/*), Caches (~/Library/Caches/*), Developer (node_modules, build folders, Xcode DerivedData), Other (everything else).
+- **Column navigation:** Click category → see items. Click item → see details. Arrow keys should work.
+- **Comparison presets:** 1 hour, 12 hours, 24 hours, 3 days, 7 days, Custom date picker.
 
-3. **"Current State"**: When user selects "Compare Since 24h ago":
-   - If scan exists from 24h ago, use it
-   - If no exact match, find closest scan
-   - Always compare against most recent scan (or trigger new scan)
+</specifics>
 
-4. **Path Persistence**: Where to store tracked paths?
-   - UserDefaults (simple, limited to ~100 paths)
-   - SQLite table (more scalable, allows metadata)
-   - JSON file (human-editable)
+<notes>
+## Additional Context
 
-## Constraints
+**User priorities:**
+- Full redesign in one go - don't split into sidebar-first/columns-later
+- Function over form - focus on layout and navigation working correctly
+- Finder-inspired but not exact - simpler behavior acceptable
 
-- Must follow macOS design patterns (HIG)
+**Technical constraints from research:**
+- NavigationSplitView for sidebar + main layout
+- @AppStorage for persisting tracked paths
+- Custom HStack of Lists for 3-column view (NSBrowser is backup plan)
 - Target macOS 14+ (Sonoma)
-- Keep performance snappy with thousands of items
-- Maintain existing backend (Scanner, DeltaService, DatabaseManager)
+
+</notes>
+
+---
+
+*Phase: 05-finder-style-redesign*
+*Context gathered: 2025-01-10*
+*Ready for planning: yes*
