@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 3 — Delta Engine
+**Current focus:** Phase 4 — UI & Polish
 
 ## Current Position
 
-Phase: 3 of 4 (Delta Engine)
-Plan: 1 of 1 in current phase
-Status: Phase complete
-Last activity: 2026-01-10 — Completed 03-01-PLAN.md
+Phase: 4 of 4 (UI & Polish)
+Plan: 1 of 2 in current phase
+Status: In progress
+Last activity: 2026-01-10 — Completed 04-01-PLAN.md
 
-Progress: ██████░░░░ 67%
+Progress: ████████░░ 83%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: 5 min
-- Total execution time: 0.33 hours
+- Total execution time: 0.4 hours
 
 **By Phase:**
 
@@ -30,10 +30,11 @@ Progress: ██████░░░░ 67%
 | 1. Foundation | 1 | 8 min | 8 min |
 | 2. Scanner & Storage | 2 | 6 min | 3 min |
 | 3. Delta Engine | 1 | 3 min | 3 min |
+| 4. UI & Polish | 1 | 4 min | 4 min |
 
 **Recent Trend:**
-- Last 4 plans: 8, 3, 3, 3 min
-- Trend: Velocity improving
+- Last 5 plans: 8, 3, 3, 3, 4 min
+- Trend: Consistent velocity
 
 ## Accumulated Context
 
@@ -50,6 +51,8 @@ Recent decisions affecting current work:
 | 03-01 | SQL FULL OUTER JOIN for delta calculation | Better performance for 50k+ entries |
 | 03-01 | Path-based ID for Delta | SwiftUI stability across app launches |
 | 03-01 | COLLATE NOCASE in SQL | macOS case-insensitive filesystem |
+| 04-01 | @Observable @MainActor pattern | Thread-safe SwiftUI state management |
+| 04-01 | ByteCountFormatter .file style | Human-readable size formatting |
 
 ### Deferred Issues
 
@@ -62,5 +65,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-10
-Stopped at: Completed 03-01-PLAN.md (Phase 3 complete)
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None

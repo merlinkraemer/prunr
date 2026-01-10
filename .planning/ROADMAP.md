@@ -56,7 +56,7 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 04-01: Main window UI
+- [x] 04-01: Main window UI
 - [ ] 04-02: App chrome + build for distribution
 
 ## Progress
@@ -69,4 +69,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Foundation | 1/1 | Complete | 2026-01-10 |
 | 2. Scanner & Storage | 2/2 | Complete | 2026-01-10 |
 | 3. Delta Engine | 1/1 | Complete | 2026-01-10 |
-| 4. UI & Polish | 0/2 | Not started | - |
+| 4. UI & Polish | 1/2 | In progress | - |
