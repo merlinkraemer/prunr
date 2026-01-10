@@ -14,7 +14,7 @@ None
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Foundation** - Xcode project setup with GRDB dependency
+- [x] **Phase 1: Foundation** - Xcode project setup with GRDB dependency
 - [ ] **Phase 2: Scanner & Storage** - Disk scanner + SQLite snapshot storage
 - [ ] **Phase 3: Delta Engine** - Compare snapshots to show growth/shrinkage
 - [ ] **Phase 4: UI & Polish** - SwiftUI main window displaying growth data
@@ -28,7 +28,7 @@ None
 **Plans**: TBD
 
 Plans:
-- [ ] 01-01: Xcode project + GRDB integration
+- [x] 01-01: Xcode project + GRDB integration
 
 ### Phase 2: Scanner & Storage
 **Goal**: Scan disk recursively, store folder sizes with timestamps in SQLite
@@ -66,7 +66,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/1 | Not started | - |
+| 1. Foundation | 1/1 | Complete | 2026-01-10 |
 | 2. Scanner & Storage | 0/2 | Not started | - |
 | 3. Delta Engine | 0/1 | Not started | - |
 | 4. UI & Polish | 0/2 | Not started | - |
