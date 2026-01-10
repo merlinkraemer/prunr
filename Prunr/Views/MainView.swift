@@ -51,7 +51,14 @@ struct MainView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         Task {
+                            #if DEBUG
+                            // Dev mode: scan a small folder for faster testing
+                            let testPath = (NSHomeDirectory() as NSString).appendingPathComponent("Desktop")
+                            await viewModel.scan(path: testPath)
+                            #else
+                            // Release: scan full home directory
                             await viewModel.scan(path: NSHomeDirectory())
+                            #endif
                         }
                     } label: {
                         Label("Scan", systemImage: "arrow.clockwise")
@@ -80,7 +87,12 @@ struct MainView: View {
         }
         .focusedValue(\.scanAction) {
             Task {
+                #if DEBUG
+                let testPath = (NSHomeDirectory() as NSString).appendingPathComponent("Desktop")
+                await viewModel.scan(path: testPath)
+                #else
                 await viewModel.scan(path: NSHomeDirectory())
+                #endif
             }
         }
         .focusedValue(\.refreshAction) {
