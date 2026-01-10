@@ -65,11 +65,10 @@ struct MainView: View {
                     Button {
                         Task {
                             #if DEBUG
-                            // Dev mode: scan a small folder for faster testing
-                            let testPath = (NSHomeDirectory() as NSString).appendingPathComponent("Desktop")
-                            await viewModel.scan(path: testPath)
+                            let testFolder = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first!
+                                .appending("/Prunr/PrunrTest")
+                            await viewModel.scan(path: testFolder)
                             #else
-                            // Release: scan full home directory
                             await viewModel.scan(path: NSHomeDirectory())
                             #endif
                         }
@@ -101,8 +100,10 @@ struct MainView: View {
         .focusedValue(\.scanAction) {
             Task {
                 #if DEBUG
-                // Dev mode: scan test folder inside project
-                await viewModel.scan(path: viewModel.testFolderPath)
+                // Dev mode: scan test folder in Application Support
+                let testFolder = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first!
+                    .appending("/Prunr/PrunrTest")
+                await viewModel.scan(path: testFolder)
                 #else
                 await viewModel.scan(path: NSHomeDirectory())
                 #endif

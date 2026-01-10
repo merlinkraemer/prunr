@@ -35,48 +35,6 @@ final class MainViewModel {
     private let db = DatabaseManager.shared
     private let fileManager = FileManager.default
 
-    #if DEBUG
-    /// Test folder path inside project directory for development testing
-    var testFolderPath: String {
-        // Start from bundle path and navigate up to find project
-        var path = Bundle.main.bundlePath
-        print("[DEBUG] Bundle path: \(path)")
-
-        for _ in 0..<10 {  // Limit iterations to prevent infinite loop
-            let projectCheck = (path as NSString).appendingPathComponent("Prunr.xcodeproj")
-            if fileManager.fileExists(atPath: projectCheck) {
-                let result = (path as NSString).appendingPathComponent("PrunrTest")
-                print("[DEBUG] Found project at: \(path)")
-                print("[DEBUG] Test folder path: \(result)")
-                return result
-            }
-            let parent = (path as NSString).deletingLastPathComponent
-            if parent == path { break }
-            path = parent
-        }
-
-        // Fallback - use cwd and search up
-        var cwd = fileManager.currentDirectoryPath
-        print("[DEBUG] Trying cwd: \(cwd)")
-        for _ in 0..<10 {
-            let projectCheck = (cwd as NSString).appendingPathComponent("Prunr.xcodeproj")
-            if fileManager.fileExists(atPath: projectCheck) {
-                let result = (cwd as NSString).appendingPathComponent("PrunrTest")
-                print("[DEBUG] Found project from cwd at: \(cwd)")
-                return result
-            }
-            let parent = (cwd as NSString).deletingLastPathComponent
-            if parent == cwd || parent.isEmpty { break }
-            cwd = parent
-        }
-
-        // Last resort - just use cwd + PrunrTest
-        let result = fileManager.currentDirectoryPath.appending("/PrunrTest")
-        print("[DEBUG] Using fallback path: \(result)")
-        return result
-    }
-    #endif
-
     // MARK: - Public Methods
 
     /// Loads all snapshots from the database
@@ -93,12 +51,6 @@ final class MainViewModel {
     func scan(path: String) async {
         guard !isScanning else { return }
 
-        #if DEBUG
-        print("[DEBUG] ========== DEBUG BUILD ==========")
-        print("[DEBUG] testFolderPath = \(testFolderPath)")
-        #else
-        print("[DEBUG] ========== RELEASE BUILD ==========")
-        #endif
         print("[DEBUG] Starting scan of: \(path)")
         isScanning = true
         scanProgress = "Starting scan..."
@@ -196,7 +148,8 @@ final class MainViewModel {
     /// Creates folders and files with changing sizes to demonstrate delta tracking
     func generateTestData() async {
         print("[DEBUG] ========== generateTestData called ==========")
-        let testPath = testFolderPath
+        let testPath = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first!
+            .appending("/Prunr/PrunrTest")
         print("[DEBUG] Generating test data in: \(testPath)")
 
         do {
