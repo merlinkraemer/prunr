@@ -40,6 +40,8 @@ final class MainViewModel {
     var testFolderPath: String {
         // Start from bundle path and navigate up to find project
         var path = Bundle.main.bundlePath
+        print("[DEBUG] Bundle path: \(path)")
+
         for _ in 0..<10 {  // Limit iterations to prevent infinite loop
             let projectCheck = (path as NSString).appendingPathComponent("Prunr.xcodeproj")
             if fileManager.fileExists(atPath: projectCheck) {
@@ -55,6 +57,7 @@ final class MainViewModel {
 
         // Fallback - use cwd and search up
         var cwd = fileManager.currentDirectoryPath
+        print("[DEBUG] Trying cwd: \(cwd)")
         for _ in 0..<10 {
             let projectCheck = (cwd as NSString).appendingPathComponent("Prunr.xcodeproj")
             if fileManager.fileExists(atPath: projectCheck) {
@@ -90,6 +93,12 @@ final class MainViewModel {
     func scan(path: String) async {
         guard !isScanning else { return }
 
+        #if DEBUG
+        print("[DEBUG] ========== DEBUG BUILD ==========")
+        print("[DEBUG] testFolderPath = \(testFolderPath)")
+        #else
+        print("[DEBUG] ========== RELEASE BUILD ==========")
+        #endif
         print("[DEBUG] Starting scan of: \(path)")
         isScanning = true
         scanProgress = "Starting scan..."
@@ -186,6 +195,7 @@ final class MainViewModel {
     /// Generates test data in the PrunrTest folder for development testing
     /// Creates folders and files with changing sizes to demonstrate delta tracking
     func generateTestData() async {
+        print("[DEBUG] ========== generateTestData called ==========")
         let testPath = testFolderPath
         print("[DEBUG] Generating test data in: \(testPath)")
 
