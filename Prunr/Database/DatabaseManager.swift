@@ -104,7 +104,7 @@ extension DatabaseManager {
             throw DatabaseError.notInitialized
         }
 
-        let entry = SnapshotEntry(snapshotId: snapshotId, path: path, sizeBytes: sizeBytes)
+        var entry = SnapshotEntry(snapshotId: snapshotId, path: path, sizeBytes: sizeBytes)
         try await dbPool.write { db in
             try entry.insert(db)
         }
@@ -133,7 +133,7 @@ extension DatabaseManager {
             try await dbPool.write { db in
                 try db.inTransaction {
                     for scanResult in batch {
-                        let entry = SnapshotEntry(
+                        var entry = SnapshotEntry(
                             snapshotId: snapshotId,
                             path: scanResult.path,
                             sizeBytes: scanResult.sizeBytes

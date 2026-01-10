@@ -25,7 +25,7 @@ struct SnapshotEntry: Codable, Identifiable {
 
 // MARK: - GRDB Record Conformance
 
-extension SnapshotEntry: FetchableRecord, PersistableRecord {
+extension SnapshotEntry: FetchableRecord, MutablePersistableRecord {
     /// The table name in the database
     static let databaseTableName = "snapshotEntry"
 
