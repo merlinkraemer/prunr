@@ -21,9 +21,9 @@ struct PrunrApp: App {
     var body: some Scene {
         WindowGroup {
             MainView()
+                .frame(minWidth: 600, minHeight: 400)
         }
         .defaultSize(width: 800, height: 600)
-        .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Scan Home Folder") {
