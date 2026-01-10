@@ -17,7 +17,7 @@ None
 - [x] **Phase 1: Foundation** - Xcode project setup with GRDB dependency
 - [x] **Phase 2: Scanner & Storage** - Disk scanner + SQLite snapshot storage
 - [x] **Phase 3: Delta Engine** - Compare snapshots to show growth/shrinkage
-- [ ] **Phase 4: UI & Polish** - SwiftUI main window displaying growth data
+- [x] **Phase 4: UI & Polish** - SwiftUI main window displaying growth data
 
 ## Phase Details
 
@@ -57,7 +57,7 @@ Plans:
 
 Plans:
 - [x] 04-01: Main window UI
-- [ ] 04-02: App chrome + build for distribution
+- [x] 04-02: App chrome + build for distribution
 
 ## Progress
 
@@ -69,4 +69,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Foundation | 1/1 | Complete | 2026-01-10 |
 | 2. Scanner & Storage | 2/2 | Complete | 2026-01-10 |
 | 3. Delta Engine | 1/1 | Complete | 2026-01-10 |
-| 4. UI & Polish | 1/2 | In progress | - |
+| 4. UI & Polish | 2/2 | Complete | 2026-01-10 |
