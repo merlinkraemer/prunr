@@ -1,5 +1,27 @@
 import SwiftUI
 
+// MARK: - Focused Values for Menu Commands
+
+struct ScanActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+struct RefreshActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    var scanAction: (() -> Void)? {
+        get { self[ScanActionKey.self] }
+        set { self[ScanActionKey.self] = newValue }
+    }
+
+    var refreshAction: (() -> Void)? {
+        get { self[RefreshActionKey.self] }
+        set { self[RefreshActionKey.self] = newValue }
+    }
+}
+
 /// Main window displaying snapshot comparison and delta list
 struct MainView: View {
     @State private var viewModel = MainViewModel()
@@ -54,6 +76,16 @@ struct MainView: View {
         .onChange(of: viewModel.selectedAfterSnapshot) {
             Task {
                 await viewModel.compareSnapshots()
+            }
+        }
+        .focusedValue(\.scanAction) {
+            Task {
+                await viewModel.scan(path: NSHomeDirectory())
+            }
+        }
+        .focusedValue(\.refreshAction) {
+            Task {
+                await viewModel.loadSnapshots()
             }
         }
     }

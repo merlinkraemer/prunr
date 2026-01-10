@@ -3,6 +3,9 @@ import GRDB
 
 @main
 struct PrunrApp: App {
+    @FocusedValue(\.scanAction) private var scanAction
+    @FocusedValue(\.refreshAction) private var refreshAction
+
     init() {
         // Initialize the database on app launch
         do {
@@ -17,7 +20,24 @@ struct PrunrApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainView()
+        }
+        .defaultSize(width: 800, height: 600)
+        .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Scan Home Folder") {
+                    scanAction?()
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
+
+            CommandGroup(after: .toolbar) {
+                Button("Refresh Snapshots") {
+                    refreshAction?()
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+            }
         }
     }
 }
