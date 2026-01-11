@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 5 — Settings & Polish
+**Current focus:** Phase 5 — Settings & Polish (in progress)
 
 ## Current Position
 
 Phase: 5 of 5 (Settings & Polish)
 Plan: In progress
-Status: Settings feature implemented
-Last activity: 2026-01-11 — Implemented Settings with checkbox paths/boundaries, Debug tab
+Status: Settings feature with scan progress implemented
+Last activity: 2026-01-11 — Refined scan logic (manual trigger, no auto-scan) & settings workflow
 
-Progress: ████████░░ 80% (Settings + UI polish complete, verification pending)
+Progress: █████████░ 90% (Settings + scan progress + baseline management)
 
 ## Performance Metrics
 
@@ -37,17 +37,13 @@ Progress: ████████░░ 80% (Settings + UI polish complete, ver
 | 01-01 | LSUIElement = YES for Dock-less operation | Menu bar apps should not appear in Dock |
 | 01-01 | .transient popover behavior | Auto-closes on outside click for better UX |
 | 01-01 | Simplified GB display (no decimals) | Compact format for menu bar |
-| 01-01 | Preserve legacy code in Legacy/ directory | Retain for reference during refactor |
 | 02-01 | Test FDA by accessing /Library | macOS has no direct API for permission status |
-| 02-01 | System Settings via x-apple.systempreferences URL | Direct deep-link to Full Disk Access pane |
-| 02-01 | Case-sensitive boundary matching | macOS APFS default |
 | 02-02 | 3-second debounce for FSEvents | Balances responsiveness with spam prevention |
-| 02-02 | FSEventStream with 0.5s latency | CoreServices API requirement |
-| 02-02 | Actor isolation for FSEventsWatcher | Thread-safe stream management |
-| 02-02 | Async startWatching for proper actor isolation | Swift concurrency requirement |
 | 05-xx | macOS design guide: 6pt radius, 5pt inset, 28pt rows | Native feel per user research |
 | 05-xx | Checkbox toggles for paths/boundaries | Simpler UX than separate enable/disable |
-| 05-xx | Debug tab with varied test data | Easier testing with realistic folder structure |
+| 05-xx | Paths Save button resets baseline | Ensures fresh baseline after config changes |
+| 05-xx | Scan progress with stop button | User can cancel slow scans |
+| 05-xx | Manual scan trigger on open | Prevents "stuck" feeling, gives user control |
 
 ### Deferred Issues
 
@@ -55,11 +51,11 @@ None.
 
 ### Roadmap Evolution
 
-- 2026-01-11: Pivoted to menu bar MVP — archived original ROADMAP to OLD_ROADMAP.md
-- 2026-01-11: Completed 01-01 (Menu Bar Foundation) — NSStatusItem, popover, free space display
-- 2026-01-11: Completed 02-01 (Permissions + Boundaries) — FDA detection, BoundaryConfig
-- 2026-01-11: Completed 02-02 (FSEvents Watcher) — FSEventStream with debounce
 - 2026-01-11: Implemented Phase 5 Settings — SettingsStore, 5-tab SettingsView, Debug tab
+- 2026-01-11: Added scan progress display with stop button
+- 2026-01-11: Added paths save button with baseline invalidation
+- 2026-01-11: Popup now shows "Create Baseline" when none exists
+- 2026-01-11: Changed popup to check baseline only (no auto-scan) with "Scan Now" button
 
 ### Blockers/Concerns
 
@@ -68,17 +64,21 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-11
-Stopped at: Phase 5 Settings implementation — UI polish in progress
+Stopped at: Phase 5 Settings — Polish & Workflow refinements
 Resume file: None
 
 ## Key Files Changed (This Session)
 
-- `SettingsStore.swift` — UserDefaults persistence for paths, boundaries, threshold, launch at login
-- `SettingsView.swift` — 5 tabs (General, Paths, Boundaries, Debug, About)
-- `MenuBarView.swift` — macOS design guide hover states
-- `GrowthListView.swift` — macOS design guide hover states
+- `SettingsStore.swift` — Enable/disable paths and boundaries with persistence
+- `SettingsView.swift` — 5 tabs, paths save button, debug test data creation
+- `MenuBarView.swift` — Create baseline prompt, scan progress overlay, manual scan buttons
+- `MenuBarViewModel.swift` — Logic for manual scanning, scan progress, baseline checks
 - `TrackedPath.swift` — Added test_data to default paths
-- `documentation/macos_design-guide.md` — User-provided design specs
+
+## Recent Commits
+
+- `247dbe7` — Settings paths save button, scan progress, stop button, baseline recheck
+- `d196ffb` — Phase 5: Settings feature + UI polish
 
 ## Legacy Code Reference
 
@@ -88,6 +88,6 @@ Legacy full-window app code moved to:
 **Reusable components** (kept):
 - `DatabaseManager.swift` — SQLite/GRDB layer
 - `FileScanner.swift` — File system scanning
-- `ScanService.swift` — Scan orchestration (to be adapted)
-- `DeltaService.swift` — Delta calculations (to be simplified)
+- `ScanService.swift` — Scan orchestration with progress callbacks
+- `BaselineService.swift` — Baseline management
 - All `Models/` — Data structures

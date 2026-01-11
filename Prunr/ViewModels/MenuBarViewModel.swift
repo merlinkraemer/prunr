@@ -157,6 +157,18 @@ final class MenuBarViewModel {
         await scanService.cancelScan()
         scanProgress = "Stopping..."
     }
+    
+    /// Checks if baseline exists without triggering a scan
+    func checkBaseline() async {
+        let hasBaseline = await baselineService.hasBaseline()
+        noBaseline = !hasBaseline
+        
+        if noBaseline {
+            print("[MenuBarViewModel] No baseline exists")
+        } else {
+            print("[MenuBarViewModel] Baseline exists")
+        }
+    }
 
     /// Reveals the given path in Finder
     func revealInFinder(path: String) {
@@ -169,4 +181,5 @@ final class MenuBarViewModel {
         refreshDiskSpace()
     }
 }
+
 

@@ -68,7 +68,6 @@ struct MenuBarView: View {
                         Button("Create Baseline") {
                             Task {
                                 await viewModel.createBaseline()
-                                await viewModel.loadGrowthList()
                             }
                         }
                         .buttonStyle(.borderedProminent)
@@ -85,6 +84,32 @@ struct MenuBarView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
+                        Button("Retry") {
+                            Task {
+                                await viewModel.loadGrowthList()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
+                } else if viewModel.growthItems.isEmpty && !viewModel.isLoading {
+                    // Baseline exists but no growth data loaded yet
+                    VStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.secondary)
+                        Text("Ready to scan")
+                            .font(.headline)
+                        Text("Scan to see what changed since baseline")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Scan Now") {
+                            Task {
+                                await viewModel.loadGrowthList()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding()
@@ -214,12 +239,8 @@ struct MenuBarView: View {
             // Refresh disk space immediately (fast)
             viewModel.refreshDiskSpace()
             
-            // Load growth list asynchronously (can be slow)
-            await viewModel.loadGrowthList()
-        }
-        .onAppear {
-            // Always refresh disk space when appearing
-            viewModel.refreshDiskSpace()
+            // Just check if baseline exists, don't auto-scan
+            await viewModel.checkBaseline()
         }
     }
 }
