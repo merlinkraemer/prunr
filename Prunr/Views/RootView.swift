@@ -232,15 +232,46 @@ struct DetailContentView: View {
             if viewModel.snapshots.isEmpty {
                 Text("No snapshots yet")
                     .font(.headline)
-                Text("Click Rescan to create your first snapshot")
+
+                Text("Create your first snapshot to see disk usage changes")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+
+                // Prominent "Scan Now" button for first-time users
+                Button {
+                    Task {
+                        await viewModel.scanCurrentState()
+                    }
+                } label: {
+                    Label("Scan Now", systemImage: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .controlSize(.large)
+                .disabled(viewModel.isScanning)
+                .help("Start scanning this folder (⌘R)")
+
             } else {
                 Text("No changes found")
                     .font(.headline)
-                Text("Try changing the comparison interval or rescanning")
+                Text("Try changing the comparison interval or scanning again")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+
+                // Smaller "Rescan" button for subsequent use
+                Button {
+                    Task {
+                        await viewModel.scanCurrentState()
+                    }
+                } label: {
+                    Label("Rescan", systemImage: "arrow.clockwise")
+                }
+                .controlSize(.regular)
+                .disabled(viewModel.isScanning)
+                .help("Create a new snapshot to compare (⌘R)")
             }
             Spacer()
         }
