@@ -34,6 +34,7 @@
 		BFC7F6EF7E04A2F54EA30890 /* PrunrApp_Legacy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C7B37F7B6230A30C77B7C62 /* PrunrApp_Legacy.swift */; };
 		C1B816875E44D7EE2D9CED35 /* DatabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14CFD6B00057E08E333E4BCA /* DatabaseManager.swift */; };
 		D5E6F7A8B9C0D1E2F3A4B5C6 /* PrunrMenuBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = J3K8L9M0N1O2P3Q4R5S6T7U /* PrunrMenuBar.swift */; };
+		E7F8G9H0I1J2K3L4M5N6O7P /* DiskSpaceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8G9H0I1J2K3L4M5N6O7P8Q /* DiskSpaceService.swift */; };
 		CF108B3C9788F1F1C26CF774 /* DeltaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */; };
 		D708B58DF59CBCD995F25398 /* Delta.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1FD965ED095B5AD6BC9CE03 /* Delta.swift */; };
 		G1H2I3J4K5L6M7N8O9P0Q1R2 /* CategoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F4A /* CategoryDetailView.swift */; };
@@ -72,6 +73,7 @@
 		A1B2C3D4E5F6A7B8C9D0E1F4A /* CategoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDetailView.swift; sourceTree = "<group>"; };
 		BBCCDDEEFF00112233445566 /* MenuBarManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarManager.swift; sourceTree = "<group>"; };
 		H2I6J7K8L9M0N1O2P3Q4R5S6 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		F8G9H0I1J2K3L4M5N6O7P8Q /* DiskSpaceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskSpaceService.swift; sourceTree = "<group>"; };
 		B2C3D4E5F6A7B8C9D0E1F2B5 /* GrowthBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthBarView.swift; sourceTree = "<group>"; };
 		C3D4E5F6A7B8C9D0E1F2A3C6 /* ScanResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanResultsView.swift; sourceTree = "<group>"; };
 		D3E4F5A6B7C8D9E0F1A2B3C7 /* SizeBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SizeBarView.swift; sourceTree = "<group>"; };
@@ -183,6 +185,7 @@
 			isa = PBXGroup;
 			children = (
 				5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */,
+				F8G9H0I1J2K3L4M5N6O7P8Q /* DiskSpaceService.swift */,
 				40E989B2BA4D011B5C20B82D /* FileScanner.swift */,
 				BBCCDDEEFF00112233445566 /* MenuBarManager.swift */,
 				3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */,
@@ -293,6 +296,7 @@
 				7E70A2EDCB2DC6D1F60C07AE /* DeltaRowView.swift in Sources */,
 				1A2B3C4D5E6F7A8B9C0D1E2F /* DetailColumn.swift in Sources */,
 				CF108B3C9788F1F1C26CF774 /* DeltaService.swift in Sources */,
+				E7F8G9H0I1J2K3L4M5N6O7P /* DiskSpaceService.swift in Sources */,
 				AABBCCDDEEFF001122334455 /* MenuBarManager.swift in Sources */,
 				8D1CA082042D60BC7B5D588C /* FileScanner.swift in Sources */,
 				E5F6A7B8C9D0E1F2A3B4C5D7 /* ItemColumn.swift in Sources */,

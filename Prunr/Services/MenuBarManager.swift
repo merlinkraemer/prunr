@@ -10,6 +10,7 @@ final class MenuBarManager {
 
     init() {
         setupMenuBar()
+        updateFreeSpace()
     }
 
     private func setupMenuBar() {
@@ -41,6 +42,13 @@ final class MenuBarManager {
             isPopoverShown = true
             popover?.contentViewController?.view.window?.makeKey()
         }
+    }
+
+    func updateFreeSpace() {
+        let freeSpace = DiskSpaceService.shared.getFreeSpaceFormatted()
+        // Simplify format (e.g., "50 GB" instead of "50.2 GB")
+        let simplified = String(freeSpace.dropLast(3)) // Drop decimal
+        updateFreeSpaceDisplay(simplified)
     }
 
     func updateFreeSpaceDisplay(_ freeSpace: String) {
