@@ -264,7 +264,8 @@ struct DetailContentView: View {
             // Show scan results with categories
             ScanResultsView(
                 deltas: viewModel.deltas,
-                selectedCategory: $selectedCategory
+                selectedCategory: $selectedCategory,
+                comparisonSummary: viewModel.comparisonSummary
             )
         }
     }
