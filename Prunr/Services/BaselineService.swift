@@ -28,6 +28,18 @@ actor BaselineService {
         let growthBytes: Int64
         let currentSizeBytes: Int64
         let percentOfParent: Double
+
+        // MARK: - Computed Properties
+
+        /// Whether this item is considered a "big file" (>=100MB)
+        var isBigFile: Bool {
+            growthBytes >= CategoryGrowthItem.bigFileThreshold
+        }
+
+        /// The category this item belongs to
+        var category: GrowthCategory {
+            GrowthCategory.categorize(path: path)
+        }
     }
 
     // MARK: - Properties
