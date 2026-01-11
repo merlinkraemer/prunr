@@ -59,7 +59,7 @@ struct BoundaryConfig {
         ".gradle",
 
         // Maven
-        "target" // (already included for Rust, shared with Java)
+        // "target" // Already included for Rust, shared with Java
 
         // Fastlane
         "fastlane",
