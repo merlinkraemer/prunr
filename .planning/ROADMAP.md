@@ -97,7 +97,8 @@ Plans:
 - [x] 05-02: Sidebar View with NavigationSplitView
 - [x] 05-03: Three-Column View (categories → items → details) - superseded
 - [x] 05-04: Simplified Comparison
-- [ ] 05-05: DaisyDisk-Style Scan Results (replaces 3-column view)
+- [x] 05-05: DaisyDisk-Style Scan Results (replaces 3-column view)
+- [x] 05-05-FIX: UAT Issue Fixes (8 issues resolved)
 
 ### Phase 6: Cleanup Actions
 **Goal**: Add delete/move functionality to free disk space directly from Prunr
@@ -126,7 +127,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. Scanner & Storage | 2/2 | Complete | 2026-01-10 |
 | 3. Delta Engine | 1/1 | Complete | 2026-01-10 |
 | 4. UI & Polish | 2/2 | Complete | 2026-01-10 |
-| 5. DaisyDisk-Style Scan Results | 4/5 | In progress | — |
+| 5. DaisyDisk-Style Scan Results | 6/6 | Complete | 2026-01-11 |
 | 6. Cleanup Actions | 0/0 | Future | — |
 
 ## Key Differentiators

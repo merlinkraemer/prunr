@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 ## Current Position
 
 Phase: 5 of 5 (Frontend Redesign)
-Plan: 2 of 4 in current phase
+Plan: 5 of 5 in current phase (FIX plan completed)
 Status: In progress
-Last activity: 2026-01-10 — Completed 05-02: Sidebar View
+Last activity: 2026-01-11 — Completed 05-05-FIX: UAT Issue Fixes
 
-Progress: ████████░░ 70% (Milestone 1 complete, Phase 5 in progress)
+Progress: ████████░░ 85% (Milestone 1 complete, Phase 5 nearly complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
+- Total plans completed: 13
 - Average duration: 5 min
-- Total execution time: 0.6 hours
+- Total execution time: 1.0 hours
 
 **By Phase:**
 
@@ -31,10 +31,10 @@ Progress: ████████░░ 70% (Milestone 1 complete, Phase 5 in p
 | 2. Scanner & Storage | 2 | 6 min | 3 min |
 | 3. Delta Engine | 1 | 3 min | 3 min |
 | 4. UI & Polish | 2 | 10 min | 5 min |
-| 5. Frontend Redesign | 2 | 6 min | 3 min |
+| 5. Frontend Redesign | 5 | 24 min | 5 min |
 
 **Recent Trend:**
-- Last 5 plans: 3, 3, 3, 4, 6 min
+- Last 5 plans: 3, 3, 4, 6, 12 min (FIX plan had 8 tasks)
 - Trend: Consistent velocity
 
 ## Accumulated Context
@@ -57,21 +57,26 @@ Recent decisions affecting current work:
 | 04-02 | FocusedValue for menu commands | Clean SwiftUI pattern for menu-to-view action binding |
 | 05-01 | @State for PathManager in SidebarView | Resolves @MainActor initialization constraints |
 | 05-02 | NavigationSplitView for sidebar layout | macOS 13+ native Finder-style navigation |
+| 05-05-FIX | @State viewModel at RootView level | Enables path selection updates across views |
+| 05-05-FIX | RED=bad/growth, GREEN=good/shrinkage | Matches user mental model for disk usage |
+| 05-05-FIX | 20% minimum width for growth bars | Ensures visibility when one category dominates |
+| 05-05-FIX | Current-only mode for first scan | First scan shows useful data instead of empty state |
 
 ### Deferred Issues
 
-- ISS-001: Scan fails with "failed to create snapshot" (needs Phase 2 debugging)
+None. All UAT issues from 05-05 have been addressed.
 
 ### Roadmap Evolution
 
 - 2026-01-10: Phase 5 added — Frontend Redesign (complete UX overhaul)
+- 2026-01-11: Phase 05-05-FIX completed — Fixed 8 UAT issues
 
 ### Blockers/Concerns
 
-None yet.
+None.
 
 ## Session Continuity
 
-Last session: 2026-01-10
-Stopped at: Completed 05-02-PLAN.md — Sidebar View with NavigationSplitView
+Last session: 2026-01-11
+Stopped at: Completed 05-05-FIX — Fixed 8 UAT issues
 Resume file: None
