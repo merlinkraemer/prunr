@@ -10,17 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 ## Current Position
 
 Phase: 2 of 5 (FSEvents Monitoring + Permissions)
-Plan: 1 of TBD in current phase
-Status: In progress
-Last activity: 2026-01-11 — Completed 02-01-PLAN.md
+Plan: 2 of 2 in current phase
+Status: Phase complete
+Last activity: 2026-01-11 — Completed 02-02-PLAN.md
 
-Progress: █████░░░░░ 30% (Menu bar foundation + Permissions + Boundaries complete)
+Progress: ██████░░░░ 40% (Menu bar + Permissions + Boundaries + FSEvents complete)
 
 ## Performance Metrics
 
 **Velocity:**
 - 01-01: 18 min (3 tasks)
 - 02-01: 8 min (3 tasks)
+- 02-02: 25 min (3 tasks)
 
 ## Accumulated Context
 
@@ -40,6 +41,10 @@ Progress: █████░░░░░ 30% (Menu bar foundation + Permissions 
 | 02-01 | Test FDA by accessing /Library | macOS has no direct API for permission status |
 | 02-01 | System Settings via x-apple.systempreferences URL | Direct deep-link to Full Disk Access pane |
 | 02-01 | Case-sensitive boundary matching | macOS APFS default |
+| 02-02 | 3-second debounce for FSEvents | Balances responsiveness with spam prevention |
+| 02-02 | FSEventStream with 0.5s latency | CoreServices API requirement |
+| 02-02 | Actor isolation for FSEventsWatcher | Thread-safe stream management |
+| 02-02 | Async startWatching for proper actor isolation | Swift concurrency requirement |
 
 ### Deferred Issues
 
@@ -50,6 +55,7 @@ None.
 - 2026-01-11: Pivoted to menu bar MVP — archived original ROADMAP to OLD_ROADMAP.md
 - 2026-01-11: Completed 01-01 (Menu Bar Foundation) — NSStatusItem, popover, free space display
 - 2026-01-11: Completed 02-01 (Permissions + Boundaries) — FDA detection, BoundaryConfig
+- 2026-01-11: Completed 02-02 (FSEvents Watcher) — FSEventStream with debounce
 
 ### Blockers/Concerns
 
@@ -58,7 +64,7 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-11
-Stopped at: Completed 02-01-PLAN.md (Permissions + Boundaries)
+Stopped at: Completed 02-02-PLAN.md (FSEvents Watcher) - Phase 2 complete
 Resume file: None
 
 ## Legacy Code Reference

@@ -103,7 +103,7 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Menu Bar Foundation | 1/1 | Complete | 2026-01-11 |
-| 2. FSEvents + Permissions | 1/1 | In progress | 2026-01-11 |
+| 2. FSEvents + Permissions | 2/2 | Complete | 2026-01-11 |
 | 3. Baseline & Growth | 0/0 | Not Started | — |
 | 4. Menu Bar UI | 0/0 | Not Started | — |
 | 5. Settings & Polish | 0/0 | Not Started | — |
