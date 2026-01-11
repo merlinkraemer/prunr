@@ -77,17 +77,17 @@ enum GrowthCategory: String, CaseIterable, Identifiable {
         case .nodeModules:
             return ["node_modules"]
         case .libraryCaches:
-            return ["Library/Caches"]
+            return ["Library/Caches", "/Library/Caches", ".cache"]
         case .downloads:
-            return ["/Downloads"]
+            return ["/Downloads", "/downloads"]
         case .docker:
             return ["/var/lib/docker", "Library/Containers/com.docker", ".docker"]
         case .spotifyCache:
-            return ["Library/Application Support/Spotify", "Library/Caches/Spotify"]
+            return ["Library/Application Support/Spotify", ".spotify"]
         case .browserCache:
-            return ["Library/Caches/Google/Chrome", "Library/Caches/Mozilla/Firefox", "Library/Caches/Safari"]
+            return ["Library/Caches/Google/Chrome", "Library/Caches/Mozilla/Firefox", "Library/Safari"]
         case .mailAttachments:
-            return ["Library/Mail", "Library/Mail V2"]
+            return ["Library/Mail"]
         case .trash:
             return [".Trash"]
         case .other:
@@ -99,50 +99,53 @@ enum GrowthCategory: String, CaseIterable, Identifiable {
     /// - Parameter path: The file system path to classify
     /// - Returns: The matching GrowthCategory, or .other if no match
     static func categorize(path: String) -> GrowthCategory {
+        // Normalize path: expand tilde to full home directory path
+        let normalizedPath = (path as NSString).expandingTildeInPath
+
         // Check specific categories in priority order
 
         // Homebrew
-        if containsAny(of: path, substrings: homebrew.patterns) {
+        if containsAny(of: normalizedPath, substrings: homebrew.patterns) {
             return .homebrew
         }
 
         // node_modules
-        if containsAny(of: path, substrings: nodeModules.patterns) {
+        if containsAny(of: normalizedPath, substrings: nodeModules.patterns) {
             return .nodeModules
         }
 
         // Docker
-        if containsAny(of: path, substrings: docker.patterns) {
+        if containsAny(of: normalizedPath, substrings: docker.patterns) {
             return .docker
         }
 
         // Spotify
-        if containsAny(of: path, substrings: spotifyCache.patterns) {
+        if containsAny(of: normalizedPath, substrings: spotifyCache.patterns) {
             return .spotifyCache
         }
 
         // Browser cache
-        if containsAny(of: path, substrings: browserCache.patterns) {
+        if containsAny(of: normalizedPath, substrings: browserCache.patterns) {
             return .browserCache
         }
 
         // Mail attachments
-        if containsAny(of: path, substrings: mailAttachments.patterns) {
+        if containsAny(of: normalizedPath, substrings: mailAttachments.patterns) {
             return .mailAttachments
         }
 
         // Trash
-        if containsAny(of: path, substrings: trash.patterns) {
+        if containsAny(of: normalizedPath, substrings: trash.patterns) {
             return .trash
         }
 
         // Library/Caches (check after specific caches)
-        if containsAny(of: path, substrings: libraryCaches.patterns) {
+        if containsAny(of: normalizedPath, substrings: libraryCaches.patterns) {
             return .libraryCaches
         }
 
         // Downloads
-        if containsAny(of: path, substrings: downloads.patterns) {
+        if containsAny(of: normalizedPath, substrings: downloads.patterns) {
             return .downloads
         }
 
