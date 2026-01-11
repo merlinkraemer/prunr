@@ -41,6 +41,14 @@ final class MainViewModel {
     /// Historical snapshot date for display
     var historicalSnapshotDate: Date?
 
+    /// Current-only mode when only one snapshot exists
+    var currentOnlyMode: Bool {
+        snapshots.count == 1
+    }
+
+    /// Current snapshot entries for current-only mode display
+    var currentSnapshotEntries: [SnapshotEntry] = []
+
     // MARK: - Private Properties
 
     private let scanService = ScanService.shared
@@ -194,7 +202,18 @@ final class MainViewModel {
         }
 
         guard snapshots.count >= 2 else {
-            // Not an error, just need more snapshots
+            // Current-only mode: load the single snapshot's entries
+            if snapshots.count == 1, let snapshotId = snapshots[0].id {
+                do {
+                    currentSnapshotEntries = try await db.fetchEntries(for: snapshotId)
+                    print("[DEBUG] Current-only mode: \(currentSnapshotEntries.count) entries loaded")
+                } catch {
+                    print("[ERROR] Failed to load snapshot entries: \(error)")
+                    currentSnapshotEntries = []
+                }
+            } else {
+                currentSnapshotEntries = []
+            }
             comparisonWarning = nil
             deltas = []
             return

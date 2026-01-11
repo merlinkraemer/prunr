@@ -265,7 +265,9 @@ struct DetailContentView: View {
             ScanResultsView(
                 deltas: viewModel.deltas,
                 selectedCategory: $selectedCategory,
-                comparisonSummary: viewModel.comparisonSummary
+                comparisonSummary: viewModel.comparisonSummary,
+                currentSnapshotEntries: viewModel.currentSnapshotEntries,
+                currentOnlyMode: viewModel.currentOnlyMode
             )
         }
     }
