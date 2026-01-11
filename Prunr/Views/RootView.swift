@@ -5,8 +5,14 @@ struct RootView: View {
     /// Currently selected path from the sidebar
     @State private var selectedPath: TrackedPath?
 
+    /// Currently selected category for drill-down
+    @State private var selectedCategory: DeltaCategory?
+
     /// Controls visibility of sidebar and detail columns
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    /// Shared view model for the detail content
+    @State private var viewModel = MainViewModel()
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -18,14 +24,26 @@ struct RootView: View {
                     max: 300
                 )
         } detail: {
-            // Detail column - Main content with column view
+            // Detail column - Main content with scan results view
             if let selectedPath = selectedPath {
-                DetailContentView(selectedPath: selectedPath)
+                DetailContentView(
+                    viewModel: viewModel,
+                    selectedPath: selectedPath,
+                    selectedCategory: $selectedCategory
+                )
             } else {
                 emptyDetailPlaceholder
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .onChange(of: selectedPath) { _, newPath in
+            // When path changes, reset the view model and load new data
+            if let newPath = newPath {
+                Task { @MainActor in
+                    await viewModel.updatePath(newPath)
+                }
+            }
+        }
     }
 
     // MARK: - Placeholder Views
@@ -53,10 +71,16 @@ struct RootView: View {
 // MARK: - Detail Content View
 
 /// Main content view for a selected path
-/// Shows comparison controls and the three-column category view
+/// Shows comparison controls and the scan results view
 struct DetailContentView: View {
+    /// Shared view model (passed from RootView)
+    /// With @Observable, we use @State to observe the reference
+    @State var viewModel: MainViewModel
+
     let selectedPath: TrackedPath
-    @State private var viewModel = MainViewModel()
+
+    /// Binding for selected category (passed to RootView)
+    @Binding var selectedCategory: DeltaCategory?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -70,7 +94,7 @@ struct DetailContentView: View {
                 scanningBanner
             }
 
-            // Main content - three column view or empty state
+            // Main content - scan results or category detail
             contentView
         }
         .toolbar {
@@ -99,26 +123,28 @@ struct DetailContentView: View {
         }
         .navigationTitle(selectedPath.displayName)
         .task {
-            // Set the selected path in the view model
-            viewModel.selectedPath = selectedPath
+            // Set the selected path in the view model (first time only)
+            if viewModel.selectedPath?.id != selectedPath.id {
+                viewModel.selectedPath = selectedPath
 
-            // Register actions with AppActions for menu commands
-            AppActions.shared.scanAction = {
-                Task {
-                    await viewModel.scanCurrentState()
+                // Register actions with AppActions for menu commands
+                AppActions.shared.scanAction = {
+                    Task {
+                        await viewModel.scanCurrentState()
+                    }
                 }
-            }
-            #if DEBUG
-            AppActions.shared.generateTestDataAction = {
-                Task {
-                    await viewModel.generateTestData()
+                #if DEBUG
+                AppActions.shared.generateTestDataAction = {
+                    Task {
+                        await viewModel.generateTestData()
+                    }
                 }
-            }
-            #endif
+                #endif
 
-            // Load snapshots and perform initial comparison
-            await viewModel.loadSnapshots()
-            await viewModel.compareSince()
+                // Load snapshots and perform initial comparison
+                await viewModel.loadSnapshots()
+                await viewModel.compareSince()
+            }
         }
     }
 
@@ -172,13 +198,26 @@ struct DetailContentView: View {
         .background(.blue.opacity(0.05))
     }
 
-    /// Main content showing either three-column view or empty state
+    /// Main content showing scan results, category detail, or empty state
     @ViewBuilder
     private var contentView: some View {
         if viewModel.deltas.isEmpty && !viewModel.isScanning {
             emptyState
+        } else if let category = selectedCategory {
+            // Show category detail view
+            CategoryDetailView(
+                category: category,
+                deltas: viewModel.deltas,
+                onBack: {
+                    selectedCategory = nil
+                }
+            )
         } else {
-            ColumnContainerView(deltas: $viewModel.deltas)
+            // Show scan results with categories
+            ScanResultsView(
+                deltas: viewModel.deltas,
+                selectedCategory: $selectedCategory
+            )
         }
     }
 

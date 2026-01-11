@@ -29,6 +29,18 @@ final class MainViewModel {
     /// The comparison interval in seconds (default 24 hours)
     var comparisonInterval: TimeInterval = 86400
 
+    /// Warning message when exact timeframe snapshot is unavailable
+    var comparisonWarning: String?
+
+    /// Comparison summary text (e.g., "Comparing now vs 2 days ago")
+    var comparisonSummary: String?
+
+    /// Current snapshot date for display
+    var currentSnapshotDate: Date?
+
+    /// Historical snapshot date for display
+    var historicalSnapshotDate: Date?
+
     // MARK: - Private Properties
 
     private let scanService = ScanService.shared
@@ -52,6 +64,20 @@ final class MainViewModel {
     }
 
     // MARK: - Public Methods
+
+    /// Updates the selected path and reloads data
+    /// Called when user selects a different path in the sidebar
+    func updatePath(_ path: TrackedPath) async {
+        // Reset state for the new path
+        selectedPath = path
+        deltas = []
+        errorMessage = nil
+        comparisonWarning = nil
+
+        // Reload snapshots and comparison for the new path
+        await loadSnapshots()
+        await compareSince()
+    }
 
     /// Loads all snapshots from the database
     func loadSnapshots() async {
@@ -192,40 +218,126 @@ final class MainViewModel {
                 try fileManager.createDirectory(atPath: testPath, withIntermediateDirectories: true)
             }
 
-            // Helper to write data to a file
-            func writeData(_ data: Data, to file: String) throws {
-                try data.write(to: URL(fileURLWithPath: testPath).appendingPathComponent(file))
-            }
-
             // Use timestamp to vary sizes each run
             let timestamp = Int(Date().timeIntervalSince1970)
             let randomVariation = timestamp % 10 + 1  // 1-10 variation factor
 
-            // Files that grow: growing_file.txt (increases each run)
-            let baseSize = 1_000_000  // 1 MB base
-            let growingSize = baseSize + (randomVariation * 500_000)  // Add 0.5-5 MB
-            try writeData(Data(repeating: UInt8(randomVariation), count: growingSize), to: "growing_file.txt")
-
-            // Files that shrink: shrinking_file.txt (decreases each run)
-            let shrinkingSize = max(100_000, 5_000_000 - (randomVariation * 400_000))  // Start at 5 MB, shrink
-            try writeData(Data(repeating: 0xAA, count: shrinkingSize), to: "shrinking_file.txt")
-
-            // Stable file (same size, different timestamp content)
-            try writeData("Stable content at \(timestamp)".data(using: .utf8)!, to: "stable_file.txt")
-
-            // New file with timestamp (appears as new each time if deleted)
-            try writeData("New content \(timestamp)".data(using: .utf8)!, to: "timestamp_file.txt")
-
-            // Create a folder with a large file
-            let folderPath = (testPath as NSString).appendingPathComponent("test_folder")
-            if !fileManager.fileExists(atPath: folderPath) {
-                try fileManager.createDirectory(atPath: folderPath, withIntermediateDirectories: true)
+            // Helper to create directory if needed
+            func ensureDirectory(_ path: String) throws {
+                if !fileManager.fileExists(atPath: path) {
+                    try fileManager.createDirectory(atPath: path, withIntermediateDirectories: true)
+                }
             }
-            try Data(repeating: 0xDD, count: 2_000_000 + Int(randomVariation * 200_000))
-                .write(to: URL(fileURLWithPath: folderPath).appendingPathComponent("folder_file.bin"))
+
+            // Helper to write data to a file (creates parent directories)
+            func writeData(_ data: Data, to path: String) throws {
+                let url = URL(fileURLWithPath: path)
+                let dir = url.deletingLastPathComponent().path
+                if !fileManager.fileExists(atPath: dir) {
+                    try fileManager.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                }
+                try data.write(to: url)
+            }
+
+            // MARK: - Homebrew category
+            try writeData(
+                Data(repeating: UInt8(0x01), count: 50_000_000 + Int(randomVariation * 5_000_000)),
+                to: (testPath as NSString).appendingPathComponent("Cellar/python/libpython3.11.dylib")
+            )
+            try writeData(
+                Data(repeating: UInt8(0x02), count: 30_000_000 + Int(randomVariation * 3_000_000)),
+                to: (testPath as NSString).appendingPathComponent("Cellar/node/bin/node")
+            )
+
+            // MARK: - Docker category
+            try writeData(
+                Data(repeating: UInt8(0x03), count: 100_000_000 + Int(randomVariation * 10_000_000)),
+                to: (testPath as NSString).appendingPathComponent(".docker/overlay2.img")
+            )
+
+            // MARK: - NPM category
+            let packages = ["lodash", "react", "vue", "express", "typescript"]
+            for pkg in packages {
+                let size = (5_000_000 * (packages.firstIndex(of: pkg)! + 1)) + (randomVariation * 1_000_000)
+                try writeData(
+                    Data(repeating: UInt8(0x04), count: size),
+                    to: (testPath as NSString).appendingPathComponent("node_modules/\(pkg)/index.js")
+                )
+            }
+
+            // MARK: - Developer category
+            try writeData(
+                Data(repeating: UInt8(0x05), count: 200_000_000 + Int(randomVariation * 20_000_000)),
+                to: (testPath as NSString).appendingPathComponent("DerivedData/BuildProducts")
+            )
+
+            // MARK: - Media category
+            try writeData(
+                Data(repeating: UInt8(0x06), count: 150_000_000 + Int(randomVariation * 15_000_000)),
+                to: (testPath as NSString).appendingPathComponent("Media/vacation.mp4")
+            )
+            try writeData(
+                Data(repeating: UInt8(0x07), count: 80_000_000 + Int(randomVariation * 8_000_000)),
+                to: (testPath as NSString).appendingPathComponent("Media/birthday.mov")
+            )
+            try writeData(
+                Data(repeating: UInt8(0x08), count: 25_000_000 + Int(randomVariation * 2_500_000)),
+                to: (testPath as NSString).appendingPathComponent("Media/photo.jpg")
+            )
+            try writeData(
+                Data(repeating: UInt8(0x09), count: 40_000_000 + Int(randomVariation * 4_000_000)),
+                to: (testPath as NSString).appendingPathComponent("Media/design.psd")
+            )
+            try writeData(
+                Data(repeating: UInt8(0x0A), count: 15_000_000 + Int(randomVariation * 1_500_000)),
+                to: (testPath as NSString).appendingPathComponent("Media/logo.ai")
+            )
+
+            // MARK: - Containers category
+            try writeData(
+                Data(repeating: UInt8(0x0B), count: 20_000_000 + Int(randomVariation * 2_000_000)),
+                to: (testPath as NSString).appendingPathComponent("Library/Containers/com.example.app/Data.sqlite")
+            )
+
+            // MARK: - Caches category
+            try writeData(
+                Data(repeating: UInt8(0x0C), count: 35_000_000 + Int(randomVariation * 3_500_000)),
+                to: (testPath as NSString).appendingPathComponent("Library/Caches/com.apple.safaricache")
+            )
+
+            // MARK: - Packages category
+            try writeData(
+                Data(repeating: UInt8(0x0D), count: 45_000_000 + Int(randomVariation * 4_500_000)),
+                to: (testPath as NSString).appendingPathComponent("installer.pkg")
+            )
+
+            // MARK: - Apps category
+            try writeData(
+                Data(repeating: UInt8(0x0E), count: 60_000_000 + Int(randomVariation * 6_000_000)),
+                to: (testPath as NSString).appendingPathComponent("TestApp.app/Contents/MacOS/executable")
+            )
+
+            // MARK: - Other (miscellaneous files)
+            try writeData(
+                Data(repeating: UInt8(0x0F), count: 10_000_000 + Int(randomVariation * 1_000_000)),
+                to: (testPath as NSString).appendingPathComponent("document.pdf")
+            )
+            let logContent = String(repeating: "Log entry at \(timestamp)\n", count: 1000)
+            try writeData(
+                logContent.data(using: .utf8)!,
+                to: (testPath as NSString).appendingPathComponent("logs.txt")
+            )
+
+            // Some files that shrink (to show negative deltas)
+            let shrinkingSize = max(100_000, 50_000_000 - (randomVariation * 4_000_000))
+            try writeData(
+                Data(repeating: 0xAA, count: shrinkingSize),
+                to: (testPath as NSString).appendingPathComponent("old_backup.tar")
+            )
 
             errorMessage = nil
             print("[DEBUG] Test data generated successfully - sizes will vary on each run")
+            print("[DEBUG] Categories: Homebrew, Docker, NPM, Developer, Media, Containers, Caches, Packages, Apps")
         } catch {
             let msg = "Failed to generate test data: \(error.localizedDescription)"
             errorMessage = msg
