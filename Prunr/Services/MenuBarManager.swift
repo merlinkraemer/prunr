@@ -8,9 +8,13 @@ final class MenuBarManager {
     var popover: NSPopover?
     var isPopoverShown = false
 
+    /// FSEvents service for file system monitoring
+    private let fseventsService = FSEventsService.shared
+
     init() {
         setupMenuBar()
         updateFreeSpace()
+        startWatchingDefaultPaths()
     }
 
     private func setupMenuBar() {
@@ -53,5 +57,26 @@ final class MenuBarManager {
 
     func updateFreeSpaceDisplay(_ freeSpace: String) {
         statusItem?.button?.title = " \(freeSpace)"
+    }
+
+    // MARK: - FSEvents Integration
+
+    /// Starts watching default tracked paths for file system changes.
+    private func startWatchingDefaultPaths() {
+        let urls = TrackedPath.defaultPaths.map { $0.url }
+
+        // Set up callback to log changes (full integration in Phase 3)
+        fseventsService.onChangedPaths = { [weak self] changedPaths in
+            print("[MenuBarManager] FSEvents detected changes in:")
+            changedPaths.forEach { path in
+                print("  - \(path.path)")
+            }
+            // Phase 3 will trigger rescans here
+        }
+
+        // Start watching asynchronously
+        Task {
+            await fseventsService.startWatching(paths: urls)
+        }
     }
 }

@@ -42,6 +42,8 @@
 		G2H3I4J5K6L7M8N9O0P1Q2R3 /* GrowthBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7B8C9D0E1F2B5 /* GrowthBarView.swift */; };
 		G3H4I5J6K7L8M9N0O1P2Q3R4 /* ScanResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F6A7B8C9D0E1F2A3C6 /* ScanResultsView.swift */; };
 		G4H5I6J7K8L9M0N1O2P3Q4R5 /* SizeBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E4F5A6B7C8D9E0F1A2B3C7 /* SizeBarView.swift */; };
+		H3I4J5K6L7M8N9O0P1Q2R3S4 /* FSEventsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = I4J5K6L7M8N9O0P1Q2R3S4T5 /* FSEventsService.swift */; };
+		I5J6K7L8M9N0O1P2Q3R4S5T6 /* FSEventsWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = J6K7L8M9N0O1P2Q3R4S5T6U7 /* FSEventsWatcher.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -81,6 +83,8 @@
 		E63015DE0AAE16AB6AA6B215 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
 		E66E49820CB5A9702B7565F3 /* Prunr.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prunr.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ED22215848F7B27478151FD0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		I4J5K6L7M8N9O0P1Q2R3S4T5 /* FSEventsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSEventsService.swift; sourceTree = "<group>"; };
+		J6K7L8M9N0O1P2Q3R4S5T6U7 /* FSEventsWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSEventsWatcher.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -186,6 +190,8 @@
 			children = (
 				5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */,
 				F8G9H0I1J2K3L4M5N6O7P8Q /* DiskSpaceService.swift */,
+				J6K7L8M9N0O1P2Q3R4S5T6U7 /* FSEventsWatcher.swift */,
+				I4J5K6L7M8N9O0P1Q2R3S4T5 /* FSEventsService.swift */,
 				40E989B2BA4D011B5C20B82D /* FileScanner.swift */,
 				BBCCDDEEFF00112233445566 /* MenuBarManager.swift */,
 				3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */,
@@ -318,6 +324,8 @@
 				G2H3I4J5K6L7M8N9O0P1Q2R3 /* GrowthBarView.swift in Sources */,
 				G3H4I5J6K7L8M9N0O1P2Q3R4 /* ScanResultsView.swift in Sources */,
 				G4H5I6J7K8L9M0N1O2P3Q4R5 /* SizeBarView.swift in Sources */,
+				H3I4J5K6L7M8N9O0P1Q2R3S4 /* FSEventsService.swift in Sources */,
+				I5J6K7L8M9N0O1P2Q3R4S5T6 /* FSEventsWatcher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

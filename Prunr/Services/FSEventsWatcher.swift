@@ -10,16 +10,13 @@ actor FSEventsWatcher {
 
     // MARK: - Types
 
-    /// Wrapper around FSEventStream for type-safe management.
-    ///
-    /// The actual FSEventStreamRef is opaque from CoreServices, so we use
-    /// a typealias for clarity and unsafe pointer operations.
-    private typealias FSEventStream = OpaquePointer
+    /// Opaque pointer to FSEventStream from CoreServices.
+    private typealias FSEventStreamRef = OpaquePointer
 
     // MARK: - Properties
 
     /// The underlying FSEventStream, if created and started.
-    private var stream: FSEventStream?
+    private var stream: FSEventStreamRef?
 
     /// Current debounce task for pending changes.
     private var debounceTask: Task<Void, Never>?
@@ -35,6 +32,9 @@ actor FSEventsWatcher {
 
     /// Whether the stream is currently active.
     private(set) var isRunning = false
+
+    /// Callback context storage - needs to be stored to keep it alive
+    private var callbackContext: FSEventStreamContext?
 
     // MARK: - Initialization
 
@@ -58,28 +58,55 @@ actor FSEventsWatcher {
         guard !isRunning else { return }
 
         // Convert URLs to path strings for FSEvents
-        let paths = pathsToWatch.map { $0.path }
+        let paths = pathsToWatch.map { $0.path as CFString }
 
-        // Create context for callback
-        let context = Unmanaged.passRetained(self as AnyObject).toOpaque()
+        // Create context to pass 'self' to the callback
+        let contextPtr = Unmanaged.passRetained(self as AnyObject).toOpaque()
+
+        // Set up the callback context structure
+        var context = FSEventStreamContext(
+            version: 0,
+            info: contextPtr,
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
+        callbackContext = context
 
         // Create the event stream
         guard let newStream = FSEventStreamCreate(
             kCFAllocatorDefault,
             { (streamRef, clientCallbackInfo, numEvents, eventPaths, eventFlags, eventIds) in
                 // Extract the watcher instance from context
-                guard let clientCallbackInfo = clientCallbackInfo else { return }
+                guard let info = clientCallbackInfo else { return }
 
-                        let watcher = Unmanaged<FSEventsWatcher>.fromOpaque(clientCallbackInfo).takeUnretainedValue()
+                let watcher = Unmanaged<FSEventsWatcher>.fromOpaque(info).takeUnretainedValue()
 
-                // Collect changed paths from the event
-                        watcher.collectEventPaths(eventPaths, count: numEvents)
+                // Collect changed paths - need to do this synchronously from callback
+                // Convert the opaque paths array to CFString array
+                let pathsArray = eventPaths.assumingMemoryBound(to: (UnsafeRawPointer?.self))
+                var changedPaths = Set<URL>()
+
+                for i in 0..<numEvents {
+                    if let pathPtr = pathsArray[i] {
+                        let cfStr = Unmanaged<CFString>.fromOpaque(pathPtr).takeUnretainedValue()
+                        if let pathStr = cfStr as String? {
+                            let url = URL(fileURLWithPath: pathStr)
+                            changedPaths.insert(url)
+                        }
+                    }
+                }
+
+                // Trigger debounced handling
+                Task {
+                    await watcher.handleEventPaths(changedPaths)
+                }
             },
-            nil,
+            &context,
             paths as CFArray,
-            kFSEventStreamEventIdSinceNow,
-            0.5, // Latency in seconds - FSEvents batches events within this window
-            FSEventStreamCreateFlags(kFSEventStreamEventIdSinceNow.rawValue)
+            UInt64(kFSEventStreamEventIdSinceNow),
+            0.5,
+            FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
         ) else {
             print("[FSEventsWatcher] Failed to create FSEventStream")
             return
@@ -88,7 +115,8 @@ actor FSEventsWatcher {
         stream = newStream
 
         // Schedule on the current run loop
-        FSEventStreamScheduleWithRunLoop(newStream, CFRunLoopGetCurrent(), CFRunLoopMode.defaultModes.rawValue)
+        // Use RunLoop.Mode.default which is bridged to kCFRunLoopDefaultMode
+        FSEventStreamScheduleWithRunLoop(newStream, CFRunLoopGetCurrent(), RunLoop.Mode.default.rawValue as CFString)
 
         // Start the stream
         if FSEventStreamStart(newStream) {
@@ -135,30 +163,6 @@ actor FSEventsWatcher {
 
     // MARK: - Private Methods
 
-    /// Collects event paths from FSEvents callback and triggers debounced handling.
-    ///
-    /// This is called from the C callback context and must be thread-safe.
-    /// We accumulate changed paths and trigger debounced notification.
-    ///
-    /// - Parameters:
-    ///   - eventPaths: Raw pointer to C array of path strings
-    ///   - count: Number of paths in the array
-    private func collectEventPaths(_ eventPaths: UnsafePointer<Unmanaged<CFString>?>, count: Int) {
-        var changedPaths = Set<URL>()
-
-        for i in 0..<count {
-            if let pathRef = eventPaths[i].takeUnretainedValue() as String? {
-                let url = URL(fileURLWithPath: pathRef)
-                changedPaths.insert(url)
-            }
-        }
-
-        // Trigger debounced handling of these paths
-        Task {
-            await handleEventPaths(changedPaths)
-        }
-    }
-
     /// Handles event paths with debouncing.
     ///
     /// Cancels any existing debounce task and creates a new one that will
@@ -176,7 +180,13 @@ actor FSEventsWatcher {
             // Only invoke if not cancelled
             guard !Task.isCancelled else { return }
 
-            await onChange?(paths)
+            // Log the changes
+            print("[FSEventsWatcher] Detected changes in:")
+            paths.forEach { path in
+                print("  - \(path.path)")
+            }
+
+            onChange?(paths)
         }
     }
 

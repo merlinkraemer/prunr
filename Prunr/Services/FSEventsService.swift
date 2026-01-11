@@ -56,9 +56,9 @@ final class FSEventsService {
     /// onChangedPaths after the debounce interval.
     ///
     /// - Parameter paths: Array of file URLs to monitor
-    func startWatching(paths: [URL]) {
+    func startWatching(paths: [URL]) async {
         // Stop existing watcher if running
-        stopWatching()
+        await stopWatching()
 
         guard !paths.isEmpty else {
             print("[FSEventsService] No paths to watch")
@@ -72,42 +72,38 @@ final class FSEventsService {
         )
 
         // Set up change callback
-        newWatcher.setOnChange { [weak self] changedPaths in
+        await newWatcher.setOnChange { [weak self] changedPaths in
             Task { @MainActor in
-                await self?.handleChangedPaths(changedPaths)
+                self?.handleChangedPaths(changedPaths)
             }
         }
 
         // Start the watcher
-        Task {
-            await newWatcher.start()
-            await MainActor.run {
-                self.watcher = newWatcher
-                self.isWatching = true
-                self.watchedPaths = Set(paths)
-                print("[FSEventsService] Started watching \(paths.count) paths:")
-                paths.forEach { print("  - \($0.path)") }
-            }
-        }
+        await newWatcher.start()
+
+        // Update state on main actor
+        watcher = newWatcher
+        isWatching = true
+        watchedPaths = Set(paths)
+        print("[FSEventsService] Started watching \(paths.count) paths:")
+        paths.forEach { print("  - \($0.path)") }
     }
 
     /// Stops file system monitoring.
     ///
     /// The current watcher is stopped and cleaned up.
     /// Pending changed paths are cleared.
-    func stopWatching() {
+    func stopWatching() async {
         guard let currentWatcher = watcher else { return }
 
-        Task {
-            await currentWatcher.stop()
-            await MainActor.run {
-                self.watcher = nil
-                self.isWatching = false
-                self.watchedPaths.removeAll()
-                self.pendingChangedPaths.removeAll()
-                print("[FSEventsService] Stopped watching")
-            }
-        }
+        await currentWatcher.stop()
+
+        // Clear state
+        watcher = nil
+        isWatching = false
+        watchedPaths.removeAll()
+        pendingChangedPaths.removeAll()
+        print("[FSEventsService] Stopped watching")
     }
 
     /// Retrieves and clears pending changed paths.
