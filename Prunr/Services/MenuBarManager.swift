@@ -138,6 +138,7 @@ final class MenuBarManager {
     
     // Published state for UI
     var growthItems: [BaselineService.GrowthItem] = []
+    var monitoredPathName: String = ""
     var isLoading = false
     var errorMessage: String?
     var noBaseline = false
@@ -239,6 +240,15 @@ final class MenuBarManager {
     func checkBaseline() async {
         let hasBaseline = await baselineService.hasBaseline()
         noBaseline = !hasBaseline
+        updateMonitoredPathName()
+    }
+    
+    private func updateMonitoredPathName() {
+        if let path = SettingsStore.shared.enabledTrackedPaths.first {
+            monitoredPathName = path.displayName
+        } else {
+            monitoredPathName = "None"
+        }
     }
     
     /// Reveals the given path in Finder

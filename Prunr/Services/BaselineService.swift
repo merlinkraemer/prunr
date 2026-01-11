@@ -259,41 +259,80 @@ actor BaselineService {
     ///   - deltas: Array of Delta items to process
     ///   - parentPath: The parent path for calculating percentages
     /// - Returns: Array of GrowthItem values
+    /// Builds a growth list from deltas with 70% threshold filtering.
+    ///
+    /// Aggregates growth by direct child of the parent path.
+    /// Example: If parent is `/root`, then `/root/folder/file` growth counts towards `/root/folder`.
+    ///
+    /// - Parameters:
+    ///   - deltas: Array of Delta items to process
+    ///   - parentPath: The parent path for calculating percentages
+    /// - Returns: Array of GrowthItem values
     private func buildGrowthList(from deltas: [Delta], parentPath: String) -> [GrowthItem] {
         // Filter to only items that grew
         let growingDeltas = deltas.filter { $0.changeBytes > 0 }
-
+        
         // Calculate total growth for the parent
         let totalGrowth = growingDeltas.reduce(Int64(0)) { $0 + $1.changeBytes }
-
+        
         guard totalGrowth > 0 else {
             return []
         }
-
+        
+        // Aggregate growth by direct child component
+        var aggregatedGrowth: [String: (growth: Int64, size: Int64)] = [:]
+        let parentWithSlash = parentPath.hasSuffix("/") ? parentPath : parentPath + "/"
+        
+        for delta in growingDeltas {
+            guard delta.path.hasPrefix(parentWithSlash) else { continue }
+            
+            // Extract relative path: "images/img1.dat" or "file.txt"
+            let relativePath = String(delta.path.dropFirst(parentWithSlash.count))
+            
+            // Get the first component (direct child name)
+            let components = relativePath.split(separator: "/", maxSplits: 1)
+            guard let firstComponent = components.first else { continue }
+            let childName = String(firstComponent)
+            let fullChildPath = parentWithSlash + childName
+            
+            // Accumulate
+            let current = aggregatedGrowth[fullChildPath] ?? (growth: 0, size: 0)
+            aggregatedGrowth[fullChildPath] = (
+                growth: current.growth + delta.changeBytes,
+                size: current.size + (delta.newSizeBytes ?? 0)
+            )
+        }
+        
         // Build growth items with 70% threshold
         let threshold = 0.70 // 70%
         var items: [GrowthItem] = []
-
-        for delta in growingDeltas {
-            // Calculate what percent of parent growth this represents
-            let percentOfParent = Double(delta.changeBytes) / Double(totalGrowth)
-
-            // Include if >= 70% threshold or if it's a direct child of parent
-            let isDirectChild = isDirectChild(delta.path, of: parentPath)
-            let meetsThreshold = percentOfParent >= threshold
-
-            if meetsThreshold || isDirectChild {
-                let currentSize = delta.newSizeBytes ?? 0
-                let item = GrowthItem(
-                    path: delta.path,
-                    growthBytes: delta.changeBytes,
-                    currentSizeBytes: currentSize,
-                    percentOfParent: percentOfParent
-                )
-                items.append(item)
-            }
+        
+        for (path, data) in aggregatedGrowth {
+            let percentOfParent = Double(data.growth) / Double(totalGrowth)
+            
+            // Include if >= 70% threshold (always include in this simplified drill-down logic? 
+            // The original logic was: "Include if >= 70% OR if it's a direct child".
+            // Since we are now showing direct children (aggregated), we should probably show all 
+            // significant ones. But let's stick to the threshold logic to hide noise?
+            // User wants to see "What Grew". If multiple folders grew, show them.
+            // If I grew "images" (30%) and "documents" (20%) and "videos" (50%), 
+            // none is > 70%. But user wants to see them.
+            // The threshold was mainly for "Drill Down" to pick the *single culprit*.
+            // But here we are listing items.
+            // Let's include items that contribute > 1% to avoid noise, or just top ones.
+            // Or stick to the original logic: "Include if >= 70% OR isDirectChild".
+            // Since we aggregated to direct children, ALL items in `aggregatedGrowth` ARE direct children.
+            // So we should include ALL of them (maybe sorted).
+            
+            let item = GrowthItem(
+                path: path,
+                growthBytes: data.growth,
+                currentSizeBytes: data.size,
+                percentOfParent: percentOfParent
+            )
+            items.append(item)
         }
-
+        
         return items
     }
 

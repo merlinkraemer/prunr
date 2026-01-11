@@ -47,9 +47,19 @@ struct MenuBarView: View {
             // Growth list section
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("What Grew")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("What Grew")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        
+                        if !manager.monitoredPathName.isEmpty {
+                            Text(manager.monitoredPathName)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
                     Spacer()
                 }
                 .padding(.horizontal, 16)
