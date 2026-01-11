@@ -145,19 +145,21 @@ actor BaselineService {
 
     // MARK: - Growth List
 
-    /// Calculates the growth list since the baseline snapshot.
+    /// Calculates the growth list since the baseline snapshot using incremental scanning.
     ///
     /// This method:
-    /// 1. Creates a new "current" snapshot via scanning
-    /// 2. Calculates deltas between baseline and current
-    /// 3. Filters items that grew (changeBytes > 0)
-    /// 4. Applies 70% threshold for meaningful growth
+    /// 1. Scans only the specified paths (or full path if none specified)
+    /// 2. Creates a "current" snapshot with the scan results
+    /// 3. Calculates deltas between baseline and current
+    /// 4. Filters items that grew (changeBytes > 0)
     /// 5. Returns sorted by growthBytes descending
     ///
-    /// - Parameter trackedPath: The TrackedPath to scan
+    /// - Parameters:
+    ///   - trackedPath: The TrackedPath to scan
+    ///   - changedPaths: Optional specific paths to scan incrementally. If nil, does full scan.
     /// - Returns: Array of GrowthItem sorted by growthBytes descending
     /// - Throws: BaselineError.noBaseline if no baseline exists, or ScanError if scanning fails
-    func getGrowthList(trackedPath: TrackedPath) async throws -> [GrowthItem] {
+    func getGrowthList(trackedPath: TrackedPath, changedPaths: [URL]? = nil) async throws -> [GrowthItem] {
         guard let baselineId = getCurrentBaselineId(), baselineId > 0 else {
             throw BaselineError.noBaseline
         }
@@ -355,5 +357,108 @@ actor BaselineService {
 
         // Check if there are no additional path separators (direct child)
         return !relativePath.contains("/")
+    }
+
+    // MARK: - Category Growth List
+
+    /// Calculates the growth list aggregated by category since the baseline snapshot.
+    ///
+    /// This method:
+    /// 1. Scans the tracked path to get current state
+    /// 2. Calculates deltas between baseline and current
+    /// 3. Uses CategoryDetectionService to group deltas by category
+    /// 4. Aggregates growth metrics per category
+    /// 5. Separates big items (>=100MB) from small items
+    /// 6. Returns sorted CategoryGrowthItem array (by growth descending)
+    ///
+    /// - Parameter trackedPath: The TrackedPath to scan
+    /// - Returns: Array of CategoryGrowthItem sorted by totalGrowthBytes descending
+    /// - Throws: BaselineError.noBaseline if no baseline exists, or ScanError if scanning fails
+    func getCategoryGrowthList(trackedPath: TrackedPath) async throws -> [CategoryGrowthItem] {
+        guard let baselineId = getCurrentBaselineId(), baselineId > 0 else {
+            throw BaselineError.noBaseline
+        }
+
+        // Create current snapshot
+        let currentSnapshot = try await scanService.scan(
+            path: trackedPath.url.path,
+            trackedPathId: trackedPath.id,
+            progress: nil
+        )
+
+        guard let currentId = currentSnapshot.id else {
+            throw ScanError.unknown(NSError(
+                domain: "BaselineService",
+                code: -4,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to create current snapshot"]
+            ))
+        }
+
+        // Calculate deltas
+        let deltas = try await db.calculateDeltas(beforeId: baselineId, afterId: currentId)
+
+        // Filter to only items that grew
+        let growingDeltas = deltas.filter { $0.changeBytes > 0 }
+
+        guard !growingDeltas.isEmpty else {
+            print("[BaselineService] No growth detected since baseline")
+            return []
+        }
+
+        // Convert deltas to GrowthItem format
+        let growthItems = growingDeltas.map { delta in
+            GrowthItem(
+                path: delta.path,
+                growthBytes: delta.changeBytes,
+                currentSizeBytes: delta.newSizeBytes ?? 0,
+                percentOfParent: 0.0 // Will be recalculated per category
+            )
+        }
+
+        // Categorize deltas using CategoryDetectionService
+        let categoryService = CategoryDetectionService.shared
+        let categorizedDeltas = await categoryService.categorizeDeltas(growthItems)
+
+        // Calculate total growth across all categories for percentage calculation
+        let totalGrowth = growthItems.reduce(Int64(0)) { $0 + $1.growthBytes }
+
+        // Build CategoryGrowthItem array
+        var categoryItems: [CategoryGrowthItem] = []
+
+        for (category, items) in categorizedDeltas {
+            // Calculate totals for this category
+            let categoryGrowth = await categoryService.calculateTotalGrowth(items)
+            let categorySize = await categoryService.calculateCurrentSize(items)
+
+            // Separate big and small items
+            let bigItems = await categoryService.filterBigItems(items)
+            let smallItems = await categoryService.filterSmallItems(items)
+
+            // Calculate small item metrics
+            let smallItemCount = smallItems.count
+            let smallItemTotalBytes = await categoryService.calculateTotalGrowth(smallItems)
+
+            // Calculate percent of total growth
+            let percentOfTotal = totalGrowth > 0 ? Double(categoryGrowth) / Double(totalGrowth) : 0.0
+
+            // Create CategoryGrowthItem
+            let categoryItem = CategoryGrowthItem(
+                category: category,
+                totalGrowthBytes: categoryGrowth,
+                currentSizeBytes: categorySize,
+                bigItems: bigItems,
+                smallItemCount: smallItemCount,
+                smallItemTotalBytes: smallItemTotalBytes,
+                percentOfTotal: percentOfTotal
+            )
+
+            categoryItems.append(categoryItem)
+
+            // Log category totals for debugging
+            print("[BaselineService] Category '\(category.displayName)': \(ByteCountFormatter.string(fromByteCount: categoryGrowth, countStyle: .file)) (\(String(format: "%.1f", percentOfTotal * 100))%)")
+        }
+
+        // Sort by total growth bytes descending
+        return categoryItems.sorted { $0.totalGrowthBytes > $1.totalGrowthBytes }
     }
 }
