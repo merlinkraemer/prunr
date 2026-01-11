@@ -172,6 +172,10 @@ extension DeltaCategory {
         case .containers: return .orange
         case .caches: return .yellow
         case .developer: return .indigo
+        case .homebrew: return .brown
+        case .docker: return .cyan
+        case .npm: return .green
+        case .media: return .pink
         case .other: return .gray
         }
     }
