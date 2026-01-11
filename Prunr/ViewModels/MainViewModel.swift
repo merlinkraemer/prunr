@@ -189,11 +189,13 @@ final class MainViewModel {
     func compareSince() async {
         guard selectedPath != nil else {
             deltas = []
+            comparisonWarning = nil
             return
         }
 
         guard snapshots.count >= 2 else {
-            errorMessage = "Need at least 2 snapshots to compare. Scan this path at least twice."
+            // Not an error, just need more snapshots
+            comparisonWarning = nil
             deltas = []
             return
         }
@@ -207,7 +209,29 @@ final class MainViewModel {
             return
         }
 
+        // Store snapshot dates for display
+        currentSnapshotDate = snapshots[0].createdAt
+        historicalSnapshotDate = snapshots[1].createdAt
+
+        // Check if the actual time difference matches the requested interval
+        let actualInterval = snapshots[0].createdAt.timeIntervalSince(snapshots[1].createdAt)
+        let requestedInterval = comparisonInterval
+
+        // Set comparison summary
+        comparisonSummary = formattedComparisonSummary(current: snapshots[0].createdAt, historical: snapshots[1].createdAt)
+
+        // Warn if the actual interval differs significantly from requested (>20% difference)
+        let differenceRatio = abs(actualInterval - requestedInterval) / requestedInterval
+        if differenceRatio > 0.2 {
+            let actualFormatted = formattedTimeSpan(actualInterval)
+            let requestedFormatted = formattedTimeSpan(requestedInterval)
+            comparisonWarning = "Using snapshot from \(actualFormatted) ago (no snapshot from \(requestedFormatted) ago)"
+        } else {
+            comparisonWarning = nil
+        }
+
         print("[DEBUG] Comparing snapshots: previousId=\(previousId), currentId=\(currentId)")
+        print("[DEBUG] Actual interval: \(actualInterval)s, requested: \(requestedInterval)s")
 
         await performComparison(historicalId: previousId, currentId: currentId)
     }
@@ -408,5 +432,58 @@ final class MainViewModel {
             let minutes = Int(interval / 60)
             return "\(minutes)m"
         }
+    }
+
+    /// Formats a time span into a human-readable string
+    /// - Parameter interval: Time interval in seconds
+    /// - Returns: Formatted string like "2 hours ago", "3 days ago"
+    private func formattedTimeSpan(_ interval: TimeInterval) -> String {
+        let hours = Int(interval / 3600)
+        let days = hours / 24
+
+        if days >= 1 {
+            return "\(days) day\(days == 1 ? "" : "s")"
+        } else if hours >= 1 {
+            return "\(hours) hour\(hours == 1 ? "" : "s")"
+        } else {
+            let minutes = Int(interval / 60)
+            return "\(minutes) minute\(minutes == 1 ? "" : "s")"
+        }
+    }
+
+    /// Formats a snapshot date for display in comparison summary
+    /// - Parameter date: The date to format
+    /// - Returns: Formatted string like "2h ago", "3d ago", or "Jan 10"
+    func formattedSnapshotDate(_ date: Date) -> String {
+        let hoursAgo = Int(Date().timeIntervalSince(date) / 3600)
+
+        if hoursAgo < 1 {
+            let minutesAgo = Int(Date().timeIntervalSince(date) / 60)
+            return "\(minutesAgo)m ago"
+        } else if hoursAgo < 24 {
+            return "\(hoursAgo)h ago"
+        }
+
+        let daysAgo = hoursAgo / 24
+        if daysAgo < 7 {
+            return "\(daysAgo)d ago"
+        }
+
+        // Use date formatter for older dates
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
+    }
+
+    /// Creates a comparison summary string
+    /// - Parameters:
+    ///   - current: The current snapshot date
+    ///   - historical: The historical snapshot date
+    /// - Returns: Formatted summary like "now vs 2 days ago"
+    private func formattedComparisonSummary(current: Date, historical: Date) -> String {
+        let now = "Now"
+        let then = formattedSnapshotDate(historical)
+        return "\(now) vs \(then)"
     }
 }

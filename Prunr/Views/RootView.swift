@@ -84,6 +84,11 @@ struct DetailContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Warning banner (timeframe mismatch)
+            if let warning = viewModel.comparisonWarning {
+                warningBanner(warning)
+            }
+
             // Error banner
             if let error = viewModel.errorMessage {
                 errorBanner(error)
@@ -200,6 +205,28 @@ struct DetailContentView: View {
         }
         .padding()
         .background(.red.opacity(0.1))
+    }
+
+    /// Warning banner for timeframe mismatch (informational, not an error)
+    @ViewBuilder
+    private func warningBanner(_ message: String) -> some View {
+        HStack {
+            Image(systemName: "info.circle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.callout)
+                .lineLimit(3)
+            Spacer()
+            Button {
+                viewModel.comparisonWarning = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding()
+        .background(.orange.opacity(0.1))
     }
 
     /// Scanning progress banner
