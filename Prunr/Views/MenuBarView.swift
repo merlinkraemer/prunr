@@ -3,12 +3,14 @@ import AppKit
 
 struct MenuBarView: View {
     @Bindable var manager: MenuBarManager
-    
+
     @Environment(\.openSettings) private var openSettings
     @Environment(\.dismiss) private var dismiss
     @State private var resetHover = false
+    @State private var scanHover = false
     @State private var settingsHover = false
     @State private var isResetting = false
+    @State private var isScanning = false
 
     private func closePopoverAndOpenSettings() {
         // Close the popover first via manager to ensure state sync
@@ -28,7 +30,7 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Drive bar section
+            // Drive bar section (HIG: 20pt margins for standard window content)
             VStack(alignment: .leading, spacing: 4) {
                 DriveBarView(
                     totalBytes: manager.totalBytes,
@@ -36,32 +38,44 @@ struct MenuBarView: View {
                     freeBytes: manager.freeBytes
                 )
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
+            .padding(20) // HIG standard: 20pt margins
 
             Divider()
 
-            // Growth list section
+            // Growth list section header (distinct from list items, shows full scanned path)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
+                    // Label + path (no folder icon to differentiate from list items)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("What Grew")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        
-                        if !manager.monitoredPathName.isEmpty {
-                            Text(manager.monitoredPathName)
+                        Text("MONITORING")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+
+                        Text(manager.monitoredPathDisplay)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+
+                    Spacer()
+
+                    // Auto-scan indicator
+                    if manager.isAutoScanning {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Scanning...")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
                         }
+                        .transition(.opacity)
                     }
-                    Spacer()
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 12) // Extra spacing below header for separation
 
                 if manager.noBaseline {
                     // No baseline prompt
@@ -95,14 +109,14 @@ struct MenuBarView: View {
                             .multilineTextAlignment(.center)
                         Button("Retry") {
                             Task {
-                                await manager.loadGrowthList()
+                                await manager.loadCategoryGrowthList()
                             }
                         }
                         .buttonStyle(.bordered)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding()
-                } else if manager.growthItems.isEmpty && !manager.isLoading {
+                } else if manager.categoryItems.isEmpty && !manager.isLoading {
                     // Baseline exists but no growth data loaded yet
                     VStack(spacing: 12) {
                         Image(systemName: "magnifyingglass")
@@ -115,7 +129,7 @@ struct MenuBarView: View {
                             .foregroundStyle(.secondary)
                         Button("Scan Now") {
                             Task {
-                                await manager.loadGrowthList()
+                                await manager.loadCategoryGrowthList()
                             }
                         }
                         .buttonStyle(.borderedProminent)
@@ -123,8 +137,8 @@ struct MenuBarView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding()
                 } else {
-                    GrowthListView(
-                        growthItems: manager.growthItems,
+                    CategoryGrowthListView(
+                        categoryItems: manager.categoryItems,
                         onTapItem: { item in
                             manager.revealInFinder(path: item.path)
                         }
@@ -136,21 +150,57 @@ struct MenuBarView: View {
 
             Divider()
 
-            // Footer - native macOS menu style rows (per design guide)
+            // Footer - buttons like WiFi/Bluetooth system menus (small inset + rounded corners)
             VStack(spacing: 0) {
-                // Reset Baseline (28pt row height, 6pt corner radius, 4-6pt inset)
+                // Scan Now
+                Button {
+                    isScanning = true
+                    Task {
+                        await manager.loadCategoryGrowthList()
+
+                        // Brief delay to show completion
+                        try? await Task.sleep(for: .milliseconds(500))
+                        isScanning = false
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Group {
+                            if isScanning {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            } else {
+                                Image(systemName: "magnifyingglass")
+                            }
+                        }
+                        .frame(width: 16, height: 16)
+
+                        Text(isScanning ? "Done!" : "Scan Now")
+                            .font(.system(size: 13))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .frame(height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6) // 6pt rounded corners like system menus
+                            .fill(scanHover && !isScanning ? Color.gray.opacity(0.1) : Color.clear)
+                    )
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 6) // Small inset from edges (not full width)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    scanHover = hovering
+                }
+                .disabled(manager.isLoading || isScanning)
+
+                // Reset Baseline
                 Button {
                     isResetting = true
                     Task {
-                        // We access resetBaseline directly via selector or expose it?
-                        // MenuBarManager has public method? No, it's @objc private.
-                        // But we can call createBaseline which is similar but reset is actually "Reset Baseline".
-                        // Wait, MenuBarManager had 'resetBaseline' as action, but it calls baselineService.
-                        // Let's assume we can call resetBaseline if we make it internal/public.
-                        // Or we call `baselineService.resetBaseline()` directly? No, better via manager.
-                        // I need to start exposing `resetBaseline` in Manager as internal.
                         await manager.performReset()
-                        
+
                         // Brief delay to show completion
                         try? await Task.sleep(for: .milliseconds(500))
                         isResetting = false
@@ -166,18 +216,20 @@ struct MenuBarView: View {
                             }
                         }
                         .frame(width: 16, height: 16)
-                        
+
                         Text(isResetting ? "Done!" : "Reset Baseline")
                             .font(.system(size: 13))
                         Spacer()
                     }
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                     .frame(height: 28)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(resetHover && !isResetting ? Color.accentColor : Color.clear)
+                            .fill(resetHover && !isResetting ? Color.gray.opacity(0.1) : Color.clear)
                     )
-                    .foregroundStyle(resetHover && !isResetting ? .white : .primary)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 6) // Small inset from edges
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -185,9 +237,8 @@ struct MenuBarView: View {
                     resetHover = hovering
                 }
                 .disabled(manager.isLoading || isResetting)
-                .padding(.horizontal, 5)
 
-                // Settings (28pt row height, 6pt corner radius, 4-6pt inset)
+                // Settings
                 Button {
                     closePopoverAndOpenSettings()
                 } label: {
@@ -198,22 +249,23 @@ struct MenuBarView: View {
                             .font(.system(size: 13))
                         Spacer()
                     }
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                     .frame(height: 28)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(settingsHover ? Color.accentColor : Color.clear)
+                            .fill(settingsHover ? Color.gray.opacity(0.1) : Color.clear)
                     )
-                    .foregroundStyle(settingsHover ? .white : .primary)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 6) // Small inset from edges
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .onHover { hovering in
                     settingsHover = hovering
                 }
-                .padding(.horizontal, 5)
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, 8)
         }
         .frame(width: 320, height: 420)
         .overlay {
@@ -227,18 +279,22 @@ struct MenuBarView: View {
                         ProgressView()
                             .controlSize(.regular)
 
-                        if !manager.scanProgress.isEmpty {
+                        if manager.isAutoScanning {
+                            Text("Auto-scanning changes...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if !manager.scanProgress.isEmpty {
                             Text(manager.scanProgress)
                                 .font(.caption)
                                 .foregroundStyle(.primary)
                         }
-                        
+
                         if manager.filesScanned > 0 {
                             Text("\(manager.filesScanned) files scanned")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
-                        
+
                         Button("Stop") {
                             Task {
                                 await manager.stopScan()

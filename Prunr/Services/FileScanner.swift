@@ -28,6 +28,82 @@ actor FileScanner {
 
     // MARK: - Public API
 
+    /// Recursively scans specific paths and streams results via AsyncThrowingStream
+    ///
+    /// This is optimized for incremental scanning - only scans the exact paths provided,
+    /// recursing into directories if needed. Much faster than scanning entire directory trees.
+    ///
+    /// - Parameter paths: The specific paths to scan (files or directories)
+    /// - Returns: An AsyncThrowingStream that yields ScanResult values
+    func scanSpecificPaths(_ paths: [URL]) -> AsyncThrowingStream<ScanResult, Error> {
+        // Reset state for fresh scan
+        visitedInodes.removeAll()
+
+        return AsyncThrowingStream<ScanResult, Error> { continuation in
+            Task { [weak self] in
+                guard let self else {
+                    continuation.finish()
+                    return
+                }
+
+                do {
+                    var count = 0
+
+                    for path in paths {
+                        // Check if we should skip this URL
+                        if await self.shouldSkip(path) {
+                            continue
+                        }
+
+                        var isDirectory: ObjCBool = false
+                        guard fileManager.fileExists(atPath: path.path, isDirectory: &isDirectory) else {
+                            continue // Skip paths that don't exist
+                        }
+
+                        if isDirectory.boolValue {
+                            // Recursively scan directory
+                            let errorHandler: (URL, Error) -> Bool = { _, _ in true }
+
+                            guard let enumerator = fileManager.enumerator(
+                                at: path,
+                                includingPropertiesForKeys: Array(resourceKeys),
+                                options: enumerationOptions,
+                                errorHandler: errorHandler
+                            ) else {
+                                continue
+                            }
+
+                            for case let url as URL in enumerator {
+                                if await self.shouldSkip(url) {
+                                    continue
+                                }
+
+                                if let sizeBytes = await self.getSize(for: url) {
+                                    continuation.yield(ScanResult(path: url.path, sizeBytes: sizeBytes))
+                                    count += 1
+                                    if count % 1000 == 0 {
+                                        await Task.yield()
+                                    }
+                                }
+                            }
+                        } else {
+                            // Single file - just get its size
+                            if let sizeBytes = await self.getSize(for: path) {
+                                continuation.yield(ScanResult(path: path.path, sizeBytes: sizeBytes))
+                                count += 1
+                            }
+                        }
+                    }
+
+                    continuation.finish()
+
+                } catch {
+                    continuation.finish(throwing: ScanError.unknown(error))
+                }
+            }
+        }
+    }
+
     /// Recursively scans a directory and streams results via AsyncThrowingStream
     ///
     /// - Parameter rootURL: The root URL to begin scanning from

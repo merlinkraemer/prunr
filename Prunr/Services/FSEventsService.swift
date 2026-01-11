@@ -65,10 +65,10 @@ final class FSEventsService {
             return
         }
 
-        // Create new watcher with 3-second debounce
+        // Create new watcher with 1-second debounce (near-realtime)
         let newWatcher = FSEventsWatcher(
             pathsToWatch: paths,
-            debounceInterval: 3.0
+            debounceInterval: 1.0
         )
 
         // Set up change callback

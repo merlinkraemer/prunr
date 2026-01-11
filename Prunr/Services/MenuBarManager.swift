@@ -21,8 +21,27 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     
     // Published state for UI
     var growthItems: [BaselineService.GrowthItem] = []
+    var categoryItems: [CategoryGrowthItem] = []
     var monitoredPathName: String = ""
+    var monitoredPathDisplay: String {
+        // Full path for header display with tilde notation (e.g., "~/dev" instead of "/Users/username/dev")
+        if let path = SettingsStore.shared.enabledTrackedPaths.first {
+            let fullPath = path.url.path
+            let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+
+            // Convert to tilde path if in home directory
+            if fullPath.hasPrefix(homePath) {
+                let relativePath = String(fullPath.dropFirst(homePath.count))
+                let cleanRelativePath = relativePath.hasPrefix("/") ? String(relativePath.dropFirst()) : relativePath
+                return "~/" + cleanRelativePath
+            }
+
+            return fullPath
+        }
+        return "No path configured"
+    }
     var isLoading = false
+    var isAutoScanning = false // Visual feedback for background scans
     var errorMessage: String?
     var noBaseline = false
     var scanProgress: String = ""
@@ -160,9 +179,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             try await baselineService.resetBaseline()
             updateFreeSpace()
             await checkBaseline() // Update state
-            
+
             // Also clear growth items since baseline is gone/reset
             growthItems = []
+            categoryItems = []
         } catch {
             print("[MenuBarManager] Failed to reset baseline: \(error)")
         }
@@ -173,6 +193,48 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // Properties are now synthesized by @Observable macro at class level
     // and initialized above.
     
+    /// Loads the category-based growth list
+    func loadCategoryGrowthList() async {
+        // Get first enabled tracked path from settings
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        guard let trackedPath = enabledPaths.first else {
+            print("[MenuBarManager] No enabled tracked paths in settings")
+            errorMessage = "No paths enabled in Settings"
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+        noBaseline = false
+        filesScanned = 0
+        scanProgress = "Scanning \(trackedPath.displayName)..."
+
+        print("[MenuBarManager] Loading category growth list for: \(trackedPath.url.path)")
+
+        do {
+            let items = try await baselineService.getCategoryGrowthList(trackedPath: trackedPath)
+            categoryItems = items
+            scanProgress = ""
+            print("[MenuBarManager] Loaded \(items.count) category items")
+        } catch {
+            if let baselineError = error as? BaselineService.BaselineError,
+               case .noBaseline = baselineError {
+                print("[MenuBarManager] No baseline exists")
+                noBaseline = true
+                categoryItems = []
+            } else if let scanError = error as? ScanError, case .cancelled = scanError {
+                print("[MenuBarManager] Scan was cancelled")
+                scanProgress = "Cancelled"
+            } else {
+                print("[MenuBarManager] Error loading category growth list: \(error)")
+                errorMessage = "Scan failed: \(error.localizedDescription)"
+            }
+        }
+
+        isLoading = false
+        scanProgress = ""
+    }
+
     /// Loads the growth list by comparing current state with baseline
     func loadGrowthList() async {
         // Get first enabled tracked path from settings
@@ -338,38 +400,64 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func startWatchingPaths() async {
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
         let urls = enabledPaths.map { $0.url }
-        
+
         print("[MenuBarManager] Starting to watch: \(urls.map { $0.path })")
+        print("[MenuBarManager] Found \(enabledPaths.count) enabled paths")
+
+        if enabledPaths.isEmpty {
+            print("[MenuBarManager] WARNING: No enabled paths found in Settings!")
+            return
+        }
 
         // Set up callback to detect changes under tracked paths
         fseventsService.onChangedPaths = { [weak self] changedPaths in
             guard let self else { return }
 
+            print("[MenuBarManager] FSEvents callback triggered with \(changedPaths.count) changed paths")
+            for path in changedPaths {
+                print("[MenuBarManager]   - Changed: \(path.path)")
+            }
+
             // Only rescan if we have a baseline
             Task {
-                if await self.baselineService.hasBaseline() {
+                let hasBaseline = await self.baselineService.hasBaseline()
+                print("[MenuBarManager] hasBaseline = \(hasBaseline)")
+
+                if hasBaseline {
                     let trackedPaths = enabledPaths
                     var shouldRescan = false
 
                     for changedPath in changedPaths {
                         for trackedPath in trackedPaths {
                             if changedPath.path.hasPrefix(trackedPath.url.path) {
-                                print("[MenuBarManager] Change detected: \(changedPath.path)")
+                                print("[MenuBarManager] Change detected under tracked path: \(changedPath.path)")
                                 shouldRescan = true
                             }
                         }
                     }
-                    
+
                     if shouldRescan {
                         print("[MenuBarManager] Auto-triggering scan due to file changes...")
-                        await self.loadGrowthList()
+                        // Set auto-scanning flag for visual feedback
+                        await MainActor.run {
+                            self.isAutoScanning = true
+                        }
+                        await self.loadCategoryGrowthList()
+                        await MainActor.run {
+                            self.isAutoScanning = false
+                        }
+                    } else {
+                        print("[MenuBarManager] Changes detected but not under tracked paths, skipping rescan")
                     }
+                } else {
+                    print("[MenuBarManager] No baseline exists, skipping autoscan")
                 }
             }
         }
 
         // Start watching asynchronously
         await fseventsService.startWatching(paths: urls)
+        print("[MenuBarManager] FSEvents started watching")
     }
     
     /// Initial watcher setup

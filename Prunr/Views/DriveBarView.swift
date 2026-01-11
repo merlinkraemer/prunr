@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Visual drive bar showing used and free disk space
+/// Visual drive bar showing used and free disk space with modern design
 struct DriveBarView: View {
     /// Total disk space in bytes
     let totalBytes: Int64
@@ -12,43 +12,76 @@ struct DriveBarView: View {
     let freeBytes: Int64
 
     /// Bar height
-    var height: CGFloat = 12
+    var height: CGFloat = 8
 
     /// Corner radius
-    var cornerRadius: CGFloat = 6
+    var cornerRadius: CGFloat = 4
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Visual bar with background track
-            ZStack(alignment: .leading) {
-                // Background track (gray)
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(Color.gray.opacity(0.2))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                // Drive icon with color based on usage
+                Image(systemName: "internaldrive")
+                    .font(.system(size: 14))
+                    .foregroundStyle(usageColor)
 
-                // Used space bar (blue)
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(Color.blue)
-                    .frame(width: barWidth(for: usedBytes))
+                // Free space (prominent)
+                Text(bytesToGBString(freeBytes))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Text("free")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                // Percentage badge
+                HStack(spacing: 4) {
+                    Text("\(usedPercentage)%")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(usageColor, in: RoundedRectangle(cornerRadius: 4))
+            }
+
+            // Visual bar with gradient based on usage
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    // Background track
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(Color.gray.opacity(0.15))
+
+                    // Used space bar with gradient
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(
+                            LinearGradient(
+                                colors: [usageColor.opacity(0.8), usageColor],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geometry.size.width * CGFloat(usedPercentage) / 100.0)
+                }
             }
             .frame(height: height)
-
-            // Labels
-            HStack {
-                Text(spaceLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
         }
     }
 
     // MARK: - Private Helpers
 
-    /// Calculates proportional width for a segment
-    private func barWidth(for bytes: Int64) -> CGFloat {
-        guard totalBytes > 0 else { return 0 }
-        let proportion = max(0, min(1, Double(bytes) / Double(totalBytes)))
-        return proportion * 300 // Max width matching popover
+    /// Color based on disk usage
+    private var usageColor: Color {
+        let percentage = usedPercentage
+        if percentage < 70 {
+            return .green
+        } else if percentage < 90 {
+            return .orange
+        } else {
+            return .red
+        }
     }
 
     /// Used percentage (0-100)
@@ -57,12 +90,7 @@ struct DriveBarView: View {
         return Int((Double(usedBytes) / Double(totalBytes)) * 100)
     }
 
-    /// Space label (e.g., "50 GB free of 500 GB (75% used)")
-    private var spaceLabel: String {
-        "\(bytesToGBString(freeBytes)) free of \(bytesToGBString(totalBytes)) (\(usedPercentage)% used)"
-    }
-
-    /// Converts bytes to GB string (e.g., "50 GB")
+    /// Converts bytes to GB/ TB string
     private func bytesToGBString(_ bytes: Int64) -> String {
         let gb = Double(bytes) / 1_000_000_000
         if gb >= 1000 {
@@ -77,8 +105,8 @@ struct DriveBarView: View {
 }
 
 #Preview {
-    VStack(alignment: .leading, spacing: 16) {
-        Text("Drive Bar Examples")
+    VStack(alignment: .leading, spacing: 20) {
+        Text("Drive Bar - Redesigned")
             .font(.headline)
 
         DriveBarView(totalBytes: 500_000_000_000, usedBytes: 450_000_000_000, freeBytes: 50_000_000_000)

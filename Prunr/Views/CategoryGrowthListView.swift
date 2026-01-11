@@ -167,7 +167,7 @@ private struct CategoryRow: View {
                         .foregroundStyle(growthSeverityColor)
 
                     Text(growthText)
-                        .font(.system(size: 12, weight: .monospaced))
+                        .font(.system(size: 12))
                         .foregroundStyle(growthSeverityColor)
                 }
 
@@ -257,7 +257,7 @@ private struct BigItemRow: View {
 
                 // Size with percentage
                 Text(sizeText)
-                    .font(.system(size: 11, weight: .monospaced))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
@@ -336,7 +336,7 @@ private struct SmallItemsRow: View {
 
                 // Total size
                 Text(smallSizeText)
-                    .font(.system(size: 11, weight: .monospaced))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
 
                 // Chevron

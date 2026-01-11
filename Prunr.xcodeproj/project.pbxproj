@@ -11,6 +11,7 @@
 		2A4B6C7D8E9F0A1B2C3D4E5F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C5D7E8F9A0B1C2D3E4F5A6B /* RootView.swift */; };
 		XXAA11223344556677889901 /* DriveBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = XXBB11223344556677889902 /* DriveBarView.swift */; };
 		XXAA11223344556677889903 /* GrowthListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = XXBB11223344556677889904 /* GrowthListView.swift */; };
+	DAEAD8DA04B64C3B93BF7C7E /* CategoryGrowthListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6958A3CB39C4FAF806CDCDA /* CategoryGrowthListView.swift */; };
 		XXAA11223344556677889905 /* MenuBarViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = XXBB11223344556677889906 /* MenuBarViewModel.swift */; };
 		XXAA11223344556677889907 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = XXBB11223344556677889908 /* SettingsStore.swift */; };
 		3A7B9C5D8E6F4A2B1C0D9E8F /* DeltaCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B8C2A6E7D0E593C1A2F4B9D /* DeltaCategory.swift */; };
@@ -51,6 +52,9 @@
 		I5J6K7L8M9N0O1P2Q3R4S5T6 /* FSEventsWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = J6K7L8M9N0O1P2Q3R4S5T6U7 /* FSEventsWatcher.swift */; };
 		J7K8L9M0N1O2P3Q4R5S6T7U8 /* BaselineService.swift in Sources */ = {isa = PBXBuildFile; fileRef = K8L9M0N1O2P3Q4R5S6T7U8V9 /* BaselineService.swift */; };
 		L9M0N1O2P3Q4R5S6T7U8V9W0 /* BoundaryConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = M0N1O2P3Q4R5S6T7U8V9W0X1 /* BoundaryConfig.swift */; };
+		DD11223344556677889900DE /* GrowthCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11223344556677889900AB /* GrowthCategory.swift */; };
+		EE11223344556677889900EF /* CategoryGrowthItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB11223344556677889900BC /* CategoryGrowthItem.swift */; };
+		FF11223344556677889900F0 /* CategoryDetectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC11223344556677889900CD /* CategoryDetectionService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +62,7 @@
 		0867BF2AF037836CE930A493 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		XXBB11223344556677889902 /* DriveBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveBarView.swift; sourceTree = "<group>"; };
 		XXBB11223344556677889904 /* GrowthListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthListView.swift; sourceTree = "<group>"; };
+	A6958A3CB39C4FAF806CDCDA /* CategoryGrowthListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryGrowthListView.swift; sourceTree = "<group>"; };
 		XXBB11223344556677889906 /* MenuBarViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarViewModel.swift; sourceTree = "<group>"; };
 		XXBB11223344556677889908 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		2B3C4D5E6F7A8B9C0D1E2F3A /* DetailColumn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailColumn.swift; sourceTree = "<group>"; };
@@ -99,6 +104,9 @@
 		J6K7L8M9N0O1P2Q3R4S5T6U7 /* FSEventsWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSEventsWatcher.swift; sourceTree = "<group>"; };
 		K8L9M0N1O2P3Q4R5S6T7U8V9 /* BaselineService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaselineService.swift; sourceTree = "<group>"; };
 		M0N1O2P3Q4R5S6T7U8V9W0X1 /* BoundaryConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundaryConfig.swift; sourceTree = "<group>"; };
+		AA11223344556677889900AB /* GrowthCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthCategory.swift; sourceTree = "<group>"; };
+		BB11223344556677889900BC /* CategoryGrowthItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryGrowthItem.swift; sourceTree = "<group>"; };
+		CC11223344556677889900CD /* CategoryDetectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDetectionService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -124,6 +132,7 @@
 				F6A7B8C9D0E1F2A3B4C5D6E8 /* ItemColumn.swift */,
 				4CD1BD242A8EF0103002F1BD /* DeltaRowView.swift */,
 				XXBB11223344556677889904 /* GrowthListView.swift */,
+				A6958A3CB39C4FAF806CDCDA /* CategoryGrowthListView.swift */,
 				H2I6J7K8L9M0N1O2P3Q4R5S6 /* MenuBarView.swift */,
 				E63015DE0AAE16AB6AA6B215 /* MainView.swift */,
 				3C5D7E8F9A0B1C2D3E4F5A6B /* RootView.swift */,
@@ -183,8 +192,10 @@
 			isa = PBXGroup;
 			children = (
 				M0N1O2P3Q4R5S6T7U8V9W0X1 /* BoundaryConfig.swift */,
+				BB11223344556677889900BC /* CategoryGrowthItem.swift */,
 				E1FD965ED095B5AD6BC9CE03 /* Delta.swift */,
 				4B8C2A6E7D0E593C1A2F4B9D /* DeltaCategory.swift */,
+				AA11223344556677889900AB /* GrowthCategory.swift */,
 				6001A5F6F87F3C900008091D /* ScanError.swift */,
 				346A454CD5E69D90C84D7375 /* ScanResult.swift */,
 				9E245227FBA99587A6DF0C4A /* Snapshot.swift */,
@@ -209,6 +220,7 @@
 			isa = PBXGroup;
 			children = (
 				K8L9M0N1O2P3Q4R5S6T7U8V9 /* BaselineService.swift */,
+				CC11223344556677889900CD /* CategoryDetectionService.swift */,
 				5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */,
 				F8G9H0I1J2K3L4M5N6O7P8Q /* DiskSpaceService.swift */,
 				J6K7L8M9N0O1P2Q3R4S5T6U7 /* FSEventsWatcher.swift */,
@@ -329,6 +341,7 @@
 				8D1CA082042D60BC7B5D588C /* FileScanner.swift in Sources */,
 				E5F6A7B8C9D0E1F2A3B4C5D7 /* ItemColumn.swift in Sources */,
 				XXAA11223344556677889903 /* GrowthListView.swift in Sources */,
+				DAEAD8DA04B64C3B93BF7C7E /* CategoryGrowthListView.swift in Sources */,
 				G1H5I6J7K8L9M0N1O2P3Q4R5 /* MenuBarView.swift in Sources */,
 				5E2B7A24B1405A0772020191 /* MainView.swift in Sources */,
 				25D53FEECF12CC55C4083ED4 /* MainViewModel.swift in Sources */,
@@ -353,7 +366,10 @@
 				H3I4J5K6L7M8N9O0P1Q2R3S4 /* FSEventsService.swift in Sources */,
 				I5J6K7L8M9N0O1P2Q3R4S5T6 /* FSEventsWatcher.swift in Sources */,
 				J7K8L9M0N1O2P3Q4R5S6T7U8 /* BaselineService.swift in Sources */,
+				FF11223344556677889900F0 /* CategoryDetectionService.swift in Sources */,
 				L9M0N1O2P3Q4R5S6T7U8V9W0 /* BoundaryConfig.swift in Sources */,
+				DD11223344556677889900DE /* GrowthCategory.swift in Sources */,
+				EE11223344556677889900EF /* CategoryGrowthItem.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -42,8 +42,8 @@ actor FSEventsWatcher {
     ///
     /// - Parameters:
     ///   - pathsToWatch: Array of file URLs to monitor for changes
-    ///   - debounceInterval: Seconds to wait before invoking onChange (default: 3.0)
-    init(pathsToWatch: [URL], debounceInterval: TimeInterval = 3.0) {
+    ///   - debounceInterval: Seconds to wait before invoking onChange (default: 1.0 for near-realtime)
+    init(pathsToWatch: [URL], debounceInterval: TimeInterval = 1.0) {
         self.pathsToWatch = pathsToWatch
         self.debounceInterval = debounceInterval
     }
@@ -77,23 +77,29 @@ actor FSEventsWatcher {
         guard let newStream = FSEventStreamCreate(
             kCFAllocatorDefault,
             { (streamRef, clientCallbackInfo, numEvents, eventPaths, eventFlags, eventIds) in
+                // Log: FSEvents callback invoked by OS
+                print("[FSEventsWatcher] OS callback invoked: \(numEvents) events")
+
                 // Extract the watcher instance from context
                 guard let info = clientCallbackInfo else { return }
 
                 let watcher = Unmanaged<FSEventsWatcher>.fromOpaque(info).takeUnretainedValue()
 
                 // Collect changed paths - need to do this synchronously from callback
-                // Convert the opaque paths array to CFString array
-                let pathsArray = eventPaths.assumingMemoryBound(to: (UnsafeRawPointer?.self))
+                // FSEvents passes char** (array of C string pointers), not CFString*
+                let pathsArray = eventPaths.assumingMemoryBound(to: UnsafeMutableRawPointer.self)
                 var changedPaths = Set<URL>()
 
                 for i in 0..<numEvents {
-                    if let pathPtr = pathsArray[i] {
-                        let cfStr = Unmanaged<CFString>.fromOpaque(pathPtr).takeUnretainedValue()
-                        if let pathStr = cfStr as String? {
-                            let url = URL(fileURLWithPath: pathStr)
-                            changedPaths.insert(url)
-                        }
+                    let pathPtr = pathsArray[i]
+                    // Treat as C string pointer (char*)
+                    let cString = pathPtr.assumingMemoryBound(to: CChar.self)
+                    if let pathStr = String(validatingUTF8: cString) {
+                        let url = URL(fileURLWithPath: pathStr)
+                        changedPaths.insert(url)
+                        print("[FSEventsWatcher]   - \(pathStr)")
+                    } else {
+                        print("[FSEventsWatcher] WARNING: Could not convert path to string at index \(i)")
                     }
                 }
 
@@ -114,9 +120,9 @@ actor FSEventsWatcher {
 
         stream = newStream
 
-        // Schedule on the current run loop
+        // Schedule on the MAIN run loop (critical: FSEvents must be on main runloop to receive events)
         // Use RunLoop.Mode.default which is bridged to kCFRunLoopDefaultMode
-        FSEventStreamScheduleWithRunLoop(newStream, CFRunLoopGetCurrent(), RunLoop.Mode.default.rawValue as CFString)
+        FSEventStreamScheduleWithRunLoop(newStream, CFRunLoopGetMain(), RunLoop.Mode.default.rawValue as CFString)
 
         // Start the stream
         if FSEventStreamStart(newStream) {
