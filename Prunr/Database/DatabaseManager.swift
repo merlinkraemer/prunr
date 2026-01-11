@@ -72,6 +72,17 @@ final class DatabaseManager {
             try db.create(index: "idx_snapshotEntry_snapshotId", on: "snapshotEntry", columns: ["snapshotId"])
         }
 
+        // Migration v2: Add trackedPathId to snapshot table
+        migrator.registerMigration("v2_add_tracked_path_id") { db in
+            // Add trackedPathId column (nullable for existing rows)
+            try db.alter(table: "snapshot") { t in
+                t.add(column: "trackedPathId", .text).defaults(to: "")
+            }
+
+            // Create index for faster lookups by trackedPathId
+            try db.create(index: "idx_snapshot_trackedPathId", on: "snapshot", columns: ["trackedPathId"])
+        }
+
         try migrator.migrate(dbPool)
     }
 }
@@ -80,16 +91,18 @@ final class DatabaseManager {
 
 extension DatabaseManager {
 
-    /// Creates a new snapshot with the current timestamp
+    /// Creates a new snapshot with the current timestamp for a specific path
+    /// - Parameter trackedPathId: The ID of the TrackedPath this snapshot belongs to
     /// - Returns: The inserted Snapshot with populated id
-    func createSnapshot() async throws -> Snapshot {
+    func createSnapshot(trackedPathId: UUID) async throws -> Snapshot {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
         return try await dbPool.write { db in
-            var snapshot = Snapshot(createdAt: Date())
+            var snapshot = Snapshot(trackedPathId: trackedPathId, createdAt: Date())
             try snapshot.insert(db)
+            print("[DEBUG] Created snapshot with id: \(snapshot.id ?? 0), trackedPathId: \(snapshot.trackedPathId)")
             return snapshot
         }
     }
@@ -148,16 +161,34 @@ extension DatabaseManager {
     }
 
     /// Fetches all snapshots ordered by creation date (newest first)
-    /// - Returns: Array of all snapshots
-    func fetchAllSnapshots() async throws -> [Snapshot] {
+    /// - Parameter trackedPathId: Optional filter to only fetch snapshots for a specific path
+    /// - Returns: Array of snapshots
+    func fetchAllSnapshots(trackedPathId: UUID? = nil) async throws -> [Snapshot] {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
         return try await dbPool.read { db in
-            try Snapshot.all()
+            var request = Snapshot.all()
                 .order(Snapshot.Columns.createdAt.desc)
-                .fetchAll(db)
+
+            // Filter by trackedPathId if provided
+            // Also exclude snapshots with empty trackedPathId (old snapshots before migration)
+            if let trackedPathId = trackedPathId {
+                let pathIdString = trackedPathId.uuidString
+                print("[DEBUG] Filtering snapshots by trackedPathId: \(pathIdString)")
+                request = request.filter(Snapshot.Columns.trackedPathId == pathIdString)
+            } else {
+                // When not filtering by path, still exclude empty trackedPathId entries
+                request = request.filter(Snapshot.Columns.trackedPathId != "")
+            }
+
+            let snapshots = try request.fetchAll(db)
+            print("[DEBUG] Fetched \(snapshots.count) snapshots")
+            for snap in snapshots {
+                print("[DEBUG]   - id: \(snap.id ?? 0), trackedPathId: \(snap.trackedPathId), createdAt: \(snap.createdAt)")
+            }
+            return snapshots
         }
     }
 

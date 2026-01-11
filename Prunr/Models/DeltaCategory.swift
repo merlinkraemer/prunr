@@ -7,6 +7,10 @@ enum DeltaCategory: String, CaseIterable, Identifiable {
     case containers
     case caches
     case developer
+    case homebrew
+    case docker
+    case npm
+    case media
     case other
 
     // MARK: - Identifiable
@@ -23,6 +27,10 @@ enum DeltaCategory: String, CaseIterable, Identifiable {
         case .containers: return "Containers"
         case .caches: return "Caches"
         case .developer: return "Developer"
+        case .homebrew: return "Homebrew"
+        case .docker: return "Docker"
+        case .npm: return "NPM"
+        case .media: return "Media"
         case .other: return "Other"
         }
     }
@@ -35,6 +43,10 @@ enum DeltaCategory: String, CaseIterable, Identifiable {
         case .containers: return "cube.box.fill"
         case .caches: return "folder.fill"
         case .developer: return "hammer.fill"
+        case .homebrew: return "mug.fill"
+        case .docker: return "shippingbox.fill"
+        case .npm: return "circle.grid.2x2.fill"
+        case .media: return "photo.fill"
         case .other: return "doc.fill"
         }
     }
@@ -51,7 +63,15 @@ enum DeltaCategory: String, CaseIterable, Identifiable {
         case .caches:
             return ["Library/Caches"]
         case .developer:
-            return ["node_modules", "DerivedData", ".build", "build"]
+            return ["DerivedData", ".build", "build"]
+        case .homebrew:
+            return ["/usr/local/Cellar", "/opt/homebrew", "/Library/Caches/Homebrew", "Caches/Homebrew"]
+        case .docker:
+            return ["/var/lib/docker", "Library/Containers/com.docker", ".docker"]
+        case .npm:
+            return ["node_modules"]
+        case .media:
+            return []
         case .other:
             return []
         }
@@ -62,7 +82,9 @@ enum DeltaCategory: String, CaseIterable, Identifiable {
         switch self {
         case .apps, .packages:
             return patterns
-        case .containers, .caches, .developer, .other:
+        case .media:
+            return [".mp4", ".mov", ".avi", ".mkv", ".jpg", ".jpeg", ".png", ".psd", ".ai", ".tiff", ".heic"]
+        case .containers, .caches, .developer, .homebrew, .docker, .npm, .other:
             return []
         }
     }
@@ -71,7 +93,18 @@ enum DeltaCategory: String, CaseIterable, Identifiable {
     /// - Parameter path: The file system path to classify
     /// - Returns: The matching DeltaCategory, or .other if no match
     static func categorize(path: String) -> DeltaCategory {
-        // Check developer patterns first (more specific)
+        // Check source-specific patterns first (most specific)
+        if containsAny(of: path, substrings: homebrew.patterns) {
+            return .homebrew
+        }
+        if containsAny(of: path, substrings: docker.patterns) {
+            return .docker
+        }
+        if containsAny(of: path, substrings: npm.patterns) {
+            return .npm
+        }
+
+        // Check developer patterns
         if containsAny(of: path, substrings: developer.patterns) {
             return .developer
         }
@@ -84,10 +117,13 @@ enum DeltaCategory: String, CaseIterable, Identifiable {
             return .caches
         }
 
-        // Check file extensions
+        // Check file extensions for media
         let fileExtension = URL(fileURLWithPath: path).pathExtension
         let extWithDot = fileExtension.isEmpty ? "" : ".\(fileExtension)"
 
+        if media.extensions.contains(extWithDot) {
+            return .media
+        }
         if apps.extensions.contains(extWithDot) {
             return .apps
         }

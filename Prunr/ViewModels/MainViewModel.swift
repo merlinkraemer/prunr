@@ -26,9 +26,6 @@ final class MainViewModel {
     /// Currently selected path for scanning and comparison
     var selectedPath: TrackedPath?
 
-    /// The comparison interval in seconds (default 24 hours)
-    var comparisonInterval: TimeInterval = 86400
-
     /// Warning message when exact timeframe snapshot is unavailable
     var comparisonWarning: String?
 
@@ -62,15 +59,6 @@ final class MainViewModel {
     /// The ID of the historical snapshot being compared against
     private var historicalSnapshotId: Int64?
 
-    // MARK: - Initialization
-
-    init() {
-        // Load the comparison interval from AppStorage
-        if let storedValue = UserDefaults.standard.object(forKey: "comparisonInterval") as? TimeInterval {
-            self.comparisonInterval = storedValue
-        }
-    }
-
     // MARK: - Public Methods
 
     /// Updates the selected path and reloads data
@@ -82,16 +70,26 @@ final class MainViewModel {
         errorMessage = nil
         comparisonWarning = nil
 
+        print("[DEBUG] ========== Updating path to: \(path.displayName) ==========")
+        print("[DEBUG] Path ID: \(path.id)")
+        print("[DEBUG] Path URL: \(path.url.path)")
+
         // Reload snapshots and comparison for the new path
         await loadSnapshots()
         await compareSince()
     }
 
-    /// Loads all snapshots from the database
+    /// Loads all snapshots from the database for the currently selected path
     func loadSnapshots() async {
+        guard let path = selectedPath else {
+            snapshots = []
+            return
+        }
         do {
-            snapshots = try await db.fetchAllSnapshots()
+            snapshots = try await db.fetchAllSnapshots(trackedPathId: path.id)
+            print("[DEBUG] Loaded \(snapshots.count) snapshots for path: \(path.displayName)")
         } catch {
+            print("[ERROR] Failed to load snapshots: \(error)")
             errorMessage = "Failed to load snapshots: \(error.localizedDescription)"
         }
     }
@@ -100,9 +98,14 @@ final class MainViewModel {
     /// - Parameter path: The file system path to scan
     func scan(path: String) async {
         guard !isScanning else { return }
+        guard let trackedPathId = selectedPath?.id else {
+            errorMessage = "No path selected for scanning"
+            return
+        }
 
         print("[DEBUG] ========== Starting scan ==========")
         print("[DEBUG] Path: \(path)")
+        print("[DEBUG] TrackedPathId: \(trackedPathId)")
         print("[DEBUG] Checking path accessibility...")
 
         // Check if path exists before attempting scan
@@ -138,7 +141,7 @@ final class MainViewModel {
         errorMessage = nil
 
         do {
-            let snapshot = try await scanService.scan(path: path) { [weak self] progress in
+            let snapshot = try await scanService.scan(path: path, trackedPathId: trackedPathId) { [weak self] progress in
                 Task { @MainActor in
                     self?.scanProgress = progress.currentPath
                 }
@@ -193,8 +196,12 @@ final class MainViewModel {
     }
 
     /// Compares the two most recent snapshots
-    /// Simplified workflow: always compare newest vs second-newest
+    /// Always compares newest vs second-newest
     func compareSince() async {
+        print("[DEBUG] ========== compareSince called ==========")
+        print("[DEBUG] snapshots.count: \(snapshots.count)")
+        print("[DEBUG] selectedPath: \(selectedPath?.displayName ?? "nil")")
+
         guard selectedPath != nil else {
             deltas = []
             comparisonWarning = nil
@@ -202,6 +209,7 @@ final class MainViewModel {
         }
 
         guard snapshots.count >= 2 else {
+            print("[DEBUG] Not enough snapshots for comparison (have \(snapshots.count), need 2)")
             // Current-only mode: load the single snapshot's entries
             if snapshots.count == 1, let snapshotId = snapshots[0].id {
                 do {
@@ -216,6 +224,7 @@ final class MainViewModel {
             }
             comparisonWarning = nil
             deltas = []
+            comparisonSummary = nil
             return
         }
 
@@ -228,29 +237,15 @@ final class MainViewModel {
             return
         }
 
+        print("[DEBUG] Using snapshots: currentId=\(currentId), previousId=\(previousId)")
+        print("[DEBUG] Current: \(snapshots[0].createdAt), Previous: \(snapshots[1].createdAt)")
+
         // Store snapshot dates for display
         currentSnapshotDate = snapshots[0].createdAt
         historicalSnapshotDate = snapshots[1].createdAt
 
-        // Check if the actual time difference matches the requested interval
-        let actualInterval = snapshots[0].createdAt.timeIntervalSince(snapshots[1].createdAt)
-        let requestedInterval = comparisonInterval
-
-        // Set comparison summary
+        // Set comparison summary showing actual time between snapshots
         comparisonSummary = formattedComparisonSummary(current: snapshots[0].createdAt, historical: snapshots[1].createdAt)
-
-        // Warn if the actual interval differs significantly from requested (>20% difference)
-        let differenceRatio = abs(actualInterval - requestedInterval) / requestedInterval
-        if differenceRatio > 0.2 {
-            let actualFormatted = formattedTimeSpan(actualInterval)
-            let requestedFormatted = formattedTimeSpan(requestedInterval)
-            comparisonWarning = "Using snapshot from \(actualFormatted) ago (no snapshot from \(requestedFormatted) ago)"
-        } else {
-            comparisonWarning = nil
-        }
-
-        print("[DEBUG] Comparing snapshots: previousId=\(previousId), currentId=\(currentId)")
-        print("[DEBUG] Actual interval: \(actualInterval)s, requested: \(requestedInterval)s")
 
         await performComparison(historicalId: previousId, currentId: currentId)
     }
@@ -280,12 +275,6 @@ final class MainViewModel {
         await scan(path: path.url.path)
         // Re-run comparison after scanning
         await compareSince()
-    }
-
-    /// Updates the comparison interval and persists it to UserDefaults
-    func updateComparisonInterval(_ interval: TimeInterval) {
-        comparisonInterval = interval
-        UserDefaults.standard.set(interval, forKey: "comparisonInterval")
     }
 
     /// Clears any displayed error message

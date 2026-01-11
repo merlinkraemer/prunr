@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 2 — FSEvents Monitoring + Permissions
+**Current focus:** Phase 5 — Settings & Polish
 
 ## Current Position
 
-Phase: 2 of 5 (FSEvents Monitoring + Permissions)
-Plan: 2 of 2 in current phase
-Status: Phase complete
-Last activity: 2026-01-11 — Completed 02-02-PLAN.md
+Phase: 5 of 5 (Settings & Polish)
+Plan: In progress
+Status: Settings feature implemented
+Last activity: 2026-01-11 — Implemented Settings with checkbox paths/boundaries, Debug tab
 
-Progress: ██████░░░░ 40% (Menu bar + Permissions + Boundaries + FSEvents complete)
+Progress: ████████░░ 80% (Settings + UI polish complete, verification pending)
 
 ## Performance Metrics
 
@@ -45,6 +45,9 @@ Progress: ██████░░░░ 40% (Menu bar + Permissions + Boundarie
 | 02-02 | FSEventStream with 0.5s latency | CoreServices API requirement |
 | 02-02 | Actor isolation for FSEventsWatcher | Thread-safe stream management |
 | 02-02 | Async startWatching for proper actor isolation | Swift concurrency requirement |
+| 05-xx | macOS design guide: 6pt radius, 5pt inset, 28pt rows | Native feel per user research |
+| 05-xx | Checkbox toggles for paths/boundaries | Simpler UX than separate enable/disable |
+| 05-xx | Debug tab with varied test data | Easier testing with realistic folder structure |
 
 ### Deferred Issues
 
@@ -56,6 +59,7 @@ None.
 - 2026-01-11: Completed 01-01 (Menu Bar Foundation) — NSStatusItem, popover, free space display
 - 2026-01-11: Completed 02-01 (Permissions + Boundaries) — FDA detection, BoundaryConfig
 - 2026-01-11: Completed 02-02 (FSEvents Watcher) — FSEventStream with debounce
+- 2026-01-11: Implemented Phase 5 Settings — SettingsStore, 5-tab SettingsView, Debug tab
 
 ### Blockers/Concerns
 
@@ -64,8 +68,17 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-11
-Stopped at: Completed 02-02-PLAN.md (FSEvents Watcher) - Phase 2 complete
+Stopped at: Phase 5 Settings implementation — UI polish in progress
 Resume file: None
+
+## Key Files Changed (This Session)
+
+- `SettingsStore.swift` — UserDefaults persistence for paths, boundaries, threshold, launch at login
+- `SettingsView.swift` — 5 tabs (General, Paths, Boundaries, Debug, About)
+- `MenuBarView.swift` — macOS design guide hover states
+- `GrowthListView.swift` — macOS design guide hover states
+- `TrackedPath.swift` — Added test_data to default paths
+- `documentation/macos_design-guide.md` — User-provided design specs
 
 ## Legacy Code Reference
 

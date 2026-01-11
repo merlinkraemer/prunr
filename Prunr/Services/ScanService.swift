@@ -55,10 +55,11 @@ actor ScanService {
     ///
     /// - Parameters:
     ///   - path: The file system path to scan
+    ///   - trackedPathId: The ID of the TrackedPath this snapshot belongs to
     ///   - progress: Optional callback for progress updates
     /// - Returns: The completed Snapshot with all entries stored
     /// - Throws: ScanError if the path is invalid or scanning fails
-    func scan(path: String, progress: ((ScanProgress) -> Void)?) async throws -> Snapshot {
+    func scan(path: String, trackedPathId: UUID, progress: ((ScanProgress) -> Void)?) async throws -> Snapshot {
         // Check if already scanning
         if await isScanning {
             throw ScanError.unknown(NSError(
@@ -98,7 +99,7 @@ actor ScanService {
         }
 
         // Create new snapshot
-        let snapshot = try await db.createSnapshot()
+        let snapshot = try await db.createSnapshot(trackedPathId: trackedPathId)
         guard let snapshotId = snapshot.id else {
             throw ScanError.unknown(NSError(
                 domain: "ScanService",

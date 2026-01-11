@@ -61,7 +61,12 @@ extension TrackedPath {
         if fm.fileExists(atPath: developerPath.path) {
             paths.append(TrackedPath(url: developerPath, displayName: "Developer", isDefault: true))
         }
+        
+        // Test data directory (for development)
+        let testDataPath = URL(fileURLWithPath: "/Users/merlinkramer/dev/projects/prunr/test_data")
+        paths.append(TrackedPath(url: testDataPath, displayName: "Test Data", isDefault: true))
 
         return paths
     }()
 }
+

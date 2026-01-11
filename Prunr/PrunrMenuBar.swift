@@ -3,7 +3,8 @@ import AppKit
 
 @main
 struct PrunrMenuBar: App {
-    @State private var menuBarManager = MenuBarManager()
+    @MainActor
+    private let menuBarManager = MenuBarManager()
 
     init() {
         // Initialize database on app launch
@@ -16,10 +17,25 @@ struct PrunrMenuBar: App {
     }
 
     var body: some Scene {
-        // Empty scene - we don't want any windows
-        // NSStatusItem is managed by MenuBarManager
-        Settings {
-            Text("Settings coming in Phase 5")
+        // Menu bar-only app: empty window with LSUIElement=1 in Info.plist
+        WindowGroup {
+            EmptyView()
+                .frame(width: 0, height: 0)
+                .task {
+                    // Hide any window that might appear
+                    if let window = NSApplication.shared.windows.first {
+                        window.setIsVisible(false)
+                    }
+                }
         }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultSize(width: 0, height: 0)
+
+        // Settings window
+        Settings {
+            SettingsView()
+        }
+        .defaultSize(width: 400, height: 350)
     }
 }
