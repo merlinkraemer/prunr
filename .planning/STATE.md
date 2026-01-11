@@ -5,16 +5,29 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 5 — Settings & Polish (Complete)
+**Current focus:** Phase 7 — Category-Based Growth View (In Progress)
 
 ## Current Position
 
-Phase: 5 of 5 (Settings & Polish)
-Plan: Completed
-Status: All features implemented, verified, and polished.
-Last activity: 2026-01-11 — Context menu enhancement and state sync fixes.
+**MVP Status:** Complete (5/5 phases)
+- Phase 1: Menu Bar Foundation ✓
+- Phase 2: FSEvents + Permissions ✓
+- Phase 3: Baseline & Growth ✓
+- Phase 4: Menu Bar UI ✓ (incl. 04-02-FIX for UI issues)
+- Phase 5: Settings & Polish ✓
+- Phase 6: Popup HIG Redesign (Not Planned)
+- Phase 7: Category-Based Growth View (2/4 plans complete)
 
-Progress: ██████████ 100% (Ready for final review)
+Last activity: 2026-01-12 — Completed 07-02: Category Growth Aggregation.
+
+Progress: ██████████ 100% MVP | Post-MVP: Phase 07 (2/4 plans)
+
+**Phase Structure:**
+- Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
+- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`
+- Archived: Old full-window app plans moved to `.planning/phases/_archived-full-window-app/`
+- Note: Phase 05 (Settings & Polish) was implemented without formal GSD planning; retrospective PLAN.md and SUMMARY.md created 2026-01-11
+- Note: Phase 07 plan created 2026-01-12 from documentation/grouping_feature_spec.md
 
 ## Performance Metrics
 
@@ -48,6 +61,14 @@ Progress: ██████████ 100% (Ready for final review)
 | 05-xx | Nested growth aggregation | Ensures subfolder growth is visible at top level |
 | 05-xx | Default paths limited to Test Data | Improves focus for development testing |
 | 05-xx | Context menu 'Create Test Data' | Simplifies testing workflow |
+| 07-01 | Category-based growth view as Phase 07 | Significant feature addition, transforms growth display |
+| 07-01 | Create new GrowthCategory model | Clean slate, spec-driven design vs legacy DeltaCategory |
+| 07-01 | Hardcode 100MB big file threshold | Simpler for v1, configurable later if needed |
+| 07-01 | View mode toggle (Folders/Categories) | Users choose between folder and category views |
+| 07-01 | Defer category-specific drill-down | Focus on aggregation/display first, drill-down later |
+| 07-02 | getCategoryGrowthList() in BaselineService | Parallel API for category-based growth data |
+| 07-02 | GrowthItem.isBigFile computed property | Reuses CategoryGrowthItem.bigFileThreshold for consistency |
+| 07-02 | GrowthItem.category computed property | Lazy evaluation for category detection |
 
 ### Deferred Issues
 
@@ -55,15 +76,19 @@ None.
 
 ### Roadmap Evolution
 
-- 2026-01-11: Implemented Phase 5 Settings — SettingsStore, 5-tab SettingsView, Debug tab
-- 2026-01-11: Added scan progress display with stop button
-- 2026-01-11: Added paths save button with baseline invalidation
-- 2026-01-11: Popup now shows "Create Baseline" when none exists
-- 2026-01-11: Changed popup to check baseline only (no auto-scan) with "Scan Now" button
-- 2026-01-11: Refactored MenuBarManager to handle state and auto-scan on FSEvents
-- 2026-01-11: Fixed "No Changes" bug by aggregating nested file growth into parent directories
-- 2026-01-11: Fixed popup state handling and updated default paths
-- 2026-01-11: Added "Create Test Data" to right-click menu and shared logic
+**Menu Bar MVP (Current Roadmap):**
+- 2026-01-11: Phase 1 (Menu Bar Foundation) — NSStatusItem, popover, LSUIElement
+- 2026-01-11: Phase 2 (FSEvents + Permissions) — FSEventsWatcher, Full Disk Access handling, 3s debounce
+- 2026-01-11: Phase 3 (Baseline & Growth) — BaselineService, drill-down algorithm
+- 2026-01-11: Phase 4 (Menu Bar UI) — DriveBarView, GrowthListView, MenuBarViewModel
+- 2026-01-11: Phase 4 (04-02-FIX) — UI polish: DriveBar redesign, Settings window, right-click menu, native list footer
+- 2026-01-11: Phase 5 (Settings & Polish) — SettingsStore, 5-tab SettingsView, paths configuration, scan progress, test data creation, macOS design compliance
+  - Retrospective PLAN.md/SUMMARY.md created 2026-01-11 to document completed work
+- 2026-01-11: Phase 6 (Popup HIG Redesign) — Post-MVP phase for Apple HIG compliance (main list, settings, path boundaries, about section)
+- 2026-01-12: Phase 7 (Category-Based Growth View) — Post-MVP phase for category-based grouping (GrowthCategory, CategoryDetectionService, CategoryGrowthListView)
+
+**Archived (2026-01-11):** Full-window app plans moved to `.planning/phases/_archived-full-window-app/`:
+- 01-foundation, 02-scanner-storage, 03-delta-engine, 05-frontend-redesign
 
 ### Blockers/Concerns
 
@@ -71,26 +96,47 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-11
-Stopped at: Phase 5 Complete
+Last session: 2026-01-12
+MVP Status: Complete (all 5 phases finished)
+Phase 07: 2/4 plans complete (07-01, 07-02), ready for 07-03
 Resume file: None
 
-## Key Files Changed (This Session)
+## Key Files Changed (Final MVP)
 
-- `SettingsStore.swift` — Enable/disable paths and boundaries with persistence
-- `SettingsView.swift` — 5 tabs, paths save button, debug test data creation
-- `MenuBarView.swift` — Uses MenuBarManager, manual scan, monitored path, popover close
-- `MenuBarManager.swift` — Singleton, context menu, test data logic, popover delegate
-- `BaselineService.swift` — Nested growth aggregation
-- `TrackedPath.swift` — Default paths update
+**Core Services:**
+- `FSEventsWatcher.swift` — File system monitoring with 3s debounce
+- `FSEventsService.swift` — Lifecycle management for FSEvents
+- `BaselineService.swift` — Baseline creation, growth calculation, nested aggregation
+- `ScanService.swift` — Targeted folder scanning
+
+**UI Components:**
+- `PrunrMenuBar.swift` — NSStatusItem setup and popover presentation
+- `MenuBarManager.swift` — Singleton for menu bar state, context menu, test data
+- `MenuBarView.swift` — Main popover with drive bar, growth list, scan progress
+- `DriveBarView.swift` — Visual capacity bar with percentage
+- `GrowthListView.swift` — Scrollable list of growth items
+- `SettingsView.swift` — 5-tab settings window (Paths, Boundaries, Threshold, Debug, About)
+
+**Data Layer:**
+- `SettingsStore.swift` — UserDefaults persistence for app settings
+- `TrackedPath.swift` — Monitored path model with enable/disable
+- `BoundaryConfig.swift` — Known boundary folder definitions
 
 ## Recent Commits
 
+- `7ddca87` — Feat: 'Create Test Data' context menu, Fix Settings popup sync
 - `a7e9c34` — Fix: Popup state sync, Default paths to TestData only
 - `0c7f6d3` — Fix: Aggregate nested growth in BaselineService, Add monitored path to UI
 - `efbca50` — Checkpoint: Update state and cleanup
+
+**MVP Complete:** All 5 phases of menu bar app finished.
 
 ## Legacy Code Reference
 
 Legacy full-window app code moved to:
 - `Prunr/Legacy/PrunrApp_Legacy.swift` — Original @main app entry point (@main removed)
+- `.planning/phases/_archived-full-window-app/` — Archived plans from old roadmap:
+  - 01-foundation (Xcode project + GRDB)
+  - 02-scanner-storage (Scanner + SQLite)
+  - 03-delta-engine (Delta calculation)
+  - 05-frontend-redesign (DaisyDisk-style full-window UI)
