@@ -11,10 +11,8 @@ struct MenuBarView: View {
     @State private var isResetting = false
 
     private func closePopoverAndOpenSettings() {
-        // Close the popover first
-        if let popover = NSApp.windows.first(where: { $0.contentViewController?.view.window?.isVisible == true && $0.className.contains("NSPopover") }) {
-            popover.close()
-        }
+        // Close the popover first via manager to ensure state sync
+        manager.closePopover()
         
         // Use openSettings environment action
         openSettings()

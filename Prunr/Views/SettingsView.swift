@@ -391,57 +391,19 @@ private struct DebugSettingsTab: View {
     
     private func createVariedTestData() {
         isCreating = true
-        statusMessage = ""
+        statusMessage = "Creating..."
         
         Task {
-            do {
-                let fm = FileManager.default
-                let baseURL = URL(fileURLWithPath: testDataPath)
+            if let manager = await MainActor.run(body: { MenuBarManager.shared }) {
+                await manager.generateTestData()
                 
-                // Create base directory
-                try fm.createDirectory(at: baseURL, withIntermediateDirectories: true)
-                
-                // Create small random files for quick testing (~10MB total)
-                // Each button press adds NEW random files
-                let timestamp = Int(Date().timeIntervalSince1970)
-                let folders: [(name: String, sizeKB: Int, fileCount: Int)] = [
-                    ("documents", 500, 2),   // 1 MB
-                    ("images", 1000, 3),     // 3 MB
-                    ("cache", 200, 5),       // 1 MB
-                    ("downloads", 2000, 2),  // 4 MB
-                    ("logs", 100, 5)         // 0.5 MB
-                ]
-                
-                var totalCreated = 0
-                for folder in folders {
-                    let folderURL = baseURL.appendingPathComponent(folder.name)
-                    try fm.createDirectory(at: folderURL, withIntermediateDirectories: true)
-                    
-                    let sizeBytes = folder.sizeKB * 1024
-                    
-                    for i in 1...folder.fileCount {
-                        // Random filename with timestamp ensures new files each time
-                        let fileName = "\(folder.name)_\(timestamp)_\(i)_\(arc4random() % 10000).dat"
-                        let fileURL = folderURL.appendingPathComponent(fileName)
-                        
-                        // Create random data
-                        var bytes = [UInt8](repeating: 0, count: sizeBytes)
-                        for j in 0..<sizeBytes {
-                            bytes[j] = UInt8.random(in: 0...255)
-                        }
-                        try Data(bytes).write(to: fileURL)
-                        totalCreated += sizeBytes
-                    }
-                }
-                
-                let mbCreated = Double(totalCreated) / 1024.0 / 1024.0
                 await MainActor.run {
-                    statusMessage = String(format: "Created %.1f MB of new test data", mbCreated)
+                    statusMessage = "Created test data successfully"
                     isCreating = false
                 }
-            } catch {
+            } else {
                 await MainActor.run {
-                    statusMessage = "Error: \(error.localizedDescription)"
+                    statusMessage = "Error: MenuBarManager not found"
                     isCreating = false
                 }
             }

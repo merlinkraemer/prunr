@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 5 — Settings & Polish (in progress)
+**Current focus:** Phase 5 — Settings & Polish (Complete)
 
 ## Current Position
 
 Phase: 5 of 5 (Settings & Polish)
-Plan: In progress
-Status: Settings feature complete, verification ongoing
-Last activity: 2026-01-11 — Fixed growth aggregation bug, verified auto-scan
+Plan: Completed
+Status: All features implemented, verified, and polished.
+Last activity: 2026-01-11 — Context menu enhancement and state sync fixes.
 
-Progress: █████████▓ 98% (Settings + scan progress + auto-scan + growth logic fix)
+Progress: ██████████ 100% (Ready for final review)
 
 ## Performance Metrics
 
@@ -46,6 +46,8 @@ Progress: █████████▓ 98% (Settings + scan progress + auto-sc
 | 05-xx | Manual scan trigger on open | Prevents "stuck" feeling, gives user control |
 | 05-xx | Auto-scan on file changes | Updates popup seamlessly in background |
 | 05-xx | Nested growth aggregation | Ensures subfolder growth is visible at top level |
+| 05-xx | Default paths limited to Test Data | Improves focus for development testing |
+| 05-xx | Context menu 'Create Test Data' | Simplifies testing workflow |
 
 ### Deferred Issues
 
@@ -60,6 +62,8 @@ None.
 - 2026-01-11: Changed popup to check baseline only (no auto-scan) with "Scan Now" button
 - 2026-01-11: Refactored MenuBarManager to handle state and auto-scan on FSEvents
 - 2026-01-11: Fixed "No Changes" bug by aggregating nested file growth into parent directories
+- 2026-01-11: Fixed popup state handling and updated default paths
+- 2026-01-11: Added "Create Test Data" to right-click menu and shared logic
 
 ### Blockers/Concerns
 
@@ -68,31 +72,25 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-11
-Stopped at: Phase 5 Settings Verified
+Stopped at: Phase 5 Complete
 Resume file: None
 
 ## Key Files Changed (This Session)
 
 - `SettingsStore.swift` — Enable/disable paths and boundaries with persistence
 - `SettingsView.swift` — 5 tabs, paths save button, debug test data creation
-- `MenuBarView.swift` — Uses MenuBarManager, manual scan buttons, monitored path display
-- `MenuBarManager.swift` — State management, auto-scan logic, disk space tracking
-- `BaselineService.swift` — Fixed `buildGrowthList` to aggregate nested changes correctly
+- `MenuBarView.swift` — Uses MenuBarManager, manual scan, monitored path, popover close
+- `MenuBarManager.swift` — Singleton, context menu, test data logic, popover delegate
+- `BaselineService.swift` — Nested growth aggregation
+- `TrackedPath.swift` — Default paths update
 
 ## Recent Commits
 
+- `a7e9c34` — Fix: Popup state sync, Default paths to TestData only
 - `0c7f6d3` — Fix: Aggregate nested growth in BaselineService, Add monitored path to UI
 - `efbca50` — Checkpoint: Update state and cleanup
-- `63e1cfd` — Refactor: Move logic to MenuBarManager, implement auto-scan on file change
 
 ## Legacy Code Reference
 
 Legacy full-window app code moved to:
 - `Prunr/Legacy/PrunrApp_Legacy.swift` — Original @main app entry point (@main removed)
-
-**Reusable components** (kept):
-- `DatabaseManager.swift` — SQLite/GRDB layer
-- `FileScanner.swift` — File system scanning
-- `ScanService.swift` — Scan orchestration with progress callbacks
-- `BaselineService.swift` — Baseline management
-- All `Models/` — Data structures

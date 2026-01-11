@@ -33,10 +33,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var usedBytes: Int64 = 0
     var freeBytes: Int64 = 0
     
+    static var shared: MenuBarManager?
+    
     // MARK: - Init
 
     override init() {
         super.init()
+        Self.shared = self
         setupMenuBar()
         setupContextMenu()
         updateFreeSpace()
@@ -64,6 +67,17 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func setupContextMenu() {
         let menu = NSMenu()
+        
+        // Create Test Data (Debug)
+        let createDataItem = NSMenuItem(
+            title: "Create Test Data",
+            action: #selector(createTestDataAction),
+            keyEquivalent: ""
+        )
+        createDataItem.target = self
+        menu.addItem(createDataItem)
+        
+        menu.addItem(NSMenuItem.separator())
 
         // Settings...
         let settingsItem = NSMenuItem(
@@ -365,6 +379,70 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
+    
+    func closePopover() {
+        if isPopoverShown {
+            popover?.performClose(nil)
+            isPopoverShown = false
+        }
+    }
+    
+    // MARK: - Actions
+    
+    @objc private func createTestDataAction() {
+        Task {
+            await generateTestData()
+        }
+    }
+    
+    /// Generates test data at the default test path
+    func generateTestData() async {
+        let testDataPath = "/Users/merlinkramer/dev/projects/prunr/test_data"
+        let fm = FileManager.default
+        let baseURL = URL(fileURLWithPath: testDataPath)
+        
+        do {
+            // Create base directory
+            try fm.createDirectory(at: baseURL, withIntermediateDirectories: true)
+            
+            // Create small random files for quick testing (~10MB total)
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let folders: [(name: String, sizeKB: Int, fileCount: Int)] = [
+                ("documents", 500, 2),   // 1 MB
+                ("images", 1000, 3),     // 3 MB
+                ("cache", 200, 5),       // 1 MB
+                ("downloads", 2000, 2),  // 4 MB
+                ("logs", 100, 5)         // 0.5 MB
+            ]
+            
+            var totalCreated = 0
+            for folder in folders {
+                let folderURL = baseURL.appendingPathComponent(folder.name)
+                try fm.createDirectory(at: folderURL, withIntermediateDirectories: true)
+                
+                let sizeBytes = folder.sizeKB * 1024
+                
+                for i in 1...folder.fileCount {
+                    let fileName = "\(folder.name)_\(timestamp)_\(i)_\(arc4random() % 10000).dat"
+                    let fileURL = folderURL.appendingPathComponent(fileName)
+                    
+                    var bytes = [UInt8](repeating: 0, count: sizeBytes)
+                    for j in 0..<sizeBytes {
+                        bytes[j] = UInt8.random(in: 0...255)
+                    }
+                    try Data(bytes).write(to: fileURL)
+                    totalCreated += sizeBytes
+                }
+            }
+            
+            print("[MenuBarManager] Created \(Double(totalCreated) / 1024.0 / 1024.0) MB of test data")
+            
+            // Note: FSEvents should pick this up automatically if validation is running
+            
+        } catch {
+            print("[MenuBarManager] Failed to create test data: \(error)")
+        }
+    }
     
     // MARK: - NSPopoverDelegate
     
