@@ -38,31 +38,8 @@ extension TrackedPath {
 
         var paths: [TrackedPath] = []
 
-        // Home directory
-        paths.append(TrackedPath(url: home, displayName: "Home", isDefault: true))
-
-        // Desktop
-        if let desktop = fm.urls(for: .desktopDirectory, in: .userDomainMask).first {
-            paths.append(TrackedPath(url: desktop, displayName: "Desktop", isDefault: true))
-        }
-
-        // Documents
-        if let documents = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
-            paths.append(TrackedPath(url: documents, displayName: "Documents", isDefault: true))
-        }
-
-        // Downloads
-        if let downloads = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first {
-            paths.append(TrackedPath(url: downloads, displayName: "Downloads", isDefault: true))
-        }
-
-        // Developer directory (if it exists)
-        let developerPath = home.appendingPathComponent("Developer")
-        if fm.fileExists(atPath: developerPath.path) {
-            paths.append(TrackedPath(url: developerPath, displayName: "Developer", isDefault: true))
-        }
-        
         // Test data directory (for development)
+        // Hardcoded for this environment as requested
         let testDataPath = URL(fileURLWithPath: "/Users/merlinkramer/dev/projects/prunr/test_data")
         paths.append(TrackedPath(url: testDataPath, displayName: "Test Data", isDefault: true))
 

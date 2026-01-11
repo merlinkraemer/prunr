@@ -11,10 +11,10 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 
 Phase: 5 of 5 (Settings & Polish)
 Plan: In progress
-Status: Settings feature with scan progress implemented
-Last activity: 2026-01-11 — Implemented auto-scan on file change
+Status: Settings feature complete, verification ongoing
+Last activity: 2026-01-11 — Fixed growth aggregation bug, verified auto-scan
 
-Progress: █████████▓ 95% (Settings + scan progress + auto-scan)
+Progress: █████████▓ 98% (Settings + scan progress + auto-scan + growth logic fix)
 
 ## Performance Metrics
 
@@ -45,6 +45,7 @@ Progress: █████████▓ 95% (Settings + scan progress + auto-sc
 | 05-xx | Scan progress with stop button | User can cancel slow scans |
 | 05-xx | Manual scan trigger on open | Prevents "stuck" feeling, gives user control |
 | 05-xx | Auto-scan on file changes | Updates popup seamlessly in background |
+| 05-xx | Nested growth aggregation | Ensures subfolder growth is visible at top level |
 
 ### Deferred Issues
 
@@ -58,6 +59,7 @@ None.
 - 2026-01-11: Popup now shows "Create Baseline" when none exists
 - 2026-01-11: Changed popup to check baseline only (no auto-scan) with "Scan Now" button
 - 2026-01-11: Refactored MenuBarManager to handle state and auto-scan on FSEvents
+- 2026-01-11: Fixed "No Changes" bug by aggregating nested file growth into parent directories
 
 ### Blockers/Concerns
 
@@ -66,22 +68,22 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-11
-Stopped at: Phase 5 Settings — Polish & Workflow refinements
+Stopped at: Phase 5 Settings Verified
 Resume file: None
 
 ## Key Files Changed (This Session)
 
 - `SettingsStore.swift` — Enable/disable paths and boundaries with persistence
 - `SettingsView.swift` — 5 tabs, paths save button, debug test data creation
-- `MenuBarView.swift` — Uses MenuBarManager, manual scan buttons
+- `MenuBarView.swift` — Uses MenuBarManager, manual scan buttons, monitored path display
 - `MenuBarManager.swift` — State management, auto-scan logic, disk space tracking
-- `MenuBarViewModel.swift` — Deprecated/Removed
+- `BaselineService.swift` — Fixed `buildGrowthList` to aggregate nested changes correctly
 
 ## Recent Commits
 
+- `0c7f6d3` — Fix: Aggregate nested growth in BaselineService, Add monitored path to UI
+- `efbca50` — Checkpoint: Update state and cleanup
 - `63e1cfd` — Refactor: Move logic to MenuBarManager, implement auto-scan on file change
-- `3059d85` — UI Polish: Manual scan trigger, no auto-scan on open, scan progress display
-- `247dbe7` — Settings paths save button, scan progress, stop button, baseline recheck
 
 ## Legacy Code Reference
 

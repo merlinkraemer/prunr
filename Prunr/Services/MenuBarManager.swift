@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 @Observable
-final class MenuBarManager {
+final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     var popover: NSPopover?
     var isPopoverShown = false
@@ -16,8 +16,27 @@ final class MenuBarManager {
 
     /// Right-click menu
     private var contextMenu: NSMenu?
+    
+    // MARK: - Scan & Growth Logic (Moved from ViewModel)
+    
+    // Published state for UI
+    var growthItems: [BaselineService.GrowthItem] = []
+    var monitoredPathName: String = ""
+    var isLoading = false
+    var errorMessage: String?
+    var noBaseline = false
+    var scanProgress: String = ""
+    var filesScanned: Int = 0
+    
+    // Disk space state
+    var totalBytes: Int64 = 0
+    var usedBytes: Int64 = 0
+    var freeBytes: Int64 = 0
+    
+    // MARK: - Init
 
-    init() {
+    override init() {
+        super.init()
         setupMenuBar()
         setupContextMenu()
         updateFreeSpace()
@@ -38,6 +57,7 @@ final class MenuBarManager {
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 320, height: 420)
         popover?.behavior = .transient
+        popover?.delegate = self
         // Pass self to MenuBarView
         popover?.contentViewController = NSHostingController(rootView: MenuBarView(manager: self))
     }
@@ -135,20 +155,9 @@ final class MenuBarManager {
     }
     
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
-    
-    // Published state for UI
-    var growthItems: [BaselineService.GrowthItem] = []
-    var monitoredPathName: String = ""
-    var isLoading = false
-    var errorMessage: String?
-    var noBaseline = false
-    var scanProgress: String = ""
-    var filesScanned: Int = 0
-    
-    // Disk space state
-    var totalBytes: Int64 = 0
-    var usedBytes: Int64 = 0
-    var freeBytes: Int64 = 0
+     
+    // Properties are now synthesized by @Observable macro at class level
+    // and initialized above.
     
     /// Loads the growth list by comparing current state with baseline
     func loadGrowthList() async {
@@ -353,6 +362,16 @@ final class MenuBarManager {
     private func startWatchingDefaultPaths() {
         Task {
             await startWatchingPaths()
+        }
+    }
+
+    
+    // MARK: - NSPopoverDelegate
+    
+    func popoverDidClose(_ notification: Notification) {
+        if isPopoverShown {
+            isPopoverShown = false
+            print("[MenuBarManager] Popover closed via delegate")
         }
     }
 }
