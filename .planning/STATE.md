@@ -5,20 +5,22 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 1 — Menu Bar Foundation (MVP refactor)
+**Current focus:** Phase 2 — FSEvents Monitoring + Permissions
 
 ## Current Position
 
-Phase: 1 of 5 (Menu Bar Foundation)
+Phase: 2 of 5 (FSEvents Monitoring + Permissions)
 Plan: 1 of TBD in current phase
 Status: In progress
-Last activity: 2026-01-11 — Completed 01-01-PLAN.md
+Last activity: 2026-01-11 — Completed 02-01-PLAN.md
 
-Progress: ████░░░░░░ 20% (Menu bar foundation complete)
+Progress: █████░░░░░ 30% (Menu bar foundation + Permissions + Boundaries complete)
 
 ## Performance Metrics
 
-**Velocity:** 18 min for first plan (3 tasks)
+**Velocity:**
+- 01-01: 18 min (3 tasks)
+- 02-01: 8 min (3 tasks)
 
 ## Accumulated Context
 
@@ -35,6 +37,9 @@ Progress: ████░░░░░░ 20% (Menu bar foundation complete)
 | 01-01 | .transient popover behavior | Auto-closes on outside click for better UX |
 | 01-01 | Simplified GB display (no decimals) | Compact format for menu bar |
 | 01-01 | Preserve legacy code in Legacy/ directory | Retain for reference during refactor |
+| 02-01 | Test FDA by accessing /Library | macOS has no direct API for permission status |
+| 02-01 | System Settings via x-apple.systempreferences URL | Direct deep-link to Full Disk Access pane |
+| 02-01 | Case-sensitive boundary matching | macOS APFS default |
 
 ### Deferred Issues
 
@@ -44,6 +49,7 @@ None.
 
 - 2026-01-11: Pivoted to menu bar MVP — archived original ROADMAP to OLD_ROADMAP.md
 - 2026-01-11: Completed 01-01 (Menu Bar Foundation) — NSStatusItem, popover, free space display
+- 2026-01-11: Completed 02-01 (Permissions + Boundaries) — FDA detection, BoundaryConfig
 
 ### Blockers/Concerns
 
@@ -52,7 +58,7 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-11
-Stopped at: Completed 01-01-PLAN.md (Menu Bar Foundation)
+Stopped at: Completed 02-01-PLAN.md (Permissions + Boundaries)
 Resume file: None
 
 ## Legacy Code Reference

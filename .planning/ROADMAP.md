@@ -20,7 +20,7 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 
 ## Phases
 
-- [ ] **Phase 1: Menu Bar Foundation** - NSStatusItem, no Dock icon, basic popover
+- [x] **Phase 1: Menu Bar Foundation** - NSStatusItem, no Dock icon, basic popover
 - [ ] **Phase 2: FSEvents Monitoring + Permissions** - File system watcher with Full Disk Access handling
 - [ ] **Phase 3: Baseline & Growth Tracking** - Single baseline + smart drill-down algorithm
 - [ ] **Phase 4: Menu Bar UI** - Drive bar + growth list popover
@@ -102,8 +102,8 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Menu Bar Foundation | 1/1 | In progress | 2026-01-11 |
-| 2. FSEvents + Permissions | 0/0 | Not Started | — |
+| 1. Menu Bar Foundation | 1/1 | Complete | 2026-01-11 |
+| 2. FSEvents + Permissions | 1/1 | In progress | 2026-01-11 |
 | 3. Baseline & Growth | 0/0 | Not Started | — |
 | 4. Menu Bar UI | 0/0 | Not Started | — |
 | 5. Settings & Polish | 0/0 | Not Started | — |
