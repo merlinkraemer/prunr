@@ -16,11 +16,11 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 4: Menu Bar UI ✓ (incl. 04-02-FIX for UI issues)
 - Phase 5: Settings & Polish ✓
 - Phase 6: Popup HIG Redesign (Not Planned)
-- Phase 7: Category-Based Growth View (2/4 plans complete)
+- Phase 7: Category-Based Growth View (3/4 plans complete)
 
-Last activity: 2026-01-12 — Completed 07-02: Category Growth Aggregation.
+Last activity: 2026-01-12 — Completed 07-03: Category UI Implementation.
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 07 (2/4 plans)
+Progress: ██████████ 100% MVP | Post-MVP: Phase 07 (3/4 plans)
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
@@ -69,6 +69,10 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 07 (2/4 plan
 | 07-02 | getCategoryGrowthList() in BaselineService | Parallel API for category-based growth data |
 | 07-02 | GrowthItem.isBigFile computed property | Reuses CategoryGrowthItem.bigFileThreshold for consistency |
 | 07-02 | GrowthItem.category computed property | Lazy evaluation for category detection |
+| 07-03 | Complete replacement (no toggle) per CONTEXT.md | Folder list becomes category list, no hybrid view |
+| 07-03 | Color-coded severity for categories | Green <1GB, Orange 1-5GB, Red >=5GB |
+| 07-03 | CategoryGrowthListView expandable hierarchy | Categories expand, big items nested, small items collapsed |
+| 07-03 | Deferred category-specific drill-down | Focus on UI/UX first, drill-down later |
 
 ### Deferred Issues
 
@@ -98,7 +102,7 @@ None.
 
 Last session: 2026-01-12
 MVP Status: Complete (all 5 phases finished)
-Phase 07: 2/4 plans complete (07-01, 07-02), ready for 07-03
+Phase 07: 3/4 plans complete (07-01, 07-02, 07-03), ready for 07-04
 Resume file: None
 
 ## Key Files Changed (Final MVP)
