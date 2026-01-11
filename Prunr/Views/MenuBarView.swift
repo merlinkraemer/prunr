@@ -54,12 +54,48 @@ struct MenuBarView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
 
-                GrowthListView(
-                    growthItems: viewModel.growthItems,
-                    onTapItem: { item in
-                        viewModel.revealInFinder(path: item.path)
+                if viewModel.noBaseline {
+                    // No baseline prompt
+                    VStack(spacing: 12) {
+                        Image(systemName: "clock.badge.questionmark")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.secondary)
+                        Text("No baseline yet")
+                            .font(.headline)
+                        Text("Create a baseline to start tracking growth")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Create Baseline") {
+                            Task {
+                                await viewModel.createBaseline()
+                                await viewModel.loadGrowthList()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
+                } else if let error = viewModel.errorMessage {
+                    // Error message
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.orange)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
+                } else {
+                    GrowthListView(
+                        growthItems: viewModel.growthItems,
+                        onTapItem: { item in
+                            viewModel.revealInFinder(path: item.path)
+                        }
+                    )
+                }
             }
 
             Spacer()
@@ -139,28 +175,50 @@ struct MenuBarView: View {
         }
         .frame(width: 320, height: 420)
         .overlay {
-            // Loading indicator
+            // Loading indicator with progress
             if viewModel.isLoading {
                 ZStack {
-                    Color.black.opacity(0.1)
+                    Color.black.opacity(0.3)
                         .ignoresSafeArea()
 
-                    VStack(spacing: 8) {
+                    VStack(spacing: 12) {
                         ProgressView()
                             .controlSize(.regular)
 
-                        Text("Scanning...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if !viewModel.scanProgress.isEmpty {
+                            Text(viewModel.scanProgress)
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                        }
+                        
+                        if viewModel.filesScanned > 0 {
+                            Text("\(viewModel.filesScanned) files scanned")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        Button("Stop") {
+                            Task {
+                                await viewModel.stopScan()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    .padding(16)
+                    .padding(20)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
         }
         .task {
-            // Load growth list when popover appears
+            // Refresh disk space immediately (fast)
+            viewModel.refreshDiskSpace()
+            
+            // Load growth list asynchronously (can be slow)
             await viewModel.loadGrowthList()
+        }
+        .onAppear {
+            // Always refresh disk space when appearing
             viewModel.refreshDiskSpace()
         }
     }

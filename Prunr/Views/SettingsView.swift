@@ -68,7 +68,7 @@ private struct GeneralSettingsTab: View {
                             Text("\(Int(settingsStore.drillDownThreshold * 100))%")
                                 .foregroundStyle(.secondary)
                         }
-                        Slider(value: $settingsStore.drillDownThreshold, in: 0.5...0.95, step: 0.05)
+                        Slider(value: $settingsStore.drillDownThreshold, in: 0.5...0.95)
                     }
                     
                     Text("Stop drilling into subfolders when one folder contains this percentage of the parent's total growth.")
@@ -89,6 +89,8 @@ private struct GeneralSettingsTab: View {
 private struct PathsSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
     @State private var showingFilePicker = false
+    @State private var pathsChanged = false
+    @State private var showingSavedNotice = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -98,7 +100,10 @@ private struct PathsSettingsTab: View {
                     ForEach(TrackedPath.defaultPaths) { path in
                         Toggle(isOn: Binding(
                             get: { settingsStore.isPathEnabled(path) },
-                            set: { enabled in settingsStore.setPathEnabled(path, enabled: enabled) }
+                            set: { enabled in
+                                settingsStore.setPathEnabled(path, enabled: enabled)
+                                pathsChanged = true
+                            }
                         )) {
                             HStack(spacing: 8) {
                                 Image(systemName: "folder.fill")
@@ -122,7 +127,10 @@ private struct PathsSettingsTab: View {
                         HStack {
                             Toggle(isOn: Binding(
                                 get: { settingsStore.isPathEnabled(path) },
-                                set: { enabled in settingsStore.setPathEnabled(path, enabled: enabled) }
+                                set: { enabled in
+                                    settingsStore.setPathEnabled(path, enabled: enabled)
+                                    pathsChanged = true
+                                }
                             )) {
                                 HStack(spacing: 8) {
                                     Image(systemName: "folder.fill")
@@ -138,6 +146,7 @@ private struct PathsSettingsTab: View {
                             
                             Button {
                                 settingsStore.removeTrackedPath(path)
+                                pathsChanged = true
                             } label: {
                                 Image(systemName: "minus.circle.fill")
                                     .foregroundStyle(.red)
@@ -148,18 +157,60 @@ private struct PathsSettingsTab: View {
                 }
             }
             
+            if pathsChanged {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Paths changed — baseline needs to be recreated")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.1))
+            }
+            
+            if showingSavedNotice {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("Saved!")
+                        .font(.caption)
+                }
+                .padding(8)
+            }
+            
             Divider()
             
             HStack {
-                Spacer()
                 Button {
                     showingFilePicker = true
                 } label: {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(.bordered)
-                .padding(8)
+                
+                Spacer()
+                
+                if pathsChanged {
+                    Button("Save") {
+                        // Settings are auto-saved, but trigger baseline invalidation
+                        Task {
+                            try? await BaselineService.shared.resetBaseline()
+                        }
+                        pathsChanged = false
+                        showingSavedNotice = true
+                        
+                        // Hide notice after 2 seconds
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            showingSavedNotice = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             }
+            .padding(8)
         }
         .fileImporter(
             isPresented: $showingFilePicker,
@@ -173,10 +224,12 @@ private struct PathsSettingsTab: View {
                     isDefault: false
                 )
                 settingsStore.addTrackedPath(path)
+                pathsChanged = true
             }
         }
     }
 }
+
 
 // MARK: - Boundaries Tab
 
@@ -318,13 +371,13 @@ private struct DebugSettingsTab: View {
                 .padding(8)
             }
             
-            GroupBox("What Gets Created") {
+            GroupBox("What Gets Created (~10 MB each click)") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("documents/ — 50 MB (text files)", systemImage: "doc.text")
-                    Label("images/ — 100 MB (image data)", systemImage: "photo")
-                    Label("cache/ — 75 MB (cache files)", systemImage: "archivebox")
-                    Label("downloads/ — 150 MB (misc files)", systemImage: "arrow.down.circle")
-                    Label("logs/ — 25 MB (log files)", systemImage: "doc.plaintext")
+                    Label("documents/ — 1 MB", systemImage: "doc.text")
+                    Label("images/ — 3 MB", systemImage: "photo")
+                    Label("cache/ — 1 MB", systemImage: "archivebox")
+                    Label("downloads/ — 4 MB", systemImage: "arrow.down.circle")
+                    Label("logs/ — 0.5 MB", systemImage: "doc.plaintext")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -348,36 +401,43 @@ private struct DebugSettingsTab: View {
                 // Create base directory
                 try fm.createDirectory(at: baseURL, withIntermediateDirectories: true)
                 
-                // Create varied subdirectories with different file types and sizes
-                let folders: [(name: String, sizeMB: Int, filePrefix: String, fileCount: Int)] = [
-                    ("documents", 50, "report", 10),
-                    ("images", 100, "photo", 5),
-                    ("cache", 75, "cache", 15),
-                    ("downloads", 150, "download", 3),
-                    ("logs", 25, "app", 20)
+                // Create small random files for quick testing (~10MB total)
+                // Each button press adds NEW random files
+                let timestamp = Int(Date().timeIntervalSince1970)
+                let folders: [(name: String, sizeKB: Int, fileCount: Int)] = [
+                    ("documents", 500, 2),   // 1 MB
+                    ("images", 1000, 3),     // 3 MB
+                    ("cache", 200, 5),       // 1 MB
+                    ("downloads", 2000, 2),  // 4 MB
+                    ("logs", 100, 5)         // 0.5 MB
                 ]
                 
+                var totalCreated = 0
                 for folder in folders {
                     let folderURL = baseURL.appendingPathComponent(folder.name)
                     try fm.createDirectory(at: folderURL, withIntermediateDirectories: true)
                     
-                    let sizePerFile = (folder.sizeMB * 1024 * 1024) / folder.fileCount
+                    let sizeBytes = folder.sizeKB * 1024
                     
                     for i in 1...folder.fileCount {
-                        let fileName = "\(folder.filePrefix)_\(i)_\(UUID().uuidString.prefix(4)).dat"
+                        // Random filename with timestamp ensures new files each time
+                        let fileName = "\(folder.name)_\(timestamp)_\(i)_\(arc4random() % 10000).dat"
                         let fileURL = folderURL.appendingPathComponent(fileName)
-                        let data = Data(repeating: UInt8.random(in: 0...255), count: sizePerFile)
-                        try data.write(to: fileURL)
+                        
+                        // Create random data
+                        var bytes = [UInt8](repeating: 0, count: sizeBytes)
+                        for j in 0..<sizeBytes {
+                            bytes[j] = UInt8.random(in: 0...255)
+                        }
+                        try Data(bytes).write(to: fileURL)
+                        totalCreated += sizeBytes
                     }
                 }
                 
+                let mbCreated = Double(totalCreated) / 1024.0 / 1024.0
                 await MainActor.run {
-                    statusMessage = "Created ~400 MB of test data in 5 folders"
-                    // Brief delay to show completion
-                    Task {
-                        try? await Task.sleep(for: .seconds(1))
-                        isCreating = false
-                    }
+                    statusMessage = String(format: "Created %.1f MB of new test data", mbCreated)
+                    isCreating = false
                 }
             } catch {
                 await MainActor.run {
