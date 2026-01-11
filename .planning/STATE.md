@@ -12,9 +12,9 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 Phase: 5 of 5 (Settings & Polish)
 Plan: In progress
 Status: Settings feature with scan progress implemented
-Last activity: 2026-01-11 — Refined scan logic (manual trigger, no auto-scan) & settings workflow
+Last activity: 2026-01-11 — Implemented auto-sacn on file change
 
-Progress: █████████░ 90% (Settings + scan progress + baseline management)
+Progress: █████████▓ 95% (Settings + scan progress + auto-scan)
 
 ## Performance Metrics
 
@@ -44,6 +44,7 @@ Progress: █████████░ 90% (Settings + scan progress + baselin
 | 05-xx | Paths Save button resets baseline | Ensures fresh baseline after config changes |
 | 05-xx | Scan progress with stop button | User can cancel slow scans |
 | 05-xx | Manual scan trigger on open | Prevents "stuck" feeling, gives user control |
+| 05-xx | Auto-scan on file changes | Updates popup seamlessly in background |
 
 ### Deferred Issues
 
@@ -56,6 +57,7 @@ None.
 - 2026-01-11: Added paths save button with baseline invalidation
 - 2026-01-11: Popup now shows "Create Baseline" when none exists
 - 2026-01-11: Changed popup to check baseline only (no auto-scan) with "Scan Now" button
+- 2026-01-11: Refactored MenuBarManager to handle state and auto-scan on FSEvents
 
 ### Blockers/Concerns
 
@@ -71,14 +73,15 @@ Resume file: None
 
 - `SettingsStore.swift` — Enable/disable paths and boundaries with persistence
 - `SettingsView.swift` — 5 tabs, paths save button, debug test data creation
-- `MenuBarView.swift` — Create baseline prompt, scan progress overlay, manual scan buttons
-- `MenuBarViewModel.swift` — Logic for manual scanning, scan progress, baseline checks
-- `TrackedPath.swift` — Added test_data to default paths
+- `MenuBarView.swift` — Uses MenuBarManager, manual scan buttons
+- `MenuBarManager.swift` — State management, auto-scan logic, disk space tracking
+- `MenuBarViewModel.swift` — Deprecated/Removed
 
 ## Recent Commits
 
+- `63e1cfd` — Refactor: Move logic to MenuBarManager, implement auto-scan on file change
+- `3059d85` — UI Polish: Manual scan trigger, no auto-scan on open, scan progress display
 - `247dbe7` — Settings paths save button, scan progress, stop button, baseline recheck
-- `d196ffb` — Phase 5: Settings feature + UI polish
 
 ## Legacy Code Reference
 
