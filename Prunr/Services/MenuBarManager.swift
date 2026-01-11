@@ -38,7 +38,8 @@ final class MenuBarManager {
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 320, height: 420)
         popover?.behavior = .transient
-        popover?.contentViewController = NSHostingController(rootView: MenuBarView())
+        // Pass self to MenuBarView
+        popover?.contentViewController = NSHostingController(rootView: MenuBarView(manager: self))
     }
 
     private func setupContextMenu() {
@@ -115,13 +116,135 @@ final class MenuBarManager {
 
     @objc private func resetBaseline() {
         Task {
-            do {
-                try await baselineService.resetBaseline()
-                updateFreeSpace()
-            } catch {
-                print("[MenuBarManager] Failed to reset baseline: \(error)")
+            await performReset()
+        }
+    }
+    
+    /// Public method to reset baseline (called by View)
+    func performReset() async {
+        do {
+            try await baselineService.resetBaseline()
+            updateFreeSpace()
+            await checkBaseline() // Update state
+            
+            // Also clear growth items since baseline is gone/reset
+            growthItems = []
+        } catch {
+            print("[MenuBarManager] Failed to reset baseline: \(error)")
+        }
+    }
+    
+    // MARK: - Scan & Growth Logic (Moved from ViewModel)
+    
+    // Published state for UI
+    var growthItems: [BaselineService.GrowthItem] = []
+    var isLoading = false
+    var errorMessage: String?
+    var noBaseline = false
+    var scanProgress: String = ""
+    var filesScanned: Int = 0
+    
+    // Disk space state
+    var totalBytes: Int64 = 0
+    var usedBytes: Int64 = 0
+    var freeBytes: Int64 = 0
+    
+    /// Loads the growth list by comparing current state with baseline
+    func loadGrowthList() async {
+        // Get first enabled tracked path from settings
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        guard let trackedPath = enabledPaths.first else {
+            print("[MenuBarManager] No enabled tracked paths in settings")
+            errorMessage = "No paths enabled in Settings"
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+        noBaseline = false
+        filesScanned = 0
+        scanProgress = "Scanning \(trackedPath.displayName)..."
+        
+        print("[MenuBarManager] Loading growth list for: \(trackedPath.url.path)")
+
+        do {
+            let items = try await baselineService.getGrowthList(trackedPath: trackedPath)
+            growthItems = items
+            scanProgress = ""
+            print("[MenuBarManager] Loaded \(items.count) growth items")
+        } catch {
+            if let baselineError = error as? BaselineService.BaselineError,
+               case .noBaseline = baselineError {
+                print("[MenuBarManager] No baseline exists")
+                noBaseline = true
+                growthItems = []
+            } else if let scanError = error as? ScanError, case .cancelled = scanError {
+                print("[MenuBarManager] Scan was cancelled")
+                scanProgress = "Cancelled"
+            } else {
+                print("[MenuBarManager] Error loading growth list: \(error)")
+                errorMessage = "Scan failed: \(error.localizedDescription)"
             }
         }
+
+        isLoading = false
+        scanProgress = ""
+    }
+    
+    /// Creates a new baseline from enabled paths
+    func createBaseline() async {
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        guard let trackedPath = enabledPaths.first else {
+            errorMessage = "No paths enabled in Settings"
+            return
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        filesScanned = 0
+        scanProgress = "Creating baseline for \(trackedPath.displayName)..."
+        
+        print("[MenuBarManager] Creating baseline for: \(trackedPath.url.path)")
+        
+        do {
+            _ = try await baselineService.createBaseline(trackedPath: trackedPath)
+            noBaseline = false
+            scanProgress = ""
+            print("[MenuBarManager] Baseline created successfully")
+            
+            // Start watching this new path
+            await startWatchingPaths()
+            
+        } catch {
+            if let scanError = error as? ScanError, case .cancelled = scanError {
+                print("[MenuBarManager] Baseline creation cancelled")
+                scanProgress = "Cancelled"
+            } else {
+                print("[MenuBarManager] Error creating baseline: \(error)")
+                errorMessage = error.localizedDescription
+            }
+        }
+        
+        isLoading = false
+        scanProgress = ""
+    }
+    
+    /// Stops the current scan
+    func stopScan() async {
+        await ScanService.shared.cancelScan()
+        scanProgress = "Stopping..."
+    }
+    
+    /// Checks if baseline exists without triggering a scan
+    func checkBaseline() async {
+        let hasBaseline = await baselineService.hasBaseline()
+        noBaseline = !hasBaseline
+    }
+    
+    /// Reveals the given path in Finder
+    func revealInFinder(path: String) {
+        let url = URL(fileURLWithPath: path)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     @objc private func quit() {
@@ -138,12 +261,31 @@ final class MenuBarManager {
             popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             isPopoverShown = true
             popover?.contentViewController?.view.window?.makeKey()
+            
+            // Just check baseline on open
+            Task {
+                await checkBaseline()
+            }
         }
     }
 
     func updateFreeSpace() {
-        let freeBytes = DiskSpaceService.shared.getFreeSpace()
-        let gb = Double(freeBytes) / 1_000_000_000
+        let free = DiskSpaceService.shared.getFreeSpace()
+        let total = DiskSpaceService.shared.getTotalSpace()
+        
+        // Update observable state for UI
+        self.freeBytes = free
+        self.totalBytes = total
+        self.usedBytes = total - free
+        
+        // Update menu bar text
+        let gb = Double(free) / 1_000_000_000
+
+        
+        // Also update view state
+        // totalBytes, etc. logic could be added here if needed for UI, 
+        // but currently UI uses DriveBarView. For now we assume UI might need it.
+        // We'll stick to updating the status bar text.
 
         if gb >= 1000 {
             let tb = gb / 1000
@@ -159,9 +301,12 @@ final class MenuBarManager {
 
     // MARK: - FSEvents Integration
 
-    /// Starts watching default tracked paths for file system changes.
-    private func startWatchingDefaultPaths() {
-        let urls = TrackedPath.defaultPaths.map { $0.url }
+    /// Starts watching paths from Settings for file system changes.
+    private func startWatchingPaths() async {
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        let urls = enabledPaths.map { $0.url }
+        
+        print("[MenuBarManager] Starting to watch: \(urls.map { $0.path })")
 
         // Set up callback to detect changes under tracked paths
         fseventsService.onChangedPaths = { [weak self] changedPaths in
@@ -170,23 +315,34 @@ final class MenuBarManager {
             // Only rescan if we have a baseline
             Task {
                 if await self.baselineService.hasBaseline() {
-                    let trackedPaths = TrackedPath.defaultPaths
+                    let trackedPaths = enabledPaths
+                    var shouldRescan = false
 
                     for changedPath in changedPaths {
                         for trackedPath in trackedPaths {
                             if changedPath.path.hasPrefix(trackedPath.url.path) {
-                                print("[MenuBarManager] Path \(changedPath.path) changed under \(trackedPath.displayName)")
-                                // Phase 4 will trigger targeted rescan and update UI
+                                print("[MenuBarManager] Change detected: \(changedPath.path)")
+                                shouldRescan = true
                             }
                         }
+                    }
+                    
+                    if shouldRescan {
+                        print("[MenuBarManager] Auto-triggering scan due to file changes...")
+                        await self.loadGrowthList()
                     }
                 }
             }
         }
 
         // Start watching asynchronously
+        await fseventsService.startWatching(paths: urls)
+    }
+    
+    /// Initial watcher setup
+    private func startWatchingDefaultPaths() {
         Task {
-            await fseventsService.startWatching(paths: urls)
+            await startWatchingPaths()
         }
     }
 }

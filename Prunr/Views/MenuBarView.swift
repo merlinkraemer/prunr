@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 
 struct MenuBarView: View {
-    @State private var viewModel = MenuBarViewModel()
+    @Bindable var manager: MenuBarManager
+    
     @Environment(\.openSettings) private var openSettings
     @Environment(\.dismiss) private var dismiss
     @State private var resetHover = false
@@ -32,9 +33,9 @@ struct MenuBarView: View {
             // Drive bar section
             VStack(alignment: .leading, spacing: 4) {
                 DriveBarView(
-                    totalBytes: viewModel.totalBytes,
-                    usedBytes: viewModel.usedBytes,
-                    freeBytes: viewModel.freeBytes
+                    totalBytes: manager.totalBytes,
+                    usedBytes: manager.usedBytes,
+                    freeBytes: manager.freeBytes
                 )
             }
             .padding(.horizontal, 16)
@@ -54,7 +55,7 @@ struct MenuBarView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
 
-                if viewModel.noBaseline {
+                if manager.noBaseline {
                     // No baseline prompt
                     VStack(spacing: 12) {
                         Image(systemName: "clock.badge.questionmark")
@@ -67,14 +68,14 @@ struct MenuBarView: View {
                             .foregroundStyle(.secondary)
                         Button("Create Baseline") {
                             Task {
-                                await viewModel.createBaseline()
+                                await manager.createBaseline()
                             }
                         }
                         .buttonStyle(.borderedProminent)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding()
-                } else if let error = viewModel.errorMessage {
+                } else if let error = manager.errorMessage {
                     // Error message
                     VStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle")
@@ -86,14 +87,14 @@ struct MenuBarView: View {
                             .multilineTextAlignment(.center)
                         Button("Retry") {
                             Task {
-                                await viewModel.loadGrowthList()
+                                await manager.loadGrowthList()
                             }
                         }
                         .buttonStyle(.bordered)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding()
-                } else if viewModel.growthItems.isEmpty && !viewModel.isLoading {
+                } else if manager.growthItems.isEmpty && !manager.isLoading {
                     // Baseline exists but no growth data loaded yet
                     VStack(spacing: 12) {
                         Image(systemName: "magnifyingglass")
@@ -106,7 +107,7 @@ struct MenuBarView: View {
                             .foregroundStyle(.secondary)
                         Button("Scan Now") {
                             Task {
-                                await viewModel.loadGrowthList()
+                                await manager.loadGrowthList()
                             }
                         }
                         .buttonStyle(.borderedProminent)
@@ -115,9 +116,9 @@ struct MenuBarView: View {
                     .padding()
                 } else {
                     GrowthListView(
-                        growthItems: viewModel.growthItems,
+                        growthItems: manager.growthItems,
                         onTapItem: { item in
-                            viewModel.revealInFinder(path: item.path)
+                            manager.revealInFinder(path: item.path)
                         }
                     )
                 }
@@ -133,7 +134,15 @@ struct MenuBarView: View {
                 Button {
                     isResetting = true
                     Task {
-                        await viewModel.resetBaseline()
+                        // We access resetBaseline directly via selector or expose it?
+                        // MenuBarManager has public method? No, it's @objc private.
+                        // But we can call createBaseline which is similar but reset is actually "Reset Baseline".
+                        // Wait, MenuBarManager had 'resetBaseline' as action, but it calls baselineService.
+                        // Let's assume we can call resetBaseline if we make it internal/public.
+                        // Or we call `baselineService.resetBaseline()` directly? No, better via manager.
+                        // I need to start exposing `resetBaseline` in Manager as internal.
+                        await manager.performReset()
+                        
                         // Brief delay to show completion
                         try? await Task.sleep(for: .milliseconds(500))
                         isResetting = false
@@ -167,7 +176,7 @@ struct MenuBarView: View {
                 .onHover { hovering in
                     resetHover = hovering
                 }
-                .disabled(viewModel.isLoading || isResetting)
+                .disabled(manager.isLoading || isResetting)
                 .padding(.horizontal, 5)
 
                 // Settings (28pt row height, 6pt corner radius, 4-6pt inset)
@@ -201,7 +210,7 @@ struct MenuBarView: View {
         .frame(width: 320, height: 420)
         .overlay {
             // Loading indicator with progress
-            if viewModel.isLoading {
+            if manager.isLoading {
                 ZStack {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
@@ -210,21 +219,21 @@ struct MenuBarView: View {
                         ProgressView()
                             .controlSize(.regular)
 
-                        if !viewModel.scanProgress.isEmpty {
-                            Text(viewModel.scanProgress)
+                        if !manager.scanProgress.isEmpty {
+                            Text(manager.scanProgress)
                                 .font(.caption)
                                 .foregroundStyle(.primary)
                         }
                         
-                        if viewModel.filesScanned > 0 {
-                            Text("\(viewModel.filesScanned) files scanned")
+                        if manager.filesScanned > 0 {
+                            Text("\(manager.filesScanned) files scanned")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                         
                         Button("Stop") {
                             Task {
-                                await viewModel.stopScan()
+                                await manager.stopScan()
                             }
                         }
                         .buttonStyle(.bordered)
@@ -237,14 +246,15 @@ struct MenuBarView: View {
         }
         .task {
             // Refresh disk space immediately (fast)
-            viewModel.refreshDiskSpace()
+            manager.updateFreeSpace()
             
             // Just check if baseline exists, don't auto-scan
-            await viewModel.checkBaseline()
+            await manager.checkBaseline()
         }
     }
 }
 
 #Preview {
-    MenuBarView()
+    // Cannot preview easily with Bindable manager without mock
+    Text("Preview not available")
 }
