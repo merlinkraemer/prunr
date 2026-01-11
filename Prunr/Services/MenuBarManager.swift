@@ -484,36 +484,44 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
     
     /// Generates test data at the default test path
+    /// Creates files in paths that match category patterns for testing
     func generateTestData() async {
         let testDataPath = "/Users/merlinkramer/dev/projects/prunr/test_data"
         let fm = FileManager.default
         let baseURL = URL(fileURLWithPath: testDataPath)
-        
+
         do {
             // Create base directory
             try fm.createDirectory(at: baseURL, withIntermediateDirectories: true)
-            
-            // Create small random files for quick testing (~10MB total)
+
+            // Create files in category-specific paths to test categorization
             let timestamp = Int(Date().timeIntervalSince1970)
-            let folders: [(name: String, sizeKB: Int, fileCount: Int)] = [
-                ("documents", 500, 2),   // 1 MB
-                ("images", 1000, 3),     // 3 MB
-                ("cache", 200, 5),       // 1 MB
-                ("downloads", 2000, 2),  // 4 MB
-                ("logs", 100, 5)         // 0.5 MB
+            let categoryPaths: [(path: String, sizeKB: Int, fileCount: Int)] = [
+                // Library/Caches (matches libraryCaches)
+                ("Library/Caches", 200, 3),           // 0.6 MB
+                // Downloads (matches downloads)
+                ("Downloads", 500, 2),                // 1 MB
+                // node_modules (matches nodeModules)
+                ("node_modules", 300, 2),             // 0.6 MB
+                // .Trash (matches trash)
+                (".Trash", 100, 2),                  // 0.2 MB
+                // Documents (won't match, goes to other)
+                ("Documents", 400, 2),                // 0.8 MB
+                // Logs (won't match, goes to other)
+                ("logs", 100, 2),                     // 0.2 MB
             ]
-            
+
             var totalCreated = 0
-            for folder in folders {
-                let folderURL = baseURL.appendingPathComponent(folder.name)
+            for folder in categoryPaths {
+                let folderURL = baseURL.appendingPathComponent(folder.path)
                 try fm.createDirectory(at: folderURL, withIntermediateDirectories: true)
-                
+
                 let sizeBytes = folder.sizeKB * 1024
-                
+
                 for i in 1...folder.fileCount {
-                    let fileName = "\(folder.name)_\(timestamp)_\(i)_\(arc4random() % 10000).dat"
+                    let fileName = "file_\(timestamp)_\(i)_\(arc4random() % 10000).dat"
                     let fileURL = folderURL.appendingPathComponent(fileName)
-                    
+
                     var bytes = [UInt8](repeating: 0, count: sizeBytes)
                     for j in 0..<sizeBytes {
                         bytes[j] = UInt8.random(in: 0...255)
@@ -522,11 +530,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                     totalCreated += sizeBytes
                 }
             }
-            
-            print("[MenuBarManager] Created \(Double(totalCreated) / 1024.0 / 1024.0) MB of test data")
-            
-            // Note: FSEvents should pick this up automatically if validation is running
-            
+
+            print("[MenuBarManager] Created \(Double(totalCreated) / 1024.0 / 1024.0) MB of test data in categories")
+            print("[MenuBarManager] Categories: Library/Caches, Downloads, node_modules, .Trash, other")
+
         } catch {
             print("[MenuBarManager] Failed to create test data: \(error)")
         }

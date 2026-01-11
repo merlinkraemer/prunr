@@ -328,7 +328,7 @@ private struct SmallItemsRow: View {
                     .frame(width: 16, height: 16)
 
                 // Count and size
-                Text("\(item.smallItemCount) files under 100MB")
+                Text("\(item.smallItemCount) files < 100MB")
                     .font(.system(size: 11))
                     .foregroundStyle(.primary)
 
@@ -337,11 +337,6 @@ private struct SmallItemsRow: View {
                 // Total size
                 Text(smallSizeText)
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-
-                // Chevron
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
