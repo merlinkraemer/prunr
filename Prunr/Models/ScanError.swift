@@ -17,13 +17,27 @@ enum ScanError: Error, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .permissionDenied(let path):
-            return "Permission denied: \(path)"
+            return "Permission denied: \(path)\n\nGrant Full Disk Access in System Settings > Privacy & Security > Full Disk Access"
         case .invalidPath:
             return "Invalid path or path does not exist"
         case .cancelled:
             return "Scan cancelled"
         case .unknown(let error):
-            return "Unknown error: \(error.localizedDescription)"
+            return "Scan failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Recovery suggestion for the error
+    var recoverySuggestion: String? {
+        switch self {
+        case .permissionDenied:
+            return "Go to System Settings > Privacy & Security > Full Disk Access and add Prunr to the list of allowed applications."
+        case .invalidPath:
+            return "Check that the path exists and you have access to it."
+        case .cancelled:
+            return nil
+        case .unknown:
+            return "Try again or contact support if the problem persists."
         }
     }
 }

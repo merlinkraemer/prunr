@@ -153,29 +153,50 @@ struct DetailContentView: View {
     /// Error banner with dismiss and copy buttons
     @ViewBuilder
     private func errorBanner(_ message: String) -> some View {
-        HStack {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.yellow)
-            Text(message)
-                .font(.callout)
-                .lineLimit(3)
-            Spacer()
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(message, forType: .string)
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                Text(message)
+                    .font(.callout)
+                    .lineLimit(5)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(message, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Copy error to clipboard")
+                Button {
+                    viewModel.dismissError()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .help("Copy error to clipboard")
-            Button {
-                viewModel.dismissError()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
+
+            // Show recovery suggestion if message contains common error patterns
+            if message.contains("Permission denied") || message.contains("Full Disk Access") {
+                HStack(spacing: 4) {
+                    Image(systemName: "info.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.blue)
+                    Text("Open System Settings to grant Full Disk Access")
+                        .font(.caption2)
+                        .foregroundStyle(.blue)
+                    Button("Open") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.link)
+                }
             }
-            .buttonStyle(.plain)
         }
         .padding()
         .background(.red.opacity(0.1))

@@ -93,7 +93,38 @@ final class MainViewModel {
     func scan(path: String) async {
         guard !isScanning else { return }
 
-        print("[DEBUG] Starting scan of: \(path)")
+        print("[DEBUG] ========== Starting scan ==========")
+        print("[DEBUG] Path: \(path)")
+        print("[DEBUG] Checking path accessibility...")
+
+        // Check if path exists before attempting scan
+        var isDirectory: ObjCBool = false
+        let pathExists = fileManager.fileExists(atPath: path, isDirectory: &isDirectory)
+
+        print("[DEBUG] Path exists: \(pathExists), isDirectory: \(isDirectory.boolValue)")
+
+        guard pathExists else {
+            errorMessage = "Path does not exist: \(path)"
+            print("[ERROR] Path does not exist: \(path)")
+            return
+        }
+
+        guard isDirectory.boolValue else {
+            errorMessage = "Path is not a directory: \(path)"
+            print("[ERROR] Path is not a directory: \(path)")
+            return
+        }
+
+        // Check if we can read the directory
+        let isReadable = fileManager.isReadableFile(atPath: path)
+        print("[DEBUG] Path is readable: \(isReadable)")
+
+        guard isReadable else {
+            errorMessage = "No permission to access \(path). Grant Full Disk Access in System Settings > Privacy & Security > Full Disk Access"
+            print("[ERROR] Permission denied for path: \(path)")
+            return
+        }
+
         isScanning = true
         scanProgress = "Starting scan..."
         errorMessage = nil
@@ -104,7 +135,7 @@ final class MainViewModel {
                     self?.scanProgress = progress.currentPath
                 }
             }
-            print("[DEBUG] Scan completed, snapshot ID: \(snapshot.id ?? -1)")
+            print("[DEBUG] Scan completed successfully, snapshot ID: \(snapshot.id ?? -1)")
 
             // Store the current snapshot ID for comparison
             if let snapshotId = snapshot.id {
@@ -117,7 +148,22 @@ final class MainViewModel {
         } catch {
             // Don't show error for cancelled scans
             if let scanError = error as? ScanError, case .cancelled = scanError {
-                print("[DEBUG] Scan cancelled")
+                print("[DEBUG] Scan cancelled by user")
+            } else if let scanError = error as? ScanError {
+                // Handle specific scan errors with helpful messages
+                switch scanError {
+                case .permissionDenied(let path):
+                    errorMessage = "Permission denied: \(path)\n\nGrant Full Disk Access in System Settings > Privacy & Security > Full Disk Access"
+                    print("[ERROR] Permission denied: \(path)")
+                case .invalidPath:
+                    errorMessage = "Invalid path or path does not exist"
+                    print("[ERROR] Invalid path error")
+                case .unknown(let err):
+                    errorMessage = "Scan failed: \(err.localizedDescription)"
+                    print("[ERROR] Unknown scan error: \(err)")
+                case .cancelled:
+                    break // Already handled above
+                }
             } else {
                 let errorMsg = "Scan failed: \(error.localizedDescription)"
                 print("[ERROR] \(errorMsg)")
@@ -128,6 +174,7 @@ final class MainViewModel {
 
         isScanning = false
         scanProgress = ""
+        print("[DEBUG] ========== Scan finished ==========")
     }
 
     /// Stops the current scan operation
