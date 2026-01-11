@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 Phase: 5 of 5 (Settings & Polish)
 Plan: In progress
 Status: Settings feature with scan progress implemented
-Last activity: 2026-01-11 — Implemented auto-sacn on file change
+Last activity: 2026-01-11 — Implemented auto-scan on file change
 
 Progress: █████████▓ 95% (Settings + scan progress + auto-scan)
 
