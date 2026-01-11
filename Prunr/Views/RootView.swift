@@ -1,7 +1,6 @@
 import SwiftUI
 
 /// Root view container providing Finder-style sidebar layout with NavigationSplitView
-/// Replaces the previous single-pane NavigationStack approach
 struct RootView: View {
     /// Currently selected path from the sidebar
     @State private var selectedPath: TrackedPath?
@@ -19,7 +18,7 @@ struct RootView: View {
                     max: 300
                 )
         } detail: {
-            // Detail column - MainView content
+            // Detail column - Main content with column view
             if let selectedPath = selectedPath {
                 DetailContentView(selectedPath: selectedPath)
             } else {
@@ -53,8 +52,8 @@ struct RootView: View {
 
 // MARK: - Detail Content View
 
-/// Temporary detail view wrapper for MainView content
-/// In future phases, this will become the three-column category view
+/// Main content view for a selected path
+/// Shows comparison controls and the three-column category view
 struct DetailContentView: View {
     let selectedPath: TrackedPath
     @State private var viewModel = MainViewModel()
@@ -71,12 +70,7 @@ struct DetailContentView: View {
                 scanningBanner
             }
 
-            // Snapshot selection
-            snapshotPickers
-
-            Divider()
-
-            // Main content
+            // Main content - three column view or empty state
             contentView
         }
         .toolbar {
@@ -90,28 +84,28 @@ struct DetailContentView: View {
             }
             #endif
 
+            // Rescan button
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task {
-                        await viewModel.scan(path: selectedPath.url.path)
+                        await viewModel.scanCurrentState()
                     }
                 } label: {
-                    Label("Scan", systemImage: "arrow.clockwise")
+                    Label("Rescan", systemImage: "arrow.clockwise")
                 }
                 .disabled(viewModel.isScanning)
+                .help("Scan the current state of this path")
             }
         }
         .navigationTitle(selectedPath.displayName)
         .task {
+            // Set the selected path in the view model
+            viewModel.selectedPath = selectedPath
+
             // Register actions with AppActions for menu commands
             AppActions.shared.scanAction = {
                 Task {
-                    await viewModel.scan(path: selectedPath.url.path)
-                }
-            }
-            AppActions.shared.refreshAction = {
-                Task {
-                    await viewModel.refreshSnapshots()
+                    await viewModel.scanCurrentState()
                 }
             }
             #if DEBUG
@@ -122,21 +116,9 @@ struct DetailContentView: View {
             }
             #endif
 
+            // Load snapshots and perform initial comparison
             await viewModel.loadSnapshots()
-            viewModel.autoSelectSnapshots()
-            if viewModel.selectedBeforeSnapshot != nil && viewModel.selectedAfterSnapshot != nil {
-                await viewModel.compareSnapshots()
-            }
-        }
-        .onChange(of: viewModel.selectedBeforeSnapshot) {
-            Task {
-                await viewModel.compareSnapshots()
-            }
-        }
-        .onChange(of: viewModel.selectedAfterSnapshot) {
-            Task {
-                await viewModel.compareSnapshots()
-            }
+            await viewModel.compareSince()
         }
     }
 
@@ -177,7 +159,7 @@ struct DetailContentView: View {
     private var scanningBanner: some View {
         HStack {
             ProgressView()
-                .scaleEffect(0.7)
+                .controlSize(.small)
             Text("Scanning: \(viewModel.scanProgress)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -190,52 +172,13 @@ struct DetailContentView: View {
         .background(.blue.opacity(0.05))
     }
 
-    /// Snapshot pickers for before/after selection
-    private var snapshotPickers: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading) {
-                Text("Before")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Picker("Before", selection: $viewModel.selectedBeforeSnapshot) {
-                    Text("Select...").tag(nil as Snapshot?)
-                    ForEach(viewModel.snapshots) { snapshot in
-                        Text(formattedDate(snapshot.createdAt))
-                            .tag(snapshot as Snapshot?)
-                    }
-                }
-                .labelsHidden()
-            }
-
-            Image(systemName: "arrow.right")
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading) {
-                Text("After")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Picker("After", selection: $viewModel.selectedAfterSnapshot) {
-                    Text("Select...").tag(nil as Snapshot?)
-                    ForEach(viewModel.snapshots) { snapshot in
-                        Text(formattedDate(snapshot.createdAt))
-                            .tag(snapshot as Snapshot?)
-                    }
-                }
-                .labelsHidden()
-            }
-
-            Spacer()
-        }
-        .padding()
-    }
-
-    /// Main content showing either deltas list or empty state
+    /// Main content showing either three-column view or empty state
     @ViewBuilder
     private var contentView: some View {
-        if viewModel.deltas.isEmpty {
+        if viewModel.deltas.isEmpty && !viewModel.isScanning {
             emptyState
         } else {
-            deltasList
+            ColumnContainerView(deltas: $viewModel.deltas)
         }
     }
 
@@ -250,43 +193,19 @@ struct DetailContentView: View {
             if viewModel.snapshots.isEmpty {
                 Text("No snapshots yet")
                     .font(.headline)
-                Text("Click Scan to create your first snapshot")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else if viewModel.snapshots.count == 1 {
-                Text("Need two snapshots to compare")
-                    .font(.headline)
-                Text("Click Scan again to create another snapshot")
+                Text("Click Rescan to create your first snapshot")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Select two snapshots to compare")
+                Text("No changes found")
                     .font(.headline)
-                Text("Use the pickers above to choose snapshots")
+                Text("Try changing the comparison interval or rescanning")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    /// List of delta rows
-    private var deltasList: some View {
-        List(viewModel.deltas) { delta in
-            DeltaRowView(delta: delta)
-        }
-        .listStyle(.inset)
-    }
-
-    // MARK: - Helpers
-
-    /// Format date for snapshot picker
-    private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
     }
 }
 

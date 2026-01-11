@@ -20,7 +20,20 @@ actor ScanService {
     /// Tracks whether a scan is currently in progress
     @MainActor var isScanning = false
 
+    /// Cancellation token for stopping in-progress scans
+    private var isCancelled = false
+
     private init() {}
+
+    /// Cancels the current scan operation
+    func cancelScan() {
+        isCancelled = true
+    }
+
+    /// Resets cancellation state for a new scan
+    private func resetCancellation() {
+        isCancelled = false
+    }
 
     // MARK: - Types
 
@@ -54,6 +67,9 @@ actor ScanService {
                 userInfo: [NSLocalizedDescriptionKey: "A scan is already in progress"]
             ))
         }
+
+        // Reset cancellation state
+        resetCancellation()
 
         // Set scanning state
         await MainActor.run {
@@ -101,6 +117,11 @@ actor ScanService {
             let stream = await scanner.scan(url)
 
             for try await result in stream {
+                // Check for cancellation
+                if isCancelled {
+                    throw ScanError.cancelled
+                }
+
                 batch.append(result)
                 count += 1
 

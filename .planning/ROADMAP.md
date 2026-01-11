@@ -2,7 +2,14 @@
 
 ## Overview
 
-Build a macOS disk space tracker that shows what grew recently. Start with project setup, add scanning and storage, implement delta calculations, then wrap it in a SwiftUI interface. Four phases to deliver the core "what grew in the last 24h" value.
+Prunr is a filesystem growth journal that answers "What filled my disk?" Unlike DaisyDisk (shows current state) or CleanMyMac (blind cleanup), Prunr shows what grew over time and groups scattered files logically for actionable cleanup.
+
+**How It Works:**
+1. **SCAN** → Store directory sizes in SQLite (~500KB/snapshot)
+2. **COMPARE** → Query growth: "What grew >100MB in last 7d?"
+3. **GROUP** → Detect Homebrew/npm/apps → link scattered paths
+
+Build in phases: project setup → scanner → delta engine → UI → smart grouping → cleanup actions.
 
 ## Domain Expertise
 
@@ -33,10 +40,12 @@ Plans:
 - [x] 01-01: Xcode project + GRDB integration
 
 ### Phase 2: Scanner & Storage
-**Goal**: Scan disk recursively, store folder sizes with timestamps in SQLite
+**Goal**: Scan disk recursively, store directory sizes with timestamps in SQLite (~500KB/snapshot)
 **Depends on**: Phase 1
 **Research**: Unlikely (GRDB decided, FileManager APIs standard)
 **Plans**: TBD
+
+**Note:** Directory-level snapshots are sufficient for "what grew" questions. Individual file tracking deferred until needed for delete operations.
 
 Plans:
 - [x] 02-01: Disk scanner implementation
@@ -61,31 +70,34 @@ Plans:
 - [x] 04-01: Main window UI
 - [x] 04-02: App chrome + build for distribution
 
-### Phase 5: Finder-Style Redesign
-**Goal**: Complete UX overhaul with Finder-style sidebar, column view navigation, and simplified "since X ago" comparison
+### Phase 5: DaisyDisk-Style Scan Results
+**Goal**: Simple 2-screen UX: select path → scan results with category growth bars → drill down to file list
 **Depends on**: Phase 4
 **Research**: Complete (RESEARCH.md created)
-**Plans**: TBD (run /gsd:plan-phase 5 to break down)
 
 **User Requirements:**
-1. **Left Sidebar**: Scan paths like Finder (customizable, add/remove, default list, persistent)
-2. **Column View**: 3-column layout like Finder:
-   - Column 1: Categories (Apps, Packages, Containers, Files/Folders, etc.)
-   - Column 2: Items within selected category
-   - Column 3: Details about selected item
-3. **Simplified Comparison**: "Compare Since" dropdown (1h, 12h, 24h, 3d, 7d, custom) - always compares vs current state
-4. **Top Bar**: Rescan button + comparison picker (no 2-snapshot selection needed)
+1. **Screen 1 - Sidebar**: Select path/drive to scan (like DaisyDisk)
+2. **Screen 2 - Scan Results**:
+   - Categories with growth bars (apps, packages, projects, homebrew, docker, npm, media)
+   - Smart grouping by source (detects: homebrew? docker? npm? app? media files?)
+   - Click category → drill down to file list
+3. **File List Detail**:
+   - Finder-like view of all files in category
+   - Shows size, change amount, "NEW" badge for added files
+   - Sorted by current size (largest first)
+4. **Comparison**: Since last scan (auto-scan on path selection)
 
 **Technical Approach:**
-- NavigationSplitView for sidebar + main layout
-- @AppStorage for persisting tracked paths
-- Custom HStack of Lists for 3-column view (or NSBrowser via NSViewRepresentable)
+- NavigationSplitView for sidebar + main layout (already built)
+- DaisyDisk-style category cards (replaces 3-column view)
+- Pattern detection for smart grouping (Homebrew, docker, npm, media files)
 
 Plans:
 - [x] 05-01: TrackedPath and PathManager models
 - [x] 05-02: Sidebar View with NavigationSplitView
-- [ ] 05-03: Three-Column View
-- [ ] 05-04: Simplified Comparison
+- [x] 05-03: Three-Column View (categories → items → details) - superseded
+- [x] 05-04: Simplified Comparison
+- [ ] 05-05: DaisyDisk-Style Scan Results (replaces 3-column view)
 
 ### Phase 6: Cleanup Actions
 **Goal**: Add delete/move functionality to free disk space directly from Prunr
@@ -114,5 +126,15 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. Scanner & Storage | 2/2 | Complete | 2026-01-10 |
 | 3. Delta Engine | 1/1 | Complete | 2026-01-10 |
 | 4. UI & Polish | 2/2 | Complete | 2026-01-10 |
-| 5. Finder-Style Redesign | 2/4 | In progress | — |
+| 5. DaisyDisk-Style Scan Results | 4/5 | In progress | — |
 | 6. Cleanup Actions | 0/0 | Future | — |
+
+## Key Differentiators
+
+| Feature | DaisyDisk | CleanMyMac | Prunr |
+|---------|-----------|------------|-------|
+| Shows | Current sizes | Junk detection | Growth over time |
+| Question answered | What's big? | What's safe to clean? | What filled my disk? |
+| History | No | No | 30/90d history |
+| Grouping | No | No | Scattered → logical |
+| Time windows | N/A | N/A | 1d / 7d / 30d |

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// ViewModel for the main window, managing snapshots, scans, and delta comparisons
 @Observable
@@ -9,12 +10,6 @@ final class MainViewModel {
 
     /// All available snapshots from the database
     var snapshots: [Snapshot] = []
-
-    /// The older snapshot for comparison (before)
-    var selectedBeforeSnapshot: Snapshot?
-
-    /// The newer snapshot for comparison (after)
-    var selectedAfterSnapshot: Snapshot?
 
     /// Current comparison results
     var deltas: [Delta] = []
@@ -28,12 +23,33 @@ final class MainViewModel {
     /// User-visible error message
     var errorMessage: String?
 
+    /// Currently selected path for scanning and comparison
+    var selectedPath: TrackedPath?
+
+    /// The comparison interval in seconds (default 24 hours)
+    var comparisonInterval: TimeInterval = 86400
+
     // MARK: - Private Properties
 
     private let scanService = ScanService.shared
     private let deltaService = DeltaService.shared
     private let db = DatabaseManager.shared
     private let fileManager = FileManager.default
+
+    /// The ID of the most recent current-state snapshot (for comparison)
+    private var currentSnapshotId: Int64?
+
+    /// The ID of the historical snapshot being compared against
+    private var historicalSnapshotId: Int64?
+
+    // MARK: - Initialization
+
+    init() {
+        // Load the comparison interval from AppStorage
+        if let storedValue = UserDefaults.standard.object(forKey: "comparisonInterval") as? TimeInterval {
+            self.comparisonInterval = storedValue
+        }
+    }
 
     // MARK: - Public Methods
 
@@ -64,35 +80,71 @@ final class MainViewModel {
             }
             print("[DEBUG] Scan completed, snapshot ID: \(snapshot.id ?? -1)")
 
+            // Store the current snapshot ID for comparison
+            if let snapshotId = snapshot.id {
+                currentSnapshotId = snapshotId
+            }
+
             // Reload snapshots after successful scan
             await loadSnapshots()
-            autoSelectSnapshots()
 
         } catch {
-            let errorMsg = "Scan failed: \(error.localizedDescription)"
-            print("[ERROR] \(errorMsg)")
-            print("[ERROR] Full error: \(error)")
-            errorMessage = errorMsg
+            // Don't show error for cancelled scans
+            if let scanError = error as? ScanError, case .cancelled = scanError {
+                print("[DEBUG] Scan cancelled")
+            } else {
+                let errorMsg = "Scan failed: \(error.localizedDescription)"
+                print("[ERROR] \(errorMsg)")
+                print("[ERROR] Full error: \(error)")
+                errorMessage = errorMsg
+            }
         }
 
         isScanning = false
         scanProgress = ""
     }
 
-    /// Compares the selected before and after snapshots
-    func compareSnapshots() async {
-        guard let before = selectedBeforeSnapshot,
-              let beforeId = before.id,
-              let after = selectedAfterSnapshot,
-              let afterId = after.id else {
+    /// Stops the current scan operation
+    func stopScan() async {
+        guard isScanning else { return }
+        print("[DEBUG] Stopping scan...")
+        await scanService.cancelScan()
+    }
+
+    /// Compares the two most recent snapshots
+    /// Simplified workflow: always compare newest vs second-newest
+    func compareSince() async {
+        guard selectedPath != nil else {
             deltas = []
             return
         }
 
-        print("[DEBUG] Comparing snapshots: beforeId=\(beforeId), afterId=\(afterId)")
+        guard snapshots.count >= 2 else {
+            errorMessage = "Need at least 2 snapshots to compare. Scan this path at least twice."
+            deltas = []
+            return
+        }
+
+        // Use the two most recent snapshots
+        // snapshots[0] = newest (current), snapshots[1] = second newest (previous)
+        guard let currentId = snapshots[0].id,
+              let previousId = snapshots[1].id else {
+            errorMessage = "Invalid snapshot IDs."
+            deltas = []
+            return
+        }
+
+        print("[DEBUG] Comparing snapshots: previousId=\(previousId), currentId=\(currentId)")
+
+        await performComparison(historicalId: previousId, currentId: currentId)
+    }
+
+    /// Performs the delta comparison between two snapshots
+    private func performComparison(historicalId: Int64, currentId: Int64) async {
+        print("[DEBUG] Comparing snapshots: historicalId=\(historicalId), currentId=\(currentId)")
 
         do {
-            deltas = try await deltaService.compare(beforeId: beforeId, afterId: afterId)
+            deltas = try await deltaService.compare(beforeId: historicalId, afterId: currentId)
             print("[DEBUG] Comparison successful: \(deltas.count) deltas")
         } catch {
             let errorMsg = "Failed to compare snapshots: \(error.localizedDescription)"
@@ -103,18 +155,21 @@ final class MainViewModel {
         }
     }
 
-    /// Automatically selects the two most recent snapshots for comparison
-    func autoSelectSnapshots() {
-        // Snapshots are already sorted newest first
-        guard snapshots.count >= 2 else {
-            selectedBeforeSnapshot = nil
-            selectedAfterSnapshot = nil
+    /// Scans the current state of the selected path
+    func scanCurrentState() async {
+        guard let path = selectedPath else {
+            errorMessage = "No path selected for scanning"
             return
         }
+        await scan(path: path.url.path)
+        // Re-run comparison after scanning
+        await compareSince()
+    }
 
-        // Most recent is "after", second most recent is "before"
-        selectedAfterSnapshot = snapshots[0]
-        selectedBeforeSnapshot = snapshots[1]
+    /// Updates the comparison interval and persists it to UserDefaults
+    func updateComparisonInterval(_ interval: TimeInterval) {
+        comparisonInterval = interval
+        UserDefaults.standard.set(interval, forKey: "comparisonInterval")
     }
 
     /// Clears any displayed error message
@@ -122,34 +177,13 @@ final class MainViewModel {
         errorMessage = nil
     }
 
-    /// Refreshes the snapshot list while preserving current selections
-    /// After reloading, attempts to restore the previously selected snapshots by ID,
-    /// then triggers a comparison if both selections are still valid.
-    func refreshSnapshots() async {
-        // Preserve current selection IDs
-        let beforeId = selectedBeforeSnapshot?.id
-        let afterId = selectedAfterSnapshot?.id
-
-        // Reload snapshots
-        await loadSnapshots()
-
-        // Restore selections by finding snapshots with matching IDs
-        selectedBeforeSnapshot = snapshots.first { $0.id == beforeId }
-        selectedAfterSnapshot = snapshots.first { $0.id == afterId }
-
-        // If we have valid selections, trigger comparison
-        if selectedBeforeSnapshot != nil && selectedAfterSnapshot != nil {
-            await compareSnapshots()
-        }
-    }
-
     #if DEBUG
-    /// Generates test data in the PrunrTest folder for development testing
+    /// Generates test data in the test_data folder for development testing
     /// Creates folders and files with changing sizes to demonstrate delta tracking
+    /// Each call modifies file sizes to create visible deltas when scanning
     func generateTestData() async {
         print("[DEBUG] ========== generateTestData called ==========")
-        let testPath = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first!
-            .appending("/Prunr/PrunrTest")
+        let testPath = "/Users/merlinkramer/dev/projects/prunr/test_data"
         print("[DEBUG] Generating test data in: \(testPath)")
 
         do {
@@ -163,33 +197,57 @@ final class MainViewModel {
                 try data.write(to: URL(fileURLWithPath: testPath).appendingPathComponent(file))
             }
 
-            // Create some test files with varying sizes
-            // Delete old files first if they exist
-            let oldFiles = ["old_folder.txt", "changed_file.txt", "stable_file.txt"]
-            for file in oldFiles {
-                let filePath = (testPath as NSString).appendingPathComponent(file)
-                try? fileManager.removeItem(atPath: filePath)
-            }
+            // Use timestamp to vary sizes each run
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let randomVariation = timestamp % 10 + 1  // 1-10 variation factor
 
-            // Delete old "shrunk" folder
-            try? fileManager.removeItem(atPath: (testPath as NSString).appendingPathComponent("shrunk_folder"))
+            // Files that grow: growing_file.txt (increases each run)
+            let baseSize = 1_000_000  // 1 MB base
+            let growingSize = baseSize + (randomVariation * 500_000)  // Add 0.5-5 MB
+            try writeData(Data(repeating: UInt8(randomVariation), count: growingSize), to: "growing_file.txt")
 
-            // Create fresh test data
-            try writeData(Data(repeating: 0xAA, count: 1_000_000), to: "stable_file.txt")      // 1 MB - stays same
-            try writeData(Data(repeating: 0xBB, count: 2_000_000), to: "changed_file.txt")     // 2 MB - will change
-            try writeData(Data(repeating: 0xCC, count: 500_000), to: "new_file.txt")          // 0.5 MB - new
+            // Files that shrink: shrinking_file.txt (decreases each run)
+            let shrinkingSize = max(100_000, 5_000_000 - (randomVariation * 400_000))  // Start at 5 MB, shrink
+            try writeData(Data(repeating: 0xAA, count: shrinkingSize), to: "shrinking_file.txt")
 
-            // Create a folder with files
+            // Stable file (same size, different timestamp content)
+            try writeData("Stable content at \(timestamp)".data(using: .utf8)!, to: "stable_file.txt")
+
+            // New file with timestamp (appears as new each time if deleted)
+            try writeData("New content \(timestamp)".data(using: .utf8)!, to: "timestamp_file.txt")
+
+            // Create a folder with a large file
             let folderPath = (testPath as NSString).appendingPathComponent("test_folder")
-            try fileManager.createDirectory(atPath: folderPath, withIntermediateDirectories: true)
-            try Data(repeating: 0xDD, count: 3_000_000).write(to: URL(fileURLWithPath: folderPath).appendingPathComponent("large.bin"))
+            if !fileManager.fileExists(atPath: folderPath) {
+                try fileManager.createDirectory(atPath: folderPath, withIntermediateDirectories: true)
+            }
+            try Data(repeating: 0xDD, count: 2_000_000 + Int(randomVariation * 200_000))
+                .write(to: URL(fileURLWithPath: folderPath).appendingPathComponent("folder_file.bin"))
 
             errorMessage = nil
-            print("[DEBUG] Test data generated successfully")
+            print("[DEBUG] Test data generated successfully - sizes will vary on each run")
         } catch {
-            errorMessage = "Failed to generate test data: \(error.localizedDescription)"
-            print("[ERROR] \(errorMessage)")
+            let msg = "Failed to generate test data: \(error.localizedDescription)"
+            errorMessage = msg
+            print("[ERROR] \(msg)")
         }
     }
     #endif
+
+    // MARK: - Helpers
+
+    /// Formats the comparison interval for display
+    private func formattedInterval(_ interval: TimeInterval) -> String {
+        let hours = Int(interval / 3600)
+        let days = hours / 24
+
+        if days >= 1 {
+            return "\(days)d"
+        } else if hours >= 1 {
+            return "\(hours)h"
+        } else {
+            let minutes = Int(interval / 60)
+            return "\(minutes)m"
+        }
+    }
 }

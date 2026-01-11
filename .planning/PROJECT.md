@@ -2,15 +2,24 @@
 
 ## What This Is
 
-Prunr is a macOS app that tracks what's eating your disk space *over time* and helps you see what grew recently. Unlike tools that show what's big (DaisyDisk) or blindly clean caches (CleanMyMac), Prunr answers: "What grew in the last 24 hours?"
+Prunr is a filesystem growth journal for macOS. It answers: *"What filled my disk?"*
 
-For developers and power users on storage-constrained Macs, it turns a 30-minute scavenger hunt into a 1-minute answer.
+Unlike DaisyDisk (shows what's big) or CleanMyMac (blind cleanup), Prunr shows what grew over time and groups scattered files logically for actionable cleanup.
+
+**Problem:** Disk is full. User forgot what filled it.
+**Solution:** Snapshot directory sizes over time → show what grew → group scattered files → delete.
+
+## How It Works
+
+1. **SCAN** → Store directory sizes in SQLite (~500KB/snapshot)
+2. **COMPARE** → Query growth: "What grew >100MB in last 7d?"
+3. **GROUP** → Detect Homebrew/npm/apps → link scattered paths
 
 ## Core Value
 
 **When storage suddenly drops, users can immediately see what consumed it.**
 
-The "what grew in the last 24h" view is the core—everything else supports this.
+The growth journal view is the core—everything else supports finding and removing the space hogs.
 
 ## Requirements
 
@@ -27,9 +36,7 @@ The "what grew in the last 24h" view is the core—everything else supports this
 
 ### Out of Scope
 
-- Cleanup actions — v1 is read-only, shows growth but doesn't delete anything
 - App Store distribution — direct distribution only for v1, avoids sandbox complexity
-- Category detection/grouping — v1 shows raw folder paths, smart grouping deferred to v2
 - Menu bar companion — nice-to-have but not core for first ship
 - Low-space alerts — deferred until core value is validated
 - Settings UI — hardcode sensible defaults for v1
@@ -43,11 +50,13 @@ The "what grew in the last 24h" view is the core—everything else supports this
 - Anyone on a 256-512GB Mac who actively manages storage
 
 **Existing landscape:**
-- DaisyDisk: shows what's big, no change tracking
-- CleanMyMac: blind cleanup, no insight into what grew
-- `du` commands: slow, tedious, no history
+| Tool | What it shows | Limitation |
+|------|---------------|------------|
+| DaisyDisk | Current disk usage | No history, no change tracking |
+| CleanMyMac | "Junk" detection | Blind cleanup, no insight into what grew |
+| `du` commands | Directory sizes | Slow, tedious, no history |
 
-**Key insight:** Users waste 30+ minutes hunting manually or blindly delete hoping it helps. Prunr provides: accurate size tracking + time-based deltas + clear answers.
+**Key insight:** Users waste 30+ minutes hunting manually or blindly delete hoping it helps. Prunr provides: time-based growth tracking + smart grouping for scattered files + clear answers.
 
 ## Constraints
 
@@ -59,11 +68,13 @@ The "what grew in the last 24h" view is the core—everything else supports this
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Core 4 features for v1 | Ship the value loop fast, add polish later | — Pending |
-| Read-only for v1 | Avoid complexity and risk of deletion features | — Pending |
+| Directory-level snapshots | ~500KB/snapshot vs 50MB for file-level. Sufficient for "what grew" questions. | — Pending |
+| Smart grouping is core | Homebrew, npm, apps scatter files. Grouping makes results actionable. | — Pending |
+| Time windows: 1d/7d/30d | Covers "yesterday", "last week", "last month" use cases | — Pending |
+| Growth bars in UI | Visual feedback makes big changes obvious at a glance | — Pending |
 | Direct distribution | Avoids sandbox restrictions, simpler for v1 | — Pending |
-| GRDB.swift for SQLite | Robust, type-safe, well-documented Swift wrapper | — Pending |
-| SwiftUI + MVVM | Native, declarative, clean separation | — Pending |
+| GRDB.swift for SQLite | Robust, type-safe, well-documented Swift wrapper | ✅ Complete |
+| SwiftUI + MVVM | Native, declarative, clean separation | ✅ Complete |
 
 ---
-*Last updated: 2026-01-10 after initialization*
+*Last updated: 2026-01-11 — clarified growth journal vision*
