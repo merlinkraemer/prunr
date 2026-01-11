@@ -44,4 +44,85 @@ final class PermissionsService {
 
         NSWorkspace.shared.open(url)
     }
+
+    // MARK: - Permission Status
+
+    /// The current permission status based on Full Disk Access availability.
+    var permissionStatus: PermissionStatus {
+        if canAccessRootLibrary() {
+            return .granted
+        }
+        // Since we can't reliably distinguish between "not determined" and "denied"
+        // without FDA, we default to denied for UI purposes
+        return .denied
+    }
+
+    // MARK: - Helper Methods
+
+    /// Tests read access to a given path using FileManager.
+    ///
+    /// - Parameter path: The file system path to test
+    /// - Returns: `true` if the path can be accessed, `false` otherwise
+    func testAccess(to path: String) -> Bool {
+        FileManager.default.fileExists(atPath: path)
+    }
+
+    /// Tests access to the user's Home Library folder.
+    ///
+    /// This location typically requires Full Disk Access to be accessed
+    /// when the app is sandboxed.
+    ///
+    /// - Returns: `true` if ~/Library can be accessed
+    func canAccessHomeLibrary() -> Bool {
+        let homeLibrary = FileManager.default.urls(
+            for: .libraryDirectory,
+            in: .userDomainMask
+        ).first
+        return homeLibrary.map { testAccess(to: $0.path) } ?? false
+    }
+
+    /// Tests access to the root /Library folder.
+    ///
+    /// This location always requires Full Disk Access.
+    ///
+    /// - Returns: `true` if /Library can be accessed
+    func canAccessRootLibrary() -> Bool {
+        testAccess(to: "/Library")
+    }
+}
+
+// MARK: - PermissionStatus
+
+/// The permission status for Full Disk Access.
+enum PermissionStatus: String, CaseIterable {
+    /// Permission has not been requested yet
+    case notDetermined
+    /// Full Disk Access has been granted
+    case granted
+    /// Full Disk Access has been denied
+    case denied
+
+    /// Display name for UI purposes.
+    var displayName: String {
+        switch self {
+        case .notDetermined:
+            "Not Determined"
+        case .granted:
+            "Granted"
+        case .denied:
+            "Denied"
+        }
+    }
+
+    /// SF Symbol icon name for UI display.
+    var icon: String {
+        switch self {
+        case .notDetermined:
+            "questionmark.circle"
+        case .granted:
+            "checkmark.circle.fill"
+        case .denied:
+            "xmark.circle.fill"
+        }
+    }
 }
