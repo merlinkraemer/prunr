@@ -531,8 +531,25 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 }
             }
 
+            // Create one "big file" (105MB) in Downloads to test big file display
+            let downloadsURL = baseURL.appendingPathComponent("Downloads")
+            let bigFileSizeBytes = 105 * 1024 * 1024 // 105 MB
+            let bigFileName = "big_test_file_\(timestamp).dat"
+            let bigFileURL = downloadsURL.appendingPathComponent(bigFileName)
+
+            // Create big file in chunks to avoid memory issues
+            let chunkSize = 1024 * 1024 // 1 MB chunks
+            var bigFileData = Data()
+            for _ in 0..<(bigFileSizeBytes / chunkSize) {
+                var chunk = [UInt8](repeating: UInt8.random(in: 0...255), count: chunkSize)
+                bigFileData.append(contentsOf: chunk)
+            }
+            try bigFileData.write(to: bigFileURL)
+            totalCreated += bigFileSizeBytes
+
             print("[MenuBarManager] Created \(Double(totalCreated) / 1024.0 / 1024.0) MB of test data in categories")
             print("[MenuBarManager] Categories: Library/Caches, Downloads, node_modules, .Trash, other")
+            print("[MenuBarManager] Big file: 105 MB file in Downloads (tests >= 100MB threshold)")
 
         } catch {
             print("[MenuBarManager] Failed to create test data: \(error)")

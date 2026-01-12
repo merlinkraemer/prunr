@@ -11,6 +11,9 @@ struct CategoryGrowthItem: Identifiable, Sendable {
     /// Current total size of this category (bytes)
     let currentSizeBytes: Int64
 
+    /// All items in this category (for drill-down view)
+    let allItems: [BaselineService.GrowthItem]
+
     /// Individual items >100MB threshold
     let bigItems: [BaselineService.GrowthItem]
 

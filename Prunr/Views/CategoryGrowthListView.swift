@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// List view showing growth grouped by category with expandable sections
+/// List view showing growth grouped by category with drill-down navigation
 struct CategoryGrowthListView: View {
     /// Category growth items to display
     let categoryItems: [CategoryGrowthItem]
@@ -16,47 +16,70 @@ struct CategoryGrowthListView: View {
         Group {
             if categoryItems.isEmpty {
                 emptyStateView
+            } else if selectedCategory == nil {
+                // Category list view
+                categoryListView
             } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(categoryItems) { item in
-                            CategorySection(
-                                item: item,
-                                isExpanded: expandedCategories.contains(item.id),
-                                smallItemsExpanded: expandedSmallItems.contains(item.id),
-                                onToggleExpand: { toggleCategory(item.id) },
-                                onToggleSmallItems: { toggleSmallItems(item.id) },
-                                onTapItem: onTapItem
-                            )
-                        }
-                    }
-                }
-                .frame(maxHeight: maxHeight)
+                // Category detail view (drill-down)
+                categoryDetailView
             }
         }
     }
 
     // MARK: - State
 
-    @State private var expandedCategories: Set<String> = []
-    @State private var expandedSmallItems: Set<String> = []
+    @State private var selectedCategory: CategoryGrowthItem?
+
+    // MARK: - Category List View
+
+    private var categoryListView: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(categoryItems) { item in
+                    CategoryListRow(
+                        item: item,
+                        onTap: { selectCategory(item) }
+                    )
+                }
+            }
+        }
+        .frame(maxHeight: maxHeight)
+    }
+
+    // MARK: - Category Detail View
+
+    private var categoryDetailView: some View {
+        VStack(spacing: 0) {
+            // Header with back button
+            CategoryDetailHeader(
+                category: selectedCategory!,
+                onBack: { selectedCategory = nil }
+            )
+
+            // List of all items in this category
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(sortedItems) { item in
+                        ItemRow(
+                            item: item,
+                            onTap: { onTapItem(item) }
+                        )
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: maxHeight)
+    }
+
+    /// All items in the selected category, sorted by size (largest first)
+    private var sortedItems: [BaselineService.GrowthItem] {
+        selectedCategory?.allItems.sorted { $0.growthBytes > $1.growthBytes } ?? []
+    }
 
     // MARK: - Actions
 
-    private func toggleCategory(_ categoryId: String) {
-        if expandedCategories.contains(categoryId) {
-            expandedCategories.remove(categoryId)
-        } else {
-            expandedCategories.insert(categoryId)
-        }
-    }
-
-    private func toggleSmallItems(_ categoryId: String) {
-        if expandedSmallItems.contains(categoryId) {
-            expandedSmallItems.remove(categoryId)
-        } else {
-            expandedSmallItems.insert(categoryId)
-        }
+    private func selectCategory(_ item: CategoryGrowthItem) {
+        selectedCategory = item
     }
 
     // MARK: - Empty State
@@ -88,59 +111,10 @@ struct CategoryGrowthListView: View {
     }
 }
 
-// MARK: - Category Section
+// MARK: - Category List Row
 
-private struct CategorySection: View {
+private struct CategoryListRow: View {
     let item: CategoryGrowthItem
-    let isExpanded: Bool
-    let smallItemsExpanded: Bool
-    let onToggleExpand: () -> Void
-    let onToggleSmallItems: () -> Void
-    let onTapItem: (BaselineService.GrowthItem) -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Category row
-            CategoryRow(
-                item: item,
-                isExpanded: isExpanded,
-                onTap: onToggleExpand
-            )
-
-            // Expanded content
-            if isExpanded {
-                // Big items
-                ForEach(item.bigItems) { bigItem in
-                    BigItemRow(
-                        item: bigItem,
-                        onTap: { onTapItem(bigItem) }
-                    )
-                }
-
-                // Small items collapsible row
-                if item.hasSmallItems {
-                    SmallItemsRow(
-                        item: item,
-                        isExpanded: smallItemsExpanded,
-                        onTap: onToggleSmallItems
-                    )
-
-                    // Expanded small items
-                    if smallItemsExpanded {
-                        // Note: We don't have individual small items in CategoryGrowthItem
-                        // This is deferred for future phase
-                    }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Category Row
-
-private struct CategoryRow: View {
-    let item: CategoryGrowthItem
-    let isExpanded: Bool
     let onTap: () -> Void
 
     var body: some View {
@@ -160,6 +134,11 @@ private struct CategoryRow: View {
 
                 Spacer()
 
+                // Item count
+                Text("\(item.itemCount) items")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
                 // Growth amount
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.up.right")
@@ -170,11 +149,6 @@ private struct CategoryRow: View {
                         .font(.system(size: 12))
                         .foregroundStyle(growthSeverityColor)
                 }
-
-                // Chevron
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -228,23 +202,97 @@ private struct CategoryRow: View {
     }
 }
 
-// MARK: - Big Item Row
+// MARK: - Category Detail Header
 
-private struct BigItemRow: View {
+private struct CategoryDetailHeader: View {
+    let category: CategoryGrowthItem
+    let onBack: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Back button
+            Button(action: onBack) {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+
+                    Text("Back")
+                        .font(.system(size: 12))
+                }
+                .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            // Category name and icon
+            HStack(spacing: 6) {
+                Image(systemName: category.category.icon)
+                    .font(.system(size: 14))
+                    .foregroundStyle(growthSeverityColor)
+
+                Text(category.category.displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            Spacer()
+
+            // Total growth
+            Text(growthText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(growthSeverityColor)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.gray.opacity(0.05))
+    }
+
+    private var growthText: String {
+        formattedBytes(category.totalGrowthBytes, prefix: "+")
+    }
+
+    private var growthSeverityColor: Color {
+        let gb = Double(category.totalGrowthBytes) / 1_000_000_000
+        if gb >= 5 {
+            return .red
+        } else if gb >= 1 {
+            return .orange
+        } else {
+            return .green
+        }
+    }
+
+    private func formattedBytes(_ bytes: Int64, prefix: String = "") -> String {
+        let kb = Double(bytes) / 1_000
+        let mb = kb / 1_000
+        let gb = mb / 1_000
+
+        if abs(gb) >= 1 {
+            return "\(prefix)\(String(format: "%.1f", gb)) GB"
+        } else if abs(mb) >= 1 {
+            return "\(prefix)\(String(format: "%.0f", mb)) MB"
+        } else if abs(kb) >= 1 {
+            return "\(prefix)\(String(format: "%.0f", kb)) KB"
+        } else {
+            return "\(prefix)\(bytes) B"
+        }
+    }
+}
+
+// MARK: - Item Row (for detail view)
+
+private struct ItemRow: View {
     let item: BaselineService.GrowthItem
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
-                // Indent for hierarchy
-                Spacer()
-                    .frame(width: 24)
-
-                // File icon
+                // File/folder icon
                 Image(systemName: "doc.fill")
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(item.isBigFile ? .orange : .secondary)
                     .frame(width: 16, height: 16)
 
                 // File name
@@ -255,7 +303,7 @@ private struct BigItemRow: View {
 
                 Spacer()
 
-                // Size with percentage
+                // Size
                 Text(sizeText)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -307,79 +355,6 @@ private struct BigItemRow: View {
     }
 }
 
-// MARK: - Small Items Row
-
-private struct SmallItemsRow: View {
-    let item: CategoryGrowthItem
-    let isExpanded: Bool
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 10) {
-                // Indent for hierarchy
-                Spacer()
-                    .frame(width: 24)
-
-                // Small files icon
-                Image(systemName: "doc.on.doc.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-
-                // Count and size
-                Text("\(item.smallItemCount) files < 100MB")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.primary)
-
-                Spacer()
-
-                // Total size
-                Text(smallSizeText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 4)
-            .frame(minHeight: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
-            )
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                hoverState = hovering
-            }
-        }
-    }
-
-    @State private var hoverState = false
-
-    private var smallSizeText: String {
-        formattedBytes(item.smallItemTotalBytes, prefix: "+")
-    }
-
-    private func formattedBytes(_ bytes: Int64, prefix: String = "") -> String {
-        let kb = Double(bytes) / 1_000
-        let mb = kb / 1_000
-        let gb = mb / 1_000
-
-        if abs(gb) >= 1 {
-            return "\(prefix)\(String(format: "%.1f", gb)) GB"
-        } else if abs(mb) >= 1 {
-            return "\(prefix)\(String(format: "%.0f", mb)) MB"
-        } else if abs(kb) >= 1 {
-            return "\(prefix)\(String(format: "%.0f", kb)) KB"
-        } else {
-            return "\(prefix)\(bytes) B"
-        }
-    }
-}
-
 // MARK: - Sample Data
 
 extension CategoryGrowthListView {
@@ -390,6 +365,20 @@ extension CategoryGrowthListView {
                     category: .homebrew,
                     totalGrowthBytes: 4_100_000_000,
                     currentSizeBytes: 8_500_000_000,
+                    allItems: [
+                        BaselineService.GrowthItem(
+                            path: "/usr/local/Cellar/python@3.9",
+                            growthBytes: 850_000_000,
+                            currentSizeBytes: 1_200_000_000,
+                            percentOfParent: 0.21
+                        ),
+                        BaselineService.GrowthItem(
+                            path: "/usr/local/Cellar/node",
+                            growthBytes: 650_000_000,
+                            currentSizeBytes: 900_000_000,
+                            percentOfParent: 0.16
+                        )
+                    ],
                     bigItems: [
                         BaselineService.GrowthItem(
                             path: "/usr/local/Cellar/python@3.9",
@@ -412,6 +401,14 @@ extension CategoryGrowthListView {
                     category: .nodeModules,
                     totalGrowthBytes: 2_800_000_000,
                     currentSizeBytes: 5_200_000_000,
+                    allItems: [
+                        BaselineService.GrowthItem(
+                            path: "/Users/test/project/node_modules",
+                            growthBytes: 450_000_000,
+                            currentSizeBytes: 650_000_000,
+                            percentOfParent: 0.16
+                        )
+                    ],
                     bigItems: [
                         BaselineService.GrowthItem(
                             path: "/Users/test/project/node_modules",
@@ -428,6 +425,7 @@ extension CategoryGrowthListView {
                     category: .libraryCaches,
                     totalGrowthBytes: 1_500_000_000,
                     currentSizeBytes: 3_100_000_000,
+                    allItems: [],
                     bigItems: [],
                     smallItemCount: 89,
                     smallItemTotalBytes: 1_500_000_000,
@@ -437,6 +435,14 @@ extension CategoryGrowthListView {
                     category: .downloads,
                     totalGrowthBytes: 850_000_000,
                     currentSizeBytes: 1_200_000_000,
+                    allItems: [
+                        BaselineService.GrowthItem(
+                            path: "/Users/test/Downloads/installer.pkg",
+                            growthBytes: 450_000_000,
+                            currentSizeBytes: 450_000_000,
+                            percentOfParent: 0.53
+                        )
+                    ],
                     bigItems: [
                         BaselineService.GrowthItem(
                             path: "/Users/test/Downloads/installer.pkg",

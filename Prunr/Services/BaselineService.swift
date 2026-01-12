@@ -453,11 +453,12 @@ actor BaselineService {
             // Calculate percent of total growth
             let percentOfTotal = totalGrowth > 0 ? Double(categoryGrowth) / Double(totalGrowth) : 0.0
 
-            // Create CategoryGrowthItem
+            // Create CategoryGrowthItem with all items for drill-down
             let categoryItem = CategoryGrowthItem(
                 category: category,
                 totalGrowthBytes: categoryGrowth,
                 currentSizeBytes: categorySize,
+                allItems: items, // All items for drill-down view
                 bigItems: bigItems,
                 smallItemCount: smallItemCount,
                 smallItemTotalBytes: smallItemTotalBytes,
