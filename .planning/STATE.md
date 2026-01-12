@@ -16,11 +16,11 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 4: Menu Bar UI ✓ (incl. 04-02-FIX for UI issues)
 - Phase 5: Settings & Polish ✓
 - Phase 6: Popup HIG Redesign (Not Planned)
-- Phase 7.1: Layout Fixes (1/2 plans complete) - Category list with nested big files, distinct icon colors, stable layout
+- Phase 7.1: Layout Fixes (2/2 plans complete) - Category list with nested big files, distinct icon colors, stable layout, slide-in navigation, polished drill-down
 
-Last activity: 2026-01-12 — Completed 7.1-01: Big file nesting + category colors.
+Last activity: 2026-01-12 — Completed 7.1-02: Slide-in navigation + drill-down polish.
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 (1/2 plans)
+Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
@@ -84,6 +84,11 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 (1/2 pla
 | 7.1-01 | Fixed 60pt width for item count text | Prevents layout jitter when counts change |
 | 7.1-01 | 32pt indentation for nested big items | Creates clear visual hierarchy |
 | 7.1-01 | Visual separator between category groups | Thin gray line (1pt, 15% opacity) |
+| 7.1-02 | Finder-style slide-in navigation | ZStack with offset animations (80% push left, slide from right) |
+| 7.1-02 | 300ms easeInOut animation timing | Natural Finder-like feel for transitions |
+| 7.1-02 | Background dimming during drill-down | 10% black overlay focuses attention on detail view |
+| 7.1-02 | Navigation bar styling for detail header | Bottom border, shadow, larger font for visual hierarchy |
+| 7.1-02 | Fixed header with scrollable content | Header stays at top, items scroll beneath |
 
 ### Deferred Issues
 
@@ -114,7 +119,7 @@ None.
 
 Last session: 2026-01-12
 MVP Status: Complete (all 5 phases finished)
-Phase 7.1: In progress (1/2 plans) - Category list layout fixes started
+Phase 7.1: Complete (2/2 plans) - Category list layout fixes with slide-in navigation
 Resume file: None
 
 ## Key Files Changed (Final MVP)

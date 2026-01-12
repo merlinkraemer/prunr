@@ -159,7 +159,7 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 | 5. Settings & Polish | 1/1 | Complete | 2026-01-11 |
 | 6. Popup HIG Redesign | 0/0 | Not Planned | — |
 | 7. Category Growth View | 4/4 | Complete | 2026-01-12 |
-| 7.1. Layout Fixes | 1/2 | In progress | 2026-01-12 |
+| 7.1. Layout Fixes | 2/2 | Complete | 2026-01-12 |
 
 **MVP Status:** 🎉 MVP complete (Phase 1-5). Phase 6-7.1 are post-MVP enhancements.
 
