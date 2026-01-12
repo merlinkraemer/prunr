@@ -161,6 +161,7 @@ private struct CategoryListRow: View {
                 Text("\(item.itemCount) items")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .frame(width: 60, alignment: .trailing)
 
                 // Growth amount
                 HStack(spacing: 4) {
