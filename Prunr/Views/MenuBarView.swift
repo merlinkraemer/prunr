@@ -120,10 +120,11 @@ struct MenuBarView: View {
 
     private var mainCategoryView: some View {
         VStack(spacing: 0) {
-            // Header with drive bar + monitoring path
-            mainHeaderView
-
-            Divider()
+            // Header with drive bar + monitoring path (hidden during drill-down - ISS-037)
+            if !manager.isDrilledDown {
+                mainHeaderView
+                Divider()
+            }
 
             // Category list
             categoryListView
@@ -288,6 +289,7 @@ struct MenuBarView: View {
             } else {
                 CategoryGrowthListView(
                     categoryItems: manager.categoryItems,
+                    manager: manager,
                     onTapItem: { item in
                         // Reveal item in Finder
                         NSWorkspace.shared.selectFile(item.path, inFileViewerRootedAtPath: "")

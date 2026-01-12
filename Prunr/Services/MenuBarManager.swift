@@ -26,6 +26,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // Published state for UI
     var growthItems: [BaselineService.GrowthItem] = []
     var categoryItems: [CategoryGrowthItem] = []
+    var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
     var monitoredPathName: String = ""
     var monitoredPathDisplay: String {
         // Full path for header display with tilde notation (e.g., "~/dev" instead of "/Users/username/dev")

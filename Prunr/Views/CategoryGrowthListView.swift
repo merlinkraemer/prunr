@@ -6,11 +6,14 @@ struct CategoryGrowthListView: View {
     /// Category growth items to display
     let categoryItems: [CategoryGrowthItem]
 
+    /// Menu bar manager for drill-down state tracking (ISS-037)
+    @Bindable var manager: MenuBarManager
+
     /// Callback when a big item is tapped (reveal in Finder)
     var onTapItem: (BaselineService.GrowthItem) -> Void = { _ in }
 
     /// Maximum height for the scrollable list
-    var maxHeight: CGFloat = 300
+    var maxHeight: CGFloat = 360 // Increased from 300 to 360 for more space
 
     var body: some View {
         ZStack {
@@ -27,16 +30,15 @@ struct CategoryGrowthListView: View {
 
             // Category list view (pushes left when drilling down)
             categoryListView
-                .offset(x: selectedCategory == nil ? 0 : -maxWidth * 0.8)
-                .animation(.easeInOut(duration: 0.3), value: selectedCategory)
+                .offset(x: selectedCategory == nil ? 0 : -maxWidth)
 
-            // Category detail view (slides in from right)
+            // Category detail view (slides in from right, no transition modifier)
             if selectedCategory != nil {
                 categoryDetailView
-                    .offset(x: selectedCategory == nil ? maxWidth * 0.8 : 0)
-                    .transition(.move(edge: .trailing))
+                    .offset(x: selectedCategory == nil ? maxWidth : 0)
             }
         }
+        .animation(.easeInOut(duration: 0.3), value: selectedCategory)
         .onAppear {
             // Capture available width for animation calculations
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -49,6 +51,7 @@ struct CategoryGrowthListView: View {
 
     @State private var selectedCategory: CategoryGrowthItem?
     @State private var maxWidth: CGFloat = 320
+    @State private var expandedFolders: Set<String> = []
 
     // MARK: - Category List View
 
@@ -69,12 +72,15 @@ struct CategoryGrowthListView: View {
                                         }
                                     }
                                 )
+                                .equatable() // Prevent unnecessary redraws
 
                                 // Nested big files (max 3)
                                 if !item.bigItems.isEmpty {
-                                    ForEach(item.bigItems.prefix(3), id: \.path) { bigItem in
+                                    ForEach(Array(item.bigItems.prefix(3).enumerated()), id: \.element.path) { index, bigItem in
+                                        let isLastInList = (index == min(2, item.bigItems.count - 1)) && item.bigItems.count <= 3
                                         NestedBigItemRow(
                                             item: bigItem,
+                                            isLastItem: isLastInList,
                                             onTap: { onTapItem(bigItem) }
                                         )
                                     }
@@ -86,9 +92,6 @@ struct CategoryGrowthListView: View {
                                             onTap: { selectCategory(item) }
                                         )
                                     }
-
-                                    // Visual separator
-                                    SeparatorRow()
                                 }
                             }
                         }
@@ -109,18 +112,44 @@ struct CategoryGrowthListView: View {
                 onBack: {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         selectedCategory = nil
+                        manager.isDrilledDown = false // Reset drill-down state (ISS-037)
                     }
                 }
             )
 
-            // List of all items in this category
+            // List of items grouped by folder
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(sortedItems) { item in
-                        ItemRow(
-                            item: item,
-                            onTap: { onTapItem(item) }
+                    ForEach(sortedFolders, id: \.path) { folder in
+                        // Folder header (clickable to toggle expand/collapse)
+                        FolderHeaderRow(
+                            folderPath: folder.path,
+                            items: folder.items,
+                            isExpanded: expandedFolders.contains(folder.path),
+                            onToggle: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if expandedFolders.contains(folder.path) {
+                                        expandedFolders.remove(folder.path)
+                                    } else {
+                                        expandedFolders.insert(folder.path)
+                                    }
+                                }
+                            },
+                            onReveal: {
+                                // Reveal the folder in Finder
+                                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
+                            }
                         )
+
+                        // Items (only if expanded)
+                        if expandedFolders.contains(folder.path) {
+                            ForEach(folder.items) { item in
+                                ItemRow(
+                                    item: item,
+                                    onTap: { onTapItem(item) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -134,10 +163,32 @@ struct CategoryGrowthListView: View {
         selectedCategory?.allItems.sorted { $0.growthBytes > $1.growthBytes } ?? []
     }
 
+    /// Items grouped by their parent folder path
+    private var itemsGroupedByFolder: [String: [BaselineService.GrowthItem]] {
+        Dictionary(grouping: sortedItems) { item in
+            URL(fileURLWithPath: item.path)
+                .deletingLastPathComponent()
+                .path
+        }
+    }
+
+    /// Folders sorted by total growth (largest first)
+    private var sortedFolders: [(path: String, items: [BaselineService.GrowthItem])] {
+        itemsGroupedByFolder
+            .map { (path, items) in
+                (path, items.sorted { $0.growthBytes > $1.growthBytes })
+            }
+            .sorted {
+                $0.items.reduce(0) { $0 + $1.growthBytes } >
+                $1.items.reduce(0) { $0 + $1.growthBytes }
+            }
+    }
+
     // MARK: - Actions
 
     private func selectCategory(_ item: CategoryGrowthItem) {
         selectedCategory = item
+        manager.isDrilledDown = true // Update drill-down state (ISS-037)
     }
 
     // MARK: - Empty State
@@ -171,7 +222,12 @@ struct CategoryGrowthListView: View {
 
 // MARK: - Category List Row
 
-private struct CategoryListRow: View {
+private struct CategoryListRow: View, Equatable {
+    static func == (lhs: CategoryListRow, rhs: CategoryListRow) -> Bool {
+        lhs.item.totalGrowthBytes == rhs.item.totalGrowthBytes &&
+        lhs.item.itemCount == rhs.item.itemCount &&
+        lhs.item.bigItems.count == rhs.item.bigItems.count
+    }
     let item: CategoryGrowthItem
     let onTap: () -> Void
 
@@ -355,6 +411,99 @@ private struct CategoryDetailHeader: View {
     }
 }
 
+// MARK: - Folder Header Row
+
+private struct FolderHeaderRow: View {
+    let folderPath: String
+    let items: [BaselineService.GrowthItem]
+    let isExpanded: Bool
+    let onToggle: () -> Void
+    let onReveal: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 10) {
+                // Chevron (right when collapsed, down when expanded)
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 12)
+
+                // Folder icon
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.blue.opacity(0.8))
+                    .frame(width: 16, height: 16)
+
+                // Folder name (last path component)
+                Text(folderName)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                // Item count
+                Text("\(items.count) file\(items.count == 1 ? "" : "s")")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+
+                // Total folder growth
+                Text(totalGrowthText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                // Reveal in Finder button (secondary action)
+                Button(action: {
+                    onReveal()
+                }) {
+                    Image(systemName: "arrow.up.forward.square")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.gray.opacity(isExpanded ? 0.12 : 0.08))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                hoverState = hovering
+            }
+        }
+    }
+
+    @State private var hoverState = false
+
+    private var folderName: String {
+        URL(fileURLWithPath: folderPath).lastPathComponent
+    }
+
+    private var totalGrowthText: String {
+        let total = items.reduce(0) { $0 + $1.growthBytes }
+        return formattedBytes(total, prefix: "+")
+    }
+
+    private func formattedBytes(_ bytes: Int64, prefix: String = "") -> String {
+        let kb = Double(bytes) / 1_000
+        let mb = kb / 1_000
+        let gb = mb / 1_000
+
+        if abs(gb) >= 1 {
+            return "\(prefix)\(String(format: "%.1f", gb)) GB"
+        } else if abs(mb) >= 1 {
+            return "\(prefix)\(String(format: "%.0f", mb)) MB"
+        } else if abs(kb) >= 1 {
+            return "\(prefix)\(String(format: "%.0f", kb)) KB"
+        } else {
+            return "\(prefix)\(bytes) B"
+        }
+    }
+}
+
 // MARK: - Item Row (for detail view)
 
 private struct ItemRow: View {
@@ -434,14 +583,21 @@ private struct ItemRow: View {
 
 private struct NestedBigItemRow: View {
     let item: BaselineService.GrowthItem
+    let isLastItem: Bool
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 8) {
-                // Indentation spacer
+            HStack(spacing: 4) {
+                // Left indent (to align with parent)
                 Spacer()
-                    .frame(width: 32)
+                    .frame(width: 10)
+
+                // Tree character
+                Text(isLastItem ? "└──" : "├──")
+                    .font(.system(size: 9, weight: .light, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 18)
 
                 // File icon
                 Image(systemName: "doc.fill")
@@ -470,7 +626,6 @@ private struct NestedBigItemRow: View {
                     .fill(hoverState ? Color.gray.opacity(0.08) : Color.clear)
             )
             .padding(.horizontal, 6)
-            .padding(.leading, 32)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -516,10 +671,16 @@ private struct MoreIndicatorRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 8) {
-                // Indentation spacer
+            HStack(spacing: 4) {
+                // Left indent
                 Spacer()
-                    .frame(width: 32)
+                    .frame(width: 10)
+
+                // Tree character (always last item)
+                Text("└──")
+                    .font(.system(size: 9, weight: .light, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 18)
 
                 Text("\(count) more")
                     .font(.system(size: 10))
@@ -540,7 +701,6 @@ private struct MoreIndicatorRow: View {
                     .fill(hoverState ? Color.gray.opacity(0.08) : Color.clear)
             )
             .padding(.horizontal, 6)
-            .padding(.leading, 32)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -554,17 +714,6 @@ private struct MoreIndicatorRow: View {
     @State private var hoverState = false
 }
 
-// MARK: - Separator Row
-
-private struct SeparatorRow: View {
-    var body: some View {
-        Rectangle()
-            .fill(Color.gray.opacity(0.15))
-            .frame(height: 1)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 4)
-    }
-}
 
 // MARK: - Sample Data
 
@@ -672,16 +821,7 @@ extension CategoryGrowthListView {
 }
 
 #Preview {
-    VStack {
-        Text("Category Growth List")
-            .font(.headline)
-
-        Divider()
-
-        CategoryGrowthListView(categoryItems: CategoryGrowthListView.PreviewData.sampleItems) { item in
-            print("Tapped: \(item.path)")
-        }
-    }
-    .frame(width: 320, height: 400)
-    .padding()
+    // Note: Preview not available without MenuBarManager instance
+    Text("Preview requires MenuBarManager")
+        .frame(width: 320, height: 400)
 }
