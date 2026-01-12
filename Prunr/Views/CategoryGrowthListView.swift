@@ -24,29 +24,17 @@ struct CategoryGrowthListView: View {
     }
 
     var body: some View {
+        // Conditional rendering: ONLY ONE view exists at a time for proper push animation
         ZStack {
-            // Background dimming overlay (only in detail view)
-            if computedSelectedCategory != nil {
-                Color.black.opacity(0.1)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            selectedCategory = nil
-                            manager.isDrilledDown = false
-                        }
-                    }
-            }
-
-            // Conditional rendering: ONLY ONE view exists at a time
             if computedSelectedCategory == nil {
-                // Main list view
+                // Main list view - exits left when category selected
                 categoryListView
                     .transition(.asymmetric(
                         insertion: .move(edge: .leading),
                         removal: .move(edge: .leading)
                     ))
             } else {
-                // Detail view - computedSelectedCategory is guaranteed non-nil here
+                // Detail view - enters from right, exits left on back
                 categoryDetailView(for: computedSelectedCategory!)
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing),
