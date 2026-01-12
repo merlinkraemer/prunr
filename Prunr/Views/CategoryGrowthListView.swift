@@ -102,50 +102,37 @@ struct CategoryGrowthListView: View {
     // MARK: - Category Detail View
 
     private func categoryDetailView(for category: CategoryGrowthItem) -> some View {
-        VStack(spacing: 0) {
-            // Header with back button
-            CategoryDetailHeader(
-                category: category,
-                onBack: {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        selectedCategory = nil
-                        manager.isDrilledDown = false // Reset drill-down state (ISS-037)
-                    }
-                }
-            )
-
-            // List of items grouped by folder
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(sortedFolders(for: category), id: \.path) { folder in
-                        // Folder header (clickable to toggle expand/collapse)
-                        FolderHeaderRow(
-                            folderPath: folder.path,
-                            items: folder.items,
-                            isExpanded: expandedFolders.contains(folder.path),
-                            onToggle: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    if expandedFolders.contains(folder.path) {
-                                        expandedFolders.remove(folder.path)
-                                    } else {
-                                        expandedFolders.insert(folder.path)
-                                    }
+        // List of items grouped by folder (header is in MenuBarView now)
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(sortedFolders(for: category), id: \.path) { folder in
+                    // Folder header (clickable to toggle expand/collapse)
+                    FolderHeaderRow(
+                        folderPath: folder.path,
+                        items: folder.items,
+                        isExpanded: expandedFolders.contains(folder.path),
+                        onToggle: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                if expandedFolders.contains(folder.path) {
+                                    expandedFolders.remove(folder.path)
+                                } else {
+                                    expandedFolders.insert(folder.path)
                                 }
-                            },
-                            onReveal: {
-                                // Reveal the folder in Finder
-                                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
                             }
-                        )
+                        },
+                        onReveal: {
+                            // Reveal the folder in Finder
+                            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
+                        }
+                    )
 
-                        // Items (only if expanded)
-                        if expandedFolders.contains(folder.path) {
-                            ForEach(folder.items) { item in
-                                ItemRow(
-                                    item: item,
-                                    onTap: { onTapItem(item) }
-                                )
-                            }
+                    // Items (only if expanded)
+                    if expandedFolders.contains(folder.path) {
+                        ForEach(folder.items) { item in
+                            ItemRow(
+                                item: item,
+                                onTap: { onTapItem(item) }
+                            )
                         }
                     }
                 }
@@ -186,6 +173,7 @@ struct CategoryGrowthListView: View {
     private func selectCategory(_ item: CategoryGrowthItem) {
         selectedCategory = item
         manager.isDrilledDown = true // Update drill-down state (ISS-037)
+        manager.selectedCategoryForDrilldown = item // Update for external navigation (ISS-043 fix)
     }
 
     // MARK: - Empty State
@@ -288,100 +276,6 @@ private struct CategoryListRow: View, Equatable {
 
     private var growthSeverityColor: Color {
         let gb = Double(item.totalGrowthBytes) / 1_000_000_000
-        if gb >= 5 {
-            return .red
-        } else if gb >= 1 {
-            return .orange
-        } else {
-            return .green
-        }
-    }
-
-    private func formattedBytes(_ bytes: Int64, prefix: String = "") -> String {
-        let kb = Double(bytes) / 1_000
-        let mb = kb / 1_000
-        let gb = mb / 1_000
-
-        if abs(gb) >= 1 {
-            return "\(prefix)\(String(format: "%.1f", gb)) GB"
-        } else if abs(mb) >= 1 {
-            return "\(prefix)\(String(format: "%.0f", mb)) MB"
-        } else if abs(kb) >= 1 {
-            return "\(prefix)\(String(format: "%.0f", kb)) KB"
-        } else {
-            return "\(prefix)\(bytes) B"
-        }
-    }
-}
-
-// MARK: - Category Detail Header
-
-private struct CategoryDetailHeader: View {
-    let category: CategoryGrowthItem
-    let onBack: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                // Back button
-                Button(action: onBack) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 13, weight: .semibold))
-
-                        Text("Back")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundStyle(.blue)
-                }
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                // Category name and icon (visually centered)
-                HStack(spacing: 6) {
-                    Image(systemName: category.category.icon)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(growthSeverityColor)
-
-                    Text(category.category.displayName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.primary)
-                }
-
-                Spacer()
-
-                // Total growth (right-aligned)
-                Text(growthText)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(growthSeverityColor)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 12)
-
-            // Bottom border
-            Divider()
-        }
-        .background(
-            // Enhanced background with subtle gradient
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    Color.gray.opacity(0.02)
-                ]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-        .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-    }
-
-    private var growthText: String {
-        formattedBytes(category.totalGrowthBytes, prefix: "+")
-    }
-
-    private var growthSeverityColor: Color {
-        let gb = Double(category.totalGrowthBytes) / 1_000_000_000
         if gb >= 5 {
             return .red
         } else if gb >= 1 {

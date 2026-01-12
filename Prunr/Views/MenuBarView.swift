@@ -165,40 +165,85 @@ struct MenuBarView: View {
     // MARK: - Page Navigation Content
 
     private var pageNavigationContent: some View {
-        Group {
-            if manager.isDrilledDown {
-                // Detail page with back button header
-                detailPageView
-            } else {
-                // Main page with monitoring path header
-                mainPageView
-            }
-        }
-    }
-
-    // MARK: - Main Page View
-
-    private var mainPageView: some View {
         VStack(spacing: 0) {
-            // Monitoring path header (page-level header, not storage bar)
-            monitoringPathHeader
+            // Header section - switches between monitoring path and drill-down
+            headerSection
             Divider()
+            // Single CategoryGrowthListView instance handles internal animation
             categoryListView
         }
     }
 
-    // MARK: - Detail Page View
+    // MARK: - Header Section
 
-    private var detailPageView: some View {
-        // Pass through to CategoryGrowthListView with forced category for drill-down
-        CategoryGrowthListView(
-            categoryItems: manager.categoryItems,
-            manager: manager,
-            onTapItem: { item in
-                NSWorkspace.shared.selectFile(item.path, inFileViewerRootedAtPath: "")
-            },
-            forcedCategory: manager.selectedCategoryForDrilldown
-        )
+    private var headerSection: some View {
+        Group {
+            if manager.isDrilledDown, let category = manager.selectedCategoryForDrilldown {
+                // Drill-down header: back button, category name, size
+                drillDownHeader(category: category)
+            } else {
+                // Main header: monitoring path, size, settings link
+                monitoringPathHeader
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: manager.isDrilledDown)
+    }
+
+    // MARK: - Drill-down Header
+
+    private func drillDownHeader(category: CategoryGrowthItem) -> some View {
+        Button {
+            closePopoverAndOpenSettings()
+        } label: {
+            HStack(spacing: 8) {
+                // Back button on left
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        manager.isDrilledDown = false
+                        manager.selectedCategoryForDrilldown = nil
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Back")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                // Category name and icon (center)
+                HStack(spacing: 6) {
+                    Image(systemName: category.category.icon)
+                        .font(.system(size: 11))
+                        .foregroundStyle(category.category.color ?? .secondary)
+
+                    Text(category.category.displayName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                // Category size (right)
+                Text(formattedBytes(category.totalGrowthBytes))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color.gray.opacity(0.15))
+                    )
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Monitoring Path Header
