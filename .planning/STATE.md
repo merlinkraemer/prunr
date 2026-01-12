@@ -18,12 +18,12 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 6: Popup HIG Redesign (Not Planned)
 - Phase 7.1: Layout Fixes (2/2 plans complete) - Category list with nested big files, distinct icon colors, stable layout, slide-in navigation, polished drill-down
 - Phase 8.1: Urgent UX Fixes (1/1 plans complete) - GB meter cache interval, drill-down header replacement, animation verification
-- Phase 8.2: UI Improvements & Real-time Updates (2/4 plans complete) - GB meter real-time updates (08.2-02), navigation architecture, push animation, progress indicators, settings navigation
+- Phase 8.2: UI Improvements & Real-time Updates (4/4 plans complete) - GB meter real-time updates, navigation architecture, push animation fixes, scan modal improvements
 - Phase 8: Polish & Issue Resolution (4/4 plans created) - Scan reliability, performance optimization, UI polish, verification testing
 
-Last activity: 2026-01-12 — Completed Phase 8.2-02: GB meter real-time updates (explicit scan sync + 2s background timer)
+Last activity: 2026-01-12 — Completed Phase 8.2-04: Push animation and drill-down fixes (ISS-043, ISS-036/040, ISS-044)
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.1 complete, Phase 8.2 in progress (2/4)
+Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.1 complete, Phase 8.2 complete (4/4)
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
@@ -98,6 +98,12 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete
 | 8.2-02 | Use 2-second interval for GB meter timer | Matches cache interval from Phase 8.1 for balance |
 | 8.2-02 | Call updateFreeSpace() after all scan completions | Ensures menu bar syncs after loadCategoryGrowthList, loadGrowthList, createBaseline |
 | 8.2-02 | Timer dispatches to @MainActor for updates | updateFreeSpace() updates @Observable properties requiring main actor |
+| 8.2-04 | forcedCategory parameter for external drill-down | Replaces isDetailView boolean to fix blank screen bug when selectedCategory is nil |
+| 8.2-04 | computedSelectedCategory pattern | Single source of truth combining forcedCategory and selectedCategory |
+| 8.2-04 | Remove background dimming overlay | Improves push animation perception by removing visual interference |
+| 8.2-04 | True conditional rendering for push animation | Only ONE view exists at any time (no overlap, no transparency fighting) |
+| 8.2-04 | Asymmetric transitions: list exits left, detail enters right | Creates synchronized push effect like iOS/Finder navigation |
+| 8.2-04 | Fixed scan modal size (260x180) | Prevents jarring resizes during progress updates |
 | 8.2-02 | nonisolated(unsafe) for Timer properties | Allows deinit to access Timer from nonisolated context |
 
 ### Deferred Issues

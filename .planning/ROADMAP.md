@@ -29,8 +29,8 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 - [x] **Phase 7: Category-Based Growth View** - Category grouping with drill-down
 - [x] **Phase 7.1: Layout Fixes** - Big file nesting, slide-in navigation, visual polish
 - [x] **Phase 8.1: Urgent UX Fixes** - GB meter cache interval, drill-down header, animation verification
+- [x] **Phase 8.2: UI Improvements & Real-time Updates** - GB meter real-time updates, navigation fixes, push animation, scan modal improvements
 - [ ] **Phase 8: Polish & Issue Resolution** - Scan reliability, performance, verification
-- [ ] **Phase 8.2: UI Improvements & Real-time Updates** - Navigation architecture, animations, GB meter (In Progress: 2/4 plans)
 
 ## Phase Details
 
