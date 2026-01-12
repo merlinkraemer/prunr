@@ -142,8 +142,6 @@ struct MenuBarView: View {
             // Page navigation container - swaps between main/detail pages
             pageNavigationContent
 
-            Spacer()
-
             Divider()
 
             // Footer buttons
@@ -172,6 +170,7 @@ struct MenuBarView: View {
             // Single CategoryGrowthListView instance handles internal animation
             categoryListView
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - Header Section
