@@ -67,7 +67,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var lastFreeSpaceUpdate: Date?
 
     // Continuous update timer for GB meter (ISS-042)
-    private var updateTimer: Timer?
+    // nonisolated(unsafe) allows deinit to access it from nonisolated context
+    private nonisolated(unsafe) var updateTimer: Timer?
     
     static var shared: MenuBarManager?
     
