@@ -43,6 +43,14 @@ struct CategoryGrowthListView: View {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: computedSelectedCategory)
+        .onChange(of: manager.isDrilledDown) { _, newValue in
+            if !newValue {
+                // External back button was pressed, reset internal selection
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    selectedCategory = nil
+                }
+            }
+        }
     }
 
     // MARK: - State
