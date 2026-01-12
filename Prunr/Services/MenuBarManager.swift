@@ -322,6 +322,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             categoryItems = items
             scanProgress = ""
             print("[MenuBarManager] Loaded \(items.count) category items")
+
+            // Refresh storage space after scan (ISS-042)
+            updateFreeSpace()
         } catch {
             if let baselineError = error as? BaselineService.BaselineError,
                case .noBaseline = baselineError {
@@ -378,6 +381,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             growthItems = items
             scanProgress = ""
             print("[MenuBarManager] Loaded \(items.count) growth items")
+
+            // Refresh storage space after scan (ISS-042)
+            updateFreeSpace()
         } catch {
             if let baselineError = error as? BaselineService.BaselineError,
                case .noBaseline = baselineError {
@@ -417,9 +423,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             noBaseline = false
             scanProgress = ""
             print("[MenuBarManager] Baseline created successfully")
-            
+
             // Start watching this new path
             await startWatchingPaths()
+
+            // Refresh storage space after baseline creation (ISS-042)
+            updateFreeSpace()
             
         } catch {
             if let scanError = error as? ScanError, case .cancelled = scanError {
@@ -575,27 +584,23 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     func updateFreeSpace() {
         let free = DiskSpaceService.shared.getFreeSpace()
         let total = DiskSpaceService.shared.getTotalSpace()
-        
-        // Update observable state for UI
+
+        // Update observable state for UI (DriveBarView reacts automatically)
         self.freeBytes = free
         self.totalBytes = total
         self.usedBytes = total - free
-        
-        // Update menu bar text
+
+        // CRITICAL: Explicitly sync AppKit menu bar (ISS-042)
         let gb = Double(free) / 1_000_000_000
-
-        
-        // Also update view state
-        // totalBytes, etc. logic could be added here if needed for UI, 
-        // but currently UI uses DriveBarView. For now we assume UI might need it.
-        // We'll stick to updating the status bar text.
-
         if gb >= 1000 {
             let tb = gb / 1000
             updateFreeSpaceDisplay("\(String(format: "%.1f", tb)) TB")
         } else {
             updateFreeSpaceDisplay("\(String(format: "%.1f", gb)) GB")
         }
+
+        // Update cache timestamp
+        lastFreeSpaceUpdate = Date()
     }
 
     func updateFreeSpaceDisplay(_ freeSpace: String) {
