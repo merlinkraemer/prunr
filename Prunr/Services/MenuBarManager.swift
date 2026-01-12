@@ -65,6 +65,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     // Cache for disk space updates (avoid excessive disk checks)
     private var lastFreeSpaceUpdate: Date?
+
+    // Continuous update timer for GB meter (ISS-042)
+    private var updateTimer: Timer?
     
     static var shared: MenuBarManager?
     
@@ -77,6 +80,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         setupContextMenu()
         updateFreeSpace()
         startWatchingDefaultPaths()
+
+        // Start continuous updates (ISS-042)
+        startRealtimeUpdates()
     }
 
     private func setupMenuBar() {
@@ -607,6 +613,21 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         statusItem?.button?.title = freeSpace
     }
 
+    /// Starts continuous 2-second updates to keep menu bar in sync (ISS-042)
+    private func startRealtimeUpdates() {
+        // Invalidate any existing timer
+        updateTimer?.invalidate()
+
+        // Create timer that fires every 2 seconds
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateFreeSpace()
+            }
+        }
+
+        print("[MenuBarManager] Started 2s realtime update timer")
+    }
+
     /// Updates the monitored path size from the latest baseline or current state
     func updatePathSize() async {
         guard let trackedPath = SettingsStore.shared.enabledTrackedPaths.first else {
@@ -947,5 +968,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             isPopoverShown = false
             print("[MenuBarManager] isPopoverShown reset to false in willClose")
         }
+    }
+
+    deinit {
+        // Cleanup timer when manager is deallocated
+        updateTimer?.invalidate()
+        print("[MenuBarManager] Stopped realtime update timer")
     }
 }
