@@ -15,53 +15,191 @@ struct MenuBarView: View {
     private func closePopoverAndOpenSettings() {
         // Close the popover first via manager to ensure state sync
         manager.closePopover()
-        
+
         // Use openSettings environment action
         openSettings()
-        
-        // Ensure Settings window is focused
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+
+        // Ensure Settings window is focused immediately - ISS-024
+        // Same improved logic as MenuBarManager.openSettings with faster 50ms delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             NSApp.activate(ignoringOtherApps: true)
-            if let settingsWindow = NSApp.windows.first(where: { $0.title.contains("Settings") }) {
+
+            if let settingsWindow = NSApp.windows.first(where: {
+                $0.title.contains("Settings")
+            }) {
+                // Ensure window behavior is correct
+                settingsWindow.hidesOnDeactivate = false
+
+                // Temporarily elevate window level to bring to front
+                let originalLevel = settingsWindow.level
+                settingsWindow.level = .floating
                 settingsWindow.makeKeyAndOrderFront(nil)
+                settingsWindow.orderFrontRegardless()
+
+                // Reset to normal level immediately after focusing (no delay)
+                settingsWindow.level = originalLevel
+            } else {
+                // If window not found yet, try once more with a longer delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NSApp.activate(ignoringOtherApps: true)
+                    if let settingsWindow = NSApp.windows.first(where: { $0.title.contains("Settings") }) {
+                        settingsWindow.hidesOnDeactivate = false
+                        settingsWindow.level = .floating
+                        settingsWindow.makeKeyAndOrderFront(nil)
+                        settingsWindow.orderFrontRegardless()
+                        settingsWindow.level = .normal
+                    }
+                }
             }
         }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Drive bar section (HIG: 20pt margins for standard window content)
-            VStack(alignment: .leading, spacing: 4) {
-                DriveBarView(
-                    totalBytes: manager.totalBytes,
-                    usedBytes: manager.usedBytes,
-                    freeBytes: manager.freeBytes
-                )
+            // Main category view with monitoring path header
+            mainCategoryView
+        }
+        .frame(width: 320, height: 480)
+        .overlay {
+            // Loading indicator with progress
+            // Only show blocking overlay for manual scans, not auto-scans (ISS-038)
+            if manager.isLoading && !manager.isAutoScanning {
+                ZStack {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.regular)
+
+                        if manager.isAutoScanning {
+                            Text("Auto-scanning changes...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if !manager.scanProgress.isEmpty {
+                            Text(manager.scanProgress)
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                        }
+
+                        if manager.filesScanned > 0 {
+                            Text("\(manager.filesScanned) files scanned")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Button("Stop") {
+                            Task {
+                                await manager.stopScan()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(20)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
             }
-            .padding(20) // HIG standard: 20pt margins
+        }
+        .task {
+            // Fast: Check if baseline exists (UserDefaults lookup)
+            await manager.checkBaseline()
+
+            // Fast: Update disk space with caching (only if >5s since last update)
+            manager.updateFreeSpaceIfNeeded()
+
+            // Slow: Defer path size calculation to background after popup is visible
+            // This scans the entire directory tree and should NOT block popup opening
+            Task.detached(priority: .utility) {
+                await manager.updatePathSize()
+            }
+        }
+    }
+
+    // MARK: - Main Category View
+
+    private var mainCategoryView: some View {
+        VStack(spacing: 0) {
+            // Header with drive bar + monitoring path
+            mainHeaderView
 
             Divider()
 
-            // Growth list section header (distinct from list items, shows full scanned path)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    // Label + path (no folder icon to differentiate from list items)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("MONITORING")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
+            // Category list
+            categoryListView
 
-                        Text(manager.monitoredPathDisplay)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .truncationMode(.middle)
-                    }
+            Spacer()
+
+            Divider()
+
+            // Footer buttons
+            footerButtons
+        }
+    }
+
+    // MARK: - Main Header View
+
+    private var mainHeaderView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Top row: Drive bar with total/free (PRIMARY INFO)
+            DriveBarView(
+                totalBytes: manager.totalBytes,
+                usedBytes: manager.usedBytes,
+                freeBytes: manager.freeBytes
+            )
+
+            // Subtle separator between sections
+            Rectangle()
+                .fill(Color.gray.opacity(0.1))
+                .frame(height: 1)
+
+            // Bottom row: Path info (SECONDARY INFO) - clickable to open settings
+            Button {
+                closePopoverAndOpenSettings()
+            } label: {
+                HStack(spacing: 8) {
+                    // Path icon
+                    Image(systemName: "folder")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    // Path text (truncated with middle ellipsis)
+                    Text(manager.monitoredPathDisplay)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 
                     Spacer()
 
-                    // Auto-scan indicator
+                    // Path size badge or loading state
+                    if manager.isCalculatingPathSize {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Calculating...")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(Color.gray.opacity(0.1))
+                        )
+                    } else if manager.monitoredPathSizeBytes > 0 {
+                        Text(formattedBytes(manager.monitoredPathSizeBytes))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.gray.opacity(0.15))
+                            )
+                    }
+
+                    // Auto-scan indicator (if scanning)
                     if manager.isAutoScanning {
                         HStack(spacing: 4) {
                             ProgressView()
@@ -72,91 +210,107 @@ struct MenuBarView: View {
                         }
                         .transition(.opacity)
                     }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 12) // Extra spacing below header for separation
 
-                if manager.noBaseline {
-                    // No baseline prompt
-                    VStack(spacing: 12) {
-                        Image(systemName: "clock.badge.questionmark")
-                            .font(.system(size: 32))
-                            .foregroundStyle(.secondary)
-                        Text("No baseline yet")
-                            .font(.headline)
-                        Text("Create a baseline to start tracking growth")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button("Create Baseline") {
-                            Task {
-                                await manager.createBaseline()
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
-                } else if let error = manager.errorMessage {
-                    // Error message
-                    VStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 24))
-                            .foregroundStyle(.orange)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                        Button("Retry") {
-                            Task {
-                                await manager.loadCategoryGrowthList()
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
-                } else if manager.categoryItems.isEmpty && !manager.isLoading {
-                    // Baseline exists but no growth data loaded yet
-                    VStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 32))
-                            .foregroundStyle(.secondary)
-                        Text("Ready to scan")
-                            .font(.headline)
-                        Text("Scan to see what changed since baseline")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button("Scan Now") {
-                            Task {
-                                await manager.loadCategoryGrowthList()
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
-                } else {
-                    CategoryGrowthListView(
-                        categoryItems: manager.categoryItems,
-                        onTapItem: { item in
-                            manager.revealInFinder(path: item.path)
-                        }
-                    )
+                    // Settings chevron indicator
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
                 }
             }
+            .buttonStyle(.plain)
+        }
+        .padding(20)
+    }
 
-            Spacer()
+    // MARK: - Category List View
 
-            Divider()
+    private var categoryListView: some View {
+        Group {
+            if manager.noBaseline {
+                // No baseline prompt
+                VStack(spacing: 12) {
+                    Image(systemName: "clock.badge.questionmark")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.secondary)
+                    Text("No baseline yet")
+                        .font(.headline)
+                    Text("Create a baseline to start tracking growth")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Create Baseline") {
+                        Task {
+                            await manager.createBaseline()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
+            } else if let error = manager.errorMessage {
+                // Error message
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Retry") {
+                        Task {
+                            await manager.loadCategoryGrowthList()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
+            } else if manager.categoryItems.isEmpty && !manager.isLoading {
+                // Baseline exists but no growth data loaded yet
+                VStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.secondary)
+                    Text("Ready to scan")
+                        .font(.headline)
+                    Text("Scan to see what changed since baseline")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Scan Now") {
+                        Task {
+                            await manager.loadCategoryGrowthList()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
+            } else {
+                CategoryGrowthListView(
+                    categoryItems: manager.categoryItems,
+                    onTapItem: { item in
+                        // Reveal item in Finder
+                        NSWorkspace.shared.selectFile(item.path, inFileViewerRootedAtPath: "")
+                    }
+                )
+            }
+        }
+    }
 
-            // Footer - buttons like WiFi/Bluetooth system menus (small inset + rounded corners)
-            VStack(spacing: 0) {
+    // MARK: - Footer Buttons
+
+    private var footerButtons: some View {
+        VStack(spacing: 0) {
                 // Scan Now
                 Button {
                     isScanning = true
                     Task {
                         await manager.loadCategoryGrowthList()
+
+                        // Wait for manager to finish loading before showing done
+                        while manager.isLoading {
+                            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                        }
 
                         // Brief delay to show completion
                         try? await Task.sleep(for: .milliseconds(500))
@@ -267,53 +421,25 @@ struct MenuBarView: View {
             }
             .padding(.vertical, 8)
         }
-        .frame(width: 320, height: 420)
-        .overlay {
-            // Loading indicator with progress
-            if manager.isLoading {
-                ZStack {
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
 
-                    VStack(spacing: 12) {
-                        ProgressView()
-                            .controlSize(.regular)
+    // MARK: - Helper Methods
 
-                        if manager.isAutoScanning {
-                            Text("Auto-scanning changes...")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if !manager.scanProgress.isEmpty {
-                            Text(manager.scanProgress)
-                                .font(.caption)
-                                .foregroundStyle(.primary)
-                        }
+    private func formattedBytes(_ bytes: Int64) -> String {
+        let kb = Double(bytes) / 1_000
+        let mb = kb / 1_000
+        let gb = mb / 1_000
+        let tb = gb / 1_000
 
-                        if manager.filesScanned > 0 {
-                            Text("\(manager.filesScanned) files scanned")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        Button("Stop") {
-                            Task {
-                                await manager.stopScan()
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                    .padding(20)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                }
-            }
-        }
-        .task {
-            // Refresh disk space immediately (fast)
-            manager.updateFreeSpace()
-            
-            // Just check if baseline exists, don't auto-scan
-            await manager.checkBaseline()
+        if abs(tb) >= 1 {
+            return "\(String(format: "%.1f", tb)) TB"
+        } else if abs(gb) >= 1 {
+            return "\(String(format: "%.1f", gb)) GB"
+        } else if abs(mb) >= 1 {
+            return "\(String(format: "%.0f", mb)) MB"
+        } else if abs(kb) >= 1 {
+            return "\(String(format: "%.0f", kb)) KB"
+        } else {
+            return "\(bytes) B"
         }
     }
 }
