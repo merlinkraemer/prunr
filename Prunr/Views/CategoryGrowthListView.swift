@@ -268,43 +268,59 @@ private struct CategoryDetailHeader: View {
     let onBack: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Back button
-            Button(action: onBack) {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                // Back button
+                Button(action: onBack) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 13, weight: .semibold))
 
-                    Text("Back")
-                        .font(.system(size: 12))
+                        Text("Back")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(.blue)
                 }
-                .foregroundStyle(.blue)
-            }
-            .buttonStyle(.plain)
+                .buttonStyle(.plain)
 
-            Spacer()
+                Spacer()
 
-            // Category name and icon
-            HStack(spacing: 6) {
-                Image(systemName: category.category.icon)
-                    .font(.system(size: 14))
+                // Category name and icon (visually centered)
+                HStack(spacing: 6) {
+                    Image(systemName: category.category.icon)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(growthSeverityColor)
+
+                    Text(category.category.displayName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+
+                Spacer()
+
+                // Total growth (right-aligned)
+                Text(growthText)
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(growthSeverityColor)
-
-                Text(category.category.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
 
-            Spacer()
-
-            // Total growth
-            Text(growthText)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(growthSeverityColor)
+            // Bottom border
+            Divider()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.gray.opacity(0.05))
+        .background(
+            // Enhanced background with subtle gradient
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(nsColor: .windowBackgroundColor),
+                    Color.gray.opacity(0.02)
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
     }
 
     private var growthText: String {
