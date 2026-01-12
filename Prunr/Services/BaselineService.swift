@@ -22,7 +22,7 @@ actor BaselineService {
     }
 
     /// An item in the growth list representing a path that grew since baseline
-    struct GrowthItem: Identifiable, Sendable {
+    struct GrowthItem: Identifiable, Sendable, Equatable {
         let id = UUID()
         let path: String
         let growthBytes: Int64

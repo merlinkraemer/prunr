@@ -1,7 +1,7 @@
 import Foundation
 
 /// Represents a category with its aggregated growth data
-struct CategoryGrowthItem: Identifiable, Sendable {
+struct CategoryGrowthItem: Identifiable, Sendable, Equatable {
     /// The category this item represents
     let category: GrowthCategory
 

@@ -13,15 +13,34 @@ struct CategoryGrowthListView: View {
     var maxHeight: CGFloat = 300
 
     var body: some View {
-        Group {
-            if categoryItems.isEmpty {
-                emptyStateView
-            } else if selectedCategory == nil {
-                // Category list view
-                categoryListView
-            } else {
-                // Category detail view (drill-down)
+        ZStack {
+            // Background dimming overlay
+            if selectedCategory != nil {
+                Color.black.opacity(0.1)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            selectedCategory = nil
+                        }
+                    }
+            }
+
+            // Category list view (pushes left when drilling down)
+            categoryListView
+                .offset(x: selectedCategory == nil ? 0 : -maxWidth * 0.8)
+                .animation(.easeInOut(duration: 0.3), value: selectedCategory)
+
+            // Category detail view (slides in from right)
+            if selectedCategory != nil {
                 categoryDetailView
+                    .offset(x: selectedCategory == nil ? maxWidth * 0.8 : 0)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .onAppear {
+            // Capture available width for animation calculations
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                maxWidth = 320 // Standard popover width
             }
         }
     }
@@ -29,44 +48,55 @@ struct CategoryGrowthListView: View {
     // MARK: - State
 
     @State private var selectedCategory: CategoryGrowthItem?
+    @State private var maxWidth: CGFloat = 320
 
     // MARK: - Category List View
 
     private var categoryListView: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                ForEach(categoryItems) { item in
+        Group {
+            if categoryItems.isEmpty {
+                emptyStateView
+            } else {
+                ScrollView {
                     VStack(spacing: 0) {
-                        CategoryListRow(
-                            item: item,
-                            onTap: { selectCategory(item) }
-                        )
-
-                        // Nested big files (max 3)
-                        if !item.bigItems.isEmpty {
-                            ForEach(item.bigItems.prefix(3), id: \.path) { bigItem in
-                                NestedBigItemRow(
-                                    item: bigItem,
-                                    onTap: { onTapItem(bigItem) }
+                        ForEach(categoryItems) { item in
+                            VStack(spacing: 0) {
+                                CategoryListRow(
+                                    item: item,
+                                    onTap: {
+                                        withAnimation(.easeInOut(duration: 0.3)) {
+                                            selectCategory(item)
+                                        }
+                                    }
                                 )
-                            }
 
-                            // Show "X more" if there are more than 3 big items
-                            if item.bigItems.count > 3 {
-                                MoreIndicatorRow(
-                                    count: item.bigItems.count - 3,
-                                    onTap: { selectCategory(item) }
-                                )
-                            }
+                                // Nested big files (max 3)
+                                if !item.bigItems.isEmpty {
+                                    ForEach(item.bigItems.prefix(3), id: \.path) { bigItem in
+                                        NestedBigItemRow(
+                                            item: bigItem,
+                                            onTap: { onTapItem(bigItem) }
+                                        )
+                                    }
 
-                            // Visual separator
-                            SeparatorRow()
+                                    // Show "X more" if there are more than 3 big items
+                                    if item.bigItems.count > 3 {
+                                        MoreIndicatorRow(
+                                            count: item.bigItems.count - 3,
+                                            onTap: { selectCategory(item) }
+                                        )
+                                    }
+
+                                    // Visual separator
+                                    SeparatorRow()
+                                }
+                            }
                         }
                     }
                 }
+                .frame(maxHeight: maxHeight)
             }
         }
-        .frame(maxHeight: maxHeight)
     }
 
     // MARK: - Category Detail View
@@ -76,7 +106,11 @@ struct CategoryGrowthListView: View {
             // Header with back button
             CategoryDetailHeader(
                 category: selectedCategory!,
-                onBack: { selectedCategory = nil }
+                onBack: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        selectedCategory = nil
+                    }
+                }
             )
 
             // List of all items in this category
@@ -91,7 +125,8 @@ struct CategoryGrowthListView: View {
                 }
             }
         }
-        .frame(maxHeight: maxHeight)
+        .frame(maxWidth: .infinity, maxHeight: maxHeight)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     /// All items in the selected category, sorted by size (largest first)
