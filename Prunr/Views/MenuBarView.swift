@@ -240,10 +240,9 @@ struct MenuBarView: View {
                             .fill(Color.gray.opacity(0.15))
                     )
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
+        .padding(20)
     }
 
     // MARK: - Monitoring Path Header
