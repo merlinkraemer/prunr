@@ -16,6 +16,10 @@ struct MenuBarView: View {
         // Close the popover first via manager to ensure state sync
         manager.closePopover()
 
+        // Set settings tab to "Paths" before opening (ISS-034)
+        // Paths tab is tag 1 in SettingsView
+        UserDefaults.standard.set(1, forKey: "settingsSelectedTab")
+
         // Use openSettings environment action
         openSettings()
 
@@ -72,6 +76,16 @@ struct MenuBarView: View {
                         ProgressView()
                             .controlSize(.regular)
 
+                        // NEW: Add progress bar for long scans (ISS-033)
+                        if manager.scanProgressPercentage > 0 {
+                            ProgressView(value: manager.scanProgressPercentage, total: 1.0)
+                                .frame(width: 200)
+                                .progressViewStyle(.linear)
+                            Text("\(Int(manager.scanProgressPercentage * 100))%")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
                         if manager.isAutoScanning {
                             Text("Auto-scanning changes...")
                                 .font(.caption)
@@ -120,14 +134,12 @@ struct MenuBarView: View {
 
     private var mainCategoryView: some View {
         VStack(spacing: 0) {
-            // Header with drive bar + monitoring path (hidden during drill-down - ISS-037)
-            if !manager.isDrilledDown {
-                mainHeaderView
-                Divider()
-            }
+            // Storage bar - ALWAYS visible (outside page navigation)
+            driveBarSection
+            Divider()
 
-            // Category list
-            categoryListView
+            // Page navigation container - swaps between main/detail pages
+            pageNavigationContent
 
             Spacer()
 
@@ -138,88 +150,123 @@ struct MenuBarView: View {
         }
     }
 
-    // MARK: - Main Header View
+    // MARK: - Drive Bar Section (Always Visible)
 
-    private var mainHeaderView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Top row: Drive bar with total/free (PRIMARY INFO)
-            DriveBarView(
-                totalBytes: manager.totalBytes,
-                usedBytes: manager.usedBytes,
-                freeBytes: manager.freeBytes
-            )
+    private var driveBarSection: some View {
+        DriveBarView(
+            totalBytes: manager.totalBytes,
+            usedBytes: manager.usedBytes,
+            freeBytes: manager.freeBytes
+        )
+        .padding(20)
+    }
 
-            // Subtle separator between sections
-            Rectangle()
-                .fill(Color.gray.opacity(0.1))
-                .frame(height: 1)
+    // MARK: - Page Navigation Content
 
-            // Bottom row: Path info (SECONDARY INFO) - clickable to open settings
-            Button {
-                closePopoverAndOpenSettings()
-            } label: {
-                HStack(spacing: 8) {
-                    // Path icon
-                    Image(systemName: "folder")
-                        .font(.system(size: 11))
+    private var pageNavigationContent: some View {
+        Group {
+            if manager.isDrilledDown {
+                // Detail page with back button header
+                detailPageView
+            } else {
+                // Main page with monitoring path header
+                mainPageView
+            }
+        }
+    }
+
+    // MARK: - Main Page View
+
+    private var mainPageView: some View {
+        VStack(spacing: 0) {
+            // Monitoring path header (page-level header, not storage bar)
+            monitoringPathHeader
+            Divider()
+            categoryListView
+        }
+    }
+
+    // MARK: - Detail Page View
+
+    private var detailPageView: some View {
+        // Pass through to CategoryGrowthListView with forced category for drill-down
+        CategoryGrowthListView(
+            categoryItems: manager.categoryItems,
+            manager: manager,
+            onTapItem: { item in
+                NSWorkspace.shared.selectFile(item.path, inFileViewerRootedAtPath: "")
+            },
+            forcedCategory: manager.selectedCategoryForDrilldown
+        )
+    }
+
+    // MARK: - Monitoring Path Header
+
+    private var monitoringPathHeader: some View {
+        Button {
+            closePopoverAndOpenSettings()
+        } label: {
+            HStack(spacing: 8) {
+                // Path icon
+                Image(systemName: "folder")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                // Path text (truncated with middle ellipsis)
+                Text(manager.monitoredPathDisplay)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer()
+
+                // Path size badge or loading state
+                if manager.isCalculatingPathSize {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("Calculating...")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color.gray.opacity(0.1))
+                    )
+                } else if manager.monitoredPathSizeBytes > 0 {
+                    Text(formattedBytes(manager.monitoredPathSizeBytes))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
-
-                    // Path text (truncated with middle ellipsis)
-                    Text(manager.monitoredPathDisplay)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-
-                    Spacer()
-
-                    // Path size badge or loading state
-                    if manager.isCalculatingPathSize {
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .controlSize(.mini)
-                            Text("Calculating...")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
-                        }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
                             Capsule()
-                                .fill(Color.gray.opacity(0.1))
+                                .fill(Color.gray.opacity(0.15))
                         )
-                    } else if manager.monitoredPathSizeBytes > 0 {
-                        Text(formattedBytes(manager.monitoredPathSizeBytes))
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(Color.gray.opacity(0.15))
-                            )
-                    }
-
-                    // Auto-scan indicator (if scanning)
-                    if manager.isAutoScanning {
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Scanning...")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .transition(.opacity)
-                    }
-
-                    // Settings chevron indicator
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
                 }
+
+                // Auto-scan indicator (if scanning)
+                if manager.isAutoScanning {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Scanning...")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .transition(.opacity)
+                }
+
+                // Settings chevron indicator
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(.plain)
         }
+        .buttonStyle(.plain)
         .padding(20)
     }
 
@@ -294,6 +341,7 @@ struct MenuBarView: View {
                         // Reveal item in Finder
                         NSWorkspace.shared.selectFile(item.path, inFileViewerRootedAtPath: "")
                     }
+                    // No forcedCategory - uses internal selection
                 )
             }
         }

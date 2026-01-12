@@ -15,42 +15,51 @@ struct CategoryGrowthListView: View {
     /// Maximum height for the scrollable list
     var maxHeight: CGFloat = 360 // Increased from 300 to 360 for more space
 
+    /// Forced category from external navigation (MenuBarView drill-down)
+    var forcedCategory: CategoryGrowthItem? = nil
+
+    /// Computed selected category - uses forced category if provided, otherwise internal selection
+    private var computedSelectedCategory: CategoryGrowthItem? {
+        forcedCategory ?? selectedCategory
+    }
+
     var body: some View {
         ZStack {
-            // Background dimming overlay
-            if selectedCategory != nil {
+            // Background dimming overlay (only in detail view)
+            if computedSelectedCategory != nil {
                 Color.black.opacity(0.1)
                     .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             selectedCategory = nil
+                            manager.isDrilledDown = false
                         }
                     }
             }
 
-            // Category list view (pushes left when drilling down)
-            categoryListView
-                .offset(x: selectedCategory == nil ? 0 : -maxWidth)
-
-            // Category detail view (slides in from right, no transition modifier)
-            if selectedCategory != nil {
-                categoryDetailView
-                    .offset(x: selectedCategory == nil ? maxWidth : 0)
+            // Conditional rendering: ONLY ONE view exists at a time
+            if computedSelectedCategory == nil {
+                // Main list view
+                categoryListView
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading),
+                        removal: .move(edge: .leading)
+                    ))
+            } else {
+                // Detail view - computedSelectedCategory is guaranteed non-nil here
+                categoryDetailView(for: computedSelectedCategory!)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing),
+                        removal: .move(edge: .leading)
+                    ))
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: selectedCategory)
-        .onAppear {
-            // Capture available width for animation calculations
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                maxWidth = 320 // Standard popover width
-            }
-        }
+        .animation(.easeInOut(duration: 0.3), value: computedSelectedCategory)
     }
 
     // MARK: - State
 
     @State private var selectedCategory: CategoryGrowthItem?
-    @State private var maxWidth: CGFloat = 320
     @State private var expandedFolders: Set<String> = []
 
     // MARK: - Category List View
@@ -104,11 +113,11 @@ struct CategoryGrowthListView: View {
 
     // MARK: - Category Detail View
 
-    private var categoryDetailView: some View {
+    private func categoryDetailView(for category: CategoryGrowthItem) -> some View {
         VStack(spacing: 0) {
             // Header with back button
             CategoryDetailHeader(
-                category: selectedCategory!,
+                category: category,
                 onBack: {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         selectedCategory = nil
@@ -120,7 +129,7 @@ struct CategoryGrowthListView: View {
             // List of items grouped by folder
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(sortedFolders, id: \.path) { folder in
+                    ForEach(sortedFolders(for: category), id: \.path) { folder in
                         // Folder header (clickable to toggle expand/collapse)
                         FolderHeaderRow(
                             folderPath: folder.path,
@@ -159,13 +168,13 @@ struct CategoryGrowthListView: View {
     }
 
     /// All items in the selected category, sorted by size (largest first)
-    private var sortedItems: [BaselineService.GrowthItem] {
-        selectedCategory?.allItems.sorted { $0.growthBytes > $1.growthBytes } ?? []
+    private func sortedItems(for category: CategoryGrowthItem) -> [BaselineService.GrowthItem] {
+        category.allItems.sorted { $0.growthBytes > $1.growthBytes }
     }
 
     /// Items grouped by their parent folder path
-    private var itemsGroupedByFolder: [String: [BaselineService.GrowthItem]] {
-        Dictionary(grouping: sortedItems) { item in
+    private func itemsGroupedByFolder(for category: CategoryGrowthItem) -> [String: [BaselineService.GrowthItem]] {
+        Dictionary(grouping: sortedItems(for: category)) { item in
             URL(fileURLWithPath: item.path)
                 .deletingLastPathComponent()
                 .path
@@ -173,8 +182,8 @@ struct CategoryGrowthListView: View {
     }
 
     /// Folders sorted by total growth (largest first)
-    private var sortedFolders: [(path: String, items: [BaselineService.GrowthItem])] {
-        itemsGroupedByFolder
+    private func sortedFolders(for category: CategoryGrowthItem) -> [(path: String, items: [BaselineService.GrowthItem])] {
+        itemsGroupedByFolder(for: category)
             .map { (path, items) in
                 (path, items.sorted { $0.growthBytes > $1.growthBytes })
             }

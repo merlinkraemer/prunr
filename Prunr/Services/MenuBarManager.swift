@@ -27,6 +27,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var growthItems: [BaselineService.GrowthItem] = []
     var categoryItems: [CategoryGrowthItem] = []
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
+    var selectedCategoryForDrilldown: CategoryGrowthItem? = nil // External category selection for drill-down (ISS-043)
     var monitoredPathName: String = ""
     var monitoredPathDisplay: String {
         // Full path for header display with tilde notation (e.g., "~/dev" instead of "/Users/username/dev")
@@ -51,6 +52,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var noBaseline = false
     var scanProgress: String = ""
     var filesScanned: Int = 0
+    // Percentage progress (0.0-1.0) for progress bar (ISS-033)
+    var scanProgressPercentage: Double = 0.0
 
     // Scan timing for minimum display duration
     private var scanStartTime: Date?
@@ -294,6 +297,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         noBaseline = false
         filesScanned = 0
         scanProgress = "Scanning \(trackedPath.displayName)..."
+        // Reset progress percentage at scan start (ISS-033)
+        scanProgressPercentage = 0.0
 
         // Record scan start time for minimum display duration
         let startTime = Date()
@@ -310,6 +315,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             Task { @MainActor in
                 // Update files scanned count
                 self.filesScanned = progress.foldersScanned
+
+                // Update percentage for progress bar (ISS-033)
+                self.scanProgressPercentage = progress.percentage
 
                 // Show detailed progress after 2 seconds
                 let elapsed = Date().timeIntervalSince(scanStartTimeForProgress)
@@ -361,7 +369,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         isLoading = false
         scanProgress = ""
+        scanProgressPercentage = 0.0
         filesScanned = 0
+        scanProgressPercentage = 0.0
         scanStartTime = nil
     }
 
@@ -408,6 +418,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         isLoading = false
         scanProgress = ""
+        scanProgressPercentage = 0.0
     }
     
     /// Creates a new baseline from enabled paths
@@ -417,11 +428,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             errorMessage = "No paths enabled in Settings"
             return
         }
-        
+
         isLoading = true
         errorMessage = nil
         filesScanned = 0
         scanProgress = "Creating baseline for \(trackedPath.displayName)..."
+        // Reset progress percentage at scan start (ISS-033)
+        scanProgressPercentage = 0.0
         
         print("[MenuBarManager] Creating baseline for: \(trackedPath.url.path)")
         
@@ -449,6 +462,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         
         isLoading = false
         scanProgress = ""
+        scanProgressPercentage = 0.0
     }
     
     /// Stops the current scan
