@@ -16,11 +16,11 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 4: Menu Bar UI ✓ (incl. 04-02-FIX for UI issues)
 - Phase 5: Settings & Polish ✓
 - Phase 6: Popup HIG Redesign (Not Planned)
-- Phase 7: Category-Based Growth View (4/4 plans complete)
+- Phase 7.1: Layout Fixes (1/2 plans complete) - Category list with nested big files, distinct icon colors, stable layout
 
-Last activity: 2026-01-12 — Completed 07-04: Category patterns + drill-down UX.
+Last activity: 2026-01-12 — Completed 7.1-01: Big file nesting + category colors.
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 07 complete
+Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 (1/2 plans)
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
@@ -79,6 +79,11 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 07 complete
 | 07-04 | Test data creates category-matching paths | Library/Caches, node_modules, .Trash patterns |
 | 07-04 | 105MB big file in test data | Tests >=100MB threshold for big file display |
 | 07-04 | Drill-down navigation pattern | Back button returns to category list |
+| 7.1-01 | Show max 3 big files inline in category list | Prevents overwhelming list while surfacing large items |
+| 7.1-01 | Distinct category colors for icons | Uses GrowthCategory.color instead of severity colors |
+| 7.1-01 | Fixed 60pt width for item count text | Prevents layout jitter when counts change |
+| 7.1-01 | 32pt indentation for nested big items | Creates clear visual hierarchy |
+| 7.1-01 | Visual separator between category groups | Thin gray line (1pt, 15% opacity) |
 
 ### Deferred Issues
 
@@ -96,6 +101,7 @@ None.
   - Retrospective PLAN.md/SUMMARY.md created 2026-01-11 to document completed work
 - 2026-01-11: Phase 6 (Popup HIG Redesign) — Post-MVP phase for Apple HIG compliance (main list, settings, path boundaries, about section)
 - 2026-01-12: Phase 7 (Category-Based Growth View) — Post-MVP phase for category-based grouping (GrowthCategory, CategoryDetectionService, CategoryGrowthListView)
+- 2026-01-12: Phase 7.1 inserted after Phase 7: Layout Fixes (URGENT) — Big file nesting, drill-down redesign, slide-in navigation, icon colors, layout stability
 
 **Archived (2026-01-11):** Full-window app plans moved to `.planning/phases/_archived-full-window-app/`:
 - 01-foundation, 02-scanner-storage, 03-delta-engine, 05-frontend-redesign
@@ -108,7 +114,7 @@ None.
 
 Last session: 2026-01-12
 MVP Status: Complete (all 5 phases finished)
-Phase 07: Complete (4/4 plans) - Category-based growth view fully implemented
+Phase 7.1: In progress (1/2 plans) - Category list layout fixes started
 Resume file: None
 
 ## Key Files Changed (Final MVP)
