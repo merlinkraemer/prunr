@@ -209,6 +209,28 @@ This phase addresses critical UI and navigation issues with detailed solutions a
 
 ---
 
+### Phase 8.3: Critical Issues from Root Issues Doc (INSERTED)
+
+**Goal:** Fix critical navigation and visual consistency issues discovered during testing (ISS-045, ISS-046, ISS-047)
+**Depends on:** Phase 8.2
+**Research:** Unlikely (issues are well-documented in ISSUES.md)
+**Plans:** 1 plan
+
+Plans:
+- [x] 08.3-01: Critical Navigation & Visual Fixes (ISS-045, ISS-046, ISS-047)
+
+**Deliverables:**
+- **ISS-045:** Back button changes header but doesn't navigate back (High priority)
+- **ISS-046:** Headers not same size between views (Medium priority)
+- **ISS-047:** Footer separator has empty space above it (Low priority)
+
+**Issues Addressed:** ISS-045 (High), ISS-046 (Medium), ISS-047 (Low)
+
+**Details:**
+This phase addresses critical navigation and visual consistency issues that affect the drill-down user experience. ISS-045 is particularly critical as it blocks users from navigating back from the drill-down view, while ISS-046 and ISS-047 address visual polish and consistency.
+
+---
+
 ### Phase 8: Polish & Issue Resolution
 
 **Goal:** Address scan reliability, performance optimization, UI polish, and verification testing for issues ISS-010 through ISS-026
@@ -261,7 +283,8 @@ Comprehensive polish phase addressing all open issues from ISSUES.md. Prioritize
 | 7. Category Growth View | 4/4 | Complete | 2026-01-12 |
 | 7.1. Layout Fixes | 2/2 | Complete | 2026-01-12 |
 | 8.1. Urgent UX Fixes | 1/1 | Complete | 2026-01-12 |
-| 8.2. UI Improvements & Real-time Updates | 2/4 | In Progress | 2026-01-12 |
+| 8.2. UI Improvements & Real-time Updates | 4/4 | Complete | 2026-01-12 |
+| 8.3. Critical Issues from Root Issues Doc | 1/1 | Complete | 2026-01-12 |
 | 8. Polish & Issue Resolution | 0/4 | Planning | — |
 
 **MVP Status:** 🎉 MVP complete (Phase 1-5). Phase 6-7.1 are post-MVP enhancements.

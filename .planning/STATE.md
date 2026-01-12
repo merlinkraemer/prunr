@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 8.2 — UI Improvements & Real-time Updates (GB meter fixes, navigation, progress indicators)
+**Current focus:** Phase 8 — Polish & Issue Resolution (scan reliability, performance, verification)
 
 ## Current Position
 
@@ -19,21 +19,23 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 7.1: Layout Fixes (2/2 plans complete) - Category list with nested big files, distinct icon colors, stable layout, slide-in navigation, polished drill-down
 - Phase 8.1: Urgent UX Fixes (1/1 plans complete) - GB meter cache interval, drill-down header replacement, animation verification
 - Phase 8.2: UI Improvements & Real-time Updates (4/4 plans complete) - GB meter real-time updates, navigation architecture, push animation fixes, scan modal improvements
+- Phase 8.3: Critical Issues from Root Issues Doc (1/1 plans complete) - Back button navigation fix, header size consistency, footer separator spacing
 - Phase 8: Polish & Issue Resolution (4/4 plans created) - Scan reliability, performance optimization, UI polish, verification testing
 
-Last activity: 2026-01-12 — Completed Phase 8.2-04: Push animation and drill-down fixes (ISS-043, ISS-036/040, ISS-044)
+Last activity: 2026-01-12 — Completed Phase 8.3-01: Critical navigation and visual fixes (ISS-045, ISS-046, ISS-047)
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.1 complete, Phase 8.2 complete (4/4)
+Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.1 complete, Phase 8.2 complete (4/4), Phase 8.3 complete (1/1)
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
-- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`, `07-01-layout-fixes`, `08-01-urgent-ux-fixes` (INSERTED), `08-02-ui-improvements-realtime-updates` (INSERTED), `08-polish-and-issue-resolution`
+- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`, `07-01-layout-fixes`, `08-01-urgent-ux-fixes` (INSERTED), `08-02-ui-improvements-realtime-updates` (INSERTED), `08-03-critical-issues-from-root-issues-doc` (INSERTED), `08-polish-and-issue-resolution`
 - Archived: Old full-window app plans moved to `.planning/phases/_archived-full-window-app/`
 - Note: Phase 05 (Settings & Polish) was implemented without formal GSD planning; retrospective PLAN.md and SUMMARY.md created 2026-01-11
 - Note: Phase 07 plan created 2026-01-12 from documentation/grouping_feature_spec.md
 - Note: Phase 08 added 2026-01-12 to address all open issues from ISSUES.md review
 - Note: Phase 08.1 inserted 2026-01-12 for urgent UX fixes (ISS-032 GB meter, ISS-037 drill-down header, ISS-036 animation verification)
 - Note: Phase 08.2 inserted 2026-01-12 for UI improvements and real-time updates (ISS-039 navigation architecture, ISS-036/ISS-040 push animation, ISS-042 GB meter, ISS-033 progress indicator)
+- Note: Phase 08.3 inserted 2026-01-12 for critical navigation and visual consistency issues (ISS-045 back button navigation, ISS-046 header sizes, ISS-047 footer separator spacing)
 
 ## Performance Metrics
 
@@ -130,6 +132,7 @@ None.
   - 08-03: UI Polish & Verification (ISS-021, ISS-010, ISS-011)
   - 08-04: Low Priority Fixes (ISS-013, ISS-024, ISS-025) - optional
 - 2026-01-12: Phase 8.2 inserted after Phase 8.1: UI Improvements & Real-time Updates (URGENT) — Navigation architecture overhaul (ISS-039), push animation implementation (ISS-036/ISS-040), GB meter real-time updates (ISS-042), scanning progress indicator (ISS-033), settings navigation (ISS-034), header visual clarity (ISS-027)
+- 2026-01-12: Phase 8.3 inserted after Phase 8.2: Critical Issues from Root Issues Doc (URGENT) — Back button navigation fix (ISS-045), header size consistency (ISS-046), footer separator spacing (ISS-047)
 
 **Archived (2026-01-11):** Full-window app plans moved to `.planning/phases/_archived-full-window-app/`:
 - 01-foundation, 02-scanner-storage, 03-delta-engine, 05-frontend-redesign
@@ -142,7 +145,7 @@ None.
 
 Last session: 2026-01-12
 MVP Status: Complete (all 5 phases finished)
-Phase 8.2: 2/4 plans complete - GB meter real-time updates (08.2-02)
+Phase 8.3: Complete (1/1 plan) - Critical navigation and visual fixes
 Resume file: None
 
 ## Key Files Changed (Final MVP)
