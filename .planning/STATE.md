@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 7 — Category-Based Growth View (In Progress)
+**Current focus:** Phase 8.2 — UI Improvements & Real-time Updates (GB meter fixes, navigation, progress indicators)
 
 ## Current Position
 
@@ -17,17 +17,23 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 5: Settings & Polish ✓
 - Phase 6: Popup HIG Redesign (Not Planned)
 - Phase 7.1: Layout Fixes (2/2 plans complete) - Category list with nested big files, distinct icon colors, stable layout, slide-in navigation, polished drill-down
+- Phase 8.1: Urgent UX Fixes (1/1 plans complete) - GB meter cache interval, drill-down header replacement, animation verification
+- Phase 8.2: UI Improvements & Real-time Updates (2/4 plans complete) - GB meter real-time updates (08.2-02), navigation architecture, push animation, progress indicators, settings navigation
+- Phase 8: Polish & Issue Resolution (4/4 plans created) - Scan reliability, performance optimization, UI polish, verification testing
 
-Last activity: 2026-01-12 — Completed 7.1-02: Slide-in navigation + drill-down polish.
+Last activity: 2026-01-12 — Completed Phase 8.2-02: GB meter real-time updates (explicit scan sync + 2s background timer)
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete
+Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.1 complete, Phase 8.2 in progress (2/4)
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
-- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`
+- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`, `07-01-layout-fixes`, `08-01-urgent-ux-fixes` (INSERTED), `08-02-ui-improvements-realtime-updates` (INSERTED), `08-polish-and-issue-resolution`
 - Archived: Old full-window app plans moved to `.planning/phases/_archived-full-window-app/`
 - Note: Phase 05 (Settings & Polish) was implemented without formal GSD planning; retrospective PLAN.md and SUMMARY.md created 2026-01-11
 - Note: Phase 07 plan created 2026-01-12 from documentation/grouping_feature_spec.md
+- Note: Phase 08 added 2026-01-12 to address all open issues from ISSUES.md review
+- Note: Phase 08.1 inserted 2026-01-12 for urgent UX fixes (ISS-032 GB meter, ISS-037 drill-down header, ISS-036 animation verification)
+- Note: Phase 08.2 inserted 2026-01-12 for UI improvements and real-time updates (ISS-039 navigation architecture, ISS-036/ISS-040 push animation, ISS-042 GB meter, ISS-033 progress indicator)
 
 ## Performance Metrics
 
@@ -89,6 +95,10 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete
 | 7.1-02 | Background dimming during drill-down | 10% black overlay focuses attention on detail view |
 | 7.1-02 | Navigation bar styling for detail header | Bottom border, shadow, larger font for visual hierarchy |
 | 7.1-02 | Fixed header with scrollable content | Header stays at top, items scroll beneath |
+| 8.2-02 | Use 2-second interval for GB meter timer | Matches cache interval from Phase 8.1 for balance |
+| 8.2-02 | Call updateFreeSpace() after all scan completions | Ensures menu bar syncs after loadCategoryGrowthList, loadGrowthList, createBaseline |
+| 8.2-02 | Timer dispatches to @MainActor for updates | updateFreeSpace() updates @Observable properties requiring main actor |
+| 8.2-02 | nonisolated(unsafe) for Timer properties | Allows deinit to access Timer from nonisolated context |
 
 ### Deferred Issues
 
@@ -107,6 +117,13 @@ None.
 - 2026-01-11: Phase 6 (Popup HIG Redesign) — Post-MVP phase for Apple HIG compliance (main list, settings, path boundaries, about section)
 - 2026-01-12: Phase 7 (Category-Based Growth View) — Post-MVP phase for category-based grouping (GrowthCategory, CategoryDetectionService, CategoryGrowthListView)
 - 2026-01-12: Phase 7.1 inserted after Phase 7: Layout Fixes (URGENT) — Big file nesting, drill-down redesign, slide-in navigation, icon colors, layout stability
+- 2026-01-12: Phase 8 (Polish & Issue Resolution) — Comprehensive polish phase addressing all open issues (ISS-010 through ISS-026): scan reliability, performance optimization, UI polish, verification testing
+  - Planning complete: 4 plans created (08-01 through 08-04)
+  - 08-01: Scan Reliability & UX (ISS-026, ISS-022)
+  - 08-02: Performance Optimization (ISS-012, ISS-023)
+  - 08-03: UI Polish & Verification (ISS-021, ISS-010, ISS-011)
+  - 08-04: Low Priority Fixes (ISS-013, ISS-024, ISS-025) - optional
+- 2026-01-12: Phase 8.2 inserted after Phase 8.1: UI Improvements & Real-time Updates (URGENT) — Navigation architecture overhaul (ISS-039), push animation implementation (ISS-036/ISS-040), GB meter real-time updates (ISS-042), scanning progress indicator (ISS-033), settings navigation (ISS-034), header visual clarity (ISS-027)
 
 **Archived (2026-01-11):** Full-window app plans moved to `.planning/phases/_archived-full-window-app/`:
 - 01-foundation, 02-scanner-storage, 03-delta-engine, 05-frontend-redesign
@@ -119,7 +136,7 @@ None.
 
 Last session: 2026-01-12
 MVP Status: Complete (all 5 phases finished)
-Phase 7.1: Complete (2/2 plans) - Category list layout fixes with slide-in navigation
+Phase 8.2: 2/4 plans complete - GB meter real-time updates (08.2-02)
 Resume file: None
 
 ## Key Files Changed (Final MVP)

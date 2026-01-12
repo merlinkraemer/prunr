@@ -25,6 +25,12 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 - [x] **Phase 3: Baseline & Growth Tracking** - Single baseline + smart drill-down algorithm
 - [x] **Phase 4: Menu Bar UI** - Drive bar + growth list popover
 - [x] **Phase 5: Settings & Polish** - Configurable paths, threshold, boundaries
+- [x] **Phase 6: Popup HIG Redesign** - (Not Planned)
+- [x] **Phase 7: Category-Based Growth View** - Category grouping with drill-down
+- [x] **Phase 7.1: Layout Fixes** - Big file nesting, slide-in navigation, visual polish
+- [x] **Phase 8.1: Urgent UX Fixes** - GB meter cache interval, drill-down header, animation verification
+- [ ] **Phase 8: Polish & Issue Resolution** - Scan reliability, performance, verification
+- [ ] **Phase 8.2: UI Improvements & Real-time Updates** - Navigation architecture, animations, GB meter (In Progress: 2/4 plans)
 
 ## Phase Details
 
@@ -148,6 +154,100 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 
 ---
 
+### Phase 8.1: Urgent UX Fixes (INSERTED)
+
+**Goal:** Fix critical UI/UX issues affecting core functionality before proceeding to comprehensive Phase 8 polish
+**Depends on:** Phase 7.1
+**Research:** Unlikely (issues are well-documented)
+**Plans:** 0 plans
+
+**Deliverables:**
+- **ISS-032:** GB meter real-time updates in menu bar (reduce cache interval or trigger on FSEvents)
+- **ISS-037:** Header replacement on drill-down (detail view header replaces main view header)
+- **ISS-036:** Verify slide-in vs push animation (may already be resolved per ISS-030)
+- **ISS-038:** Auto-scan should not show blocking overlay (one-line fix: exclude auto-scans from loading overlay)
+
+**Issues Addressed:** ISS-032 (High), ISS-037 (Medium), ISS-036 (Medium - verification), ISS-038 (Medium - quick fix)
+
+**Details:**
+This urgent phase addresses the highest-priority UX issues that impact core functionality. These issues are marked High priority or affect critical user interactions and should be resolved before the comprehensive Phase 8 polish work.
+
+---
+
+### Phase 8.2: UI Improvements & Real-time Updates (INSERTED)
+
+**Goal:** Fix critical navigation architecture, animations, real-time GB meter updates, and UI polish issues
+**Depends on:** Phase 8.1
+**Research:** Unlikely (solutions identified in ISS-036, ISS-039, ISS-040, ISS-042)
+**Plans:** 4 plans
+
+Plans:
+- [x] 08.2-01: Navigation Architecture & Storage Bar (ISS-039)
+- [x] 08.2-02: GB Meter Real-time Updates (ISS-042, ISS-032)
+- [ ] 08.2-03: Scanning Progress & Settings Navigation (ISS-033, ISS-034)
+- [ ] 08.2-04: Push Animation Implementation (ISS-036, ISS-040)
+
+**Deliverables:**
+- **ISS-039:** Navigation architecture overhaul - storage bar must remain visible during drill-down (High priority)
+- **ISS-036/ISS-040:** Push animation implementation - replace slide-in with proper push that moves both views simultaneously (High priority)
+- **ISS-042:** GB meter real-time updates - explicit menu bar sync after scans and 2s timer for continuous updates (High priority)
+- **ISS-033:** Scanning progress indicator - progress bar/percentage for long-running scans (High priority)
+- **ISS-034:** Monitor path click navigation - open settings directly to Paths tab (Medium priority)
+- **ISS-027:** Header visual clarity improvements - better labels, separation, icons (Low priority)
+
+**Issues Addressed:** ISS-039 (High), ISS-036/ISS-040 (High), ISS-042 (High), ISS-033 (High), ISS-034 (Medium), ISS-027 (Low)
+
+**Details:**
+This phase addresses critical UI and navigation issues with detailed solutions already documented in ISSUES.md. Focus areas:
+
+1. **Navigation Architecture (ISS-039):** Complete redesign to separate storage bar (always visible) from page navigation system
+2. **Push Animation (ISS-036/ISS-040):** Implement conditional rendering with `.transition(.asymmetric())` to eliminate overlap
+3. **Real-time GB Meter (ISS-042):** Add explicit menu bar updates via `updateMenuBarDisplay()` and 2s background timer
+4. **Progress Indicators (ISS-033):** Show progress bar with percentage for scans longer than 2 seconds
+5. **Settings Navigation (ISS-034):** One-line fix to navigate to Paths tab when clicking monitor path
+6. **Header Polish (ISS-027):** Add section labels, better visual separation, optional icons/tooltips
+
+---
+
+### Phase 8: Polish & Issue Resolution
+
+**Goal:** Address scan reliability, performance optimization, UI polish, and verification testing for issues ISS-010 through ISS-026
+**Depends on:** Phase 8.2
+**Research:** Unlikely (issues are well-documented)
+**Plans:** 4 plans
+
+Plans:
+- [ ] 08-01: Scan Reliability & UX (ISS-026, ISS-022)
+- [ ] 08-02: Performance Optimization (ISS-012, ISS-023)
+- [ ] 08-03: UI Polish & Verification (ISS-021, ISS-010, ISS-011)
+- [ ] 08-04: Low Priority Fixes (ISS-013, ISS-024, ISS-025) - optional
+
+**Deliverables:**
+- **Urgent Issues:**
+  - ISS-026: Fix stop scan button reliability
+  - ISS-022: Scanning indicator UX improvements (minimum display duration + progress feedback)
+  - ISS-033: Scanning lacks progress indicator (progress bar/percentage for long scans)
+  - ISS-035: Verify test data creation non-blocking (may already be resolved per ISS-028)
+- **Performance Optimization:**
+  - ISS-012: App performance optimization (scan, UI, database)
+  - ISS-023: Slow popup opening investigation and fixes
+- **UI Polish:**
+  - ISS-021: Header section improvements (visual hierarchy, clarity) - COMPLETED
+  - ISS-034: Monitor path click opens wrong settings page (navigate to Paths tab)
+  - ISS-027: Header visual clarity improvements
+- **Verification Testing:**
+  - ISS-010: Verify boundaries with test data
+  - ISS-011: Verify drilling down with test data
+- **Low Priority Fixes:**
+  - ISS-013: Menubar popup click issue
+  - ISS-024: Settings window focus issue
+  - ISS-025: Multi-monitor popup position issue
+
+**Details:**
+Comprehensive polish phase addressing all open issues from ISSUES.md. Prioritizes scan reliability and UX improvements, followed by performance optimization and systematic verification testing.
+
+---
+
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -160,6 +260,9 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 | 6. Popup HIG Redesign | 0/0 | Not Planned | — |
 | 7. Category Growth View | 4/4 | Complete | 2026-01-12 |
 | 7.1. Layout Fixes | 2/2 | Complete | 2026-01-12 |
+| 8.1. Urgent UX Fixes | 1/1 | Complete | 2026-01-12 |
+| 8.2. UI Improvements & Real-time Updates | 2/4 | In Progress | 2026-01-12 |
+| 8. Polish & Issue Resolution | 0/4 | Planning | — |
 
 **MVP Status:** 🎉 MVP complete (Phase 1-5). Phase 6-7.1 are post-MVP enhancements.
 
