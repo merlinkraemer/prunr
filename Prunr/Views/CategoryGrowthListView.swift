@@ -146,7 +146,7 @@ private struct CategoryListRow: View {
                 // Category icon
                 Image(systemName: item.category.icon)
                     .font(.system(size: 16))
-                    .foregroundStyle(growthSeverityColor)
+                    .foregroundStyle(item.category.color ?? .secondary)
                     .frame(width: 20, height: 20)
 
                 // Category name
