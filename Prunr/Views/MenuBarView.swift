@@ -72,12 +72,12 @@ struct MenuBarView: View {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
 
-                    VStack(spacing: 12) {
+                    VStack(spacing: 16) {
                         ProgressView()
                             .controlSize(.regular)
 
-                        // NEW: Add progress bar for long scans (ISS-033)
-                        if manager.scanProgressPercentage > 0 {
+                        // Progress bar with percentage (shows from 1% onward)
+                        if manager.scanProgressPercentage >= 0.01 {
                             ProgressView(value: manager.scanProgressPercentage, total: 1.0)
                                 .frame(width: 200)
                                 .progressViewStyle(.linear)
@@ -110,7 +110,8 @@ struct MenuBarView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
-                    .padding(20)
+                    .frame(width: 260, height: 180)
+                    .padding(24)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
