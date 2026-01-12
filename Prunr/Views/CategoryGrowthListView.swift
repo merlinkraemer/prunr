@@ -36,10 +36,33 @@ struct CategoryGrowthListView: View {
         ScrollView {
             VStack(spacing: 0) {
                 ForEach(categoryItems) { item in
-                    CategoryListRow(
-                        item: item,
-                        onTap: { selectCategory(item) }
-                    )
+                    VStack(spacing: 0) {
+                        CategoryListRow(
+                            item: item,
+                            onTap: { selectCategory(item) }
+                        )
+
+                        // Nested big files (max 3)
+                        if !item.bigItems.isEmpty {
+                            ForEach(item.bigItems.prefix(3), id: \.path) { bigItem in
+                                NestedBigItemRow(
+                                    item: bigItem,
+                                    onTap: { onTapItem(bigItem) }
+                                )
+                            }
+
+                            // Show "X more" if there are more than 3 big items
+                            if item.bigItems.count > 3 {
+                                MoreIndicatorRow(
+                                    count: item.bigItems.count - 3,
+                                    onTap: { selectCategory(item) }
+                                )
+                            }
+
+                            // Visual separator
+                            SeparatorRow()
+                        }
+                    }
                 }
             }
         }
@@ -352,6 +375,142 @@ private struct ItemRow: View {
         } else {
             return "\(prefix)\(bytes) B"
         }
+    }
+}
+
+// MARK: - Nested Big Item Row
+
+private struct NestedBigItemRow: View {
+    let item: BaselineService.GrowthItem
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 8) {
+                // Indentation spacer
+                Spacer()
+                    .frame(width: 32)
+
+                // File icon
+                Image(systemName: "doc.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .frame(width: 14, height: 14)
+
+                // File name
+                Text(fileName)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                // Size
+                Text(sizeText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 3)
+            .frame(minHeight: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(hoverState ? Color.gray.opacity(0.08) : Color.clear)
+            )
+            .padding(.horizontal, 6)
+            .padding(.leading, 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                hoverState = hovering
+            }
+        }
+    }
+
+    @State private var hoverState = false
+
+    private var fileName: String {
+        URL(fileURLWithPath: item.path).lastPathComponent
+    }
+
+    private var sizeText: String {
+        formattedBytes(item.growthBytes, prefix: "+")
+    }
+
+    private func formattedBytes(_ bytes: Int64, prefix: String = "") -> String {
+        let kb = Double(bytes) / 1_000
+        let mb = kb / 1_000
+        let gb = mb / 1_000
+
+        if abs(gb) >= 1 {
+            return "\(prefix)\(String(format: "%.1f", gb)) GB"
+        } else if abs(mb) >= 1 {
+            return "\(prefix)\(String(format: "%.0f", mb)) MB"
+        } else if abs(kb) >= 1 {
+            return "\(prefix)\(String(format: "%.0f", kb)) KB"
+        } else {
+            return "\(prefix)\(bytes) B"
+        }
+    }
+}
+
+// MARK: - More Indicator Row
+
+private struct MoreIndicatorRow: View {
+    let count: Int
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 8) {
+                // Indentation spacer
+                Spacer()
+                    .frame(width: 32)
+
+                Text("\(count) more")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .italic()
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 3)
+            .frame(minHeight: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(hoverState ? Color.gray.opacity(0.08) : Color.clear)
+            )
+            .padding(.horizontal, 6)
+            .padding(.leading, 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                hoverState = hovering
+            }
+        }
+    }
+
+    @State private var hoverState = false
+}
+
+// MARK: - Separator Row
+
+private struct SeparatorRow: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.gray.opacity(0.15))
+            .frame(height: 1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
     }
 }
 
