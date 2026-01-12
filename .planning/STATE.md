@@ -16,11 +16,11 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 4: Menu Bar UI ✓ (incl. 04-02-FIX for UI issues)
 - Phase 5: Settings & Polish ✓
 - Phase 6: Popup HIG Redesign (Not Planned)
-- Phase 7: Category-Based Growth View (3/4 plans complete)
+- Phase 7: Category-Based Growth View (4/4 plans complete)
 
-Last activity: 2026-01-12 — Completed 07-03: Category UI Implementation.
+Last activity: 2026-01-12 — Completed 07-04: Category patterns + drill-down UX.
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 07 (3/4 plans)
+Progress: ██████████ 100% MVP | Post-MVP: Phase 07 complete
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
@@ -73,6 +73,12 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 07 (3/4 plan
 | 07-03 | Color-coded severity for categories | Green <1GB, Orange 1-5GB, Red >=5GB |
 | 07-03 | CategoryGrowthListView expandable hierarchy | Categories expand, big items nested, small items collapsed |
 | 07-03 | Deferred category-specific drill-down | Focus on UI/UX first, drill-down later |
+| 07-04 | Implemented category drill-down UX | Click category → show detail view with all items |
+| 07-04 | Added allItems to CategoryGrowthItem | Enables drill-down to show all category items |
+| 07-04 | Path normalization with tilde expansion | Accurate ~/ path matching for categorization |
+| 07-04 | Test data creates category-matching paths | Library/Caches, node_modules, .Trash patterns |
+| 07-04 | 105MB big file in test data | Tests >=100MB threshold for big file display |
+| 07-04 | Drill-down navigation pattern | Back button returns to category list |
 
 ### Deferred Issues
 
@@ -102,7 +108,7 @@ None.
 
 Last session: 2026-01-12
 MVP Status: Complete (all 5 phases finished)
-Phase 07: 3/4 plans complete (07-01, 07-02, 07-03), ready for 07-04
+Phase 07: Complete (4/4 plans) - Category-based growth view fully implemented
 Resume file: None
 
 ## Key Files Changed (Final MVP)
