@@ -92,6 +92,13 @@ final class DatabaseManager {
             try? db.create(index: "idx_snapshotEntry_path", on: "snapshotEntry", columns: ["path"])
         }
 
+        // Migration v4: Add composite index for delta query optimization
+        migrator.registerMigration("v4_add_composite_index") { db in
+            // Composite index on (snapshotId, path) speeds up calculateDeltas query
+            // which joins on both columns (lines 256-284)
+            try db.create(index: "idx_snapshotEntry_snapshotId_path", on: "snapshotEntry", columns: ["snapshotId", "path"])
+        }
+
         try migrator.migrate(dbPool)
     }
 }
