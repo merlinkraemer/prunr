@@ -15,7 +15,6 @@ final class SettingsStore {
         static let customBoundaries = "customBoundaries"
         static let disabledPaths = "disabledPaths"
         static let disabledBoundaries = "disabledBoundaries"
-        static let drillDownThreshold = "drillDownThreshold"
         static let launchAtLogin = "launchAtLogin"
     }
     
@@ -40,12 +39,7 @@ final class SettingsStore {
     private var disabledBoundaryNames: Set<String> {
         didSet { UserDefaults.standard.set(Array(disabledBoundaryNames), forKey: Keys.disabledBoundaries) }
     }
-    
-    /// Drill-down threshold percentage (0.0-1.0)
-    var drillDownThreshold: Double {
-        didSet { UserDefaults.standard.set(drillDownThreshold, forKey: Keys.drillDownThreshold) }
-    }
-    
+
     /// Launch app at system login
     var launchAtLogin: Bool {
         didSet {
@@ -53,7 +47,7 @@ final class SettingsStore {
             updateLaunchAtLogin()
         }
     }
-    
+
     // MARK: - Computed Properties
     
     /// All tracked paths (defaults + custom)
@@ -95,11 +89,7 @@ final class SettingsStore {
         
         // Load disabled boundaries
         self.disabledBoundaryNames = Set(UserDefaults.standard.stringArray(forKey: Keys.disabledBoundaries) ?? [])
-        
-        // Load threshold (default 70%)
-        let threshold = UserDefaults.standard.double(forKey: Keys.drillDownThreshold)
-        self.drillDownThreshold = threshold > 0 ? threshold : 0.7
-        
+
         // Load launch at login
         self.launchAtLogin = UserDefaults.standard.bool(forKey: Keys.launchAtLogin)
     }
