@@ -18,7 +18,7 @@ struct DriveBarView: View {
     var cornerRadius: CGFloat = 4
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             // Visual bar at top with gradient based on usage
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
@@ -40,8 +40,13 @@ struct DriveBarView: View {
             }
             .frame(height: height)
 
-            // Text row: "X GB of Y GB free" left-aligned, percentage right-aligned
-            HStack(alignment: .center, spacing: 4) {
+            // Text row: icon + "X GB of Y GB free" left-aligned, percentage tag right-aligned
+            HStack(alignment: .center, spacing: 6) {
+                // Drive icon
+                Image(systemName: "internaldrive")
+                    .font(.system(size: 14))
+                    .foregroundStyle(usageColor)
+
                 Text(bytesToGBString(freeBytes))
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.primary)
@@ -60,12 +65,16 @@ struct DriveBarView: View {
 
                 Spacer()
 
-                // Percentage (plain text, no badge)
+                // Percentage tag
                 Text("\(usedPercentage)%")
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(usageColor, in: RoundedRectangle(cornerRadius: 4))
             }
         }
+        .padding(.vertical, 4)
     }
 
     // MARK: - Private Helpers
