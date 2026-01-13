@@ -97,16 +97,16 @@ struct DriveBarView: View {
         return Int((Double(usedBytes) / Double(totalBytes)) * 100)
     }
 
-    /// Converts bytes to GB/ TB string
+    /// Converts bytes to GB/TB string (no space)
     private func bytesToGBString(_ bytes: Int64) -> String {
         let gb = Double(bytes) / 1_000_000_000
         if gb >= 1000 {
             let tb = gb / 1000
-            return String(format: "%.0f TB", tb)
+            return String(format: "%.0fTB", tb)
         } else if gb >= 10 {
-            return String(format: "%.0f GB", gb)
+            return String(format: "%.0fGB", gb)
         } else {
-            return String(format: "%.1f GB", gb)
+            return String(format: "%.1fGB", gb)
         }
     }
 }

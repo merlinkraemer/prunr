@@ -249,11 +249,18 @@ struct MenuBarView: View {
 
     // MARK: - Monitoring Path Header
 
+    private var hasMultiplePaths: Bool {
+        SettingsStore.shared.enabledTrackedPaths.count > 1
+    }
+
     private var monitoringPathHeader: some View {
         VStack(spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    isHeaderExpanded.toggle()
+                // Only expand if multiple paths
+                if hasMultiplePaths {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        isHeaderExpanded.toggle()
+                    }
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -262,19 +269,29 @@ struct MenuBarView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
 
-                    // Folder tags (showing folder names)
-                    HStack(spacing: 6) {
-                        ForEach(manager.folderNames, id: \.self) { folderName in
-                            Text(folderName)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.gray.opacity(0.15))
-                                )
+                    // Single path: show full path, Multiple paths: show tags
+                    if hasMultiplePaths {
+                        // Folder tags (showing folder names)
+                        HStack(spacing: 6) {
+                            ForEach(manager.folderNames, id: \.self) { folderName in
+                                Text(folderName)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.gray.opacity(0.15))
+                                    )
+                            }
                         }
+                    } else if let firstPath = SettingsStore.shared.enabledTrackedPaths.first {
+                        // Single path: show full path
+                        Text(firstPath.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
 
                     Spacer()
@@ -291,18 +308,20 @@ struct MenuBarView: View {
                         .transition(.opacity)
                     }
 
-                    // Expand/collapse chevron
-                    Image(systemName: isHeaderExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
+                    // Expand/collapse chevron - only show for multiple paths
+                    if hasMultiplePaths {
+                        Image(systemName: isHeaderExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
 
-            // Expanded paths list - full width dropdown
-            if isHeaderExpanded {
+            // Expanded paths list - full width dropdown (only for multiple paths)
+            if isHeaderExpanded && hasMultiplePaths {
                 Divider()
 
                 VStack(spacing: 0) {
