@@ -62,6 +62,11 @@ enum GrowthCategory: String, CaseIterable, Identifiable {
     case browserCache
     case mailAttachments
     case trash
+    case documents
+    case photos
+    case videos
+    case apps
+    case systemData
     case other
 
     // MARK: - Identifiable
@@ -82,6 +87,11 @@ enum GrowthCategory: String, CaseIterable, Identifiable {
         case .browserCache: return "Browser Cache"
         case .mailAttachments: return "Mail Attachments"
         case .trash: return "Trash"
+        case .documents: return "Documents"
+        case .photos: return "Photos"
+        case .videos: return "Videos"
+        case .apps: return "Apps"
+        case .systemData: return "System Data"
         case .other: return "Other"
         }
     }
@@ -98,7 +108,12 @@ enum GrowthCategory: String, CaseIterable, Identifiable {
         case .browserCache: return "globe"
         case .mailAttachments: return "envelope.fill"
         case .trash: return "trash.fill"
-        case .other: return "doc.fill"
+        case .documents: return "doc.fill"
+        case .photos: return "photo.fill"
+        case .videos: return "film.fill"
+        case .apps: return "app.fill"
+        case .systemData: return "gearshape.fill"
+        case .other: return "ellipsis"
         }
     }
 
@@ -114,6 +129,11 @@ enum GrowthCategory: String, CaseIterable, Identifiable {
         case .browserCache: return .blue
         case .mailAttachments: return .blue
         case .trash: return .gray
+        case .documents: return .cyan
+        case .photos: return .pink
+        case .videos: return .purple
+        case .apps: return .indigo
+        case .systemData: return .brown
         case .other: return .gray
         }
     }
@@ -141,6 +161,16 @@ enum GrowthCategory: String, CaseIterable, Identifiable {
             return ["Library/Mail"]
         case .trash:
             return [".Trash"]
+        case .documents:
+            return ["Documents", "/Documents"]
+        case .photos:
+            return ["Pictures", "Photos", "/Pictures/", "/Photos/"]
+        case .videos:
+            return ["Movies", "Videos", "/Movies/", "/Videos/"]
+        case .apps:
+            return ["/Applications"]
+        case .systemData:
+            return ["Library/Logs", "Library/Application Support", "/private/var/log"]
         case .other:
             return []
         }
@@ -198,6 +228,31 @@ enum GrowthCategory: String, CaseIterable, Identifiable {
         // Downloads
         if containsAny(of: normalizedPath, substrings: downloads.patterns) {
             return .downloads
+        }
+
+        // Documents (check before general paths)
+        if containsAny(of: normalizedPath, substrings: documents.patterns) {
+            return .documents
+        }
+
+        // Photos
+        if containsAny(of: normalizedPath, substrings: photos.patterns) {
+            return .photos
+        }
+
+        // Videos
+        if containsAny(of: normalizedPath, substrings: videos.patterns) {
+            return .videos
+        }
+
+        // Apps
+        if containsAny(of: normalizedPath, substrings: apps.patterns) {
+            return .apps
+        }
+
+        // System Data (check last as it may overlap with Library/Caches)
+        if containsAny(of: normalizedPath, substrings: systemData.patterns) {
+            return .systemData
         }
 
         return .other
