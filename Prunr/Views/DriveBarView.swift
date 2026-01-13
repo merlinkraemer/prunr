@@ -12,46 +12,14 @@ struct DriveBarView: View {
     let freeBytes: Int64
 
     /// Bar height
-    var height: CGFloat = 8
+    var height: CGFloat = 12
 
     /// Corner radius
     var cornerRadius: CGFloat = 4
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 8) {
-                // Drive icon with color based on usage
-                Image(systemName: "internaldrive")
-                    .font(.system(size: 14))
-                    .foregroundStyle(usageColor)
-
-                // Free space with total (e.g., "123 GB free of 500 GB")
-                Text(bytesToGBString(freeBytes))
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.primary)
-
-                Text("free of")
-                    .font(.system(.caption))
-                    .foregroundStyle(.secondary)
-
-                Text(bytesToGBString(totalBytes))
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.primary)
-
-                Spacer()
-
-                // Percentage badge
-                HStack(spacing: 4) {
-                    Text("\(usedPercentage)%")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.white)
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(usageColor, in: RoundedRectangle(cornerRadius: 4))
-            }
-
-            // Visual bar with gradient based on usage
+        VStack(alignment: .leading, spacing: 6) {
+            // Visual bar at top with gradient based on usage
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     // Background track
@@ -71,6 +39,32 @@ struct DriveBarView: View {
                 }
             }
             .frame(height: height)
+
+            // Text row: "X GB of Y GB free" left-aligned, percentage right-aligned
+            HStack(alignment: .center, spacing: 4) {
+                Text(bytesToGBString(freeBytes))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.primary)
+
+                Text("of")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+
+                Text(bytesToGBString(totalBytes))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.primary)
+
+                Text("free")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                // Percentage (plain text, no badge)
+                Text("\(usedPercentage)%")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
