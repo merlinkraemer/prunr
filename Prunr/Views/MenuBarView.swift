@@ -279,33 +279,6 @@ struct MenuBarView: View {
 
                     Spacer()
 
-                    // Path size badge or loading state
-                    if manager.isCalculatingPathSize {
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .controlSize(.mini)
-                            Text("Calculating...")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(Color.gray.opacity(0.1))
-                        )
-                    } else if manager.monitoredPathSizeBytes > 0 {
-                        Text(formattedBytes(manager.monitoredPathSizeBytes))
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(Color.gray.opacity(0.15))
-                            )
-                    }
-
                     // Auto-scan indicator (if scanning)
                     if manager.isAutoScanning {
                         HStack(spacing: 4) {
