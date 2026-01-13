@@ -222,7 +222,7 @@ struct CategoryGrowthListView: View {
 private enum ColumnWidths {
     static let count: CGFloat = 70  // Fits "9999 items" with space
     static let size: CGFloat = 90   // Fits "+999.9 GB" with arrow icon
-    static let name: CGFloat = 140 // Flexible remaining space
+    // Note: name column is now flexible (maxWidth: .infinity) to prevent overflow
 }
 
 private struct CategoryListRow: View, Equatable {
@@ -248,7 +248,7 @@ private struct CategoryListRow: View, Equatable {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                    .frame(width: 120)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Item count (static width)
                 Text("\(item.itemCount) items")
@@ -346,12 +346,12 @@ private struct FolderHeaderRow: View {
                     .foregroundStyle(.blue.opacity(0.8))
                     .frame(width: 16, height: 16)
 
-                // Folder name (static width)
+                // Folder name (flexible width, left-aligned)
                 Text(folderName)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                    .frame(width: ColumnWidths.name)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Item count (static width)
                 Text("\(items.count) file\(items.count == 1 ? "" : "s")")
@@ -433,14 +433,14 @@ private struct ItemRow: View {
                     .foregroundStyle(item.isBigFile ? .orange : .secondary)
                     .frame(width: 16, height: 16)
 
-                // File name (static width)
+                // File name (flexible width, left-aligned)
                 Text(fileName)
                     .font(.system(size: 11))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                    .frame(width: ColumnWidths.name)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Size with percentage (static width)
+                // Size with percentage
                 HStack(spacing: 4) {
                     Text(sizeText)
                         .font(.system(.caption, design: .monospaced))
@@ -459,7 +459,6 @@ private struct ItemRow: View {
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                 }
-                .frame(width: ColumnWidths.size, alignment: .trailing)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
@@ -532,14 +531,14 @@ private struct NestedBigItemRow: View {
                     .foregroundStyle(.orange)
                     .frame(width: 14, height: 14)
 
-                // File name (static width)
+                // File name (flexible width, left-aligned)
                 Text(fileName)
                     .font(.system(size: 10))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                    .frame(width: ColumnWidths.name)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Size with percentage (static width)
+                // Size with percentage
                 HStack(spacing: 2) {
                     Text(sizeText)
                         .font(.system(.caption2, design: .monospaced))
@@ -558,7 +557,6 @@ private struct NestedBigItemRow: View {
                             .clipShape(RoundedRectangle(cornerRadius: 2))
                     }
                 }
-                .frame(width: ColumnWidths.size, alignment: .trailing)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 3)
