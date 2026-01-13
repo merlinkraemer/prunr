@@ -326,12 +326,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Create progress callback for updating UI during scan
         // Note: MainActor.run ensures UI updates happen on main thread
         let progressCallback: (ScanService.ScanProgress) -> Void = { progress in
+            print("[MenuBarManager] Progress callback FIRED! percentage: \(progress.percentage)")
             Task { @MainActor in
                 // Update files scanned count
                 self.filesScanned = progress.foldersScanned
 
                 // Update percentage for progress bar (ISS-033)
                 self.scanProgressPercentage = progress.percentage
+                print("[MenuBarManager] Received progress: \(Int(progress.percentage * 100))%, filesScanned: \(progress.foldersScanned)")
 
                 // Show detailed progress after 2 seconds
                 let elapsed = Date().timeIntervalSince(scanStartTimeForProgress)
@@ -765,16 +767,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 print("[MenuBarManager] hasBaseline = \(hasBaseline)")
 
                 if hasBaseline {
-                    let trackedPaths = enabledPaths
-                    var shouldRescan = false
-
-                    for changedPath in changedPaths {
-                        for trackedPath in trackedPaths {
-                            if changedPath.path.hasPrefix(trackedPath.url.path) {
-                                print("[MenuBarManager] Change detected under tracked path: \(changedPath.path)")
-                                shouldRescan = true
-                            }
-                        }
+                    // Optimized: Build Set of path prefixes for O(1) lookup instead of O(n*m) iteration
+                    let pathPrefixes = Set(enabledPaths.map { $0.url.path })
+                    let shouldRescan = changedPaths.contains { changedPath in
+                        pathPrefixes.contains { changedPath.path.hasPrefix($0) }
                     }
 
                     if shouldRescan {

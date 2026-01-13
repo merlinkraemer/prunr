@@ -229,7 +229,7 @@ actor ScanService {
                             percentage: percentage
                         )
                         progress(progressUpdate)
-                        logger.debug("Progress update: \(count) files scanned, \(Int(percentage * 100))%")
+                        print("[ScanService] Progress update: \(count) files, \(Int(percentage * 100))% (threshold: 0.01)")
                     }
                 }
             }
