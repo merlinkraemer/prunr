@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 9: Visual Improvements (0/6 plans) - Monospace fonts, static columns, header redesign, spacing, footer, dropdown
 - Phase 9.1: UI Layout Fixes (2/2 plans complete) - Layout overflow, alignment, footer redesign, big file visual overhaul (INSERTED)
 - Phase 9.2: UI & UX Quick Fixes (1/1 plans complete) - Reset baseline in Paths tab, tree view visual redesign, app icon configuration (INSERTED)
-- Phase 9.3: Performance & Speed Improvements (1/3 plans complete) - Database batch inserts, composite index migration (INSERTED)
+- Phase 9.3: Performance & Speed Improvements (2/3 plans complete) - Database batch inserts, composite index migration, UI caching and stable identifiers (INSERTED)
 - Phase 9.4: Settings Redesign (0/0 plans) - Modern settings window redesign (INSERTED)
 
-Last activity: 2026-01-13 — Completed Phase 9.3-01 (Database & Scan Performance)
+Last activity: 2026-01-13 — Completed Phase 9.3-02 (UI Responsiveness)
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.x complete, Phase 9.1 complete, Phase 9.2 complete, Phase 9.3 in progress (1/3)
+Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.x complete, Phase 9.1 complete, Phase 9.2 complete, Phase 9.3 in progress (2/3)
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
@@ -121,6 +121,9 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete
 | 9.2-01 | App icon from ci directory | Use official branding in app bundle |
 | 9.3-01 | Prepared statement batch inserts with db.makeStatement() | Eliminates SQL preparation overhead for each row |
 | 9.3-01 | Composite index on (snapshotId, path) | Speeds up delta query JOIN operations |
+| 9.3-02 | SwiftUI @State caching for expensive computations | Reduces CPU usage during list updates, smoother UI |
+| 9.3-02 | Explicit .id() modifiers on list rows | Better SwiftUI diffing, avoids unnecessary redraws |
+| 9.3-02 | Helper functions to avoid compiler timeout | Swift compiler can't type-check complex chained closures |
 
 ### Deferred Issues
 
@@ -167,8 +170,8 @@ MVP Status: Complete (all 5 phases finished)
 Phase 8: Complete (all sub-phases)
 Phase 9.1: Complete (2/2 plans)
 Phase 9.2: Complete (1/1 plans)
-Phase 9.3: In progress (1/3 plans complete)
-Stopped at: Completed 9.3-01-PLAN.md (Database & Scan Performance)
+Phase 9.3: In progress (2/3 plans complete)
+Stopped at: Completed 9.3-02-PLAN.md (UI Responsiveness)
 Resume file: None
 
 ## Key Files Changed (Final MVP)
