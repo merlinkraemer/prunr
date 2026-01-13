@@ -181,7 +181,10 @@ actor ScanService {
                         throw ScanError.cancelled
                     }
 
-                    await Task.yield()
+                    // Yield every 2 batches (4000 items) to reduce coordination overhead
+                    if count % (batchSize * 2) == 0 {
+                        await Task.yield()
+                    }
                 }
 
                 // Report progress (throttled to every 500ms)
@@ -190,33 +193,32 @@ actor ScanService {
                     if now.timeIntervalSince(lastProgressUpdate) >= progressUpdateInterval {
                         lastProgressUpdate = now
 
-                        // Calculate percentage based on elapsed time (ISS-033)
-                        // Time-based estimation: scans typically complete in 2-30 seconds
-                        // Use diminishing returns approach for smooth progress
+                        // Progress estimation with minimum visibility (ISS-033)
                         let elapsed = now.timeIntervalSince(scanStartTime)
-                        let percentage: Double
+                        var percentage: Double
                         let estimatedTotal: Int
 
-                        if elapsed < 2.0 {
-                            // First 2 seconds: no progress bar (0%)
-                            percentage = 0.0
-                            estimatedTotal = 0
-                        } else if elapsed < 5.0 {
-                            // 2-5 seconds: ramp up to 25%
-                            percentage = 0.25 * ((elapsed - 2.0) / 3.0)
-                            estimatedTotal = Int(Double(count) / max(percentage, 0.01))
-                        } else if elapsed < 10.0 {
-                            // 5-10 seconds: ramp up to 50%
-                            percentage = 0.25 + (0.25 * ((elapsed - 5.0) / 5.0))
-                            estimatedTotal = Int(Double(count) / max(percentage, 0.01))
-                        } else if elapsed < 20.0 {
-                            // 10-20 seconds: ramp up to 75%
-                            percentage = 0.5 + (0.25 * ((elapsed - 10.0) / 10.0))
-                            estimatedTotal = Int(Double(count) / max(percentage, 0.01))
+                        // Minimum progress to show the bar immediately
+                        let minimumProgress = min(0.10, Double(count) / 100.0)
+
+                        if elapsed < 1.0 {
+                            // First second: show minimum progress (just started)
+                            percentage = minimumProgress
+                            estimatedTotal = max(100, count * 5) // Rough estimate
+                        } else if count < 100 {
+                            // Small scan: show progress based on count with minimum floor
+                            percentage = min(0.50, minimumProgress)
+                            estimatedTotal = max(100, count * 3)
                         } else {
-                            // 20+ seconds: gradually approach 95%
-                            percentage = 0.75 + (0.20 * min(1.0, (elapsed - 20.0) / 20.0))
-                            estimatedTotal = Int(Double(count) / max(percentage, 0.01))
+                            // Larger scan: estimate based on scan rate
+                            let rate = Double(count) / elapsed
+                            // Estimate assuming current rate continues, with 50% buffer
+                            let estimated = Double(count) + (rate * 2.0)
+                            estimatedTotal = Int(estimated)
+                            // Progressive percentage that grows with scan
+                            percentage = min(0.95, Double(count) / max(1.0, estimated))
+                            // Ensure at least some progress is visible
+                            percentage = max(minimumProgress, percentage)
                         }
 
                         let progressUpdate = ScanProgress(
