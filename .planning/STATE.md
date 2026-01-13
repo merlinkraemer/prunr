@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 9: Visual Improvements (0/6 plans) - Monospace fonts, static columns, header redesign, spacing, footer, dropdown
 - Phase 9.1: UI Layout Fixes (1/2 plans complete) - Layout overflow, alignment, footer redesign, big file visual overhaul (INSERTED)
 
-Last activity: 2026-01-13 — Completed 9.1-01-PLAN.md (Layout & Header Fixes)
+Last activity: 2026-01-13 — Completed 9.1-01-FIX.md (UAT drive bar redesign)
 
 Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.x complete, Phase 9 planning, Phase 9.1 in progress (1/2)
 
@@ -111,6 +111,7 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete
 | 8.2-04 | Asymmetric transitions: list exits left, detail enters right | Creates synchronized push effect like iOS/Finder navigation |
 | 8.2-04 | Fixed scan modal size (260x180) | Prevents jarring resizes during progress updates |
 | 8.2-02 | nonisolated(unsafe) for Timer properties | Allows deinit to access Timer from nonisolated context |
+| 9.1-01-FIX | Drive bar: bar at top, text below | User UAT feedback - better visual hierarchy |
 
 ### Deferred Issues
 
@@ -153,8 +154,8 @@ None.
 Last session: 2026-01-13
 MVP Status: Complete (all 5 phases finished)
 Phase 8: Complete (all sub-phases)
-Phase 9.1: In progress (1/2 plans complete)
-Stopped at: Completed 9.1-01-PLAN.md
+Phase 9.1: In progress (1/2 plans complete + 01-FIX)
+Stopped at: Completed 9.1-01-FIX.md (UAT drive bar redesign)
 Resume file: None
 
 ## Key Files Changed (Final MVP)
