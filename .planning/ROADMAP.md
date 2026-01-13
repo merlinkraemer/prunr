@@ -455,20 +455,22 @@ This phase focuses on performance and speed improvements across the application:
 **Goal:** Redesign the Settings window with modern macOS 26 design patterns
 **Depends on:** Phase 9.3
 **Research:** Unlikely (design patterns well-documented)
-**Plans:** 0 plans
+**Plans:** 1 plan
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 9.4 to break down)
+- [x] 9.4-01: Settings Redesign (3 tabs, merged paths, dead code removal)
 
 **Deliverables:**
-- Modern settings window redesign
-- Better organization and visual hierarchy
-- Improved controls and interactions
+- 3-tab settings window: General, Folder Limits, About
+- Merged Scan Paths into General tab
+- Clear explanation for Folder Limits tab
+- App icon in About tab
+- Removed dead drillDownThreshold code
 
-**Issues Addressed:** TBD
+**Issues Addressed:** Dead code cleanup, UX simplification
 
 **Details:**
-This phase will redesign the Settings window to match modern macOS 26 design patterns with better visual hierarchy, improved controls, and more intuitive organization.
+Consolidated from 5 tabs to 3, merged related settings, added clear explanations, removed unused drill-down threshold setting (BaselineService hardcodes 0.70).
 
 ---
 
@@ -476,7 +478,7 @@ This phase will redesign the Settings window to match modern macOS 26 design pat
 | 9.1. UI Layout Fixes | 2/2 | Complete | 2026-01-13 |
 | 9.2. UI & UX Quick Fixes | 1/1 | Complete | 2026-01-13 |
 | 9.3. Performance & Speed Improvements | 2/3 | In progress | — |
-| 9.4. Settings Redesign | 0/0 | Not Planned | — |
+| 9.4. Settings Redesign | 1/1 | Complete | 2026-01-13 |
 
 **MVP Status:** 🎉 MVP complete (Phase 1-5). Phase 6-9.2 are post-MVP enhancements.
 
