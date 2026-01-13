@@ -149,18 +149,18 @@ extension DatabaseManager {
         // Use a single transaction for all batches (much faster)
         // Note: We can't call Task.yield() inside the database write block
         try await dbPool.write { db in
+            // Use prepared statement to avoid repeated SQL parsing
+            let statement = try db.makeStatement(
+                sql: "INSERT INTO snapshotEntry (snapshotId, path, sizeBytes) VALUES (?, ?, ?)"
+            )
+
             for startIndex in stride(from: 0, to: entries.count, by: batchSize) {
                 let endIndex = min(startIndex + batchSize, entries.count)
                 let batch = entries[startIndex..<endIndex]
 
-                // Convert ScanResult to SnapshotEntry and insert
+                // Execute prepared statement for each entry
                 for scanResult in batch {
-                    var entry = SnapshotEntry(
-                        snapshotId: snapshotId,
-                        path: scanResult.path,
-                        sizeBytes: scanResult.sizeBytes
-                    )
-                    try entry.insert(db)
+                    try statement.execute(arguments: [snapshotId, scanResult.path, scanResult.sizeBytes])
                 }
             }
         }
