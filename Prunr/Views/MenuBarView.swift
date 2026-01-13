@@ -301,52 +301,46 @@ struct MenuBarView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
 
-            // Expanded paths list
+            // Expanded paths list - full width dropdown
             if isHeaderExpanded {
                 Divider()
 
-                ScrollView(.vertical) {
-                    VStack(spacing: 8) {
-                        ForEach(Array(SettingsStore.shared.enabledTrackedPaths.enumerated()), id: \.element.id) { index, path in
-                            HStack(spacing: 8) {
-                                // Folder icon
-                                Image(systemName: "folder.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.blue)
+                VStack(spacing: 0) {
+                    ForEach(Array(SettingsStore.shared.enabledTrackedPaths.enumerated()), id: \.element.id) { index, path in
+                        HStack(spacing: 8) {
+                            // Folder icon
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.blue)
 
-                                // Path text with tilde notation
-                                Text(path.url.path)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
+                            // Path text with tilde notation
+                            Text(path.url.path)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
 
-                                Spacer()
+                            Spacer()
 
-                                // Size badge if calculated
-                                if manager.monitoredPathSizeBytes > 0 && !manager.isCalculatingPathSize {
-                                    Text(formattedBytes(manager.monitoredPathSizeBytes))
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color.gray.opacity(0.1))
-                                        )
-                                }
+                            // Size badge if calculated
+                            if manager.monitoredPathSizeBytes > 0 && !manager.isCalculatingPathSize {
+                                Text(formattedBytes(manager.monitoredPathSizeBytes))
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(.secondary)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.gray.opacity(0.05))
-                            )
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.gray.opacity(0.03))
+
+                        if index < SettingsStore.shared.enabledTrackedPaths.count - 1 {
+                            Divider()
+                                .padding(.leading, 36)
                         }
                     }
-                    .padding(.vertical, 8)
                 }
-                .frame(height: 120)
+                .background(Color(nsColor: .windowBackgroundColor))
             }
         }
     }

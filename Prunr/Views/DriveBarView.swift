@@ -69,9 +69,9 @@ struct DriveBarView: View {
                 Text("\(usedPercentage)%")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(usageColor, in: RoundedRectangle(cornerRadius: 4))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(usageColor, in: RoundedRectangle(cornerRadius: 5))
             }
         }
         .padding(.vertical, 4)
