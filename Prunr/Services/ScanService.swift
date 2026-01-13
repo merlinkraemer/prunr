@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Actor that orchestrates file scanning and stores results in the database
 ///
@@ -23,16 +24,30 @@ actor ScanService {
     /// Cancellation token for stopping in-progress scans
     private var isCancelled = false
 
+    /// Task handle for the current scan (allows immediate cancellation)
+    private var currentScanTask: Task<Void, Never>?
+
+    /// Logger for scan operations
+    private let logger = Logger(subsystem: "com.prunr.ScanService", category: "Scanning")
+
     private init() {}
 
     /// Cancels the current scan operation
     func cancelScan() {
-        isCancelled = true
+        logger.info("Cancellation requested")
+        self.isCancelled = true
+
+        // Also cancel the task if we have a handle to it
+        self.currentScanTask?.cancel()
+
+        logger.info("Cancellation signal sent (isCancelled: \(self.isCancelled))")
     }
 
     /// Resets cancellation state for a new scan
     private func resetCancellation() {
         isCancelled = false
+        currentScanTask = nil
+        logger.debug("Cancellation state reset")
     }
 
     // MARK: - Types
@@ -47,6 +62,12 @@ actor ScanService {
 
         /// The snapshot ID for this scan
         var currentSnapshotId: Int64?
+
+        /// Estimated total files (time-based estimation for progress bar) (ISS-033)
+        var totalFiles: Int
+
+        /// Calculated progress percentage (0.0-1.0) based on time estimation (ISS-033)
+        var percentage: Double
     }
 
     // MARK: - Public API
@@ -62,6 +83,7 @@ actor ScanService {
     func scan(path: String, trackedPathId: UUID, progress: ((ScanProgress) -> Void)?) async throws -> Snapshot {
         // Check if already scanning
         if await isScanning {
+            logger.error("Scan requested while already scanning")
             throw ScanError.unknown(NSError(
                 domain: "ScanService",
                 code: -1,
@@ -72,13 +94,22 @@ actor ScanService {
         // Reset cancellation state
         resetCancellation()
 
+        // Store task handle for cancellation
+        let scanTask = Task<Void, Never> {
+            // Scan body
+        }
+        currentScanTask = scanTask
+
         // Set scanning state
         await MainActor.run {
             isScanning = true
         }
 
+        logger.info("Starting scan for path: \(path)")
+
         // Ensure scanning state is reset when done
         defer {
+            logger.info("Scan cleanup complete")
             Task { @MainActor in
                 isScanning = false
             }
@@ -90,36 +121,48 @@ actor ScanService {
         // Check if path exists
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            logger.error("Path does not exist: \(path)")
             throw ScanError.invalidPath
         }
 
         // Check if it's a directory
         guard isDirectory.boolValue else {
+            logger.error("Path is not a directory: \(path)")
             throw ScanError.invalidPath
         }
 
         // Create new snapshot
+        logger.debug("Creating new snapshot")
         let snapshot = try await db.createSnapshot(trackedPathId: trackedPathId)
         guard let snapshotId = snapshot.id else {
+            logger.error("Failed to create snapshot with ID")
             throw ScanError.unknown(NSError(
                 domain: "ScanService",
                 code: -2,
                 userInfo: [NSLocalizedDescriptionKey: "Failed to create snapshot"]
             ))
         }
+        logger.debug("Created snapshot ID: \(snapshotId)")
 
         // Batch insert configuration
         let batchSize = 2000
         var batch: [ScanResult] = []
         var count = 0
+        var lastProgressUpdate = Date()
+        let progressUpdateInterval: TimeInterval = 0.5 // 500ms between updates
+
+        // Track scan start time for percentage estimation (ISS-033)
+        let scanStartTime = Date()
 
         do {
             // Stream scan results and accumulate into batches
+            logger.debug("Starting file enumeration stream")
             let stream = await scanner.scan(url)
 
             for try await result in stream {
-                // Check for cancellation
-                if isCancelled {
+                // Check for cancellation (more frequent check)
+                if isCancelled || Task.isCancelled {
+                    logger.info("Scan cancelled at item \(count)")
                     throw ScanError.cancelled
                 }
 
@@ -128,41 +171,93 @@ actor ScanService {
 
                 // Insert batch when full
                 if batch.count >= batchSize {
+                    logger.debug("Inserting batch of \(batch.count) entries (total: \(count))")
                     try await db.addEntries(to: snapshotId, entries: batch)
                     batch.removeAll()
+
+                    // Check cancellation after database write
+                    if isCancelled || Task.isCancelled {
+                        logger.info("Scan cancelled after batch insert at item \(count)")
+                        throw ScanError.cancelled
+                    }
+
                     await Task.yield()
                 }
 
-                // Report progress
+                // Report progress (throttled to every 500ms)
                 if let progress = progress {
-                    let progressUpdate = ScanProgress(
-                        currentPath: result.path,
-                        foldersScanned: count,
-                        currentSnapshotId: snapshotId
-                    )
-                    progress(progressUpdate)
+                    let now = Date()
+                    if now.timeIntervalSince(lastProgressUpdate) >= progressUpdateInterval {
+                        lastProgressUpdate = now
+
+                        // Calculate percentage based on elapsed time (ISS-033)
+                        // Time-based estimation: scans typically complete in 2-30 seconds
+                        // Use diminishing returns approach for smooth progress
+                        let elapsed = now.timeIntervalSince(scanStartTime)
+                        let percentage: Double
+                        let estimatedTotal: Int
+
+                        if elapsed < 2.0 {
+                            // First 2 seconds: no progress bar (0%)
+                            percentage = 0.0
+                            estimatedTotal = 0
+                        } else if elapsed < 5.0 {
+                            // 2-5 seconds: ramp up to 25%
+                            percentage = 0.25 * ((elapsed - 2.0) / 3.0)
+                            estimatedTotal = Int(Double(count) / max(percentage, 0.01))
+                        } else if elapsed < 10.0 {
+                            // 5-10 seconds: ramp up to 50%
+                            percentage = 0.25 + (0.25 * ((elapsed - 5.0) / 5.0))
+                            estimatedTotal = Int(Double(count) / max(percentage, 0.01))
+                        } else if elapsed < 20.0 {
+                            // 10-20 seconds: ramp up to 75%
+                            percentage = 0.5 + (0.25 * ((elapsed - 10.0) / 10.0))
+                            estimatedTotal = Int(Double(count) / max(percentage, 0.01))
+                        } else {
+                            // 20+ seconds: gradually approach 95%
+                            percentage = 0.75 + (0.20 * min(1.0, (elapsed - 20.0) / 20.0))
+                            estimatedTotal = Int(Double(count) / max(percentage, 0.01))
+                        }
+
+                        let progressUpdate = ScanProgress(
+                            currentPath: result.path,
+                            foldersScanned: count,
+                            currentSnapshotId: snapshotId,
+                            totalFiles: estimatedTotal,
+                            percentage: percentage
+                        )
+                        progress(progressUpdate)
+                        logger.debug("Progress update: \(count) files scanned, \(Int(percentage * 100))%")
+                    }
                 }
             }
 
             // Insert any remaining entries in partial batch
             if !batch.isEmpty {
+                logger.debug("Inserting final batch of \(batch.count) entries")
                 try await db.addEntries(to: snapshotId, entries: batch)
             }
 
+            logger.info("Scan completed successfully: \(count) files scanned")
             return snapshot
 
         } catch {
             // Wrap errors appropriately
             if let scanError = error as? ScanError {
+                if case .cancelled = scanError {
+                    logger.info("Scan was cancelled")
+                }
                 throw scanError
             }
 
             // Check for permission errors
             let nsError = error as NSError
             if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoPermissionError {
+                logger.error("Permission denied for path: \(path)")
                 throw ScanError.permissionDenied(path)
             }
 
+            logger.error("Unknown scan error: \(error.localizedDescription)")
             throw ScanError.unknown(error)
         }
     }

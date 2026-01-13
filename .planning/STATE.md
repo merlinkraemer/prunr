@@ -28,7 +28,7 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
-- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`, `07-01-layout-fixes`, `08-01-urgent-ux-fixes` (INSERTED), `08-02-ui-improvements-realtime-updates` (INSERTED), `08-03-critical-issues-from-root-issues-doc` (INSERTED), `08-polish-and-issue-resolution`
+- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`, `07-01-layout-fixes`, `08-01-urgent-ux-fixes` (INSERTED), `08-02-ui-improvements-realtime-updates` (INSERTED), `08-03-critical-issues-from-root-issues-doc` (INSERTED), `08.4-new-issues-from-issues-doc` (INSERTED), `08-polish-and-issue-resolution`
 - Archived: Old full-window app plans moved to `.planning/phases/_archived-full-window-app/`
 - Note: Phase 05 (Settings & Polish) was implemented without formal GSD planning; retrospective PLAN.md and SUMMARY.md created 2026-01-11
 - Note: Phase 07 plan created 2026-01-12 from documentation/grouping_feature_spec.md
@@ -36,6 +36,7 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete
 - Note: Phase 08.1 inserted 2026-01-12 for urgent UX fixes (ISS-032 GB meter, ISS-037 drill-down header, ISS-036 animation verification)
 - Note: Phase 08.2 inserted 2026-01-12 for UI improvements and real-time updates (ISS-039 navigation architecture, ISS-036/ISS-040 push animation, ISS-042 GB meter, ISS-033 progress indicator)
 - Note: Phase 08.3 inserted 2026-01-12 for critical navigation and visual consistency issues (ISS-045 back button navigation, ISS-046 header sizes, ISS-047 footer separator spacing)
+- Note: Phase 08.4 inserted 2026-01-12 for new issues discovered during testing (ISS-043 drilldown blank screen, ISS-048 baseline broken, ISS-044 scan popup layout, ISS-049 header spacing, ISS-050 scan flash, ISS-034 settings navigation, ISS-051 multiple paths)
 
 ## Performance Metrics
 
@@ -133,6 +134,7 @@ None.
   - 08-04: Low Priority Fixes (ISS-013, ISS-024, ISS-025) - optional
 - 2026-01-12: Phase 8.2 inserted after Phase 8.1: UI Improvements & Real-time Updates (URGENT) — Navigation architecture overhaul (ISS-039), push animation implementation (ISS-036/ISS-040), GB meter real-time updates (ISS-042), scanning progress indicator (ISS-033), settings navigation (ISS-034), header visual clarity (ISS-027)
 - 2026-01-12: Phase 8.3 inserted after Phase 8.2: Critical Issues from Root Issues Doc (URGENT) — Back button navigation fix (ISS-045), header size consistency (ISS-046), footer separator spacing (ISS-047)
+- 2026-01-12: Phase 8.4 inserted after Phase 8.3: New Issues from Issues Doc (URGENT) — Drilldown blank screen (ISS-043), baseline creation broken (ISS-048), scan popup layout (ISS-044), header spacing (ISS-049), scan popup flash (ISS-050), monitor path settings (ISS-034), multiple paths indicator (ISS-051)
 
 **Archived (2026-01-11):** Full-window app plans moved to `.planning/phases/_archived-full-window-app/`:
 - 01-foundation, 02-scanner-storage, 03-delta-engine, 05-frontend-redesign

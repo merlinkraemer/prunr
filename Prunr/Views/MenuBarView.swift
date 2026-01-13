@@ -9,6 +9,7 @@ struct MenuBarView: View {
     @State private var resetHover = false
     @State private var scanHover = false
     @State private var settingsHover = false
+    @State private var isHeaderExpanded = false
     @State private var isResetting = false
     @State private var isScanning = false
 
@@ -82,7 +83,7 @@ struct MenuBarView: View {
                                 .frame(width: 200)
                                 .progressViewStyle(.linear)
                             Text("\(Int(manager.scanProgressPercentage * 100))%")
-                                .font(.caption2)
+                                .font(.system(.caption2, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
 
@@ -98,7 +99,7 @@ struct MenuBarView: View {
 
                         if manager.filesScanned > 0 {
                             Text("\(manager.filesScanned) files scanned")
-                                .font(.caption2)
+                                .font(.system(.caption2, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
 
@@ -157,7 +158,8 @@ struct MenuBarView: View {
             usedBytes: manager.usedBytes,
             freeBytes: manager.freeBytes
         )
-        .padding(20)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Page Navigation Content
@@ -221,8 +223,8 @@ struct MenuBarView: View {
                         .foregroundStyle(category.category.color ?? .secondary)
 
                     Text(category.category.displayName)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
                 }
 
@@ -230,7 +232,7 @@ struct MenuBarView: View {
 
                 // Category size (right)
                 Text(formattedBytes(category.totalGrowthBytes))
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -241,77 +243,139 @@ struct MenuBarView: View {
             }
         }
         .buttonStyle(.plain)
-        .padding(20)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
     // MARK: - Monitoring Path Header
 
     private var monitoringPathHeader: some View {
-        Button {
-            closePopoverAndOpenSettings()
-        } label: {
-            HStack(spacing: 8) {
-                // Path icon
-                Image(systemName: "folder")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-
-                // Path text (truncated with middle ellipsis)
-                Text(manager.monitoredPathDisplay)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Spacer()
-
-                // Path size badge or loading state
-                if manager.isCalculatingPathSize {
-                    HStack(spacing: 4) {
-                        ProgressView()
-                            .controlSize(.mini)
-                        Text("Calculating...")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(Color.gray.opacity(0.1))
-                    )
-                } else if manager.monitoredPathSizeBytes > 0 {
-                    Text(formattedBytes(manager.monitoredPathSizeBytes))
-                        .font(.system(size: 11, weight: .medium))
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    isHeaderExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    // Path icon
+                    Image(systemName: "folder")
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
+
+                    // Folder tags (showing folder names)
+                    HStack(spacing: 6) {
+                        ForEach(manager.folderNames, id: \.self) { folderName in
+                            Text(folderName)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.gray.opacity(0.15))
+                                )
+                        }
+                    }
+
+                    Spacer()
+
+                    // Path size badge or loading state
+                    if manager.isCalculatingPathSize {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Calculating...")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
                             Capsule()
-                                .fill(Color.gray.opacity(0.15))
+                                .fill(Color.gray.opacity(0.1))
                         )
-                }
-
-                // Auto-scan indicator (if scanning)
-                if manager.isAutoScanning {
-                    HStack(spacing: 4) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Scanning...")
-                            .font(.caption2)
+                    } else if manager.monitoredPathSizeBytes > 0 {
+                        Text(formattedBytes(manager.monitoredPathSizeBytes))
+                            .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.gray.opacity(0.15))
+                            )
                     }
-                    .transition(.opacity)
-                }
 
-                // Settings chevron indicator
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
+                    // Auto-scan indicator (if scanning)
+                    if manager.isAutoScanning {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Scanning...")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .transition(.opacity)
+                    }
+
+                    // Expand/collapse chevron
+                    Image(systemName: isHeaderExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+
+            // Expanded paths list
+            if isHeaderExpanded {
+                Divider()
+
+                ScrollView(.vertical) {
+                    VStack(spacing: 8) {
+                        ForEach(Array(SettingsStore.shared.enabledTrackedPaths.enumerated()), id: \.element.id) { index, path in
+                            HStack(spacing: 8) {
+                                // Folder icon
+                                Image(systemName: "folder.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.blue)
+
+                                // Path text with tilde notation
+                                Text(path.url.path)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+
+                                Spacer()
+
+                                // Size badge if calculated
+                                if manager.monitoredPathSizeBytes > 0 && !manager.isCalculatingPathSize {
+                                    Text(formattedBytes(manager.monitoredPathSizeBytes))
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.gray.opacity(0.1))
+                                        )
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.gray.opacity(0.05))
+                            )
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+                .frame(height: 120)
             }
         }
-        .buttonStyle(.plain)
-        .padding(20)
     }
 
     // MARK: - Category List View

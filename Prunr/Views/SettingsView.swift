@@ -4,7 +4,8 @@ import AppKit
 /// Settings window for Prunr with tabbed interface
 struct SettingsView: View {
     @State private var settingsStore = SettingsStore.shared
-    @State private var selectedTab = 0
+    // Read initial tab from UserDefaults for external tab control (ISS-034)
+    @State private var selectedTab = UserDefaults.standard.integer(forKey: "settingsSelectedTab")
     
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -66,6 +67,7 @@ private struct GeneralSettingsTab: View {
                             Text("Drill-Down Threshold")
                             Spacer()
                             Text("\(Int(settingsStore.drillDownThreshold * 100))%")
+                                .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         }
                         Slider(value: $settingsStore.drillDownThreshold, in: 0.5...0.95)

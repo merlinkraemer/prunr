@@ -1,13 +1,14 @@
 import SwiftUI
 import AppKit
 
+
 /// List view showing growth items with modern, intuitive design
 struct GrowthListView: View {
     /// Growth items to display
-    let growthItems: [BaselineService.GrowthItem]
+    let growthItems: [GrowthItem]
 
     /// Callback when an item is tapped
-    var onTapItem: (BaselineService.GrowthItem) -> Void = { _ in }
+    var onTapItem: (GrowthItem) -> Void = { _ in }
 
     /// Maximum height for the scrollable list
     var maxHeight: CGFloat = 300
@@ -65,7 +66,7 @@ struct GrowthListView: View {
 // MARK: - Growth Item Row
 
 private struct GrowthItemRow: View {
-    let item: BaselineService.GrowthItem
+    let item: GrowthItem
 
     var body: some View {
         HStack(spacing: 10) {
@@ -160,39 +161,39 @@ private struct GrowthItemRow: View {
 
 extension GrowthListView {
     enum PreviewData {
-        static var sampleItems: [BaselineService.GrowthItem] {
+        static var sampleItems: [GrowthItem] {
             [
-                BaselineService.GrowthItem(
+                GrowthItem(
                     path: "/Users/merlinkramer/Library/Caches/com.apple.Safari",
                     growthBytes: 5_500_000_000,
                     currentSizeBytes: 7_500_000_000,
                     percentOfParent: 0.45
                 ),
-                BaselineService.GrowthItem(
+                GrowthItem(
                     path: "/Users/merlinkramer/Library/Caches/com.apple.Safari/CacheData",
                     growthBytes: 2_100_000_000,
                     currentSizeBytes: 3_200_000_000,
                     percentOfParent: 0.25
                 ),
-                BaselineService.GrowthItem(
+                GrowthItem(
                     path: "/Users/merlinkramer/Documents/old-projects",
                     growthBytes: 850_000_000,
                     currentSizeBytes: 1_200_000_000,
                     percentOfParent: 0.15
                 ),
-                BaselineService.GrowthItem(
+                GrowthItem(
                     path: "/Users/merlinkramer/Downloads/installer.pkg",
                     growthBytes: 450_000_000,
                     currentSizeBytes: 450_000_000,
                     percentOfParent: 0.10
                 ),
-                BaselineService.GrowthItem(
+                GrowthItem(
                     path: "/Users/merlinkramer/.docker/overlay2",
                     growthBytes: 250_000_000,
                     currentSizeBytes: 800_000_000,
                     percentOfParent: 0.05
                 ),
-                BaselineService.GrowthItem(
+                GrowthItem(
                     path: "/Users/merlinkramer/test_data/small_file.txt",
                     growthBytes: 50_000_000,
                     currentSizeBytes: 100_000_000,

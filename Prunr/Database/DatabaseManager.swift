@@ -68,8 +68,11 @@ final class DatabaseManager {
                 t.column("sizeBytes", .integer).notNull()
             }
 
-            // Index for faster lookups by snapshot
+            // Index for faster lookups by snapshot (for delta calculations)
             try db.create(index: "idx_snapshotEntry_snapshotId", on: "snapshotEntry", columns: ["snapshotId"])
+
+            // Index for faster path lookups (for drill-down operations)
+            try db.create(index: "idx_snapshotEntry_path", on: "snapshotEntry", columns: ["path"])
         }
 
         // Migration v2: Add trackedPathId to snapshot table
@@ -81,6 +84,12 @@ final class DatabaseManager {
 
             // Create index for faster lookups by trackedPathId
             try db.create(index: "idx_snapshot_trackedPathId", on: "snapshot", columns: ["trackedPathId"])
+        }
+
+        // Migration v3: Add index on path column for faster queries
+        migrator.registerMigration("v3_add_path_index") { db in
+            // Check if index already exists (for databases created after v1)
+            try? db.create(index: "idx_snapshotEntry_path", on: "snapshotEntry", columns: ["path"])
         }
 
         try migrator.migrate(dbPool)
@@ -128,23 +137,23 @@ extension DatabaseManager {
     ///   - snapshotId: The snapshot ID to add entries to
     ///   - entries: Array of ScanResult values to insert
     ///
-    /// Uses batch size of 2000 per research (sweet spot between 1000-5000)
-    /// Note: dbPool.write already runs in a transaction, no need for inTransaction
+    /// Optimized to use a single transaction for all batches for better performance
+    /// Uses batch size of 5000 (increased from 2000 for better throughput)
     func addEntries(to snapshotId: Int64, entries: [ScanResult]) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
-        let batchSize = 2000
+        let batchSize = 5000 // Increased from 2000 for better throughput
 
-        // Process in batches
-        for startIndex in stride(from: 0, to: entries.count, by: batchSize) {
-            let endIndex = min(startIndex + batchSize, entries.count)
-            let batch = entries[startIndex..<endIndex]
+        // Use a single transaction for all batches (much faster)
+        // Note: We can't call Task.yield() inside the database write block
+        try await dbPool.write { db in
+            for startIndex in stride(from: 0, to: entries.count, by: batchSize) {
+                let endIndex = min(startIndex + batchSize, entries.count)
+                let batch = entries[startIndex..<endIndex]
 
-            // Convert ScanResult to SnapshotEntry and insert
-            // dbPool.write already provides transaction context
-            try await dbPool.write { db in
+                // Convert ScanResult to SnapshotEntry and insert
                 for scanResult in batch {
                     var entry = SnapshotEntry(
                         snapshotId: snapshotId,
@@ -154,9 +163,6 @@ extension DatabaseManager {
                     try entry.insert(db)
                 }
             }
-
-            // Yield between batches to prevent blocking
-            await Task.yield()
         }
     }
 

@@ -96,10 +96,120 @@ Scanning still has no progress indicator in percent or progress bar format. User
 ### ISS-034: Monitor Path Click Opens Wrong Settings Page
 Clicking the monitor path opens settings but doesn't navigate to the path configuration page. It should open directly to the path settings.
 
+**Fix implemented:**
+- Added `UserDefaults.standard.set(1, forKey: "settingsSelectedTab")` to open directly to Paths tab
+- Settings now opens to path configuration page as expected
+
+**Status:** ✅ RESOLVED
+**Priority:** Medium (Fixed)
+**Related:** MenuBarView.swift, SettingsView.swift
+**Phase Mapping:** Phase 8.2 (UI Improvements)
+**Fix Date:** 2026-01-12
+
+---
+
+### ISS-043: Drilldown View Shows Blank Screen
+Clicking on a category to drill down causes the category list to fade out, but the drilldown detail view never appears - just blank screen. No file list shows, no navigation works.
+
+**Fix implemented:**
+- Replaced boolean `isDetailView` flag with `forcedCategory` parameter pattern
+- Implemented `computedSelectedCategory` for single source of truth
+- Removed background dimming overlay that interfered with animation
+- Used true conditional rendering with asymmetric transitions
+- Detail view now properly shows file lists with back button navigation
+
+**Status:** ✅ RESOLVED
+**Priority:** High (Fixed)
+**Related:** CategoryGrowthListView.swift, MenuBarView.swift
+**Phase Mapping:** Phase 8.2 (UI Improvements)
+**Fix Date:** 2026-01-12
+
+---
+
+### ISS-044: Scan Popup Modal Layout Issues
+Scan popup modal had poor visual layout and user experience:
+- Modal changed sizes during scanning (jarring)
+- Layout not nicely organized
+- No progress percentage or progress bar
+- Poor visual feedback during scan
+
+**Fix implemented:**
+- Set modal to fixed size (260x180) to prevent resizing during scan
+- Added progress bar that appears at 1% completion
+- Increased spacing (16) and padding (24) for better organization
+- Added percentage display and file count for better feedback
+- Early progress feedback at 1% instead of waiting for higher percentages
+
+**Status:** ✅ RESOLVED
+**Priority:** High (Fixed)
+**Related:** MenuBarView.swift
+**Phase Mapping:** Phase 8.2 (UI Improvements)
+**Fix Date:** 2026-01-12
+
+---
+
+### ISS-045: Back Button Changes Header But Doesn't Navigate Back
+The back button in the drill-down view changes the header but doesn't actually navigate back to the main category list view. This creates confusion as the UI appears to respond but no actual navigation occurs.
+
+**Current behavior:**
+- Click back button in drill-down view
+- Header changes
+- View doesn't navigate back to main list
+- User stuck in drill-down view
+
+**Expected behavior:**
+- Click back button → immediately return to category list
+- Header updates and view changes simultaneously
+- Smooth back navigation animation
+
+**Status:** Open
+**Priority:** High
+**Related:** CategoryGrowthListView.swift, MenuBarView.swift
+**Phase Mapping:** Phase 8-05 (New Issues)
+
+---
+
+### ISS-046: Headers Not Same Size Between Views
+The header sizes are inconsistent between the main category list view and the drill-down detail view. This creates a jarring visual experience during navigation.
+
+**Current behavior:**
+- Main view header has one size
+- Drill-down view header has different size
+- Size changes are noticeable during transition
+- Inconsistent visual hierarchy
+
+**Expected behavior:**
+- Both headers should be exactly the same height
+- Consistent padding and spacing
+- Smooth visual continuity during navigation
+- No jarring size changes
+
 **Status:** Open
 **Priority:** Medium
-**Related:** MenuBarView.swift, SettingsView.swift
-**Phase Mapping:** Phase 8-03 (UI Polish & Verification)
+**Related:** MenuBarView.swift, CategoryGrowthListView.swift
+**Phase Mapping:** Phase 8-05 (New Issues)
+
+---
+
+### ISS-047: Footer Separator Has Empty Space Above It
+The separator line between the main content area and the footer (with 3 action buttons) has unnecessary empty space above it. The footer should end exactly at the separator with no gap.
+
+**Current behavior:**
+- Visible empty space between content and separator
+- Footer doesn't align flush with separator
+- Wasted vertical space
+- Visually disconnected layout
+
+**Expected behavior:**
+- Footer should end exactly at separator line
+- No empty space or gap above separator
+- Content flows directly to separator
+- Clean, tight layout
+
+**Status:** Open
+**Priority:** Low
+**Related:** MenuBarView.swift
+**Phase Mapping:** Phase 8-05 (New Issues)
 
 ---
 
@@ -545,6 +655,85 @@ Drill-down animation uses overlapping transition instead of pushing the category
 **Related:** MenuBarView.swift
 **Updates:**
 - 2026-01-12: Added while loop to wait for manager.isLoading to complete before showing Done
+
+---
+
+### ISS-048: Create Baseline Doesn't Work Anymore
+The "Create Baseline" functionality was broken and no longer worked. Users could not establish a new baseline for tracking growth.
+
+**Root cause:** Default path was marked as disabled in UserDefaults when test_data directory was deleted, causing `enabledTrackedPaths` to be empty.
+
+**Fix implemented:**
+- Added automatic path enabling logic in MenuBarManager.createBaseline()
+- Now checks if paths are enabled and automatically enables default path if valid
+- Added existence check before enabling paths
+- Improved error messages for invalid paths
+
+**Status:** ✅ RESOLVED
+**Priority:** High (Fixed)
+**Related:** BaselineService.swift, MenuBarManager.swift, SettingsStore.swift
+**Phase Mapping:** Phase 8.4 (Verification & Baseline Fix)
+**Fix Date:** 2026-01-12
+
+---
+
+### ISS-049: Headers Too Tall with Excess Spacing
+The headers in both main view and drill-down view have excessive vertical spacing and are taller than necessary, wasting valuable popup space.
+
+**Current behavior:**
+- Headers take up too much vertical space
+- Excessive top/bottom padding
+- Popup space underutilized
+- Poor vertical layout efficiency
+
+**Expected behavior:**
+- Compact, efficient headers
+- Reduced top/bottom spacing
+- More room for content list
+- Better use of popup space
+
+**Status:** Open
+**Priority:** Medium
+**Related:** MenuBarView.swift, CategoryGrowthListView.swift
+**Phase Mapping:** Phase 8-06 (UI Refinements)
+
+---
+
+### ISS-050: Scanning Popup Flashes on Quick Scans
+When scanning completes very quickly (nothing found or small amounts), the scanning popup flashed briefly and disappeared, creating a jarring user experience. The popup should display for a minimum duration.
+
+**Fix implemented:**
+- Added minimum display duration of 800ms in MenuBarManager
+- Scan modal now stays visible at least 0.8 seconds even on quick scans
+- Calculates elapsed time and applies delay if scan completes too quickly
+- No more jarring flash effect - smooth, consistent feedback
+
+**Status:** ✅ RESOLVED
+**Priority:** Medium (Fixed)
+**Related:** MenuBarView.swift, MenuBarManager.swift, ScanService.swift
+**Phase Mapping:** Phase 8.2 (UI Improvements)
+**Fix Date:** 2026-01-12
+
+---
+
+### ISS-051: Multiple Monitoring Paths Not Indicated in Category View Header
+When multiple monitoring paths are configured in settings, the category view header (showing current monitored path) doesn't indicate that there are other paths available. Users may not realize they can access other monitored paths.
+
+**Current behavior:**
+- Only single monitored path shown in header
+- No indication of multiple paths if multiple are configured
+- Users may not discover other monitored paths
+
+**Expected behavior:**
+- Header shows current monitored path
+- Visual indicator (e.g., "Path 1 of 3") or dropdown indicator when multiple paths configured
+- Clear way to switch between monitored paths
+- Or: Path selector/switcher in header area
+
+**Status:** Open
+**Priority:** Medium
+**Related:** MenuBarView.swift, CategoryGrowthListView.swift, SettingsView.swift
+**Phase Mapping:** Phase 8-06 (UI Refinements)
 
 ---
 

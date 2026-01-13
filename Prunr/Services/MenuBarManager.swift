@@ -24,11 +24,25 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
     
     // Published state for UI
-    var growthItems: [BaselineService.GrowthItem] = []
+    var growthItems: [GrowthItem] = []
     var categoryItems: [CategoryGrowthItem] = []
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
     var selectedCategoryForDrilldown: CategoryGrowthItem? = nil // External category selection for drill-down (ISS-043)
     var monitoredPathName: String = ""
+    var enabledPathCount: Int {
+        SettingsStore.shared.enabledTrackedPaths.count
+    }
+
+    /// Extract folder name from path for tag display
+    private func folderName(from path: URL) -> String {
+        let lastComponent = path.lastPathComponent
+        return lastComponent.isEmpty ? "Root" : lastComponent
+    }
+
+    /// Get folder names for all enabled paths
+    var folderNames: [String] {
+        SettingsStore.shared.enabledTrackedPaths.map { folderName(from: $0.url) }
+    }
     var monitoredPathDisplay: String {
         // Full path for header display with tilde notation (e.g., "~/dev" instead of "/Users/username/dev")
         if let path = SettingsStore.shared.enabledTrackedPaths.first {
@@ -424,10 +438,35 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Creates a new baseline from enabled paths
     func createBaseline() async {
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
-        guard let trackedPath = enabledPaths.first else {
-            errorMessage = "No paths enabled in Settings"
+        print("[MenuBarManager] Enabled paths count: \(enabledPaths.count)")
+        print("[MenuBarManager] Enabled paths: \(enabledPaths.map { $0.displayName })")
+
+        // If no paths are enabled, try to enable the default path
+        var pathsToTry = enabledPaths
+        if pathsToTry.isEmpty {
+            print("[MenuBarManager] No enabled paths found, attempting to enable default path")
+            if let defaultPath = SettingsStore.shared.allTrackedPaths.first(where: { $0.isDefault }) {
+                // Ensure the path exists before enabling it
+                if FileManager.default.fileExists(atPath: defaultPath.url.path) {
+                    SettingsStore.shared.setPathEnabled(defaultPath, enabled: true)
+                    pathsToTry = SettingsStore.shared.enabledTrackedPaths
+                    print("[MenuBarManager] Enabled default path: \(defaultPath.displayName)")
+                } else {
+                    print("[MenuBarManager] ERROR: Default path does not exist: \(defaultPath.url.path)")
+                    errorMessage = "Default path not found. Please configure a valid path in Settings."
+                    return
+                }
+            }
+        }
+
+        guard let trackedPath = pathsToTry.first else {
+            print("[MenuBarManager] ERROR: No valid paths available")
+            errorMessage = "No valid paths configured. Please add a path in Settings."
             return
         }
+
+        print("[MenuBarManager] Creating baseline for path: \(trackedPath.displayName) at \(trackedPath.url.path)")
+        print("[MenuBarManager] Path exists: \(FileManager.default.fileExists(atPath: trackedPath.url.path))")
 
         isLoading = true
         errorMessage = nil
@@ -435,9 +474,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanProgress = "Creating baseline for \(trackedPath.displayName)..."
         // Reset progress percentage at scan start (ISS-033)
         scanProgressPercentage = 0.0
-        
+
         print("[MenuBarManager] Creating baseline for: \(trackedPath.url.path)")
-        
+
         do {
             _ = try await baselineService.createBaseline(trackedPath: trackedPath)
             noBaseline = false
@@ -449,7 +488,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             // Refresh storage space after baseline creation (ISS-042)
             updateFreeSpace()
-            
+
         } catch {
             if let scanError = error as? ScanError, case .cancelled = scanError {
                 print("[MenuBarManager] Baseline creation cancelled")
@@ -459,7 +498,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 errorMessage = error.localizedDescription
             }
         }
-        
+
         isLoading = false
         scanProgress = ""
         scanProgressPercentage = 0.0

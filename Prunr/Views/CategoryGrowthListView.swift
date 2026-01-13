@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
 
+/// Category growth items for the main menu bar view
+
 /// List view showing growth grouped by category with drill-down navigation
 struct CategoryGrowthListView: View {
     /// Category growth items to display
@@ -10,7 +12,7 @@ struct CategoryGrowthListView: View {
     @Bindable var manager: MenuBarManager
 
     /// Callback when a big item is tapped (reveal in Finder)
-    var onTapItem: (BaselineService.GrowthItem) -> Void = { _ in }
+    var onTapItem: (GrowthItem) -> Void = { _ in }
 
     /// Maximum height for the scrollable list
     var maxHeight: CGFloat = 360 // Increased from 300 to 360 for more space
@@ -58,6 +60,7 @@ struct CategoryGrowthListView: View {
     @State private var selectedCategory: CategoryGrowthItem?
     @State private var expandedFolders: Set<String> = []
 
+    
     // MARK: - Category List View
 
     private var categoryListView: some View {
@@ -151,12 +154,12 @@ struct CategoryGrowthListView: View {
     }
 
     /// All items in the selected category, sorted by size (largest first)
-    private func sortedItems(for category: CategoryGrowthItem) -> [BaselineService.GrowthItem] {
+    private func sortedItems(for category: CategoryGrowthItem) -> [GrowthItem] {
         category.allItems.sorted { $0.growthBytes > $1.growthBytes }
     }
 
     /// Items grouped by their parent folder path
-    private func itemsGroupedByFolder(for category: CategoryGrowthItem) -> [String: [BaselineService.GrowthItem]] {
+    private func itemsGroupedByFolder(for category: CategoryGrowthItem) -> [String: [GrowthItem]] {
         Dictionary(grouping: sortedItems(for: category)) { item in
             URL(fileURLWithPath: item.path)
                 .deletingLastPathComponent()
@@ -165,7 +168,7 @@ struct CategoryGrowthListView: View {
     }
 
     /// Folders sorted by total growth (largest first)
-    private func sortedFolders(for category: CategoryGrowthItem) -> [(path: String, items: [BaselineService.GrowthItem])] {
+    private func sortedFolders(for category: CategoryGrowthItem) -> [(path: String, items: [GrowthItem])] {
         itemsGroupedByFolder(for: category)
             .map { (path, items) in
                 (path, items.sorted { $0.growthBytes > $1.growthBytes })
@@ -215,6 +218,13 @@ struct CategoryGrowthListView: View {
 
 // MARK: - Category List Row
 
+/// Static column widths for consistent layout across all views
+private enum ColumnWidths {
+    static let count: CGFloat = 70  // Fits "9999 items" with space
+    static let size: CGFloat = 90   // Fits "+999.9 GB" with arrow icon
+    static let name: CGFloat = 140 // Flexible remaining space
+}
+
 private struct CategoryListRow: View, Equatable {
     static func == (lhs: CategoryListRow, rhs: CategoryListRow) -> Bool {
         lhs.item.totalGrowthBytes == rhs.item.totalGrowthBytes &&
@@ -238,25 +248,27 @@ private struct CategoryListRow: View, Equatable {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
+                    .frame(width: 120)
 
-                Spacer()
-
-                // Item count
+                // Item count (static width)
                 Text("\(item.itemCount) items")
-                    .font(.system(size: 11))
+                    .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .frame(width: 60, alignment: .trailing)
+                    .fixedSize()
+                    .frame(width: ColumnWidths.count, alignment: .trailing)
 
-                // Growth amount
+                // Growth amount (static width)
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(growthSeverityColor)
 
                     Text(growthText)
-                        .font(.system(size: 12))
+                        .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(growthSeverityColor)
+                        .fixedSize()
                 }
+                .frame(width: ColumnWidths.size, alignment: .trailing)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -314,7 +326,7 @@ private struct CategoryListRow: View, Equatable {
 
 private struct FolderHeaderRow: View {
     let folderPath: String
-    let items: [BaselineService.GrowthItem]
+    let items: [GrowthItem]
     let isExpanded: Bool
     let onToggle: () -> Void
     let onReveal: () -> Void
@@ -334,23 +346,26 @@ private struct FolderHeaderRow: View {
                     .foregroundStyle(.blue.opacity(0.8))
                     .frame(width: 16, height: 16)
 
-                // Folder name (last path component)
+                // Folder name (static width)
                 Text(folderName)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
+                    .frame(width: ColumnWidths.name)
 
-                Spacer()
-
-                // Item count
+                // Item count (static width)
                 Text("\(items.count) file\(items.count == 1 ? "" : "s")")
-                    .font(.system(size: 10))
+                    .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.tertiary)
+                    .fixedSize()
+                    .frame(width: ColumnWidths.count, alignment: .trailing)
 
-                // Total folder growth
+                // Total folder growth (static width)
                 Text(totalGrowthText)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .frame(width: ColumnWidths.size, alignment: .trailing)
 
                 // Reveal in Finder button (secondary action)
                 Button(action: {
@@ -406,7 +421,7 @@ private struct FolderHeaderRow: View {
 // MARK: - Item Row (for detail view)
 
 private struct ItemRow: View {
-    let item: BaselineService.GrowthItem
+    let item: GrowthItem
     let onTap: () -> Void
 
     var body: some View {
@@ -418,18 +433,33 @@ private struct ItemRow: View {
                     .foregroundStyle(item.isBigFile ? .orange : .secondary)
                     .frame(width: 16, height: 16)
 
-                // File name
+                // File name (static width)
                 Text(fileName)
                     .font(.system(size: 11))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
+                    .frame(width: ColumnWidths.name)
 
-                Spacer()
+                // Size with percentage (static width)
+                HStack(spacing: 4) {
+                    Text(sizeText)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
 
-                // Size
-                Text(sizeText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    // Percentage badge
+                    if item.percentOfParent > 0 {
+                        let percent = String(format: "%.0f%%", item.percentOfParent * 100)
+                        Text(percent)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                }
+                .frame(width: ColumnWidths.size, alignment: .trailing)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
@@ -456,9 +486,7 @@ private struct ItemRow: View {
     }
 
     private var sizeText: String {
-        let size = formattedBytes(item.growthBytes, prefix: "+")
-        let percent = String(format: "%.0f%%", item.percentOfParent * 100)
-        return "\(size) (\(percent))"
+        formattedBytes(item.growthBytes, prefix: "+")
     }
 
     private func formattedBytes(_ bytes: Int64, prefix: String = "") -> String {
@@ -481,7 +509,7 @@ private struct ItemRow: View {
 // MARK: - Nested Big Item Row
 
 private struct NestedBigItemRow: View {
-    let item: BaselineService.GrowthItem
+    let item: GrowthItem
     let isLastItem: Bool
     let onTap: () -> Void
 
@@ -504,18 +532,33 @@ private struct NestedBigItemRow: View {
                     .foregroundStyle(.orange)
                     .frame(width: 14, height: 14)
 
-                // File name
+                // File name (static width)
                 Text(fileName)
                     .font(.system(size: 10))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
+                    .frame(width: ColumnWidths.name)
 
-                Spacer()
+                // Size with percentage (static width)
+                HStack(spacing: 2) {
+                    Text(sizeText)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
 
-                // Size
-                Text(sizeText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                    // Percentage badge (smaller for nested items)
+                    if item.percentOfParent > 0 {
+                        let percent = String(format: "%.0f%%", item.percentOfParent * 100)
+                        Text(percent)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 0)
+                            .background(Color.secondary.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 2))
+                    }
+                }
+                .frame(width: ColumnWidths.size, alignment: .trailing)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 3)
@@ -582,7 +625,7 @@ private struct MoreIndicatorRow: View {
                     .frame(width: 18)
 
                 Text("\(count) more")
-                    .font(.system(size: 10))
+                    .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .italic()
 
@@ -625,13 +668,13 @@ extension CategoryGrowthListView {
                     totalGrowthBytes: 4_100_000_000,
                     currentSizeBytes: 8_500_000_000,
                     allItems: [
-                        BaselineService.GrowthItem(
+                        GrowthItem(
                             path: "/usr/local/Cellar/python@3.9",
                             growthBytes: 850_000_000,
                             currentSizeBytes: 1_200_000_000,
                             percentOfParent: 0.21
                         ),
-                        BaselineService.GrowthItem(
+                        GrowthItem(
                             path: "/usr/local/Cellar/node",
                             growthBytes: 650_000_000,
                             currentSizeBytes: 900_000_000,
@@ -639,13 +682,13 @@ extension CategoryGrowthListView {
                         )
                     ],
                     bigItems: [
-                        BaselineService.GrowthItem(
+                        GrowthItem(
                             path: "/usr/local/Cellar/python@3.9",
                             growthBytes: 850_000_000,
                             currentSizeBytes: 1_200_000_000,
                             percentOfParent: 0.21
                         ),
-                        BaselineService.GrowthItem(
+                        GrowthItem(
                             path: "/usr/local/Cellar/node",
                             growthBytes: 650_000_000,
                             currentSizeBytes: 900_000_000,
@@ -661,7 +704,7 @@ extension CategoryGrowthListView {
                     totalGrowthBytes: 2_800_000_000,
                     currentSizeBytes: 5_200_000_000,
                     allItems: [
-                        BaselineService.GrowthItem(
+                        GrowthItem(
                             path: "/Users/test/project/node_modules",
                             growthBytes: 450_000_000,
                             currentSizeBytes: 650_000_000,
@@ -669,7 +712,7 @@ extension CategoryGrowthListView {
                         )
                     ],
                     bigItems: [
-                        BaselineService.GrowthItem(
+                        GrowthItem(
                             path: "/Users/test/project/node_modules",
                             growthBytes: 450_000_000,
                             currentSizeBytes: 650_000_000,
@@ -695,7 +738,7 @@ extension CategoryGrowthListView {
                     totalGrowthBytes: 850_000_000,
                     currentSizeBytes: 1_200_000_000,
                     allItems: [
-                        BaselineService.GrowthItem(
+                        GrowthItem(
                             path: "/Users/test/Downloads/installer.pkg",
                             growthBytes: 450_000_000,
                             currentSizeBytes: 450_000_000,
@@ -703,7 +746,7 @@ extension CategoryGrowthListView {
                         )
                     ],
                     bigItems: [
-                        BaselineService.GrowthItem(
+                        GrowthItem(
                             path: "/Users/test/Downloads/installer.pkg",
                             growthBytes: 450_000_000,
                             currentSizeBytes: 450_000_000,

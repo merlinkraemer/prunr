@@ -1,5 +1,56 @@
 import SwiftUI
 
+/// Big file threshold: 100MB in bytes
+let bigFileThreshold: Int64 = 100 * 1024 * 1024
+
+/// An item in the growth list representing a path that grew since baseline
+struct GrowthItem: Identifiable, Sendable, Equatable {
+    let id = UUID()
+    let path: String
+    let growthBytes: Int64
+    let currentSizeBytes: Int64
+    let percentOfParent: Double
+
+    // MARK: - Computed Properties
+
+    /// Whether this item is considered a "big file" (>=100MB)
+    var isBigFile: Bool {
+        growthBytes >= bigFileThreshold
+    }
+
+    /// The category this item belongs to
+    var category: GrowthCategory {
+        GrowthCategory.categorize(path: path)
+    }
+
+    /// Extract just the file/folder name
+    private var fileName: String {
+        URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    /// Growth text (e.g., "+1.2 GB")
+    private var growthText: String {
+        formattedBytes(growthBytes, prefix: "+")
+    }
+
+    /// Formats bytes for display
+    private func formattedBytes(_ bytes: Int64, prefix: String = "") -> String {
+        let kb = Double(bytes) / 1_000
+        let mb = kb / 1_000
+        let gb = mb / 1_000
+
+        if abs(gb) >= 1 {
+            return "\(prefix)\(String(format: "%.1f", gb)) GB"
+        } else if abs(mb) >= 1 {
+            return "\(prefix)\(String(format: "%.0f", mb)) MB"
+        } else if abs(kb) >= 1 {
+            return "\(prefix)\(String(format: "%.0f", kb)) KB"
+        } else {
+            return "\(prefix)\(bytes) B"
+        }
+    }
+}
+
 /// Categories for grouping file growth by source/type
 enum GrowthCategory: String, CaseIterable, Identifiable {
     case homebrew

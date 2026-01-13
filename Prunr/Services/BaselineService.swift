@@ -21,27 +21,6 @@ actor BaselineService {
         }
     }
 
-    /// An item in the growth list representing a path that grew since baseline
-    struct GrowthItem: Identifiable, Sendable, Equatable {
-        let id = UUID()
-        let path: String
-        let growthBytes: Int64
-        let currentSizeBytes: Int64
-        let percentOfParent: Double
-
-        // MARK: - Computed Properties
-
-        /// Whether this item is considered a "big file" (>=100MB)
-        var isBigFile: Bool {
-            growthBytes >= CategoryGrowthItem.bigFileThreshold
-        }
-
-        /// The category this item belongs to
-        var category: GrowthCategory {
-            GrowthCategory.categorize(path: path)
-        }
-    }
-
     // MARK: - Properties
 
     /// Shared singleton instance
@@ -72,6 +51,8 @@ actor BaselineService {
     /// - Returns: The created Snapshot
     /// - Throws: ScanError if scanning fails
     func createBaseline(trackedPath: TrackedPath) async throws -> Snapshot {
+        print("[BaselineService] Starting baseline creation for path: \(trackedPath.url.path)")
+
         // Set UI state
         await MainActor.run {
             isCreatingBaseline = true
@@ -84,6 +65,7 @@ actor BaselineService {
         }
 
         // Run full scan
+        print("[BaselineService] Starting scan...")
         let snapshot = try await scanService.scan(
             path: trackedPath.url.path,
             trackedPathId: trackedPath.id,
@@ -92,6 +74,7 @@ actor BaselineService {
 
         // Store snapshot ID in UserDefaults
         guard let snapshotId = snapshot.id else {
+            print("[BaselineService] ERROR: Failed to create snapshot with ID")
             throw ScanError.unknown(NSError(
                 domain: "BaselineService",
                 code: -1,
@@ -101,6 +84,7 @@ actor BaselineService {
 
         UserDefaults.standard.set(snapshotId, forKey: baselineIdKey)
         print("[BaselineService] Created baseline snapshot ID: \(snapshotId)")
+        print("[BaselineService] Baseline stored in UserDefaults")
 
         return snapshot
     }
@@ -383,10 +367,12 @@ actor BaselineService {
     /// 5. Separates big items (>=100MB) from small items
     /// 6. Returns sorted CategoryGrowthItem array (by growth descending)
     ///
-    /// - Parameter trackedPath: The TrackedPath to scan
+    /// - Parameters:
+    ///   - trackedPath: The TrackedPath to scan
+    ///   - progress: Optional callback for progress updates
     /// - Returns: Array of CategoryGrowthItem sorted by totalGrowthBytes descending
     /// - Throws: BaselineError.noBaseline if no baseline exists, or ScanError if scanning fails
-    func getCategoryGrowthList(trackedPath: TrackedPath) async throws -> [CategoryGrowthItem] {
+    func getCategoryGrowthList(trackedPath: TrackedPath, progress: ((ScanService.ScanProgress) -> Void)? = nil) async throws -> [CategoryGrowthItem] {
         guard let baselineId = getCurrentBaselineId(), baselineId > 0 else {
             throw BaselineError.noBaseline
         }
@@ -395,7 +381,7 @@ actor BaselineService {
         let currentSnapshot = try await scanService.scan(
             path: trackedPath.url.path,
             trackedPathId: trackedPath.id,
-            progress: nil
+            progress: progress
         )
 
         guard let currentId = currentSnapshot.id else {

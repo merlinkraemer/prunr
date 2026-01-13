@@ -81,7 +81,7 @@ actor FileScanner {
                                 if let sizeBytes = await self.getSize(for: url) {
                                     continuation.yield(ScanResult(path: url.path, sizeBytes: sizeBytes))
                                     count += 1
-                                    if count % 1000 == 0 {
+                                    if count % 500 == 0 {
                                         await Task.yield()
                                     }
                                 }
@@ -167,9 +167,9 @@ actor FileScanner {
                             )
                             continuation.yield(result)
 
-                            // Yield to prevent blocking every 1000 items
+                            // Yield to prevent blocking every 500 items (increased responsiveness)
                             count += 1
-                            if count % 1000 == 0 {
+                            if count % 500 == 0 {
                                 await Task.yield()
                             }
                         }

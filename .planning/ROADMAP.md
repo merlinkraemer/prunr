@@ -30,6 +30,8 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 - [x] **Phase 7.1: Layout Fixes** - Big file nesting, slide-in navigation, visual polish
 - [x] **Phase 8.1: Urgent UX Fixes** - GB meter cache interval, drill-down header, animation verification
 - [x] **Phase 8.2: UI Improvements & Real-time Updates** - GB meter real-time updates, navigation fixes, push animation, scan modal improvements
+- [x] **Phase 8.3: Critical Issues from Root Issues Doc** - Back button navigation, header consistency, footer spacing
+- [ ] **Phase 8.4: New Issues from Issues Doc** - Drilldown blank screen, baseline creation, scan popup layout, header spacing
 - [ ] **Phase 8: Polish & Issue Resolution** - Scan reliability, performance, verification
 
 ## Phase Details
@@ -231,6 +233,32 @@ This phase addresses critical navigation and visual consistency issues that affe
 
 ---
 
+### Phase 8.4: New Issues from Issues Doc (INSERTED)
+
+**Goal:** Fix new critical issues discovered during testing including drilldown blank screen, baseline creation bug, scan popup layout, and header spacing
+**Depends on:** Phase 8.3
+**Research:** Unlikely (issues are well-documented in ISSUES.md)
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 8.4 to break down)
+
+**Deliverables:**
+- **ISS-043:** Drilldown view shows blank screen - clicking category fades out but detail view never appears (High priority)
+- **ISS-048:** Create baseline doesn't work anymore - baseline creation functionality is broken (High priority)
+- **ISS-044:** Scan popup modal layout issues - modal resizes during scan, no progress bar, poor layout (High priority)
+- **ISS-049:** Headers too tall with excess spacing - excessive vertical spacing wastes popup space (Medium priority)
+- **ISS-050:** Scanning popup flashes on quick scans - needs minimum display duration (Medium priority)
+- **ISS-034:** Monitor path click opens wrong settings page - should navigate to Paths tab (Medium priority)
+- **ISS-051:** Multiple monitoring paths not indicated in header - no way to see/switch paths (Medium priority)
+
+**Issues Addressed:** ISS-043 (High), ISS-048 (High), ISS-044 (High), ISS-049 (Medium), ISS-050 (Medium), ISS-034 (Medium), ISS-051 (Medium)
+
+**Details:**
+This phase addresses new issues discovered during testing. The High priority issues (ISS-043 drilldown blank screen, ISS-048 baseline creation broken, ISS-044 scan popup layout) are critical blockers that prevent core functionality from working. Medium priority issues (ISS-049, ISS-050, ISS-034, ISS-051) address UX polish and quality-of-life improvements.
+
+---
+
 ### Phase 8: Polish & Issue Resolution
 
 **Goal:** Address scan reliability, performance optimization, UI polish, and verification testing for issues ISS-010 through ISS-026
@@ -285,7 +313,36 @@ Comprehensive polish phase addressing all open issues from ISSUES.md. Prioritize
 | 8.1. Urgent UX Fixes | 1/1 | Complete | 2026-01-12 |
 | 8.2. UI Improvements & Real-time Updates | 4/4 | Complete | 2026-01-12 |
 | 8.3. Critical Issues from Root Issues Doc | 1/1 | Complete | 2026-01-12 |
+| 8.4. New Issues from Issues Doc | 0/0 | Not Planned | — |
 | 8. Polish & Issue Resolution | 0/4 | Planning | — |
+
+### Phase 9: Visual Improvements
+**Goal**: Comprehensive visual polish including monospace fonts, static columns, header redesign, spacing consistency, simplified footer buttons, and dropdown integration
+**Depends on**: Phase 8.4
+**Research**: Unlikely (design patterns well-documented)
+**Plans**: 6 plans
+
+Plans:
+- [ ] 09-01: Monospace Font Implementation (ISS-051)
+- [ ] 09-02: Static Column Sizing (ISS-052)
+- [ ] 09-03: Header Redesign (ISS-053)
+- [ ] 09-04: Spacing Consistency (ISS-054)
+- [ ] 09-05: Footer Button Simplification (ISS-055)
+- [ ] 09-06: Multiple Paths Dropdown Integration (ISS-056)
+
+**Deliverables**:
+- **ISS-051**: Monospace font for all numeric values to prevent visual jumps when numbers change length
+- **ISS-052**: Fixed-width columns for item counts and size differences in main and drill-down views
+- **ISS-053**: Complete main view header redesign with cohesive design
+- **ISS-054**: Consistent spacing across all views
+- **ISS-055**: Simplified icon-only footer buttons with macOS 26 design
+- **ISS-056**: Multiple paths dropdown properly integrated with header design
+
+**Issues Addressed**: ISS-051 (Medium), ISS-052 (Medium), ISS-053 (High), ISS-054 (Medium), ISS-055 (Medium), ISS-056 (Medium)
+
+**Details**:
+This phase focuses on visual polish and UI consistency improvements to make the application more professional and polished. The header redesign (ISS-053) is high priority as it affects the overall user experience. Other tasks address specific visual inconsistencies and layout issues discovered during testing.
+| 9. Visual Improvements | 0/6 | Planning | — |
 
 **MVP Status:** 🎉 MVP complete (Phase 1-5). Phase 6-7.1 are post-MVP enhancements.
 

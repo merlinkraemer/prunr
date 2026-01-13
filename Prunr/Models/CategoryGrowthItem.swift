@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Represents a category with its aggregated growth data
 struct CategoryGrowthItem: Identifiable, Sendable, Equatable {
@@ -12,10 +13,10 @@ struct CategoryGrowthItem: Identifiable, Sendable, Equatable {
     let currentSizeBytes: Int64
 
     /// All items in this category (for drill-down view)
-    let allItems: [BaselineService.GrowthItem]
+    let allItems: [GrowthItem]
 
     /// Individual items >100MB threshold
-    let bigItems: [BaselineService.GrowthItem]
+    let bigItems: [GrowthItem]
 
     /// Number of items <=100MB threshold
     let smallItemCount: Int

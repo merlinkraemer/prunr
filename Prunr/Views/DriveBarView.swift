@@ -27,11 +27,11 @@ struct DriveBarView: View {
 
                 // Free space (prominent)
                 Text(bytesToGBString(freeBytes))
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.primary)
 
                 Text("free")
-                    .font(.system(size: 13))
+                    .font(.system(.caption))
                     .foregroundStyle(.secondary)
 
                 Spacer()
@@ -39,7 +39,7 @@ struct DriveBarView: View {
                 // Percentage badge
                 HStack(spacing: 4) {
                     Text("\(usedPercentage)%")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.white)
                 }
                 .padding(.horizontal, 6)
