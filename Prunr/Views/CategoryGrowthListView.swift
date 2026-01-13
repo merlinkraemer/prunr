@@ -492,38 +492,58 @@ private struct NestedBigItemRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 8) {
-                // File icon
-                Image(systemName: "doc.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.orange)
-                    .frame(width: 14, height: 14)
+            HStack(spacing: 0) {
+                // Tree view line and indent
+                ZStack {
+                    // Vertical line (tree connector)
+                    Rectangle()
+                        .fill(Color.orange.opacity(0.25))
+                        .frame(width: 1)
+                        .padding(.leading, 12)
+                        .frame(maxHeight: .infinity)
+                        .offset(y: isLastItem ? -8 : 8)
 
-                // File name (flexible width, left-aligned)
-                Text(fileName)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Horizontal connector
+                    Rectangle()
+                        .fill(Color.orange.opacity(0.25))
+                        .frame(width: 8, height: 1)
+                        .padding(.leading, 12)
+                }
+                .frame(width: 24, height: 24)
 
-                // Size
-                Text(sizeText)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
+                // Content
+                HStack(spacing: 8) {
+                    // File icon
+                    Image(systemName: "doc.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                        .frame(width: 14, height: 14)
+
+                    // File name (flexible width, left-aligned)
+                    Text(fileName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // Size
+                    Text(sizeText)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(hoverState ? Color.orange.opacity(0.1) : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(Color.orange.opacity(0.2), lineWidth: 0.5)
+                )
+                .padding(.trailing, 12)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(hoverState ? Color.orange.opacity(0.08) : Color.orange.opacity(0.04))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(Color.orange.opacity(0.15), lineWidth: 0.5)
-            )
-            .padding(.leading, 28) // Indent from parent
-            .padding(.trailing, 12)
             .padding(.vertical, 1)
             .contentShape(Rectangle())
         }
@@ -570,36 +590,55 @@ private struct MoreIndicatorRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 8) {
-                // Ellipsis icon
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.orange.opacity(0.7))
-                    .frame(width: 14, height: 14)
+            HStack(spacing: 0) {
+                // Tree view line and indent
+                ZStack {
+                    // Vertical line (tree connector)
+                    Rectangle()
+                        .fill(Color.orange.opacity(0.25))
+                        .frame(width: 1)
+                        .padding(.leading, 12)
+                        .frame(maxHeight: .infinity)
+                        .offset(y: 8)
 
-                Text("\(count) more large files")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                    // Horizontal connector
+                    Rectangle()
+                        .fill(Color.orange.opacity(0.25))
+                        .frame(width: 8, height: 1)
+                        .padding(.leading, 12)
+                }
+                .frame(width: 24, height: 24)
 
-                Spacer()
+                // Content
+                HStack(spacing: 8) {
+                    // Ellipsis icon
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange.opacity(0.7))
+                        .frame(width: 14, height: 14)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+                    Text("\(count) more large files")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(hoverState ? Color.orange.opacity(0.08) : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(Color.orange.opacity(0.15), lineWidth: 0.5)
+                )
+                .padding(.trailing, 12)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(hoverState ? Color.orange.opacity(0.06) : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(Color.orange.opacity(hoverState ? 0.15 : 0.08), lineWidth: 0.5)
-                    .opacity(hoverState ? 1 : 0.6)
-            )
-            .padding(.leading, 28) // Same indent as nested items
-            .padding(.trailing, 12)
             .padding(.vertical, 1)
             .contentShape(Rectangle())
         }

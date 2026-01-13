@@ -260,11 +260,13 @@ struct MenuBarView: View {
     private var monitoringPathHeader: some View {
         VStack(spacing: 0) {
             Button {
-                // Only expand if multiple paths
+                // Multiple paths: expand/collapse, Single path: open settings
                 if hasMultiplePaths {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         isHeaderExpanded.toggle()
                     }
+                } else {
+                    closePopoverAndOpenSettings()
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -312,10 +314,14 @@ struct MenuBarView: View {
                         .transition(.opacity)
                     }
 
-                    // Expand/collapse chevron - only show for multiple paths
+                    // Right icon: chevron for multiple paths, > for single path
                     if hasMultiplePaths {
                         Image(systemName: isHeaderExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
                 }

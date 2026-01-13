@@ -12,13 +12,13 @@ struct DriveBarView: View {
     let freeBytes: Int64
 
     /// Bar height
-    var height: CGFloat = 12
+    var height: CGFloat = 16
 
     /// Corner radius
     var cornerRadius: CGFloat = 4
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             // Visual bar at top with gradient based on usage
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
