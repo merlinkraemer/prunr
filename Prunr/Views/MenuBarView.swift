@@ -128,6 +128,14 @@ struct MenuBarView: View {
                 await manager.updatePathSize()
             }
         }
+        .onChange(of: manager.isDrilledDown) { _, newValue in
+            // Reset path header expansion when exiting drilldown
+            if !newValue {
+                withAnimation {
+                    isHeaderExpanded = false
+                }
+            }
+        }
     }
 
     // MARK: - Main Category View

@@ -115,42 +115,45 @@ struct CategoryGrowthListView: View {
     private func categoryDetailView(for category: CategoryGrowthItem) -> some View {
         // List of items grouped by folder (header is in MenuBarView now)
         ScrollView {
-            VStack(spacing: 0) {
+            VStack(spacing: 8) {
                 ForEach(sortedFolders(for: category), id: \.path) { folder in
-                    // Folder header (clickable to toggle expand/collapse)
-                    FolderHeaderRow(
-                        folderPath: folder.path,
-                        items: folder.items,
-                        isExpanded: expandedFolders.contains(folder.path),
-                        onToggle: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                if expandedFolders.contains(folder.path) {
-                                    expandedFolders.remove(folder.path)
-                                } else {
-                                    expandedFolders.insert(folder.path)
+                    VStack(spacing: 0) {
+                        // Folder header (clickable to toggle expand/collapse)
+                        FolderHeaderRow(
+                            folderPath: folder.path,
+                            items: folder.items,
+                            isExpanded: expandedFolders.contains(folder.path),
+                            onToggle: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if expandedFolders.contains(folder.path) {
+                                        expandedFolders.remove(folder.path)
+                                    } else {
+                                        expandedFolders.insert(folder.path)
+                                    }
                                 }
                             }
-                        },
-                        onReveal: {
-                            // Reveal the folder in Finder
-                            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
-                        }
-                    )
+                        )
 
-                    // Items (only if expanded)
-                    if expandedFolders.contains(folder.path) {
-                        ForEach(folder.items) { item in
-                            ItemRow(
-                                item: item,
-                                onTap: { onTapItem(item) }
-                            )
+                        // Items (only if expanded)
+                        if expandedFolders.contains(folder.path) {
+                            VStack(spacing: 4) {
+                                ForEach(folder.items, id: \.path) { item in
+                                    ItemRow(
+                                        item: item,
+                                        onTap: { onTapItem(item) }
+                                    )
+                                }
+                            }
+                            .padding(.top, 4)
+                            .padding(.bottom, 8)
                         }
                     }
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: maxHeight)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     /// All items in the selected category, sorted by size (largest first)
@@ -228,7 +231,6 @@ private enum ColumnWidths {
 private struct CategoryListRow: View, Equatable {
     static func == (lhs: CategoryListRow, rhs: CategoryListRow) -> Bool {
         lhs.item.totalGrowthBytes == rhs.item.totalGrowthBytes &&
-        lhs.item.itemCount == rhs.item.itemCount &&
         lhs.item.bigItems.count == rhs.item.bigItems.count
     }
     let item: CategoryGrowthItem
@@ -250,13 +252,6 @@ private struct CategoryListRow: View, Equatable {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Item count (static width)
-                Text("\(item.itemCount) items")
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-                    .frame(width: ColumnWidths.count, alignment: .trailing)
-
                 // Growth amount (static width)
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.up.right")
@@ -268,7 +263,6 @@ private struct CategoryListRow: View, Equatable {
                         .foregroundStyle(growthSeverityColor)
                         .fixedSize()
                 }
-                .frame(width: ColumnWidths.size, alignment: .trailing)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -329,7 +323,6 @@ private struct FolderHeaderRow: View {
     let items: [GrowthItem]
     let isExpanded: Bool
     let onToggle: () -> Void
-    let onReveal: () -> Void
 
     var body: some View {
         Button(action: onToggle) {
@@ -346,40 +339,25 @@ private struct FolderHeaderRow: View {
                     .foregroundStyle(.blue.opacity(0.8))
                     .frame(width: 16, height: 16)
 
-                // Folder name (flexible width, left-aligned)
+                // Folder name (flexible width, left-aligned, more space)
                 Text(folderName)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Item count (static width)
-                Text("\(items.count) file\(items.count == 1 ? "" : "s")")
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .fixedSize()
-                    .frame(width: ColumnWidths.count, alignment: .trailing)
-
                 // Total folder growth (static width)
                 Text(totalGrowthText)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .fixedSize()
-                    .frame(width: ColumnWidths.size, alignment: .trailing)
-
-                // Reveal in Finder button (secondary action)
-                Button(action: {
-                    onReveal()
-                }) {
-                    Image(systemName: "arrow.up.forward.square")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.blue)
-                }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color.gray.opacity(isExpanded ? 0.12 : 0.08))
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hoverState ? Color.gray.opacity(0.12) : Color.gray.opacity(0.06))
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
