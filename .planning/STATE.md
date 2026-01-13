@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 8 — Polish & Issue Resolution (scan reliability, performance, verification)
+**Current focus:** Phase 9.1 — UI Layout Fixes (overflow, alignment, footer, big file visual overhaul)
 
 ## Current Position
 
@@ -20,15 +20,18 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 8.1: Urgent UX Fixes (1/1 plans complete) - GB meter cache interval, drill-down header replacement, animation verification
 - Phase 8.2: UI Improvements & Real-time Updates (4/4 plans complete) - GB meter real-time updates, navigation architecture, push animation fixes, scan modal improvements
 - Phase 8.3: Critical Issues from Root Issues Doc (1/1 plans complete) - Back button navigation fix, header size consistency, footer separator spacing
-- Phase 8: Polish & Issue Resolution (4/4 plans created) - Scan reliability, performance optimization, UI polish, verification testing
+- Phase 8.4: New Issues from Issues Doc (1/1 plans complete) - Drilldown blank screen, baseline creation, scan popup layout, header spacing
+- Phase 8: Polish & Issue Resolution (4/4 plans complete) - Scan reliability, performance optimization, UI polish, verification testing
+- Phase 9: Visual Improvements (0/6 plans) - Monospace fonts, static columns, header redesign, spacing, footer, dropdown
+- Phase 9.1: UI Layout Fixes (0/2 plans) - Layout overflow, alignment, footer redesign, big file visual overhaul (INSERTED)
 
-Last activity: 2026-01-12 — Completed Phase 8.3-01: Critical navigation and visual fixes (ISS-045, ISS-046, ISS-047)
+Last activity: 2026-01-13 — Phase 8 marked complete, Phase 9.1 inserted for UI layout fixes
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.1 complete, Phase 8.2 complete (4/4), Phase 8.3 complete (1/1)
+Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.x complete, Phase 9 planning, Phase 9.1 not planned
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
-- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`, `07-01-layout-fixes`, `08-01-urgent-ux-fixes` (INSERTED), `08-02-ui-improvements-realtime-updates` (INSERTED), `08-03-critical-issues-from-root-issues-doc` (INSERTED), `08.4-new-issues-from-issues-doc` (INSERTED), `08-polish-and-issue-resolution`
+- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`, `07-01-layout-fixes`, `08-01-urgent-ux-fixes` (INSERTED), `08-02-ui-improvements-realtime-updates` (INSERTED), `08-03-critical-issues-from-root-issues-doc` (INSERTED), `08.4-new-issues-from-issues-doc` (INSERTED), `08-polish-and-issue-resolution`, `09-visual-improvements`, `9.1-ui-layout-fixes` (INSERTED)
 - Archived: Old full-window app plans moved to `.planning/phases/_archived-full-window-app/`
 - Note: Phase 05 (Settings & Polish) was implemented without formal GSD planning; retrospective PLAN.md and SUMMARY.md created 2026-01-11
 - Note: Phase 07 plan created 2026-01-12 from documentation/grouping_feature_spec.md
@@ -135,6 +138,8 @@ None.
 - 2026-01-12: Phase 8.2 inserted after Phase 8.1: UI Improvements & Real-time Updates (URGENT) — Navigation architecture overhaul (ISS-039), push animation implementation (ISS-036/ISS-040), GB meter real-time updates (ISS-042), scanning progress indicator (ISS-033), settings navigation (ISS-034), header visual clarity (ISS-027)
 - 2026-01-12: Phase 8.3 inserted after Phase 8.2: Critical Issues from Root Issues Doc (URGENT) — Back button navigation fix (ISS-045), header size consistency (ISS-046), footer separator spacing (ISS-047)
 - 2026-01-12: Phase 8.4 inserted after Phase 8.3: New Issues from Issues Doc (URGENT) — Drilldown blank screen (ISS-043), baseline creation broken (ISS-048), scan popup layout (ISS-044), header spacing (ISS-049), scan popup flash (ISS-050), monitor path settings (ISS-034), multiple paths indicator (ISS-051)
+- 2026-01-13: Phase 8 (all sub-phases) marked complete
+- 2026-01-13: Phase 9.1 inserted after Phase 9: UI Layout Fixes (URGENT) — Column layout overflow (ISS-057), alignment issues (ISS-058), footer redesign (ISS-059), big file children visual overhaul (ISS-060)
 
 **Archived (2026-01-11):** Full-window app plans moved to `.planning/phases/_archived-full-window-app/`:
 - 01-foundation, 02-scanner-storage, 03-delta-engine, 05-frontend-redesign
@@ -145,9 +150,10 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-12
+Last session: 2026-01-13
 MVP Status: Complete (all 5 phases finished)
-Phase 8.3: Complete (1/1 plan) - Critical navigation and visual fixes
+Phase 8: Complete (all sub-phases)
+Phase 9.1: Planned (2 plans created)
 Resume file: None
 
 ## Key Files Changed (Final MVP)

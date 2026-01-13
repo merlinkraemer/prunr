@@ -31,8 +31,8 @@ Prunr is a lightweight macOS menu bar utility that answers "What ate my disk spa
 - [x] **Phase 8.1: Urgent UX Fixes** - GB meter cache interval, drill-down header, animation verification
 - [x] **Phase 8.2: UI Improvements & Real-time Updates** - GB meter real-time updates, navigation fixes, push animation, scan modal improvements
 - [x] **Phase 8.3: Critical Issues from Root Issues Doc** - Back button navigation, header consistency, footer spacing
-- [ ] **Phase 8.4: New Issues from Issues Doc** - Drilldown blank screen, baseline creation, scan popup layout, header spacing
-- [ ] **Phase 8: Polish & Issue Resolution** - Scan reliability, performance, verification
+- [x] **Phase 8.4: New Issues from Issues Doc** - Drilldown blank screen, baseline creation, scan popup layout, header spacing
+- [x] **Phase 8: Polish & Issue Resolution** - Scan reliability, performance, verification
 
 ## Phase Details
 
@@ -313,8 +313,8 @@ Comprehensive polish phase addressing all open issues from ISSUES.md. Prioritize
 | 8.1. Urgent UX Fixes | 1/1 | Complete | 2026-01-12 |
 | 8.2. UI Improvements & Real-time Updates | 4/4 | Complete | 2026-01-12 |
 | 8.3. Critical Issues from Root Issues Doc | 1/1 | Complete | 2026-01-12 |
-| 8.4. New Issues from Issues Doc | 0/0 | Not Planned | — |
-| 8. Polish & Issue Resolution | 0/4 | Planning | — |
+| 8.4. New Issues from Issues Doc | 1/1 | Complete | 2026-01-13 |
+| 8. Polish & Issue Resolution | 4/4 | Complete | 2026-01-13 |
 
 ### Phase 9: Visual Improvements
 **Goal**: Comprehensive visual polish including monospace fonts, static columns, header redesign, spacing consistency, simplified footer buttons, and dropdown integration
@@ -342,7 +342,64 @@ Plans:
 
 **Details**:
 This phase focuses on visual polish and UI consistency improvements to make the application more professional and polished. The header redesign (ISS-053) is high priority as it affects the overall user experience. Other tasks address specific visual inconsistencies and layout issues discovered during testing.
+
+---
+
+### Phase 9.1: UI Layout Fixes (INSERTED)
+
+**Goal:** Fix layout overflow, alignment, footer redesign, and big file visual overhaul discovered during Phase 9 implementation
+**Depends on:** Phase 9
+**Research:** Unlikely (issues are well-documented)
+**Plans:** 2 plans
+
+Plans:
+- [ ] 9.1-01: Layout & Header Fixes (ISS-057, ISS-058, header updates)
+- [ ] 9.1-02: Footer & Big File Visual Overhaul (ISS-059, ISS-060)
+
+**Deliverables:**
+- **ISS-057:** Column layout overflow - category and drill-down view pages wider than window, overflowing to sides (High priority)
+- **ISS-058:** Alignment issues - file names and category names not left-aligned in grid layout (Medium priority)
+- **ISS-059:** Footer redesign - convert to horizontal icon-only layout with macOS styling (High priority)
+- **ISS-060:** Big file children visual overhaul - redesign nested big files in category view (Medium priority)
+- Remove GB indicator from monitor path header
+- Update bar header to show "X GB free of Y GB" format
+
+**Issues Addressed:** ISS-057 (High), ISS-058 (Medium), ISS-059 (High), ISS-060 (Medium)
+
+**Details:**
+This urgent phase addresses layout and visual issues discovered during Phase 9 Visual Improvements implementation.
+
+**Design Specifications:**
+
+1. **Grid Alignment (ISS-057, ISS-058):**
+   ```
+   [folder] Other                    51 items | ↗ +1.9 GB
+   [dots]   node_modules...           5 items | ↗ +189 MB
+   [arrow]  Downloads                 3 items | ↗ +111 MB
+   ```
+   - Column 1: icon + category name (flexible width, left-aligned)
+   - Column 2: item count (fixed or right-aligned)
+   - Column 3: size delta (fixed or right-aligned)
+
+2. **Header Redesign:**
+   ```
+   ┌─────────────────────────────────────────────────────────────┐
+   │  💾 24 GB free of 465 GB  [███████████████░░░] 95%         │  ← FIXED
+   ├─────────────────────────────────────────────────────────────┤
+   │  Monitoring: [~/]                                          │  ← DEFAULT
+   └─────────────────────────────────────────────────────────────┘
+   ```
+   - Multi-path: `[test_data] [prunr] [dev] ↓` — tags flow left, chevron expands
+   - Drill-down: `← 📁 CategoryName size` — back arrow, icon, name, size
+
+3. **Footer (ISS-059):**
+   - Icons only, horizontally aligned
+   - Minimalist design matching macOS 26 patterns
+
+---
+
 | 9. Visual Improvements | 0/6 | Planning | — |
+| 9.1. UI Layout Fixes | 0/2 | Planned | — |
 
 **MVP Status:** 🎉 MVP complete (Phase 1-5). Phase 6-7.1 are post-MVP enhancements.
 
