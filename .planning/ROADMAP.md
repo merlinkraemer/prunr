@@ -353,7 +353,7 @@ This phase focuses on visual polish and UI consistency improvements to make the 
 **Plans:** 2 plans
 
 Plans:
-- [ ] 9.1-01: Layout & Header Fixes (ISS-057, ISS-058, header updates)
+- [x] 9.1-01: Layout & Header Fixes (ISS-057, ISS-058, header updates)
 - [ ] 9.1-02: Footer & Big File Visual Overhaul (ISS-059, ISS-060)
 
 **Deliverables:**
@@ -399,7 +399,7 @@ This urgent phase addresses layout and visual issues discovered during Phase 9 V
 ---
 
 | 9. Visual Improvements | 0/6 | Planning | — |
-| 9.1. UI Layout Fixes | 0/2 | Planned | — |
+| 9.1. UI Layout Fixes | 1/2 | In progress | — |
 
 **MVP Status:** 🎉 MVP complete (Phase 1-5). Phase 6-7.1 are post-MVP enhancements.
 

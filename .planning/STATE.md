@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 8.4: New Issues from Issues Doc (1/1 plans complete) - Drilldown blank screen, baseline creation, scan popup layout, header spacing
 - Phase 8: Polish & Issue Resolution (4/4 plans complete) - Scan reliability, performance optimization, UI polish, verification testing
 - Phase 9: Visual Improvements (0/6 plans) - Monospace fonts, static columns, header redesign, spacing, footer, dropdown
-- Phase 9.1: UI Layout Fixes (0/2 plans) - Layout overflow, alignment, footer redesign, big file visual overhaul (INSERTED)
+- Phase 9.1: UI Layout Fixes (1/2 plans complete) - Layout overflow, alignment, footer redesign, big file visual overhaul (INSERTED)
 
-Last activity: 2026-01-13 — Phase 8 marked complete, Phase 9.1 inserted for UI layout fixes
+Last activity: 2026-01-13 — Completed 9.1-01-PLAN.md (Layout & Header Fixes)
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.x complete, Phase 9 planning, Phase 9.1 not planned
+Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.x complete, Phase 9 planning, Phase 9.1 in progress (1/2)
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
@@ -153,7 +153,8 @@ None.
 Last session: 2026-01-13
 MVP Status: Complete (all 5 phases finished)
 Phase 8: Complete (all sub-phases)
-Phase 9.1: Planned (2 plans created)
+Phase 9.1: In progress (1/2 plans complete)
+Stopped at: Completed 9.1-01-PLAN.md
 Resume file: None
 
 ## Key Files Changed (Final MVP)
