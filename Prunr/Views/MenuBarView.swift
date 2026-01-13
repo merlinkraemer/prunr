@@ -6,11 +6,9 @@ struct MenuBarView: View {
 
     @Environment(\.openSettings) private var openSettings
     @Environment(\.dismiss) private var dismiss
-    @State private var resetHover = false
     @State private var scanHover = false
     @State private var settingsHover = false
     @State private var isHeaderExpanded = false
-    @State private var isResetting = false
     @State private var isScanning = false
 
     private func closePopoverAndOpenSettings() {
@@ -143,9 +141,7 @@ struct MenuBarView: View {
             // Page navigation container - swaps between main/detail pages
             pageNavigationContent
 
-            Divider()
-
-            // Footer buttons
+            // Footer buttons (no separator)
             footerButtons
         }
     }
@@ -315,6 +311,8 @@ struct MenuBarView: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
@@ -441,11 +439,11 @@ struct MenuBarView: View {
         }
     }
 
-    // MARK: - Footer Buttons (Horizontal Icon-Only Toolbar)
+    // MARK: - Footer Buttons (Icon Toolbar - No Separator)
 
     private var footerButtons: some View {
-        HStack(spacing: 24) {
-            // Scan button
+        HStack {
+            // Scan/Refresh button (lower left)
             Button {
                 isScanning = true
                 Task {
@@ -466,11 +464,11 @@ struct MenuBarView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     } else {
-                        Image(systemName: "magnifyingglass")
+                        Image(systemName: "arrow.clockwise")
                     }
                 }
-                .font(.system(size: 14))
-                .frame(width: 28, height: 28)
+                .font(.system(size: 13))
+                .frame(width: 26, height: 26)
                 .background(
                     Circle()
                         .fill(scanHover && !isScanning ? Color.gray.opacity(0.12) : Color.clear)
@@ -485,52 +483,17 @@ struct MenuBarView: View {
                 }
             }
             .disabled(manager.isLoading || isScanning)
-            .help("Scan Now")
+            .help("Refresh View")
 
-            // Reset Baseline button
-            Button {
-                isResetting = true
-                Task {
-                    await manager.performReset()
+            Spacer()
 
-                    // Brief delay to show completion
-                    try? await Task.sleep(for: .milliseconds(500))
-                    isResetting = false
-                }
-            } label: {
-                Group {
-                    if isResetting {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                .font(.system(size: 14))
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(resetHover && !isResetting ? Color.gray.opacity(0.12) : Color.clear)
-                )
-                .foregroundStyle(.primary)
-                .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    resetHover = hovering
-                }
-            }
-            .disabled(manager.isLoading || isResetting)
-            .help("Reset Baseline")
-
-            // Settings button
+            // Settings button (lower right)
             Button {
                 closePopoverAndOpenSettings()
             } label: {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 14))
-                    .frame(width: 28, height: 28)
+                    .font(.system(size: 13))
+                    .frame(width: 26, height: 26)
                     .background(
                         Circle()
                             .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
@@ -546,7 +509,8 @@ struct MenuBarView: View {
             }
             .help("Settings")
         }
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
     }
 
     // MARK: - Helper Methods
