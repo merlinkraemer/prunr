@@ -25,14 +25,18 @@ struct DriveBarView: View {
                     .font(.system(size: 14))
                     .foregroundStyle(usageColor)
 
-                // Free space (prominent)
+                // Free space with total (e.g., "123 GB free of 500 GB")
                 Text(bytesToGBString(freeBytes))
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.primary)
 
-                Text("free")
+                Text("free of")
                     .font(.system(.caption))
                     .foregroundStyle(.secondary)
+
+                Text(bytesToGBString(totalBytes))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.primary)
 
                 Spacer()
 
