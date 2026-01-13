@@ -398,10 +398,87 @@ This urgent phase addresses layout and visual issues discovered during Phase 9 V
 
 ---
 
-| 9. Visual Improvements | 0/6 | Planning | — |
-| 9.1. UI Layout Fixes | 1/2 | In progress | — |
+### Phase 9.2: UI & UX Quick Fixes (INSERTED)
 
-**MVP Status:** 🎉 MVP complete (Phase 1-5). Phase 6-7.1 are post-MVP enhancements.
+**Goal:** Quick UI and UX fixes including reset baseline placement, tree view visuals, and app icon configuration
+**Depends on:** Phase 9.1
+**Research:** Unlikely (issues are well-documented)
+**Plans:** 1 plan
+
+Plans:
+- [x] 9.2-01: UI & UX Quick Fixes (ISS-061, ISS-062, ISS-063)
+
+**Deliverables:**
+- **ISS-061:** Reset baseline moved from About tab to Paths settings page for better discoverability
+- **ISS-062:** Tree view children visual redesign - removed background/border, now uses simple indent with subtle connector
+- **ISS-063:** App icon configured from ci/logo/prunr-iOS-Default-1024x1024@1x.png
+
+**Issues Addressed:** ISS-061 (Medium), ISS-062 (Medium), ISS-063 (Medium)
+
+**Details:**
+This phase addresses quick UI and UX fixes identified during testing:
+1. Moved Reset Baseline button from About tab to Paths settings page where it logically belongs
+2. Redesigned nested big file items to no longer look like mini cards - removed background, border, and hover states; now uses simple indentation with subtle gray connector lines
+3. Added app icon from CI directory to the AppIcon asset catalog
+
+---
+
+### Phase 9.3: Performance & Speed Improvements (INSERTED)
+
+**Goal:** General performance optimizations and speed improvements across the application
+**Depends on:** Phase 9.2
+**Research:** Unlikely (performance patterns well-documented)
+**Plans:** 3 plans
+
+Plans:
+- [x] 9.3-01: Database & Scan Performance (ISS-012)
+- [ ] 9.3-02: UI Responsiveness (ISS-012)
+- [ ] 9.3-03: Animation Performance (ISS-012)
+
+**Deliverables:**
+- **9.3-01:** Database batch inserts with prepared statements, composite index for delta queries
+- **9.3-02:** UI responsiveness improvements (to be planned)
+- **9.3-03:** Animation performance improvements (to be planned)
+
+**Issues Addressed:** ISS-012 (Medium): App performance optimization - scan performance
+
+**Details:**
+This phase focuses on performance and speed improvements across the application:
+1. Database optimizations (prepared statements, composite indexes)
+2. UI responsiveness improvements
+3. Animation performance optimizations
+
+---
+
+### Phase 9.4: Settings Redesign (INSERTED)
+
+**Goal:** Redesign the Settings window with modern macOS 26 design patterns
+**Depends on:** Phase 9.3
+**Research:** Unlikely (design patterns well-documented)
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 9.4 to break down)
+
+**Deliverables:**
+- Modern settings window redesign
+- Better organization and visual hierarchy
+- Improved controls and interactions
+
+**Issues Addressed:** TBD
+
+**Details:**
+This phase will redesign the Settings window to match modern macOS 26 design patterns with better visual hierarchy, improved controls, and more intuitive organization.
+
+---
+
+| 9. Visual Improvements | 0/6 | Planning | — |
+| 9.1. UI Layout Fixes | 2/2 | Complete | 2026-01-13 |
+| 9.2. UI & UX Quick Fixes | 1/1 | Complete | 2026-01-13 |
+| 9.3. Performance & Speed Improvements | 1/3 | In progress | — |
+| 9.4. Settings Redesign | 0/0 | Not Planned | — |
+
+**MVP Status:** 🎉 MVP complete (Phase 1-5). Phase 6-9.2 are post-MVP enhancements.
 
 ## Key Differentiators
 

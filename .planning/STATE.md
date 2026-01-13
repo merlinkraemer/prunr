@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-01-10)
 
 **Core value:** When storage suddenly drops, users can immediately see what consumed it.
-**Current focus:** Phase 9.1 — UI Layout Fixes (overflow, alignment, footer, big file visual overhaul)
+**Current focus:** Phase 9.2 — UI & UX Quick Fixes (reset baseline placement, tree view visuals, app icon)
 
 ## Current Position
 
@@ -23,15 +23,18 @@ See: .planning/PROJECT.md (updated 2026-01-10)
 - Phase 8.4: New Issues from Issues Doc (1/1 plans complete) - Drilldown blank screen, baseline creation, scan popup layout, header spacing
 - Phase 8: Polish & Issue Resolution (4/4 plans complete) - Scan reliability, performance optimization, UI polish, verification testing
 - Phase 9: Visual Improvements (0/6 plans) - Monospace fonts, static columns, header redesign, spacing, footer, dropdown
-- Phase 9.1: UI Layout Fixes (1/2 plans complete) - Layout overflow, alignment, footer redesign, big file visual overhaul (INSERTED)
+- Phase 9.1: UI Layout Fixes (2/2 plans complete) - Layout overflow, alignment, footer redesign, big file visual overhaul (INSERTED)
+- Phase 9.2: UI & UX Quick Fixes (1/1 plans complete) - Reset baseline in Paths tab, tree view visual redesign, app icon configuration (INSERTED)
+- Phase 9.3: Performance & Speed Improvements (1/3 plans complete) - Database batch inserts, composite index migration (INSERTED)
+- Phase 9.4: Settings Redesign (0/0 plans) - Modern settings window redesign (INSERTED)
 
-Last activity: 2026-01-13 — Completed 9.1-01-FIX.md (UAT drive bar redesign)
+Last activity: 2026-01-13 — Completed Phase 9.3-01 (Database & Scan Performance)
 
-Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.x complete, Phase 9 planning, Phase 9.1 in progress (1/2)
+Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete, Phase 8.x complete, Phase 9.1 complete, Phase 9.2 complete, Phase 9.3 in progress (1/3)
 
 **Phase Structure:**
 - Active MVP phases: `01-menubar-foundation`, `02-fsevents-monitoring`, `03-baseline-growth-tracking`, `04-menubar-ui`, `05-settings-polish`
-- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`, `07-01-layout-fixes`, `08-01-urgent-ux-fixes` (INSERTED), `08-02-ui-improvements-realtime-updates` (INSERTED), `08-03-critical-issues-from-root-issues-doc` (INSERTED), `08.4-new-issues-from-issues-doc` (INSERTED), `08-polish-and-issue-resolution`, `09-visual-improvements`, `9.1-ui-layout-fixes` (INSERTED)
+- Post-MVP phases: `06-popup-hig-redesign`, `07-category-growth-view`, `07-01-layout-fixes`, `08-01-urgent-ux-fixes` (INSERTED), `08-02-ui-improvements-realtime-updates` (INSERTED), `08-03-critical-issues-from-root-issues-doc` (INSERTED), `08.4-new-issues-from-issues-doc` (INSERTED), `08-polish-and-issue-resolution`, `09-visual-improvements`, `9.1-ui-layout-fixes` (INSERTED), `9.2-ui-ux-quick-fixes` (INSERTED), `9.3-performance-speed-improvements` (INSERTED), `9.4-settings-redesign` (INSERTED)
 - Archived: Old full-window app plans moved to `.planning/phases/_archived-full-window-app/`
 - Note: Phase 05 (Settings & Polish) was implemented without formal GSD planning; retrospective PLAN.md and SUMMARY.md created 2026-01-11
 - Note: Phase 07 plan created 2026-01-12 from documentation/grouping_feature_spec.md
@@ -112,6 +115,12 @@ Progress: ██████████ 100% MVP | Post-MVP: Phase 7.1 complete
 | 8.2-04 | Fixed scan modal size (260x180) | Prevents jarring resizes during progress updates |
 | 8.2-02 | nonisolated(unsafe) for Timer properties | Allows deinit to access Timer from nonisolated context |
 | 9.1-01-FIX | Drive bar: bar at top, text below | User UAT feedback - better visual hierarchy |
+| 9.2-01 | NSApp.setActivationPolicy(.accessory) for dockless | Programmatic dock hiding in addition to LSUIElement |
+| 9.2-01 | Reset baseline in Paths settings tab | Better UX - related setting in logical location |
+| 9.2-01 | Tree view children without background/border | Cleaner visual hierarchy for nested items |
+| 9.2-01 | App icon from ci directory | Use official branding in app bundle |
+| 9.3-01 | Prepared statement batch inserts with db.makeStatement() | Eliminates SQL preparation overhead for each row |
+| 9.3-01 | Composite index on (snapshotId, path) | Speeds up delta query JOIN operations |
 
 ### Deferred Issues
 
@@ -141,6 +150,8 @@ None.
 - 2026-01-12: Phase 8.4 inserted after Phase 8.3: New Issues from Issues Doc (URGENT) — Drilldown blank screen (ISS-043), baseline creation broken (ISS-048), scan popup layout (ISS-044), header spacing (ISS-049), scan popup flash (ISS-050), monitor path settings (ISS-034), multiple paths indicator (ISS-051)
 - 2026-01-13: Phase 8 (all sub-phases) marked complete
 - 2026-01-13: Phase 9.1 inserted after Phase 9: UI Layout Fixes (URGENT) — Column layout overflow (ISS-057), alignment issues (ISS-058), footer redesign (ISS-059), big file children visual overhaul (ISS-060)
+- 2026-01-13: Phase 9.2 inserted after Phase 9.1: UI & UX Quick Fixes — Reset baseline in Paths tab (ISS-061), tree view visuals (ISS-062), app icon (ISS-063)
+- 2026-01-13: Phase 9.3 inserted after Phase 9.2: Performance & Speed Improvements — Database batch inserts, composite index migration (ISS-012)
 
 **Archived (2026-01-11):** Full-window app plans moved to `.planning/phases/_archived-full-window-app/`:
 - 01-foundation, 02-scanner-storage, 03-delta-engine, 05-frontend-redesign
@@ -154,8 +165,10 @@ None.
 Last session: 2026-01-13
 MVP Status: Complete (all 5 phases finished)
 Phase 8: Complete (all sub-phases)
-Phase 9.1: In progress (1/2 plans complete + 01-FIX)
-Stopped at: Completed 9.1-01-FIX.md (UAT drive bar redesign)
+Phase 9.1: Complete (2/2 plans)
+Phase 9.2: Complete (1/1 plans)
+Phase 9.3: In progress (1/3 plans complete)
+Stopped at: Completed 9.3-01-PLAN.md (Database & Scan Performance)
 Resume file: None
 
 ## Key Files Changed (Final MVP)
