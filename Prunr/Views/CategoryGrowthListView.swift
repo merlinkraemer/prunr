@@ -514,58 +514,39 @@ private struct NestedBigItemRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 4) {
-                // Left indent (to align with parent)
-                Spacer()
-                    .frame(width: 10)
-
-                // Tree character
-                Text(isLastItem ? "└──" : "├──")
-                    .font(.system(size: 9, weight: .light, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 18)
-
+            HStack(spacing: 8) {
                 // File icon
                 Image(systemName: "doc.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundStyle(.orange)
                     .frame(width: 14, height: 14)
 
                 // File name (flexible width, left-aligned)
                 Text(fileName)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Size with percentage
-                HStack(spacing: 2) {
-                    Text(sizeText)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
-
-                    // Percentage badge (smaller for nested items)
-                    if item.percentOfParent > 0 {
-                        let percent = String(format: "%.0f%%", item.percentOfParent * 100)
-                        Text(percent)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 0)
-                            .background(Color.secondary.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 2))
-                    }
-                }
+                // Size
+                Text(sizeText)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 3)
-            .frame(minHeight: 24)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(hoverState ? Color.gray.opacity(0.08) : Color.clear)
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(hoverState ? Color.orange.opacity(0.08) : Color.orange.opacity(0.04))
             )
-            .padding(.horizontal, 6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(Color.orange.opacity(0.15), lineWidth: 0.5)
+            )
+            .padding(.leading, 28) // Indent from parent
+            .padding(.trailing, 12)
+            .padding(.vertical, 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -611,21 +592,16 @@ private struct MoreIndicatorRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 4) {
-                // Left indent
-                Spacer()
-                    .frame(width: 10)
+            HStack(spacing: 8) {
+                // Ellipsis icon
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange.opacity(0.7))
+                    .frame(width: 14, height: 14)
 
-                // Tree character (always last item)
-                Text("└──")
-                    .font(.system(size: 9, weight: .light, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 18)
-
-                Text("\(count) more")
-                    .font(.system(.caption2, design: .monospaced))
+                Text("\(count) more large files")
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                    .italic()
 
                 Spacer()
 
@@ -633,14 +609,20 @@ private struct MoreIndicatorRow: View {
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 3)
-            .frame(minHeight: 24)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(hoverState ? Color.gray.opacity(0.08) : Color.clear)
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(hoverState ? Color.orange.opacity(0.06) : Color.clear)
             )
-            .padding(.horizontal, 6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(Color.orange.opacity(hoverState ? 0.15 : 0.08), lineWidth: 0.5)
+                    .opacity(hoverState ? 1 : 0.6)
+            )
+            .padding(.leading, 28) // Same indent as nested items
+            .padding(.trailing, 12)
+            .padding(.vertical, 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
