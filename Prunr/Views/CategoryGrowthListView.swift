@@ -60,6 +60,10 @@ struct CategoryGrowthListView: View {
     @State private var selectedCategory: CategoryGrowthItem?
     @State private var expandedFolders: Set<String> = []
 
+    // Cache for sorted folders to avoid O(n log n) recomputation on every render
+    @State private var cachedSortedFolders: [(path: String, items: [GrowthItem])] = []
+    @State private var lastCachedCategory: CategoryGrowthItem?
+
     
     // MARK: - Category List View
 
@@ -84,13 +88,12 @@ struct CategoryGrowthListView: View {
 
                                 // Nested big files (max 3)
                                 if !item.bigItems.isEmpty {
-                                    ForEach(Array(item.bigItems.prefix(3).enumerated()), id: \.element.path) { index, bigItem in
-                                        let isLastInList = (index == min(2, item.bigItems.count - 1)) && item.bigItems.count <= 3
+                                    ForEach(item.bigItems.prefix(3), id: \.path) { bigItem in
                                         NestedBigItemRow(
                                             item: bigItem,
-                                            isLastItem: isLastInList,
                                             onTap: { onTapItem(bigItem) }
                                         )
+                                        .id(bigItem.path)
                                     }
 
                                     // Show "X more" if there are more than 3 big items
@@ -115,7 +118,7 @@ struct CategoryGrowthListView: View {
     private func categoryDetailView(for category: CategoryGrowthItem) -> some View {
         // List of items grouped by folder (header is in MenuBarView now)
         ScrollView {
-            VStack(spacing: 8) {
+            VStack(spacing: 0) {
                 ForEach(sortedFolders(for: category), id: \.path) { folder in
                     VStack(spacing: 0) {
                         // Folder header (clickable to toggle expand/collapse)
@@ -133,25 +136,23 @@ struct CategoryGrowthListView: View {
                                 }
                             }
                         )
+                        .id(folder.path)
 
                         // Items (only if expanded)
                         if expandedFolders.contains(folder.path) {
-                            VStack(spacing: 4) {
+                            VStack(spacing: 0) {
                                 ForEach(folder.items, id: \.path) { item in
                                     ItemRow(
                                         item: item,
                                         onTap: { onTapItem(item) }
                                     )
+                                    .id(item.path)
                                 }
                             }
-                            .padding(.top, 4)
-                            .padding(.bottom, 8)
                         }
                     }
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: maxHeight)
     }
@@ -171,15 +172,34 @@ struct CategoryGrowthListView: View {
     }
 
     /// Folders sorted by total growth (largest first)
+    /// Cached per category to avoid O(n log n) recomputation on every render
     private func sortedFolders(for category: CategoryGrowthItem) -> [(path: String, items: [GrowthItem])] {
-        itemsGroupedByFolder(for: category)
-            .map { (path, items) in
-                (path, items.sorted { $0.growthBytes > $1.growthBytes })
-            }
-            .sorted {
-                $0.items.reduce(0) { $0 + $1.growthBytes } >
-                $1.items.reduce(0) { $0 + $1.growthBytes }
-            }
+        // Return cached if category hasn't changed
+        if let lastCached = lastCachedCategory, lastCached.id == category.id {
+            return cachedSortedFolders
+        }
+
+        // Compute and cache - broken into steps to avoid compiler timeout
+        let grouped = itemsGroupedByFolder(for: category)
+
+        // Sort items within each folder
+        let foldersWithSortedItems: [(path: String, items: [GrowthItem])] = grouped.map { (path, items) in
+            let sorted = items.sorted { $0.growthBytes > $1.growthBytes }
+            return (path, sorted)
+        }
+
+        // Sort folders by total growth
+        func totalGrowth(for folder: (path: String, items: [GrowthItem])) -> Int64 {
+            folder.items.reduce(0) { $0 + $1.growthBytes }
+        }
+
+        let result = foldersWithSortedItems.sorted {
+            totalGrowth(for: $0) > totalGrowth(for: $1)
+        }
+
+        cachedSortedFolders = result
+        lastCachedCategory = category
+        return result
     }
 
     // MARK: - Actions
@@ -327,37 +347,45 @@ private struct FolderHeaderRow: View {
     var body: some View {
         Button(action: onToggle) {
             HStack(spacing: 10) {
-                // Chevron (right when collapsed, down when expanded)
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 12)
-
                 // Folder icon
                 Image(systemName: "folder.fill")
-                    .font(.system(size: 12))
+                    .font(.system(size: 16))
                     .foregroundStyle(.blue.opacity(0.8))
-                    .frame(width: 16, height: 16)
+                    .frame(width: 20, height: 20)
 
-                // Folder name (flexible width, left-aligned, more space)
+                // Folder name (flexible width, left-aligned)
                 Text(folderName)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Total folder growth (static width)
-                Text(totalGrowthText)
-                    .font(.system(.caption, design: .monospaced))
+                // Total folder growth
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(growthSeverityColor)
+
+                    Text(totalGrowthText)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(growthSeverityColor)
+                        .fixedSize()
+                }
+
+                // Chevron (right when collapsed, down when expanded) - AFTER size
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .fixedSize()
+                    .frame(width: 12)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
+            .frame(minHeight: 32)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(hoverState ? Color.gray.opacity(0.12) : Color.gray.opacity(0.06))
+                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
             )
+            .padding(.horizontal, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -377,6 +405,18 @@ private struct FolderHeaderRow: View {
     private var totalGrowthText: String {
         let total = items.reduce(0) { $0 + $1.growthBytes }
         return formattedBytes(total, prefix: "+")
+    }
+
+    private var growthSeverityColor: Color {
+        let total = items.reduce(0) { $0 + $1.growthBytes }
+        let gb = Double(total) / 1_000_000_000
+        if gb >= 5 {
+            return .red
+        } else if gb >= 1 {
+            return .orange
+        } else {
+            return .green
+        }
     }
 
     private func formattedBytes(_ bytes: Int64, prefix: String = "") -> String {
@@ -405,15 +445,18 @@ private struct ItemRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
+                // Indent spacer
+                Spacer().frame(width: 8)
+
                 // File/folder icon
                 Image(systemName: "doc.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(item.isBigFile ? .orange : .secondary)
-                    .frame(width: 16, height: 16)
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 20)
 
                 // File name (flexible width, left-aligned)
                 Text(fileName)
-                    .font(.system(size: 11))
+                    .font(.system(size: 13))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -439,8 +482,8 @@ private struct ItemRow: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 4)
-            .frame(minHeight: 28)
+            .padding(.vertical, 6)
+            .frame(minHeight: 32)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
@@ -487,64 +530,41 @@ private struct ItemRow: View {
 
 private struct NestedBigItemRow: View {
     let item: GrowthItem
-    let isLastItem: Bool
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 0) {
-                // Tree view line and indent
-                ZStack {
-                    // Vertical line (tree connector)
-                    Rectangle()
-                        .fill(Color.orange.opacity(0.25))
-                        .frame(width: 1)
-                        .padding(.leading, 12)
-                        .frame(maxHeight: .infinity)
-                        .offset(y: isLastItem ? -8 : 8)
+            HStack(spacing: 10) {
+                // Indent spacer (no tree lines)
+                Spacer().frame(width: 8)
 
-                    // Horizontal connector
-                    Rectangle()
-                        .fill(Color.orange.opacity(0.25))
-                        .frame(width: 8, height: 1)
-                        .padding(.leading, 12)
-                }
-                .frame(width: 24, height: 24)
+                // File icon
+                Image(systemName: "doc.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
 
-                // Content
-                HStack(spacing: 8) {
-                    // File icon
-                    Image(systemName: "doc.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .frame(width: 14, height: 14)
+                // File name (flexible width, left-aligned)
+                Text(fileName)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    // File name (flexible width, left-aligned)
-                    Text(fileName)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    // Size
-                    Text(sizeText)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(hoverState ? Color.orange.opacity(0.1) : Color.clear)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(Color.orange.opacity(0.2), lineWidth: 0.5)
-                )
-                .padding(.trailing, 12)
+                // Size
+                Text(sizeText)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
             }
-            .padding(.vertical, 1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .frame(minHeight: 32)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
+            )
+            .padding(.horizontal, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -590,56 +610,34 @@ private struct MoreIndicatorRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 0) {
-                // Tree view line and indent
-                ZStack {
-                    // Vertical line (tree connector)
-                    Rectangle()
-                        .fill(Color.orange.opacity(0.25))
-                        .frame(width: 1)
-                        .padding(.leading, 12)
-                        .frame(maxHeight: .infinity)
-                        .offset(y: 8)
+            HStack(spacing: 10) {
+                // Indent spacer (no tree lines)
+                Spacer().frame(width: 8)
 
-                    // Horizontal connector
-                    Rectangle()
-                        .fill(Color.orange.opacity(0.25))
-                        .frame(width: 8, height: 1)
-                        .padding(.leading, 12)
-                }
-                .frame(width: 24, height: 24)
+                // Ellipsis icon
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
 
-                // Content
-                HStack(spacing: 8) {
-                    // Ellipsis icon
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.orange.opacity(0.7))
-                        .frame(width: 14, height: 14)
+                Text("\(count) more large files")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text("\(count) more large files")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(hoverState ? Color.orange.opacity(0.08) : Color.clear)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(Color.orange.opacity(0.15), lineWidth: 0.5)
-                )
-                .padding(.trailing, 12)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
             }
-            .padding(.vertical, 1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .frame(minHeight: 32)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
+            )
+            .padding(.horizontal, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
