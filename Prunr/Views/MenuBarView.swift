@@ -441,130 +441,113 @@ struct MenuBarView: View {
         }
     }
 
-    // MARK: - Footer Buttons
+    // MARK: - Footer Buttons (Horizontal Icon-Only Toolbar)
 
     private var footerButtons: some View {
-        VStack(spacing: 0) {
-                // Scan Now
-                Button {
-                    isScanning = true
-                    Task {
-                        await manager.loadCategoryGrowthList()
+        HStack(spacing: 24) {
+            // Scan button
+            Button {
+                isScanning = true
+                Task {
+                    await manager.loadCategoryGrowthList()
 
-                        // Wait for manager to finish loading before showing done
-                        while manager.isLoading {
-                            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                        }
-
-                        // Brief delay to show completion
-                        try? await Task.sleep(for: .milliseconds(500))
-                        isScanning = false
+                    // Wait for manager to finish loading before showing done
+                    while manager.isLoading {
+                        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
                     }
-                } label: {
-                    HStack(spacing: 8) {
-                        Group {
-                            if isScanning {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                            } else {
-                                Image(systemName: "magnifyingglass")
-                            }
-                        }
-                        .frame(width: 16, height: 16)
 
-                        Text(isScanning ? "Done!" : "Scan Now")
-                            .font(.system(size: 13))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(height: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6) // 6pt rounded corners like system menus
-                            .fill(scanHover && !isScanning ? Color.gray.opacity(0.1) : Color.clear)
-                    )
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 6) // Small inset from edges (not full width)
-                    .contentShape(Rectangle())
+                    // Brief delay to show completion
+                    try? await Task.sleep(for: .milliseconds(500))
+                    isScanning = false
                 }
-                .buttonStyle(.plain)
-                .onHover { hovering in
+            } label: {
+                Group {
+                    if isScanning {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Image(systemName: "magnifyingglass")
+                    }
+                }
+                .font(.system(size: 14))
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(scanHover && !isScanning ? Color.gray.opacity(0.12) : Color.clear)
+                )
+                .foregroundStyle(.primary)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
                     scanHover = hovering
                 }
-                .disabled(manager.isLoading || isScanning)
+            }
+            .disabled(manager.isLoading || isScanning)
+            .help("Scan Now")
 
-                // Reset Baseline
-                Button {
-                    isResetting = true
-                    Task {
-                        await manager.performReset()
+            // Reset Baseline button
+            Button {
+                isResetting = true
+                Task {
+                    await manager.performReset()
 
-                        // Brief delay to show completion
-                        try? await Task.sleep(for: .milliseconds(500))
-                        isResetting = false
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Group {
-                            if isResetting {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                            }
-                        }
-                        .frame(width: 16, height: 16)
-
-                        Text(isResetting ? "Done!" : "Reset Baseline")
-                            .font(.system(size: 13))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(height: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(resetHover && !isResetting ? Color.gray.opacity(0.1) : Color.clear)
-                    )
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 6) // Small inset from edges
-                    .contentShape(Rectangle())
+                    // Brief delay to show completion
+                    try? await Task.sleep(for: .milliseconds(500))
+                    isResetting = false
                 }
-                .buttonStyle(.plain)
-                .onHover { hovering in
+            } label: {
+                Group {
+                    if isResetting {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .font(.system(size: 14))
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(resetHover && !isResetting ? Color.gray.opacity(0.12) : Color.clear)
+                )
+                .foregroundStyle(.primary)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
                     resetHover = hovering
                 }
-                .disabled(manager.isLoading || isResetting)
+            }
+            .disabled(manager.isLoading || isResetting)
+            .help("Reset Baseline")
 
-                // Settings
-                Button {
-                    closePopoverAndOpenSettings()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "gear")
-                            .frame(width: 16, height: 16)
-                        Text("Settings...")
-                            .font(.system(size: 13))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(height: 28)
+            // Settings button
+            Button {
+                closePopoverAndOpenSettings()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14))
+                    .frame(width: 28, height: 28)
                     .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(settingsHover ? Color.gray.opacity(0.1) : Color.clear)
+                        Circle()
+                            .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
                     )
                     .foregroundStyle(.primary)
-                    .padding(.horizontal, 6) // Small inset from edges
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering in
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
                     settingsHover = hovering
                 }
             }
-            .padding(.vertical, 8)
+            .help("Settings")
         }
+        .padding(.vertical, 10)
+    }
 
     // MARK: - Helper Methods
 
