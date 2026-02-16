@@ -99,6 +99,16 @@ final class DatabaseManager {
             try db.create(index: "idx_snapshotEntry_snapshotId_path", on: "snapshotEntry", columns: ["snapshotId", "path"])
         }
 
+        // Migration v5: Drop redundant path index to save space
+        // The composite index (snapshotId, path) is sufficient for our queries
+        migrator.registerMigration("v5_drop_redundant_path_index") { db in
+            // Drop the standalone path index which was taking ~286MB
+            // The composite index covers our query patterns:
+            // - calculateDeltas uses: WHERE snapshotId = ? AND path matching
+            // - fetchEntries uses: WHERE snapshotId = ? ORDER BY path
+            try db.drop(index: "idx_snapshotEntry_path")
+        }
+
         try migrator.migrate(dbPool)
     }
 }

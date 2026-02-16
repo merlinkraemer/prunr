@@ -64,54 +64,73 @@ struct MenuBarView: View {
         }
         .frame(width: 320, height: 480)
         .overlay {
-            // Loading indicator with progress
+            // Loading indicator with progress - redesigned
             // Only show blocking overlay for manual scans, not auto-scans (ISS-038)
             if manager.isLoading && !manager.isAutoScanning {
                 ZStack {
-                    Color.black.opacity(0.3)
+                    Color.black.opacity(0.4)
                         .ignoresSafeArea()
 
-                    VStack(spacing: 16) {
+                    VStack(spacing: 20) {
+                        // Spinner
                         ProgressView()
-                            .controlSize(.regular)
+                            .controlSize(.large)
+                            .tint(.blue)
 
-                        // Progress bar with percentage (shows from 1% onward)
-                        if manager.scanProgressPercentage >= 0.01 {
-                            ProgressView(value: manager.scanProgressPercentage, total: 1.0)
-                                .frame(width: 200)
-                                .progressViewStyle(.linear)
-                            Text("\(Int(manager.scanProgressPercentage * 100))%")
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if manager.isAutoScanning {
-                            Text("Auto-scanning changes...")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if !manager.scanProgress.isEmpty {
+                        // Title
+                        if manager.scanProgress.isEmpty {
+                            Text("Scanning...")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.primary)
+                        } else {
                             Text(manager.scanProgress)
-                                .font(.caption)
+                                .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(.primary)
                         }
 
+                        // Progress bar with percentage (shows from 1% onward)
+                        if manager.scanProgressPercentage >= 0.01 {
+                            VStack(spacing: 8) {
+                                ProgressView(value: manager.scanProgressPercentage, total: 1.0)
+                                    .frame(width: 200)
+                                    .progressViewStyle(.linear)
+                                    .tint(.blue)
+
+                                Text("\(Int(manager.scanProgressPercentage * 100))%")
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        // Files scanned count
                         if manager.filesScanned > 0 {
-                            Text("\(manager.filesScanned) files scanned")
-                                .font(.system(.caption2, design: .monospaced))
+                            Text("\(manager.filesScanned) files")
+                                .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
 
-                        Button("Stop") {
+                        // Stop button
+                        Button {
                             Task {
                                 await manager.stopScan()
                             }
+                        } label: {
+                            Text("Stop")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.gray.opacity(0.1))
+                                )
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .buttonStyle(.plain)
                     }
-                    .frame(width: 260, height: 180)
+                    .frame(width: 240)
                     .padding(24)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.1), radius: 20, y: 4)
                 }
             }
         }
@@ -197,11 +216,22 @@ struct MenuBarView: View {
     // MARK: - Drill-down Header
 
     private func drillDownHeader(category: CategoryGrowthItem) -> some View {
-        Button {
-            closePopoverAndOpenSettings()
-        } label: {
+        ZStack {
+            // Center: Category icon and name (truly centered)
             HStack(spacing: 8) {
-                // Back button on left
+                Image(systemName: category.category.icon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(category.category.color ?? .secondary)
+
+                Text(category.category.displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+
+            // Left: Back button
+            HStack {
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         manager.isDrilledDown = false
@@ -217,38 +247,27 @@ struct MenuBarView: View {
                     .foregroundStyle(.blue)
                 }
                 .buttonStyle(.plain)
-
                 Spacer()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Category name and icon (center)
-                HStack(spacing: 6) {
-                    Image(systemName: category.category.icon)
-                        .font(.system(size: 11))
-                        .foregroundStyle(category.category.color ?? .secondary)
-
-                    Text(category.category.displayName)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                }
-
+            // Right: Category size
+            HStack {
                 Spacer()
-
-                // Category size (right)
                 Text(formattedBytes(category.totalGrowthBytes))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
                     .background(
-                        Capsule()
+                        RoundedRectangle(cornerRadius: 5)
                             .fill(Color.gray.opacity(0.15))
                     )
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .buttonStyle(.plain)
         .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Monitoring Path Header

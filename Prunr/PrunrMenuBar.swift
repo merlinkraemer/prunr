@@ -7,6 +7,9 @@ struct PrunrMenuBar: App {
     private let menuBarManager = MenuBarManager()
 
     init() {
+        // Ensure app doesn't appear in Dock (menu bar-only app)
+        NSApp.setActivationPolicy(.accessory)
+
         // Initialize database on app launch
         do {
             try DatabaseManager.shared.initialize()

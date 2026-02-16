@@ -55,6 +55,7 @@
 		DD11223344556677889900DE /* GrowthCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11223344556677889900AB /* GrowthCategory.swift */; };
 		EE11223344556677889900EF /* CategoryGrowthItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB11223344556677889900BC /* CategoryGrowthItem.swift */; };
 		FF11223344556677889900F0 /* CategoryDetectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC11223344556677889900CD /* CategoryDetectionService.swift */; };
+		GG11223344556677889900F1 /* DatabaseCleanupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD11223344556677889900CE /* DatabaseCleanupService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -107,6 +108,7 @@
 		AA11223344556677889900AB /* GrowthCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthCategory.swift; sourceTree = "<group>"; };
 		BB11223344556677889900BC /* CategoryGrowthItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryGrowthItem.swift; sourceTree = "<group>"; };
 		CC11223344556677889900CD /* CategoryDetectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDetectionService.swift; sourceTree = "<group>"; };
+		DD11223344556677889900CE /* DatabaseCleanupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseCleanupService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -221,6 +223,7 @@
 			children = (
 				K8L9M0N1O2P3Q4R5S6T7U8V9 /* BaselineService.swift */,
 				CC11223344556677889900CD /* CategoryDetectionService.swift */,
+				DD11223344556677889900CE /* DatabaseCleanupService.swift */,
 				5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */,
 				F8G9H0I1J2K3L4M5N6O7P8Q /* DiskSpaceService.swift */,
 				J6K7L8M9N0O1P2Q3R4S5T6U7 /* FSEventsWatcher.swift */,
@@ -370,6 +373,7 @@
 				L9M0N1O2P3Q4R5S6T7U8V9W0 /* BoundaryConfig.swift in Sources */,
 				DD11223344556677889900DE /* GrowthCategory.swift in Sources */,
 				EE11223344556677889900EF /* CategoryGrowthItem.swift in Sources */,
+				GG11223344556677889900F1 /* DatabaseCleanupService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

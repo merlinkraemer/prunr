@@ -154,6 +154,19 @@ actor ScanService {
         // Track scan start time for percentage estimation (ISS-033)
         let scanStartTime = Date()
 
+        // Send initial progress update immediately to show progress bar (UAT-001 fix)
+        if let progress = progress {
+            let initialProgress = ScanProgress(
+                currentPath: path,
+                foldersScanned: 0,
+                currentSnapshotId: snapshotId,
+                totalFiles: 100, // Initial estimate
+                percentage: 0.05 // 5% to ensure bar is visible immediately
+            )
+            progress(initialProgress)
+            logger.debug("Initial progress update sent")
+        }
+
         do {
             // Stream scan results and accumulate into batches
             logger.debug("Starting file enumeration stream")
@@ -240,7 +253,26 @@ actor ScanService {
                 try await db.addEntries(to: snapshotId, entries: batch)
             }
 
+            // Send final progress update at 100% completion (UAT-001 fix)
+            if let progress = progress {
+                let finalProgress = ScanProgress(
+                    currentPath: path,
+                    foldersScanned: count,
+                    currentSnapshotId: snapshotId,
+                    totalFiles: count,
+                    percentage: 1.0 // 100% complete
+                )
+                progress(finalProgress)
+                logger.debug("Final progress update sent: \(count) files")
+            }
+
             logger.info("Scan completed successfully: \(count) files scanned")
+
+            // Auto-cleanup old snapshots in background (non-blocking)
+            Task {
+                await DatabaseCleanupService.shared.performAutoCleanup()
+            }
+
             return snapshot
 
         } catch {
