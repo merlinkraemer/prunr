@@ -1,3 +1,46 @@
+## macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+## Xcode / Swift
+DerivedData/
+build/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+
+## Swift Package Manager
+.build/
+.swiftpm/
+
+## CocoaPods
+Pods/
+*.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+
+## Carthage
+Carthage/Build/
+
+## Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+## IDE / Tooling
+.idea/
+.vscode/
+.cursor/
+
+## Logs
+*.log
+
 # Test data and temporary files
 test_data/
 *.tmp
