@@ -167,6 +167,8 @@ struct MenuBarView: View {
 
             // Page navigation container - swaps between main/detail pages
             pageNavigationContent
+            
+            Spacer(minLength: 0)
 
             // Footer buttons (no separator)
             footerButtons
@@ -349,7 +351,7 @@ struct MenuBarView: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.vertical, 12)
 
             // Expanded paths list - full width dropdown (only for multiple paths)
             if isHeaderExpanded && hasMultiplePaths {
@@ -544,6 +546,7 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: - Helper Methods

@@ -53,6 +53,12 @@ struct CategoryGrowthListView: View {
                 }
             }
         }
+        .onChange(of: selectedCategory) { _, newValue in
+            if newValue == nil {
+                manager.isDrilledDown = false
+                manager.selectedCategoryForDrilldown = nil
+            }
+        }
     }
 
     // MARK: - State
