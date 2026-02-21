@@ -405,14 +405,14 @@ struct MenuBarView: View {
                     Image(systemName: "clock.badge.questionmark")
                         .font(.system(size: 32))
                         .foregroundStyle(.secondary)
-                    Text("No baseline yet")
+                    Text("No snapshots yet")
                         .font(.headline)
-                    Text("Create a baseline to start tracking growth")
+                    Text("Take an initial snapshot to start tracking growth")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("Create Baseline") {
+                    Button("Start Tracking") {
                         Task {
-                            await manager.createBaseline()
+                            await manager.takeInitialSnapshot()
                         }
                     }
                     .buttonStyle(.borderedProminent)

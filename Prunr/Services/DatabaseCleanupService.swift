@@ -7,8 +7,8 @@ actor DatabaseCleanupService {
 
     // MARK: - Constants
 
-    /// Maximum snapshots to keep per tracked path (sensible default)
-    private static let maxSnapshotsPerPath = 50
+    /// Maximum snapshots to keep per tracked path (rolling comparison needs 2)
+    private static let maxSnapshotsPerPath = 2
 
     // MARK: - Properties
 
@@ -21,16 +21,14 @@ actor DatabaseCleanupService {
     // MARK: - Public API
 
     /// Performs automatic cleanup after a scan completes
-    /// Keeps only the most recent 50 snapshots per tracked path
+    /// Keeps only the most recent 2 snapshots per tracked path
     func performAutoCleanup() async {
         do {
             let deleted = try await cleanupOldSnapshots()
             if deleted > 0 {
                 print("[DatabaseCleanupService] Auto-cleanup: deleted \(deleted) old snapshots")
-                // Vacuum periodically (every 10+ deletions to avoid overhead)
-                if deleted >= 10 {
-                    try await vacuumDatabase()
-                }
+                // Vacuum periodically to reclaim space
+                try await vacuumDatabase()
             }
         } catch {
             print("[DatabaseCleanupService] Auto-cleanup failed: \(error.localizedDescription)")

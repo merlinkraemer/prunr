@@ -135,7 +135,7 @@ private struct GeneralSettingsTab: View {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                    Text("Paths changed — click Reset Baseline to apply")
+                    Text("Paths changed — click Delete All Snapshots to apply")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -148,7 +148,7 @@ private struct GeneralSettingsTab: View {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
-                    Text("Baseline reset!")
+                    Text("Snapshots deleted!")
                         .font(.caption)
                 }
                 .padding(8)
@@ -168,7 +168,7 @@ private struct GeneralSettingsTab: View {
 
                 Spacer()
 
-                // Reset Baseline button
+                // Delete All Snapshots button
                 Button {
                     isResetting = true
                     Task {
@@ -187,9 +187,9 @@ private struct GeneralSettingsTab: View {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
-                            Image(systemName: "arrow.counterclockwise")
+                            Image(systemName: "trash")
                         }
-                        Text("Reset Baseline")
+                        Text("Delete All Snapshots")
                     }
                 }
                 .disabled(isResetting)

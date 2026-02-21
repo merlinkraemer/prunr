@@ -1,10 +1,9 @@
 import Foundation
 
-/// Actor that manages baseline snapshots and growth list calculations.
+/// Actor that manages snapshots and growth list calculations.
 ///
-/// BaselineService provides a "single baseline" design for MVP. It stores
-/// one baseline snapshot ID in UserDefaults and provides growth list
-/// calculations with intelligent drill-down that stops at generated content boundaries.
+/// BaselineService provides a rolling comparison design. It compares
+/// the latest snapshot with the previous snapshot for a given path.
 actor BaselineService {
 
     // MARK: - Types
@@ -12,11 +11,14 @@ actor BaselineService {
     /// Errors specific to baseline operations
     enum BaselineError: Error, LocalizedError {
         case noBaseline
+        case insufficientSnapshots
 
         var errorDescription: String? {
             switch self {
             case .noBaseline:
-                return "No baseline has been created yet"
+                return "No snapshots have been created yet"
+            case .insufficientSnapshots:
+                return "Need at least two snapshots to compare growth"
             }
         }
     }
@@ -35,23 +37,20 @@ actor BaselineService {
     /// Boundary configuration for stopping drill-down
     private let boundaryConfig = BoundaryConfig.default
 
-    /// UserDefaults key for storing baseline snapshot ID
-    private let baselineIdKey = "baselineSnapshotId"
-
     /// MainActor-isolated property for UI state
     @MainActor var isCreatingBaseline = false
 
     private init() {}
 
-    // MARK: - Baseline Lifecycle
+    // MARK: - Snapshot Lifecycle
 
-    /// Creates a new baseline snapshot for the given tracked path.
+    /// Takes a new snapshot for the given tracked path.
     ///
-    /// - Parameter trackedPath: The TrackedPath to create a baseline for
+    /// - Parameter trackedPath: The TrackedPath to scan
     /// - Returns: The created Snapshot
     /// - Throws: ScanError if scanning fails
     func createBaseline(trackedPath: TrackedPath) async throws -> Snapshot {
-        print("[BaselineService] Starting baseline creation for path: \(trackedPath.url.path)")
+        print("[BaselineService] Starting scan for path: \(trackedPath.url.path)")
 
         // Set UI state
         await MainActor.run {
@@ -72,7 +71,6 @@ actor BaselineService {
             progress: nil
         )
 
-        // Store snapshot ID in UserDefaults
         guard let snapshotId = snapshot.id else {
             print("[BaselineService] ERROR: Failed to create snapshot with ID")
             throw ScanError.unknown(NSError(
@@ -82,103 +80,61 @@ actor BaselineService {
             ))
         }
 
-        UserDefaults.standard.set(snapshotId, forKey: baselineIdKey)
-        print("[BaselineService] Created baseline snapshot ID: \(snapshotId)")
-        print("[BaselineService] Baseline stored in UserDefaults")
+        print("[BaselineService] Created snapshot ID: \(snapshotId)")
+        
+        // Run auto-cleanup to keep only the latest 2 snapshots
+        await DatabaseCleanupService.shared.performAutoCleanup()
 
         return snapshot
     }
 
-    /// Returns the current baseline snapshot.
+    /// Checks whether at least one snapshot exists.
     ///
-    /// - Returns: The current baseline Snapshot
-    /// - Throws: BaselineError.noBaseline if no baseline has been created
-    func getCurrentBaseline() async throws -> Snapshot {
-        guard let baselineId = getCurrentBaselineId(),
-              baselineId > 0 else {
-            throw BaselineError.noBaseline
-        }
-
-        // Fetch the snapshot by ID - need to query database
-        guard let dbPool = db.dbPool else {
-            throw DatabaseManager.DatabaseError.notInitialized
-        }
-
-        return try await dbPool.read { db in
-            guard let snapshot = try Snapshot.fetchOne(db, key: baselineId) else {
-                throw BaselineError.noBaseline
-            }
-            return snapshot
+    /// - Returns: `true` if a snapshot exists
+    func hasBaseline() async -> Bool {
+        do {
+            let snapshots = try await db.fetchAllSnapshots()
+            return !snapshots.isEmpty
+        } catch {
+            return false
         }
     }
 
-    /// Resets the baseline, clearing UserDefaults and deleting the snapshot.
+    /// Resets the baseline by deleting all snapshots.
     ///
     /// - Throws: DatabaseError if database operation fails
     func resetBaseline() async throws {
-        guard let baselineId = getCurrentBaselineId(), baselineId > 0 else {
-            return // Nothing to reset
+        let snapshots = try await db.fetchAllSnapshots()
+        for snapshot in snapshots {
+            if let id = snapshot.id {
+                try await db.deleteSnapshot(id: id)
+            }
         }
-
-        // Delete from database
-        try await db.deleteSnapshot(id: baselineId)
-
-        // Clear UserDefaults
-        UserDefaults.standard.removeObject(forKey: baselineIdKey)
-
-        print("[BaselineService] Reset baseline snapshot ID: \(baselineId)")
-    }
-
-    /// Checks whether a baseline has been created.
-    ///
-    /// - Returns: `true` if a baseline exists
-    func hasBaseline() -> Bool {
-        guard let baselineId = getCurrentBaselineId() else {
-            return false
-        }
-        return baselineId > 0
+        print("[BaselineService] Reset baseline: deleted all snapshots")
     }
 
     // MARK: - Growth List
 
-    /// Calculates the growth list since the baseline snapshot using incremental scanning.
-    ///
-    /// This method:
-    /// 1. Scans only the specified paths (or full path if none specified)
-    /// 2. Creates a "current" snapshot with the scan results
-    /// 3. Calculates deltas between baseline and current
-    /// 4. Filters items that grew (changeBytes > 0)
-    /// 5. Returns sorted by growthBytes descending
+    /// Calculates the growth list by comparing the latest two snapshots.
     ///
     /// - Parameters:
-    ///   - trackedPath: The TrackedPath to scan
-    ///   - changedPaths: Optional specific paths to scan incrementally. If nil, does full scan.
+    ///   - trackedPath: The TrackedPath to compare
     /// - Returns: Array of GrowthItem sorted by growthBytes descending
-    /// - Throws: BaselineError.noBaseline if no baseline exists, or ScanError if scanning fails
-    func getGrowthList(trackedPath: TrackedPath, changedPaths: [URL]? = nil) async throws -> [GrowthItem] {
-        guard let baselineId = getCurrentBaselineId(), baselineId > 0 else {
-            throw BaselineError.noBaseline
+    /// - Throws: BaselineError if insufficient snapshots exist
+    func getGrowthList(trackedPath: TrackedPath) async throws -> [GrowthItem] {
+        let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        
+        guard snapshots.count >= 2 else {
+            throw BaselineError.insufficientSnapshots
         }
-
-        // Create current snapshot
-        let currentSnapshot = try await scanService.scan(
-            path: trackedPath.url.path,
-            trackedPathId: trackedPath.id,
-            progress: nil
-        )
-
-        guard let currentId = currentSnapshot.id else {
-            throw ScanError.unknown(NSError(
-                domain: "BaselineService",
-                code: -2,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create current snapshot"]
-            ))
-        }
+        
+        let currentId = snapshots[0].id!
+        let previousId = snapshots[1].id!
 
         // Calculate deltas
-        let deltas = try await db.calculateDeltas(beforeId: baselineId, afterId: currentId)
+        let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
 
-        // Build growth list with 70% threshold
+        // Build growth list
         let growthItems = buildGrowthList(from: deltas, parentPath: trackedPath.url.path)
 
         // Sort by growthBytes descending
@@ -187,19 +143,20 @@ actor BaselineService {
 
     /// Drills down into a specific path to find growth contributors.
     ///
-    /// Uses the same logic as getGrowthList but filtered to children
-    /// of the given path. Stops at boundary folders to avoid wasting
-    /// resources on generated content.
-    ///
     /// - Parameters:
     ///   - path: The path to drill down into
     ///   - trackedPath: The TrackedPath context
     /// - Returns: Array of GrowthItem sorted by growthBytes descending
-    /// - Throws: BaselineError.noBaseline if no baseline exists, or ScanError if scanning fails
+    /// - Throws: BaselineError if insufficient snapshots exist
     func drillDown(path: String, trackedPath: TrackedPath) async throws -> [GrowthItem] {
-        guard let baselineId = getCurrentBaselineId(), baselineId > 0 else {
-            throw BaselineError.noBaseline
+        let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        
+        guard snapshots.count >= 2 else {
+            throw BaselineError.insufficientSnapshots
         }
+        
+        let currentId = snapshots[0].id!
+        let previousId = snapshots[1].id!
 
         // Check if this is a boundary folder - stop drill-down
         let url = URL(fileURLWithPath: path)
@@ -208,23 +165,8 @@ actor BaselineService {
             return []
         }
 
-        // Create current snapshot
-        let currentSnapshot = try await scanService.scan(
-            path: trackedPath.url.path,
-            trackedPathId: trackedPath.id,
-            progress: nil
-        )
-
-        guard let currentId = currentSnapshot.id else {
-            throw ScanError.unknown(NSError(
-                domain: "BaselineService",
-                code: -3,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create current snapshot"]
-            ))
-        }
-
         // Calculate deltas
-        let deltas = try await db.calculateDeltas(beforeId: baselineId, afterId: currentId)
+        let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
 
         // Filter to children of the given path
         let pathWithSlash = path.hasSuffix("/") ? path : path + "/"
@@ -239,33 +181,7 @@ actor BaselineService {
 
     // MARK: - Private Helpers
 
-    /// Retrieves the current baseline ID from UserDefaults.
-    ///
-    /// - Returns: The baseline snapshot ID, or nil if not set
-    private func getCurrentBaselineId() -> Int64? {
-        let id = UserDefaults.standard.integer(forKey: baselineIdKey)
-        return id > 0 ? Int64(id) : nil
-    }
-
-    /// Builds a growth list from deltas with 70% threshold filtering.
-    ///
-    /// For each delta that grew (changeBytes > 0):
-    /// - Calculates what percent of the parent's total growth this represents
-    /// - Includes in result if >= 70% threshold OR if it's a top-level item
-    ///
-    /// - Parameters:
-    ///   - deltas: Array of Delta items to process
-    ///   - parentPath: The parent path for calculating percentages
-    /// - Returns: Array of GrowthItem values
-    /// Builds a growth list from deltas with 70% threshold filtering.
-    ///
-    /// Aggregates growth by direct child of the parent path.
-    /// Example: If parent is `/root`, then `/root/folder/file` growth counts towards `/root/folder`.
-    ///
-    /// - Parameters:
-    ///   - deltas: Array of Delta items to process
-    ///   - parentPath: The parent path for calculating percentages
-    /// - Returns: Array of GrowthItem values
+    /// Builds a growth list from deltas.
     private func buildGrowthList(from deltas: [Delta], parentPath: String) -> [GrowthItem] {
         // Filter to only items that grew
         let growingDeltas = deltas.filter { $0.changeBytes > 0 }
@@ -301,26 +217,10 @@ actor BaselineService {
             )
         }
         
-        // Build growth items with 70% threshold
-        let threshold = 0.70 // 70%
         var items: [GrowthItem] = []
         
         for (path, data) in aggregatedGrowth {
             let percentOfParent = Double(data.growth) / Double(totalGrowth)
-            
-            // Include if >= 70% threshold (always include in this simplified drill-down logic? 
-            // The original logic was: "Include if >= 70% OR if it's a direct child".
-            // Since we are now showing direct children (aggregated), we should probably show all 
-            // significant ones. But let's stick to the threshold logic to hide noise?
-            // User wants to see "What Grew". If multiple folders grew, show them.
-            // If I grew "images" (30%) and "documents" (20%) and "videos" (50%), 
-            // none is > 70%. But user wants to see them.
-            // The threshold was mainly for "Drill Down" to pick the *single culprit*.
-            // But here we are listing items.
-            // Let's include items that contribute > 1% to avoid noise, or just top ones.
-            // Or stick to the original logic: "Include if >= 70% OR isDirectChild".
-            // Since we aggregated to direct children, ALL items in `aggregatedGrowth` ARE direct children.
-            // So we should include ALL of them (maybe sorted).
             
             let item = GrowthItem(
                 path: path,
@@ -334,72 +234,33 @@ actor BaselineService {
         return items
     }
 
-    /// Checks if a path is a direct child of the parent path.
-    ///
-    /// - Parameters:
-    ///   - path: The path to check
-    ///   - parent: The parent path
-    /// - Returns: `true` if path is a direct child (not nested deeper)
-    private func isDirectChild(_ path: String, of parent: String) -> Bool {
-        let parentWithSlash = parent.hasSuffix("/") ? parent : parent + "/"
-
-        // Check if path is under parent
-        guard path.hasPrefix(parentWithSlash) else {
-            return false
-        }
-
-        // Get the relative path after parent
-        let relativePath = String(path.dropFirst(parentWithSlash.count))
-
-        // Check if there are no additional path separators (direct child)
-        return !relativePath.contains("/")
-    }
-
     // MARK: - Category Growth List
 
-    /// Calculates the growth list aggregated by category since the baseline snapshot.
-    ///
-    /// This method:
-    /// 1. Scans the tracked path to get current state
-    /// 2. Calculates deltas between baseline and current
-    /// 3. Uses CategoryDetectionService to group deltas by category
-    /// 4. Aggregates growth metrics per category
-    /// 5. Separates big items (>=100MB) from small items
-    /// 6. Returns sorted CategoryGrowthItem array (by growth descending)
+    /// Calculates the growth list aggregated by category by comparing the latest two snapshots.
     ///
     /// - Parameters:
-    ///   - trackedPath: The TrackedPath to scan
-    ///   - progress: Optional callback for progress updates
+    ///   - trackedPath: The TrackedPath to compare
+    ///   - progress: Optional callback for progress updates (not used in rolling comparison, kept for API compatibility)
     /// - Returns: Array of CategoryGrowthItem sorted by totalGrowthBytes descending
-    /// - Throws: BaselineError.noBaseline if no baseline exists, or ScanError if scanning fails
+    /// - Throws: BaselineError if insufficient snapshots exist
     func getCategoryGrowthList(trackedPath: TrackedPath, progress: ((ScanService.ScanProgress) -> Void)? = nil) async throws -> [CategoryGrowthItem] {
-        guard let baselineId = getCurrentBaselineId(), baselineId > 0 else {
-            throw BaselineError.noBaseline
+        let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        
+        guard snapshots.count >= 2 else {
+            throw BaselineError.insufficientSnapshots
         }
-
-        // Create current snapshot
-        let currentSnapshot = try await scanService.scan(
-            path: trackedPath.url.path,
-            trackedPathId: trackedPath.id,
-            progress: progress
-        )
-
-        guard let currentId = currentSnapshot.id else {
-            throw ScanError.unknown(NSError(
-                domain: "BaselineService",
-                code: -4,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create current snapshot"]
-            ))
-        }
+        
+        let currentId = snapshots[0].id!
+        let previousId = snapshots[1].id!
 
         // Calculate deltas
-        let deltas = try await db.calculateDeltas(beforeId: baselineId, afterId: currentId)
+        let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
 
         // Filter to only items that grew
         let growingDeltas = deltas.filter { $0.changeBytes > 0 }
 
         guard !growingDeltas.isEmpty else {
-            print("[BaselineService] No growth detected since baseline")
+            print("[BaselineService] No growth detected since previous scan")
             return []
         }
 
