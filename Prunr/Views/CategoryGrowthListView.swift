@@ -235,7 +235,7 @@ struct CategoryGrowthListView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                Text("Create a baseline to track changes")
+                Text("Nothing significant has changed since the last scan")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }

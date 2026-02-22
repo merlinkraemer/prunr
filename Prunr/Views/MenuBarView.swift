@@ -401,27 +401,7 @@ struct MenuBarView: View {
 
     private var categoryListView: some View {
         Group {
-            if manager.noBaseline {
-                // No baseline prompt
-                VStack(spacing: 12) {
-                    Image(systemName: "clock.badge.questionmark")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.secondary)
-                    Text("No snapshots yet")
-                        .font(.headline)
-                    Text("Take an initial snapshot to start tracking growth")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button("Start Tracking") {
-                        Task {
-                            await manager.takeInitialSnapshot()
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-            } else if let error = manager.errorMessage {
+            if let error = manager.errorMessage {
                 // Error message
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
@@ -437,26 +417,6 @@ struct MenuBarView: View {
                         }
                     }
                     .buttonStyle(.bordered)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-            } else if manager.categoryItems.isEmpty && !manager.isLoading {
-                // Baseline exists but no growth data loaded yet
-                VStack(spacing: 12) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.secondary)
-                    Text("Ready to scan")
-                        .font(.headline)
-                    Text("Scan to see what changed since baseline")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button("Scan Now") {
-                        Task {
-                            await manager.loadCategoryGrowthList()
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()

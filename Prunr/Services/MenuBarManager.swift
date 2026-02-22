@@ -522,6 +522,50 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanProgressPercentage = 0.0
     }
     
+    /// Auto-initializes the app on first launch (zero-friction onboarding)
+    /// Silently takes an initial snapshot if none exist
+    func autoInitializeIfNeeded() async {
+        // Check if we already have snapshots
+        let hasSnapshots = await baselineService.hasBaseline()
+        
+        if hasSnapshots {
+            print("[MenuBarManager] Snapshots already exist, skipping auto-init")
+            noBaseline = false
+            return
+        }
+        
+        print("[MenuBarManager] No snapshots found, auto-initializing...")
+        
+        // Enable default path if needed
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        if enabledPaths.isEmpty {
+            if let defaultPath = SettingsStore.shared.allTrackedPaths.first(where: { $0.isDefault }) {
+                if FileManager.default.fileExists(atPath: defaultPath.url.path) {
+                    SettingsStore.shared.setPathEnabled(defaultPath, enabled: true)
+                    print("[MenuBarManager] Auto-enabled default path: \(defaultPath.displayName)")
+                }
+            }
+        }
+        
+        guard let trackedPath = SettingsStore.shared.enabledTrackedPaths.first else {
+            print("[MenuBarManager] No paths available for auto-init")
+            return
+        }
+        
+        // Take snapshot silently in background (isAutoScanning = true to avoid blocking UI)
+        isAutoScanning = true
+        
+        do {
+            _ = try await baselineService.createBaseline(trackedPath: trackedPath)
+            noBaseline = false
+            print("[MenuBarManager] Auto-initialization complete")
+        } catch {
+            print("[MenuBarManager] Auto-initialization failed: \(error)")
+        }
+        
+        isAutoScanning = false
+    }
+    
     /// Stops the current scan
     func stopScan() async {
         await ScanService.shared.cancelScan()
