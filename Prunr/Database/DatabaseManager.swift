@@ -109,6 +109,14 @@ final class DatabaseManager {
             try db.drop(index: "idx_snapshotEntry_path")
         }
 
+        // Migration v6: Add NOCASE composite index for delta joins
+        migrator.registerMigration("v6_add_nocase_delta_index") { db in
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_snapshotEntry_snapshotId_path_nocase
+                ON snapshotEntry(snapshotId, path COLLATE NOCASE)
+                """)
+        }
+
         try migrator.migrate(dbPool)
     }
 }
@@ -264,6 +272,8 @@ extension DatabaseManager {
         }
 
         return try await dbPool.read { db in
+            let start = Date()
+
             // SQLite doesn't support FULL OUTER JOIN, so we use UNION of LEFT JOINs
             // - First LEFT JOIN: all entries from 'before' snapshot with matching 'after' entries
             // - Second LEFT JOIN: entries only in 'after' snapshot (excluding matches)
@@ -273,33 +283,38 @@ extension DatabaseManager {
             let query = """
             WITH combined AS (
                 SELECT
-                    COALESCE(after.path, before.path) as path,
-                    before.sizeBytes as oldSizeBytes,
-                    after.sizeBytes as newSizeBytes,
-                    COALESCE(after.sizeBytes, 0) - COALESCE(before.sizeBytes, 0) as changeBytes
-                FROM snapshotEntry before
-                LEFT JOIN snapshotEntry after
-                    ON before.path = after.path COLLATE NOCASE
-                    AND after.snapshotId = ?
-                WHERE before.snapshotId = ?
-                UNION
+                    COALESCE(afterEntry.path, beforeEntry.path) as path,
+                    beforeEntry.sizeBytes as oldSizeBytes,
+                    afterEntry.sizeBytes as newSizeBytes,
+                    COALESCE(afterEntry.sizeBytes, 0) - COALESCE(beforeEntry.sizeBytes, 0) as changeBytes
+                FROM snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_path_nocase
+                LEFT JOIN snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_path_nocase
+                    ON beforeEntry.path = afterEntry.path COLLATE NOCASE
+                    AND afterEntry.snapshotId = ?
+                WHERE beforeEntry.snapshotId = ?
+                UNION ALL
                 SELECT
-                    after.path as path,
-                    before.sizeBytes as oldSizeBytes,
-                    after.sizeBytes as newSizeBytes,
-                    COALESCE(after.sizeBytes, 0) - COALESCE(before.sizeBytes, 0) as changeBytes
-                FROM snapshotEntry after
-                LEFT JOIN snapshotEntry before
-                    ON after.path = before.path COLLATE NOCASE
-                    AND before.snapshotId = ?
-                WHERE after.snapshotId = ?
-                    AND before.path IS NULL
+                    afterEntry.path as path,
+                    beforeEntry.sizeBytes as oldSizeBytes,
+                    afterEntry.sizeBytes as newSizeBytes,
+                    COALESCE(afterEntry.sizeBytes, 0) - COALESCE(beforeEntry.sizeBytes, 0) as changeBytes
+                FROM snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_path_nocase
+                LEFT JOIN snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_path_nocase
+                    ON afterEntry.path = beforeEntry.path COLLATE NOCASE
+                    AND beforeEntry.snapshotId = ?
+                WHERE afterEntry.snapshotId = ?
+                    AND beforeEntry.path IS NULL
             )
             SELECT * FROM combined
             WHERE changeBytes != 0
             ORDER BY ABS(changeBytes) DESC
             """
-            return try Delta.fetchAll(db, sql: query, arguments: [afterId, beforeId, beforeId, afterId])
+
+            let deltas = try Delta.fetchAll(db, sql: query, arguments: [afterId, beforeId, beforeId, afterId])
+            let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
+            print("[DatabaseManager] calculateDeltas before=\(beforeId) after=\(afterId) deltas=\(deltas.count) in \(elapsedMs)ms")
+
+            return deltas
         }
     }
 }

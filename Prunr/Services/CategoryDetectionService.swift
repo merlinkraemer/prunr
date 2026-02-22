@@ -26,9 +26,6 @@ actor CategoryDetectionService {
                 categorized[category] = []
             }
             categorized[category]?.append(delta)
-
-            // Log category assignment for debugging
-            print("[CategoryDetectionService] Categorized '\(delta.path)' -> \(category.displayName)")
         }
 
         return categorized

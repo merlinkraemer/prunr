@@ -6,8 +6,8 @@ struct SidebarView: View {
     /// Binding to the currently selected path
     @Binding var selectedPath: TrackedPath?
 
-    /// Path manager for handling tracked paths
-    @State private var pathManager = PathManager()
+    /// Shared settings store (single source of truth for paths)
+    @State private var settingsStore = SettingsStore.shared
 
     /// Controls file importer for adding new paths
     @State private var isImporting = false
@@ -16,7 +16,7 @@ struct SidebarView: View {
         List(selection: $selectedPath) {
             // Section: Favorites (default paths)
             Section("Favorites") {
-                ForEach(pathManager.activeDefaults) { path in
+                ForEach(activeDefaultPaths) { path in
                     PathRow(path: path)
                         .tag(path)
                 }
@@ -24,7 +24,7 @@ struct SidebarView: View {
 
             // Section: Custom (user-added paths)
             Section("Custom") {
-                ForEach(pathManager.customPaths) { path in
+                ForEach(activeCustomPaths) { path in
                     PathRow(path: path)
                         .tag(path)
                 }
@@ -53,13 +53,21 @@ struct SidebarView: View {
 
     // MARK: - Actions
 
+    private var activeDefaultPaths: [TrackedPath] {
+        settingsStore.allTrackedPaths.filter { $0.isDefault && settingsStore.isPathEnabled($0) }
+    }
+
+    private var activeCustomPaths: [TrackedPath] {
+        settingsStore.customTrackedPaths.filter { settingsStore.isPathEnabled($0) }
+    }
+
     /// Deletes the custom paths at the specified offsets
     /// - Parameter offsets: IndexSet of paths to delete from custom paths
     private func deleteCustomPaths(at offsets: IndexSet) {
-        let customPaths = pathManager.customPaths
+        let customPaths = activeCustomPaths
         for index in offsets {
             let pathToDelete = customPaths[index]
-            pathManager.removePath(pathToDelete)
+            settingsStore.removeTrackedPath(pathToDelete)
         }
     }
 
@@ -78,8 +86,15 @@ struct SidebarView: View {
                 }
 
                 // Add the path
-                if let newPath = pathManager.addPath(url: url) {
-                    // Auto-select the newly added path
+                let newPath = TrackedPath(
+                    url: url,
+                    displayName: url.lastPathComponent,
+                    isDefault: false
+                )
+                settingsStore.addTrackedPath(newPath)
+                settingsStore.setPathEnabled(newPath, enabled: true)
+
+                if settingsStore.customTrackedPaths.contains(where: { $0.id == newPath.id }) {
                     selectedPath = newPath
                 }
             }

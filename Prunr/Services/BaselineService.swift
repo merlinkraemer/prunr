@@ -46,10 +46,15 @@ actor BaselineService {
 
     /// Takes a new snapshot for the given tracked path.
     ///
-    /// - Parameter trackedPath: The TrackedPath to scan
+    /// - Parameters:
+    ///   - trackedPath: The TrackedPath to scan
+    ///   - progress: Optional callback for scan progress updates
     /// - Returns: The created Snapshot
     /// - Throws: ScanError if scanning fails
-    func createBaseline(trackedPath: TrackedPath) async throws -> Snapshot {
+    func createBaseline(
+        trackedPath: TrackedPath,
+        progress: ((ScanService.ScanProgress) -> Void)? = nil
+    ) async throws -> Snapshot {
         print("[BaselineService] Starting scan for path: \(trackedPath.url.path)")
 
         // Set UI state
@@ -68,7 +73,7 @@ actor BaselineService {
         let snapshot = try await scanService.scan(
             path: trackedPath.url.path,
             trackedPathId: trackedPath.id,
-            progress: nil
+            progress: progress
         )
 
         guard let snapshotId = snapshot.id else {
@@ -240,10 +245,10 @@ actor BaselineService {
     ///
     /// - Parameters:
     ///   - trackedPath: The TrackedPath to compare
-    ///   - progress: Optional callback for progress updates (not used in rolling comparison, kept for API compatibility)
     /// - Returns: Array of CategoryGrowthItem sorted by totalGrowthBytes descending
     /// - Throws: BaselineError if insufficient snapshots exist
-    func getCategoryGrowthList(trackedPath: TrackedPath, progress: ((ScanService.ScanProgress) -> Void)? = nil) async throws -> [CategoryGrowthItem] {
+    func getCategoryGrowthList(trackedPath: TrackedPath) async throws -> [CategoryGrowthItem] {
+        let start = Date()
         let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
         
         guard snapshots.count >= 2 else {
@@ -255,6 +260,7 @@ actor BaselineService {
 
         // Calculate deltas
         let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
+        try Task.checkCancellation()
 
         // Filter to only items that grew
         let growingDeltas = deltas.filter { $0.changeBytes > 0 }
@@ -277,6 +283,7 @@ actor BaselineService {
         // Categorize deltas using CategoryDetectionService
         let categoryService = CategoryDetectionService.shared
         let categorizedDeltas = await categoryService.categorizeDeltas(growthItems)
+        try Task.checkCancellation()
 
         // Calculate total growth across all categories for percentage calculation
         let totalGrowth = growthItems.reduce(Int64(0)) { $0 + $1.growthBytes }
@@ -285,6 +292,8 @@ actor BaselineService {
         var categoryItems: [CategoryGrowthItem] = []
 
         for (category, items) in categorizedDeltas {
+            try Task.checkCancellation()
+
             // Calculate totals for this category
             let categoryGrowth = await categoryService.calculateTotalGrowth(items)
             let categorySize = await categoryService.calculateCurrentSize(items)
@@ -317,6 +326,9 @@ actor BaselineService {
             // Log category totals for debugging
             print("[BaselineService] Category '\(category.displayName)': \(ByteCountFormatter.string(fromByteCount: categoryGrowth, countStyle: .file)) (\(String(format: "%.1f", percentOfTotal * 100))%)")
         }
+
+        let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
+        print("[BaselineService] getCategoryGrowthList completed in \(elapsedMs)ms")
 
         // Sort by total growth bytes descending
         return categoryItems.sorted { $0.totalGrowthBytes > $1.totalGrowthBytes }

@@ -31,6 +31,68 @@ struct TrackedPath: Codable, Identifiable, Equatable, Hashable {
 // MARK: - Default Paths
 
 extension TrackedPath {
+    static let mainBasePathID = UUID(uuidString: "B9E2C9D6-7A6C-4A8C-9A73-9DBA3DE27B57")!
+
+    private struct CommonPreset {
+        let id: UUID
+        let pathBuilder: (URL, URL) -> URL
+        let name: String
+    }
+
+    private static let commonPresets: [CommonPreset] = [
+        CommonPreset(
+            id: UUID(uuidString: "5F2D56A8-1A8F-4A65-A8B4-2D6E9C5F3AC1")!,
+            pathBuilder: { _, home in home.appendingPathComponent("Library/Caches", isDirectory: true) },
+            name: "Library Caches"
+        ),
+        CommonPreset(
+            id: UUID(uuidString: "3A126B18-C3D7-4E6E-B0D2-9C47F4D4B42D")!,
+            pathBuilder: { _, home in home.appendingPathComponent("Library/Developer/Xcode/DerivedData", isDirectory: true) },
+            name: "Xcode DerivedData"
+        ),
+        CommonPreset(
+            id: UUID(uuidString: "D0AA4EDB-1D2A-4E5D-9D47-8A313E53E75A")!,
+            pathBuilder: { _, home in home.appendingPathComponent("Library/Developer/CoreSimulator", isDirectory: true) },
+            name: "CoreSimulator"
+        ),
+        CommonPreset(
+            id: UUID(uuidString: "2E405418-217A-4A3B-95D4-4E1049B6A4A0")!,
+            pathBuilder: { _, home in home.appendingPathComponent(".docker", isDirectory: true) },
+            name: "Docker Home"
+        ),
+        CommonPreset(
+            id: UUID(uuidString: "A7D56F58-7B7D-4E92-9D4A-2D5292C182D5")!,
+            pathBuilder: { _, home in home.appendingPathComponent("Library/Containers/com.docker.docker", isDirectory: true) },
+            name: "Docker Container Data"
+        ),
+        CommonPreset(
+            id: UUID(uuidString: "198E6B80-B3A9-4C09-9866-8A27C67D6D66")!,
+            pathBuilder: { base, _ in base.appendingPathComponent(".cache", isDirectory: true) },
+            name: "Base .cache"
+        )
+    ]
+
+    static func mainBasePath(url: URL) -> TrackedPath {
+        TrackedPath(id: mainBasePathID, url: url, displayName: "Base Directory", isDefault: true)
+    }
+
+    static func commonPathPresets(baseDirectory: URL) -> [TrackedPath] {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+
+        return commonPresets.compactMap { preset in
+            let url = preset.pathBuilder(baseDirectory, home)
+            guard fm.fileExists(atPath: url.path) else { return nil }
+
+            return TrackedPath(
+                id: preset.id,
+                url: url,
+                displayName: preset.name,
+                isDefault: true
+            )
+        }
+    }
+
     /// Standard default paths most users want to track
     static let defaultPaths: [TrackedPath] = {
         let fm = FileManager.default
@@ -38,12 +100,9 @@ extension TrackedPath {
 
         var paths: [TrackedPath] = []
 
-        // Test data directory (for development)
-        // Hardcoded for this environment as requested
-        let testDataPath = URL(fileURLWithPath: "/Users/merlinkramer/dev/projects/prunr/test_data")
-        paths.append(TrackedPath(url: testDataPath, displayName: "Test Data", isDefault: true))
+        let devPath = home.appendingPathComponent("dev", isDirectory: true)
+        paths.append(mainBasePath(url: devPath))
 
         return paths
     }()
 }
-

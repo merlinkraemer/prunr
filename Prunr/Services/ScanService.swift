@@ -242,7 +242,6 @@ actor ScanService {
                             percentage: percentage
                         )
                         progress(progressUpdate)
-                        print("[ScanService] Progress update: \(count) files, \(Int(percentage * 100))% (threshold: 0.01)")
                     }
                 }
             }
@@ -267,11 +266,6 @@ actor ScanService {
             }
 
             logger.info("Scan completed successfully: \(count) files scanned")
-
-            // Auto-cleanup old snapshots in background (non-blocking)
-            Task {
-                await DatabaseCleanupService.shared.performAutoCleanup()
-            }
 
             return snapshot
 

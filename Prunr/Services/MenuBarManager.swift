@@ -62,6 +62,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var errorMessage: String?
     var noBaseline = false
     var scanProgress: String = ""
+    var scanCurrentPath: String = ""
     var filesScanned: Int = 0
     // Percentage progress (0.0-1.0) for progress bar (ISS-033)
     var scanProgressPercentage: Double = 0.0
@@ -82,10 +83,19 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     // Continuous update timer for GB meter (ISS-042)
     // nonisolated(unsafe) allows deinit to access it from nonisolated context
-    private nonisolated(unsafe) var updateTimer: Timer?
-    
-    // Periodic background scan timer
-    private nonisolated(unsafe) var backgroundScanTimer: Timer?
+    private var updateTimer: Timer?
+
+    // Event-driven lightweight scan automation
+    private var fileEventsWatcher: FSEventsWatcher?
+    private var watchedPathIDs: [UUID] = []
+    private var autoScanTask: Task<Void, Never>?
+    private var lastAutomaticScanAt: Date?
+    private var isUnderDiskPressure = false
+
+    private let normalAutoScanDebounce: TimeInterval = 90
+    private let pressureAutoScanDebounce: TimeInterval = 20
+    private let normalAutoScanInterval: TimeInterval = 20 * 60
+    private let pressureAutoScanInterval: TimeInterval = 5 * 60
     
     static var shared: MenuBarManager?
     
@@ -100,6 +110,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         // Start continuous updates (ISS-042)
         startRealtimeUpdates()
+        configureFileWatcherIfNeeded()
     }
 
     private func setupMenuBar() {
@@ -175,33 +186,21 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Check this FIRST before any event handling to catch all rapid clicks
         if let lastClick = lastClickTimestamp,
            now.timeIntervalSince(lastClick) < clickDebounceInterval {
-            print("[MenuBarManager] Click debounced - too soon after last click (\(now.timeIntervalSince(lastClick))s)")
             return
         }
         lastClickTimestamp = now
-
-        // Log click details for debugging (ISS-013)
-        if let event = NSApp.currentEvent {
-            print("[MenuBarManager] Click detected - type: \(event.type.rawValue), location: \(event.locationInWindow), timestamp: \(now.timeIntervalSince1970)")
-            print("[MenuBarManager] isPopoverShown: \(isPopoverShown), popover.isShown: \(popover?.isShown ?? false)")
-        } else {
-            print("[MenuBarManager] Click detected - NO CURRENT EVENT (async call), timestamp: \(now.timeIntervalSince1970)")
-            // Don't return here - continue to toggle popover even without event
-        }
 
         // The action is called for both left and right mouse up
         // We need to determine which type of click occurred
         if let event = NSApp.currentEvent {
             // Right-click shows menu, left-click shows popover
             if event.type == .rightMouseUp {
-                print("[MenuBarManager] Right-click detected, showing context menu")
                 showContextMenu()
                 return
             }
         }
 
         // Default to showing popover for left-click or when event is unavailable
-        print("[MenuBarManager] Toggling popover (left-click or no event)")
         togglePopover()
     }
 
@@ -211,18 +210,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     @objc private func openSettings() {
-        print("[MenuBarManager] Opening settings from context menu")
-
         // Close popover if open
         if let popover = popover, popover.isShown {
             popover.performClose(nil)
             isPopoverShown = false
-            print("[MenuBarManager] Closed popover before opening settings")
         }
 
         // Small delay to ensure popover is fully closed
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-            print("[MenuBarManager] Sending showSettingsWindow action")
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
 
             // Bring Settings window to front immediately - ISS-024
@@ -234,8 +229,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 if let settingsWindow = NSApp.windows.first(where: {
                     $0.title.contains("Settings")
                 }) {
-                    print("[MenuBarManager] Found settings window: \(settingsWindow.title)")
-
                     // Ensure window behavior is correct
                     settingsWindow.hidesOnDeactivate = false
 
@@ -247,10 +240,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
                     // Reset to normal level immediately after focusing (no delay)
                     settingsWindow.level = originalLevel
-
-                    print("[MenuBarManager] Settings window brought to front")
                 } else {
-                    print("[MenuBarManager] WARNING: Could not find settings window, retrying...")
                     // If window not found yet, try once more with a longer delay
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         NSApp.activate(ignoringOtherApps: true)
@@ -260,7 +250,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                             settingsWindow.makeKeyAndOrderFront(nil)
                             settingsWindow.orderFrontRegardless()
                             settingsWindow.level = .normal
-                            print("[MenuBarManager] Settings window brought to front on retry")
                         }
                     }
                 }
@@ -270,9 +259,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
 
     @objc private func resetBaseline() {
-        Task {
-            await performReset()
-        }
+        guard confirmDeleteAllSnapshots() else { return }
+        Task { await performReset() }
     }
     
     /// Public method to reset baseline (called by View)
@@ -288,6 +276,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         } catch {
             print("[MenuBarManager] Failed to reset baseline: \(error)")
         }
+    }
+
+    private func confirmDeleteAllSnapshots() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Delete all snapshots?"
+        alert.informativeText = "This removes all scan history. This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
     
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
@@ -310,52 +308,55 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         noBaseline = false
         filesScanned = 0
         scanProgress = "Scanning \(trackedPath.displayName)..."
+        scanCurrentPath = trackedPath.url.path
         // Reset progress percentage at scan start (ISS-033)
         scanProgressPercentage = 0.0
 
         // Record scan start time for minimum display duration
         let startTime = Date()
         scanStartTime = startTime
-        let scanStartTimeForProgress = startTime
 
-        print("[MenuBarManager] Loading category growth list for: \(trackedPath.url.path)")
+        print("[MenuBarManager] Starting scan for: \(trackedPath.displayName)")
 
         var wasCancelled = false
 
         // Create progress callback for updating UI during scan
         // Note: MainActor.run ensures UI updates happen on main thread
         let progressCallback: (ScanService.ScanProgress) -> Void = { progress in
-            print("[MenuBarManager] Progress callback FIRED! percentage: \(progress.percentage)")
             Task { @MainActor in
                 // Update files scanned count
                 self.filesScanned = progress.foldersScanned
 
                 // Update percentage for progress bar (ISS-033)
                 self.scanProgressPercentage = progress.percentage
-                print("[MenuBarManager] Received progress: \(Int(progress.percentage * 100))%, filesScanned: \(progress.foldersScanned)")
+                self.scanCurrentPath = progress.currentPath
 
-                // Show detailed progress after 2 seconds
-                let elapsed = Date().timeIntervalSince(scanStartTimeForProgress)
-                if elapsed >= 2.0 {
-                    // Extract basename from path for cleaner display
-                    let basename = URL(fileURLWithPath: progress.currentPath).lastPathComponent
-                    let parent = URL(fileURLWithPath: progress.currentPath).deletingLastPathComponent().lastPathComponent
-
-                    // Show "Scanning parent/basename..." for long scans
-                    self.scanProgress = "Scanning \(parent)/\(basename)..."
+                // Show detailed path immediately for better scan visibility
+                let rootPath = trackedPath.url.path
+                var displayPath = progress.currentPath
+                if displayPath.hasPrefix(rootPath) {
+                    let relativePath = String(displayPath.dropFirst(rootPath.count))
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    displayPath = relativePath.isEmpty ? "." : "./\(relativePath)"
                 }
+                self.scanProgress = "Scanning \(displayPath)"
             }
         }
 
         do {
             // First, take a new snapshot
-            _ = try await baselineService.createBaseline(trackedPath: trackedPath)
+            _ = try await baselineService.createBaseline(trackedPath: trackedPath, progress: progressCallback)
+
+            // Scanning is complete; now compute deltas/categories
+            scanProgress = "Analyzing changes..."
+            scanCurrentPath = ""
+            scanProgressPercentage = 0.0
             
             // Then, get the growth list comparing the latest two snapshots
-            let items = try await baselineService.getCategoryGrowthList(trackedPath: trackedPath, progress: progressCallback)
+            let items = try await baselineService.getCategoryGrowthList(trackedPath: trackedPath)
             categoryItems = items
             scanProgress = ""
-            print("[MenuBarManager] Loaded \(items.count) category items")
+            scanCurrentPath = ""
 
             // Refresh storage space after scan (ISS-042)
             updateFreeSpace()
@@ -376,6 +377,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
                 print("[MenuBarManager] Scan was cancelled")
                 scanProgress = "Cancelled"
+                scanCurrentPath = ""
                 wasCancelled = true
             } else {
                 print("[MenuBarManager] Error loading category growth list: \(error)")
@@ -390,16 +392,20 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let shouldSkipDelay = wasCancelled || scanStartTime == nil
         if !shouldSkipDelay && elapsed < minimumDisplayDuration {
             let delay = minimumDisplayDuration - elapsed
-            print("[MenuBarManager] Applying minimum display delay: \(delay * 1000)ms")
             try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
         }
 
         isLoading = false
         scanProgress = ""
+        scanCurrentPath = ""
         scanProgressPercentage = 0.0
         filesScanned = 0
-        scanProgressPercentage = 0.0
         scanStartTime = nil
+        lastAutomaticScanAt = Date()
+
+        if let trackedPath = SettingsStore.shared.enabledTrackedPaths.first {
+            await updatePathSizeFromLatestSnapshot(for: trackedPath)
+        }
     }
 
     /// Loads the growth list by comparing current state with baseline
@@ -417,8 +423,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         noBaseline = false
         filesScanned = 0
         scanProgress = "Scanning \(trackedPath.displayName)..."
-        
-        print("[MenuBarManager] Loading growth list for: \(trackedPath.url.path)")
+        scanCurrentPath = trackedPath.url.path
 
         do {
             // First, take a new snapshot
@@ -427,7 +432,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             let items = try await baselineService.getGrowthList(trackedPath: trackedPath)
             growthItems = items
             scanProgress = ""
-            print("[MenuBarManager] Loaded \(items.count) growth items")
 
             // Refresh storage space after scan (ISS-042)
             updateFreeSpace()
@@ -438,15 +442,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 noBaseline = false
                 growthItems = []
             } else if let baselineError = error as? BaselineService.BaselineError,
+               case .insufficientSnapshots = baselineError {
+                noBaseline = false
+                growthItems = []
+            } else if let baselineError = error as? BaselineService.BaselineError,
                case .noBaseline = baselineError {
-                print("[MenuBarManager] No baseline exists")
                 noBaseline = true
                 growthItems = []
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
-                print("[MenuBarManager] Scan was cancelled")
                 scanProgress = "Cancelled"
             } else {
-                print("[MenuBarManager] Error loading growth list: \(error)")
                 errorMessage = "Scan failed: \(error.localizedDescription)"
             }
         }
@@ -459,21 +464,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Takes the initial snapshot for enabled paths
     func takeInitialSnapshot() async {
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
-        print("[MenuBarManager] Enabled paths count: \(enabledPaths.count)")
-        print("[MenuBarManager] Enabled paths: \(enabledPaths.map { $0.displayName })")
 
         // If no paths are enabled, try to enable the default path
         var pathsToTry = enabledPaths
         if pathsToTry.isEmpty {
-            print("[MenuBarManager] No enabled paths found, attempting to enable default path")
             if let defaultPath = SettingsStore.shared.allTrackedPaths.first(where: { $0.isDefault }) {
                 // Ensure the path exists before enabling it
                 if FileManager.default.fileExists(atPath: defaultPath.url.path) {
                     SettingsStore.shared.setPathEnabled(defaultPath, enabled: true)
                     pathsToTry = SettingsStore.shared.enabledTrackedPaths
-                    print("[MenuBarManager] Enabled default path: \(defaultPath.displayName)")
                 } else {
-                    print("[MenuBarManager] ERROR: Default path does not exist: \(defaultPath.url.path)")
                     errorMessage = "Default path not found. Please configure a valid path in Settings."
                     return
                 }
@@ -481,13 +481,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         guard let trackedPath = pathsToTry.first else {
-            print("[MenuBarManager] ERROR: No valid paths available")
             errorMessage = "No valid paths configured. Please add a path in Settings."
             return
         }
 
-        print("[MenuBarManager] Taking initial snapshot for path: \(trackedPath.displayName) at \(trackedPath.url.path)")
-        print("[MenuBarManager] Path exists: \(FileManager.default.fileExists(atPath: trackedPath.url.path))")
+        print("[MenuBarManager] Taking initial snapshot for: \(trackedPath.displayName)")
 
         isLoading = true
         errorMessage = nil
@@ -496,29 +494,27 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Reset progress percentage at scan start (ISS-033)
         scanProgressPercentage = 0.0
 
-        print("[MenuBarManager] Taking initial snapshot for: \(trackedPath.url.path)")
-
         do {
             _ = try await baselineService.createBaseline(trackedPath: trackedPath)
             noBaseline = false
             scanProgress = ""
-            print("[MenuBarManager] Initial snapshot created successfully")
+            scanCurrentPath = ""
 
             // Refresh storage space after baseline creation (ISS-042)
             updateFreeSpace()
 
         } catch {
             if let scanError = error as? ScanError, case .cancelled = scanError {
-                print("[MenuBarManager] Initial snapshot cancelled")
                 scanProgress = "Cancelled"
+                scanCurrentPath = ""
             } else {
-                print("[MenuBarManager] Error creating initial snapshot: \(error)")
                 errorMessage = error.localizedDescription
             }
         }
 
         isLoading = false
         scanProgress = ""
+        scanCurrentPath = ""
         scanProgressPercentage = 0.0
     }
     
@@ -527,14 +523,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     func autoInitializeIfNeeded() async {
         // Check if we already have snapshots
         let hasSnapshots = await baselineService.hasBaseline()
-        
+
         if hasSnapshots {
-            print("[MenuBarManager] Snapshots already exist, skipping auto-init")
             noBaseline = false
             return
         }
-        
-        print("[MenuBarManager] No snapshots found, auto-initializing...")
         
         // Enable default path if needed
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
@@ -542,13 +535,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             if let defaultPath = SettingsStore.shared.allTrackedPaths.first(where: { $0.isDefault }) {
                 if FileManager.default.fileExists(atPath: defaultPath.url.path) {
                     SettingsStore.shared.setPathEnabled(defaultPath, enabled: true)
-                    print("[MenuBarManager] Auto-enabled default path: \(defaultPath.displayName)")
                 }
             }
         }
-        
+
         guard let trackedPath = SettingsStore.shared.enabledTrackedPaths.first else {
-            print("[MenuBarManager] No paths available for auto-init")
             return
         }
         
@@ -558,9 +549,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         do {
             _ = try await baselineService.createBaseline(trackedPath: trackedPath)
             noBaseline = false
-            print("[MenuBarManager] Auto-initialization complete")
         } catch {
-            print("[MenuBarManager] Auto-initialization failed: \(error)")
+            // Silent failure - auto-init is optional
         }
         
         isAutoScanning = false
@@ -611,22 +601,18 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     @objc private func togglePopover() {
         guard let button = statusItem?.button else {
-            print("[MenuBarManager] togglePopover: No button available")
             return
         }
 
         // Check actual popover state, not just cached flag (ISS-013)
         let actualPopoverState = popover?.isShown ?? false
-        print("[MenuBarManager] togglePopover - isPopoverShown: \(isPopoverShown), actual popover.isShown: \(actualPopoverState)")
 
         if let popover = popover, actualPopoverState {
             // Popover is actually shown, close it
-            print("[MenuBarManager] Closing popover")
             popover.performClose(nil)
             isPopoverShown = false
         } else {
             // Popover is not shown, show it
-            print("[MenuBarManager] Showing popover")
 
             // Ensure popover is not already shown before showing
             if let popover = popover, !popover.isShown {
@@ -634,7 +620,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 // We'll use this to prevent the popup from jumping to other screens
                 guard let buttonWindow = button.window,
                       let screen = buttonWindow.screen else {
-                    print("[MenuBarManager] WARNING: Could not get menubar screen")
                     return
                 }
 
@@ -659,7 +644,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                         // Check if popup is on the wrong screen
                         if let popupScreen = popoverWindow.screen,
                            popupScreen != screen {
-                            print("[MenuBarManager] WARNING: Popup jumped to wrong screen, closing and reopening")
                             // Close and reopen to force repositioning
                             popover.performClose(nil)
                             self.isPopoverShown = false
@@ -672,17 +656,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                                     self.popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                                     CATransaction.commit()
                                     self.isPopoverShown = true
-                                    print("[MenuBarManager] Popup reopened on correct screen")
                                 }
                             }
                         } else {
                             popoverWindow.makeKey()
-                            print("[MenuBarManager] Popup on correct screen: \(screen.localizedName)")
                         }
                     }
                 }
-            } else {
-                print("[MenuBarManager] Popover already shown or nil, not showing again")
             }
         }
     }
@@ -723,6 +703,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         // Update cache timestamp
         lastFreeSpaceUpdate = Date()
+
+        if total > 0 {
+            let freeRatio = Double(free) / Double(total)
+            isUnderDiskPressure = freeRatio < 0.15 || free < 40_000_000_000
+        } else {
+            isUnderDiskPressure = false
+        }
     }
 
     func updateFreeSpaceDisplay(_ freeSpace: String) {
@@ -738,20 +725,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         updateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateFreeSpace()
+                self?.configureFileWatcherIfNeeded()
             }
         }
-
-        print("[MenuBarManager] Started 2s realtime update timer")
-        
-        // Start background scan timer (every 1 hour)
-        backgroundScanTimer?.invalidate()
-        backgroundScanTimer = Timer.scheduledTimer(withTimeInterval: 3600.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                print("[MenuBarManager] Running periodic background scan")
-                await self?.loadCategoryGrowthList()
-            }
-        }
-        print("[MenuBarManager] Started 1h periodic background scan timer")
     }
 
     /// Updates the monitored path size from the latest baseline or current state
@@ -761,50 +737,25 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             return
         }
 
-        // Set loading state
-        await MainActor.run {
-            self.isCalculatingPathSize = true
-        }
-
-        // Try to calculate path size directly
-        if let pathSize = try? await calculatePathSize(for: trackedPath) {
-            await MainActor.run {
-                self.monitoredPathSizeBytes = pathSize
-                self.isCalculatingPathSize = false
-            }
-        } else {
-            await MainActor.run {
-                self.monitoredPathSizeBytes = 0
-                self.isCalculatingPathSize = false
-            }
-        }
+        await updatePathSizeFromLatestSnapshot(for: trackedPath)
     }
 
-    /// Calculates the total size of a path by scanning it
-    private func calculatePathSize(for trackedPath: TrackedPath) async throws -> Int64 {
-        let url = trackedPath.url
-        var totalSize: Int64 = 0
+    private func updatePathSizeFromLatestSnapshot(for trackedPath: TrackedPath) async {
+        isCalculatingPathSize = true
+        defer { isCalculatingPathSize = false }
 
-        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .totalFileAllocatedSizeKey]
-        let enumerator = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: Array(resourceKeys),
-            options: [.skipsHiddenFiles]
-        )
-
-        while let fileURL = enumerator?.nextObject() as? URL {
-            guard let resourceValues = try? fileURL.resourceValues(forKeys: resourceKeys),
-                  let isDirectory = resourceValues.isDirectory,
-                  !isDirectory else {
-                continue
+        do {
+            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            guard let latestId = snapshots.first?.id else {
+                monitoredPathSizeBytes = 0
+                return
             }
 
-            if let fileSize = resourceValues.totalFileAllocatedSize {
-                totalSize += Int64(fileSize)
-            }
+            let entries = try await DatabaseManager.shared.fetchEntries(for: latestId)
+            monitoredPathSizeBytes = entries.reduce(0) { $0 + $1.sizeBytes }
+        } catch {
+            monitoredPathSizeBytes = 0
         }
-
-        return totalSize
     }
 
     func closePopover() {
@@ -1006,26 +957,65 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // MARK: - NSPopoverDelegate
 
     func popoverDidClose(_ notification: Notification) {
-        print("[MenuBarManager] popoverDidClose called - isPopoverShown was: \(isPopoverShown)")
         if isPopoverShown {
             isPopoverShown = false
-            print("[MenuBarManager] Popover closed via delegate, isPopoverShown reset to false")
         }
     }
 
     func popoverWillClose(_ notification: Notification) {
-        print("[MenuBarManager] popoverWillClose called - preparing to close")
         // Early state sync for better reliability (ISS-013)
         if isPopoverShown {
             isPopoverShown = false
-            print("[MenuBarManager] isPopoverShown reset to false in willClose")
         }
     }
 
-    deinit {
-        // Cleanup timer when manager is deallocated
-        updateTimer?.invalidate()
-        backgroundScanTimer?.invalidate()
-        print("[MenuBarManager] Stopped realtime update timer and background scan timer")
+    private func configureFileWatcherIfNeeded() {
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        let ids = enabledPaths.map(\.id)
+        guard ids != watchedPathIDs else { return }
+
+        watchedPathIDs = ids
+        let urls = enabledPaths.map { $0.url.standardizedFileURL }
+
+        Task { @MainActor in
+            if let watcher = fileEventsWatcher {
+                await watcher.stop()
+            }
+            fileEventsWatcher = nil
+
+            guard !urls.isEmpty else { return }
+
+            let watcher = FSEventsWatcher(pathsToWatch: urls, debounceInterval: 2.0)
+            await watcher.setOnChange { [weak self] _ in
+                Task { @MainActor in
+                    self?.scheduleAutomaticScan()
+                }
+            }
+            fileEventsWatcher = watcher
+            await watcher.start()
+        }
     }
+
+    private func scheduleAutomaticScan() {
+        autoScanTask?.cancel()
+
+        let debounce = isUnderDiskPressure ? pressureAutoScanDebounce : normalAutoScanDebounce
+        autoScanTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(Int(debounce * 1000)))
+            guard !Task.isCancelled else { return }
+            guard !isLoading else { return }
+
+            let minimumInterval = isUnderDiskPressure ? pressureAutoScanInterval : normalAutoScanInterval
+            if let lastAutomaticScanAt,
+               Date().timeIntervalSince(lastAutomaticScanAt) < minimumInterval {
+                return
+            }
+
+            isAutoScanning = true
+            await loadCategoryGrowthList()
+            isAutoScanning = false
+        }
+    }
+
+    deinit {}
 }

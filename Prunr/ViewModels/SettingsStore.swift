@@ -16,6 +16,8 @@ final class SettingsStore {
         static let disabledPaths = "disabledPaths"
         static let disabledBoundaries = "disabledBoundaries"
         static let launchAtLogin = "launchAtLogin"
+        static let mainBasePath = "mainBasePath"
+        static let selectedCommonPathIDs = "selectedCommonPathIDs"
     }
     
     // MARK: - Properties
@@ -23,6 +25,16 @@ final class SettingsStore {
     /// User-configured tracked paths (additional to defaults)
     var customTrackedPaths: [TrackedPath] {
         didSet { saveTrackedPaths() }
+    }
+
+    /// Main base directory for scanning
+    var mainBasePath: String {
+        didSet { UserDefaults.standard.set(mainBasePath, forKey: Keys.mainBasePath) }
+    }
+
+    /// Selected common paths to include in scanning
+    private var selectedCommonPathIDs: Set<String> {
+        didSet { UserDefaults.standard.set(Array(selectedCommonPathIDs), forKey: Keys.selectedCommonPathIDs) }
     }
     
     /// User-added boundary folder names
@@ -52,7 +64,23 @@ final class SettingsStore {
     
     /// All tracked paths (defaults + custom)
     var allTrackedPaths: [TrackedPath] {
-        TrackedPath.defaultPaths + customTrackedPaths
+        [mainTrackedPath] + selectedCommonPaths + customTrackedPaths
+    }
+
+    var mainTrackedPath: TrackedPath {
+        TrackedPath.mainBasePath(url: mainBaseURL)
+    }
+
+    var availableCommonPaths: [TrackedPath] {
+        TrackedPath.commonPathPresets(baseDirectory: mainBaseURL)
+    }
+
+    var selectedCommonPaths: [TrackedPath] {
+        availableCommonPaths.filter { selectedCommonPathIDs.contains($0.id.uuidString) }
+    }
+
+    private var mainBaseURL: URL {
+        URL(fileURLWithPath: mainBasePath, isDirectory: true)
     }
     
     /// Enabled tracked paths only
@@ -73,6 +101,9 @@ final class SettingsStore {
     // MARK: - Init
     
     private init() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let defaultBasePath = home.appendingPathComponent("dev", isDirectory: true).path
+
         // Load tracked paths
         if let data = UserDefaults.standard.data(forKey: Keys.trackedPaths),
            let paths = try? JSONDecoder().decode([TrackedPath].self, from: data) {
@@ -80,6 +111,10 @@ final class SettingsStore {
         } else {
             self.customTrackedPaths = []
         }
+
+        self.mainBasePath = UserDefaults.standard.string(forKey: Keys.mainBasePath) ?? defaultBasePath
+
+        self.selectedCommonPathIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.selectedCommonPathIDs) ?? [])
         
         // Load custom boundaries
         self.customBoundaries = UserDefaults.standard.stringArray(forKey: Keys.customBoundaries) ?? []
@@ -97,7 +132,7 @@ final class SettingsStore {
     // MARK: - Path Management
     
     func addTrackedPath(_ path: TrackedPath) {
-        guard !customTrackedPaths.contains(where: { $0.url == path.url }) else { return }
+        guard !allTrackedPaths.contains(where: { $0.url == path.url }) else { return }
         customTrackedPaths.append(path)
     }
     
@@ -115,6 +150,26 @@ final class SettingsStore {
             disabledPathIDs.remove(path.id.uuidString)
         } else {
             disabledPathIDs.insert(path.id.uuidString)
+        }
+    }
+
+    func setMainBasePath(_ url: URL) {
+        mainBasePath = url.path
+
+        let availableIDs = Set(availableCommonPaths.map { $0.id.uuidString })
+        selectedCommonPathIDs = selectedCommonPathIDs.intersection(availableIDs)
+    }
+
+    func isCommonPathSelected(_ path: TrackedPath) -> Bool {
+        selectedCommonPathIDs.contains(path.id.uuidString)
+    }
+
+    func setCommonPathSelected(_ path: TrackedPath, selected: Bool) {
+        if selected {
+            selectedCommonPathIDs.insert(path.id.uuidString)
+        } else {
+            selectedCommonPathIDs.remove(path.id.uuidString)
+            disabledPathIDs.remove(path.id.uuidString)
         }
     }
     

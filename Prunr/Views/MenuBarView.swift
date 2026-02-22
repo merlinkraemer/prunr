@@ -9,7 +9,6 @@ struct MenuBarView: View {
     @State private var scanHover = false
     @State private var settingsHover = false
     @State private var isHeaderExpanded = false
-    @State private var isScanning = false
 
     private func closePopoverAndOpenSettings() {
         // Close the popover first via manager to ensure state sync
@@ -64,74 +63,102 @@ struct MenuBarView: View {
         }
         .frame(width: 320, height: 480)
         .overlay {
-            // Loading indicator with progress - redesigned
+            // Loading indicator with progress - full-screen integrated design
             // Only show blocking overlay for manual scans, not auto-scans (ISS-038)
             if manager.isLoading && !manager.isAutoScanning {
-                ZStack {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
+                VStack(spacing: 0) {
+                    Spacer()
 
-                    VStack(spacing: 20) {
-                        // Spinner
-                        ProgressView()
-                            .controlSize(.large)
-                            .tint(.blue)
-
-                        // Title
-                        if manager.scanProgress.isEmpty {
-                            Text("Scanning...")
+                    VStack(spacing: 24) {
+                        // Header with title and stop button
+                        HStack(spacing: 12) {
+                            Text("Scanning files")
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(.primary)
-                        } else {
-                            Text(manager.scanProgress)
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(.primary)
+
+                            Spacer()
+
+                            Button {
+                                Task {
+                                    await manager.stopScan()
+                                }
+                            } label: {
+                                Text("Stop")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.red)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 7)
+                                            .fill(Color.red.opacity(0.1))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Stop scan")
+                            .accessibilityHint("Cancel the current scan operation")
                         }
 
-                        // Progress bar with percentage (shows from 1% onward)
-                        if manager.scanProgressPercentage >= 0.01 {
-                            VStack(spacing: 8) {
-                                ProgressView(value: manager.scanProgressPercentage, total: 1.0)
-                                    .frame(width: 200)
+                        // Progress bar with percentage
+                        VStack(spacing: 12) {
+                            HStack(spacing: 10) {
+                                Text("\(Int(max(0.0, min(1.0, manager.scanProgressPercentage)) * 100))%")
+                                    .font(.system(.title2, design: .rounded))
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 55, alignment: .leading)
+
+                                ProgressView(value: max(0.0, min(1.0, manager.scanProgressPercentage)), total: 1.0)
                                     .progressViewStyle(.linear)
                                     .tint(.blue)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                                Text("\(Int(manager.scanProgressPercentage * 100))%")
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.secondary)
+                            // Files scanned count
+                            if manager.filesScanned > 0 {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "doc.text")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.tertiary)
+
+                                    Text("\(manager.filesScanned) files scanned")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
+                        .padding(.horizontal, 4)
 
-                        // Files scanned count
-                        if manager.filesScanned > 0 {
-                            Text("\(manager.filesScanned) files")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        }
+                        // Current file path
+                        if !manager.scanCurrentPath.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(Color.blue)
+                                        .frame(width: 6, height: 6)
 
-                        // Stop button
-                        Button {
-                            Task {
-                                await manager.stopScan()
+                                    Text(manager.scanCurrentPath.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(3)
+                                        .truncationMode(.middle)
+                                }
                             }
-                        } label: {
-                            Text("Stop")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.gray.opacity(0.1))
-                                )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.gray.opacity(0.08))
+                            )
                         }
-                        .buttonStyle(.plain)
                     }
-                    .frame(width: 240)
-                    .padding(24)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: .black.opacity(0.1), radius: 20, y: 4)
+                    .padding(.horizontal, 20)
+
+                    Spacer()
                 }
+                .frame(width: 320, height: 480)
+                .background(Color(nsColor: .windowBackgroundColor))
             }
         }
         .task {
@@ -141,11 +168,8 @@ struct MenuBarView: View {
             // Fast: Update disk space with caching (only if >5s since last update)
             manager.updateFreeSpaceIfNeeded()
 
-            // Slow: Defer path size calculation to background after popup is visible
-            // This scans the entire directory tree and should NOT block popup opening
-            Task.detached(priority: .utility) {
-                await manager.updatePathSize()
-            }
+            // Update from latest snapshot (no filesystem rescan)
+            await manager.updatePathSize()
         }
         .onChange(of: manager.isDrilledDown) { _, newValue in
             // Reset path header expansion when exiting drilldown
@@ -249,6 +273,8 @@ struct MenuBarView: View {
                     .foregroundStyle(.blue)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+                .accessibilityHint("Return to category overview")
                 Spacer()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -350,6 +376,8 @@ struct MenuBarView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Monitored paths")
+            .accessibilityHint(hasMultiplePaths ? "Expand or collapse tracked paths" : "Open settings")
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
@@ -440,44 +468,29 @@ struct MenuBarView: View {
         HStack {
             // Scan/Refresh button (lower left)
             Button {
-                isScanning = true
                 Task {
                     await manager.loadCategoryGrowthList()
-
-                    // Wait for manager to finish loading before showing done
-                    while manager.isLoading {
-                        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                    }
-
-                    // Brief delay to show completion
-                    try? await Task.sleep(for: .milliseconds(500))
-                    isScanning = false
                 }
             } label: {
-                Group {
-                    if isScanning {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                .font(.system(size: 13))
-                .frame(width: 26, height: 26)
-                .background(
-                    Circle()
-                        .fill(scanHover && !isScanning ? Color.gray.opacity(0.12) : Color.clear)
-                )
-                .foregroundStyle(.primary)
-                .contentShape(Circle())
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13))
+                    .frame(width: 26, height: 26)
+                    .background(
+                        Circle()
+                            .fill(scanHover ? Color.gray.opacity(0.12) : Color.clear)
+                    )
+                    .foregroundStyle(.primary)
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Run scan now")
+            .accessibilityHint("Create a new snapshot and refresh growth categories")
             .onHover { hovering in
                 withAnimation(.easeInOut(duration: 0.15)) {
                     scanHover = hovering
                 }
             }
-            .disabled(manager.isLoading || isScanning)
+            .disabled(manager.isLoading)
             .help("Refresh View")
 
             Spacer()
@@ -497,6 +510,8 @@ struct MenuBarView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Open settings")
+            .accessibilityHint("Open Prunr settings")
             .onHover { hovering in
                 withAnimation(.easeInOut(duration: 0.15)) {
                     settingsHover = hovering

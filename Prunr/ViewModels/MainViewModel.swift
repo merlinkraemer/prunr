@@ -70,10 +70,6 @@ final class MainViewModel {
         errorMessage = nil
         comparisonWarning = nil
 
-        print("[DEBUG] ========== Updating path to: \(path.displayName) ==========")
-        print("[DEBUG] Path ID: \(path.id)")
-        print("[DEBUG] Path URL: \(path.url.path)")
-
         // Reload snapshots and comparison for the new path
         await loadSnapshots()
         await compareSince()
@@ -87,9 +83,7 @@ final class MainViewModel {
         }
         do {
             snapshots = try await db.fetchAllSnapshots(trackedPathId: path.id)
-            print("[DEBUG] Loaded \(snapshots.count) snapshots for path: \(path.displayName)")
         } catch {
-            print("[ERROR] Failed to load snapshots: \(error)")
             errorMessage = "Failed to load snapshots: \(error.localizedDescription)"
         }
     }
@@ -103,36 +97,24 @@ final class MainViewModel {
             return
         }
 
-        print("[DEBUG] ========== Starting scan ==========")
-        print("[DEBUG] Path: \(path)")
-        print("[DEBUG] TrackedPathId: \(trackedPathId)")
-        print("[DEBUG] Checking path accessibility...")
-
         // Check if path exists before attempting scan
         var isDirectory: ObjCBool = false
         let pathExists = fileManager.fileExists(atPath: path, isDirectory: &isDirectory)
 
-        print("[DEBUG] Path exists: \(pathExists), isDirectory: \(isDirectory.boolValue)")
-
         guard pathExists else {
             errorMessage = "Path does not exist: \(path)"
-            print("[ERROR] Path does not exist: \(path)")
             return
         }
 
         guard isDirectory.boolValue else {
             errorMessage = "Path is not a directory: \(path)"
-            print("[ERROR] Path is not a directory: \(path)")
             return
         }
 
         // Check if we can read the directory
         let isReadable = fileManager.isReadableFile(atPath: path)
-        print("[DEBUG] Path is readable: \(isReadable)")
-
         guard isReadable else {
             errorMessage = "No permission to access \(path). Grant Full Disk Access in System Settings > Privacy & Security > Full Disk Access"
-            print("[ERROR] Permission denied for path: \(path)")
             return
         }
 
@@ -146,7 +128,6 @@ final class MainViewModel {
                     self?.scanProgress = progress.currentPath
                 }
             }
-            print("[DEBUG] Scan completed successfully, snapshot ID: \(snapshot.id ?? -1)")
 
             // Store the current snapshot ID for comparison
             if let snapshotId = snapshot.id {
@@ -159,49 +140,37 @@ final class MainViewModel {
         } catch {
             // Don't show error for cancelled scans
             if let scanError = error as? ScanError, case .cancelled = scanError {
-                print("[DEBUG] Scan cancelled by user")
+                // Silent - cancelled scans are expected
             } else if let scanError = error as? ScanError {
                 // Handle specific scan errors with helpful messages
                 switch scanError {
                 case .permissionDenied(let path):
                     errorMessage = "Permission denied: \(path)\n\nGrant Full Disk Access in System Settings > Privacy & Security > Full Disk Access"
-                    print("[ERROR] Permission denied: \(path)")
                 case .invalidPath:
                     errorMessage = "Invalid path or path does not exist"
-                    print("[ERROR] Invalid path error")
                 case .unknown(let err):
                     errorMessage = "Scan failed: \(err.localizedDescription)"
-                    print("[ERROR] Unknown scan error: \(err)")
                 case .cancelled:
                     break // Already handled above
                 }
             } else {
-                let errorMsg = "Scan failed: \(error.localizedDescription)"
-                print("[ERROR] \(errorMsg)")
-                print("[ERROR] Full error: \(error)")
-                errorMessage = errorMsg
+                errorMessage = "Scan failed: \(error.localizedDescription)"
             }
         }
 
         isScanning = false
         scanProgress = ""
-        print("[DEBUG] ========== Scan finished ==========")
     }
 
     /// Stops the current scan operation
     func stopScan() async {
         guard isScanning else { return }
-        print("[DEBUG] Stopping scan...")
         await scanService.cancelScan()
     }
 
     /// Compares the two most recent snapshots
     /// Always compares newest vs second-newest
     func compareSince() async {
-        print("[DEBUG] ========== compareSince called ==========")
-        print("[DEBUG] snapshots.count: \(snapshots.count)")
-        print("[DEBUG] selectedPath: \(selectedPath?.displayName ?? "nil")")
-
         guard selectedPath != nil else {
             deltas = []
             comparisonWarning = nil
@@ -209,14 +178,11 @@ final class MainViewModel {
         }
 
         guard snapshots.count >= 2 else {
-            print("[DEBUG] Not enough snapshots for comparison (have \(snapshots.count), need 2)")
             // Current-only mode: load the single snapshot's entries
             if snapshots.count == 1, let snapshotId = snapshots[0].id {
                 do {
                     currentSnapshotEntries = try await db.fetchEntries(for: snapshotId)
-                    print("[DEBUG] Current-only mode: \(currentSnapshotEntries.count) entries loaded")
                 } catch {
-                    print("[ERROR] Failed to load snapshot entries: \(error)")
                     currentSnapshotEntries = []
                 }
             } else {
@@ -237,9 +203,6 @@ final class MainViewModel {
             return
         }
 
-        print("[DEBUG] Using snapshots: currentId=\(currentId), previousId=\(previousId)")
-        print("[DEBUG] Current: \(snapshots[0].createdAt), Previous: \(snapshots[1].createdAt)")
-
         // Store snapshot dates for display
         currentSnapshotDate = snapshots[0].createdAt
         historicalSnapshotDate = snapshots[1].createdAt
@@ -252,16 +215,10 @@ final class MainViewModel {
 
     /// Performs the delta comparison between two snapshots
     private func performComparison(historicalId: Int64, currentId: Int64) async {
-        print("[DEBUG] Comparing snapshots: historicalId=\(historicalId), currentId=\(currentId)")
-
         do {
             deltas = try await deltaService.compare(beforeId: historicalId, afterId: currentId)
-            print("[DEBUG] Comparison successful: \(deltas.count) deltas")
         } catch {
-            let errorMsg = "Failed to compare snapshots: \(error.localizedDescription)"
-            print("[ERROR] \(errorMsg)")
-            print("[ERROR] Full error: \(error)")
-            errorMessage = errorMsg
+            errorMessage = "Failed to compare snapshots: \(error.localizedDescription)"
             deltas = []
         }
     }
@@ -287,9 +244,7 @@ final class MainViewModel {
     /// Creates folders and files with changing sizes to demonstrate delta tracking
     /// Each call modifies file sizes to create visible deltas when scanning
     func generateTestData() async {
-        print("[DEBUG] ========== generateTestData called ==========")
         let testPath = "/Users/merlinkramer/dev/projects/prunr/test_data"
-        print("[DEBUG] Generating test data in: \(testPath)")
 
         do {
             // Create test folder if it doesn't exist
@@ -415,12 +370,8 @@ final class MainViewModel {
             )
 
             errorMessage = nil
-            print("[DEBUG] Test data generated successfully - sizes will vary on each run")
-            print("[DEBUG] Categories: Homebrew, Docker, NPM, Developer, Media, Containers, Caches, Packages, Apps")
         } catch {
-            let msg = "Failed to generate test data: \(error.localizedDescription)"
-            errorMessage = msg
-            print("[ERROR] \(msg)")
+            errorMessage = "Failed to generate test data: \(error.localizedDescription)"
         }
     }
     #endif

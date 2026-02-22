@@ -175,6 +175,8 @@ struct DetailContentView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Copy error to clipboard")
+                .accessibilityLabel("Copy error")
+                .accessibilityHint("Copy full error text to clipboard")
                 Button {
                     viewModel.dismissError()
                 } label: {
@@ -182,6 +184,8 @@ struct DetailContentView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss error")
+                .accessibilityHint("Hide the error banner")
             }
 
             // Show recovery suggestion if message contains common error patterns
@@ -224,7 +228,8 @@ struct DetailContentView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-        }
+            .accessibilityLabel("Dismiss warning")
+            }
         .padding()
         .background(.orange.opacity(0.1))
     }

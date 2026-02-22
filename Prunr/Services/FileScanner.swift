@@ -2,13 +2,10 @@ import Foundation
 
 /// Actor that recursively scans directories and streams scan results
 ///
-/// Optimized for speed: single resourceValues call per file, skips heavy directories,
-/// and minimizes filesystem overhead.
+/// Optimized for speed: single resourceValues call per file and minimal overhead.
 actor FileScanner {
 
     // MARK: - Properties
-
-    private let fileManager = FileManager.default
 
     /// Resource keys to fetch in ONE call per file (optimized)
     private let resourceKeys: Set<URLResourceKey> = [
@@ -19,34 +16,16 @@ actor FileScanner {
         .nameKey
     ]
 
-    /// Enumeration options for performance and safety
-    private let enumerationOptions: FileManager.DirectoryEnumerationOptions = [
-        .skipsHiddenFiles,
-        .skipsPackageDescendants
-    ]
+    /// Enumeration options for performance and safety.
+    /// Keep hidden files included because they are often large contributors
+    /// in developer environments (.docker, .Trash, cache folders).
+    private let enumerationOptions: FileManager.DirectoryEnumerationOptions = [.skipsPackageDescendants]
 
-    /// Directories to skip entirely (heavy build artifacts, cache directories)
-    private let skipDirectories: Set<String> = [
-        "node_modules",
-        ".git",
-        "build",
-        "DerivedData",
-        ".build",
-        "Pods",
-        "Carthage",
-        "vendor",
-        "__pycache__",
-        ".venv",
-        "venv",
-        ".tox",
-        "target",
-        "out",
-        "dist",
-        ".gradle",
-        ".idea",
-        ".vscode",
-        "Library/Caches",
-        "Library/Developer/Xcode/DerivedData"
+    /// App-internal paths to avoid recursive self-observation.
+    private let internalPathFragments: [String] = [
+        "/Library/Application Support/Prunr/",
+        "/.build/derivedData/",
+        "/dev/projects/prunr/.build/"
     ]
 
     // MARK: - Public API
@@ -63,53 +42,50 @@ actor FileScanner {
                     return
                 }
 
-                do {
-                    // Verify root path exists before enumerating
-                    var isDirectory: ObjCBool = false
-                    guard fileManager.fileExists(atPath: rootURL.path, isDirectory: &isDirectory) else {
-                        continuation.finish(throwing: ScanError.invalidPath)
-                        return
-                    }
+                let fileManager = FileManager.default
 
-                    guard isDirectory.boolValue else {
-                        continuation.finish(throwing: ScanError.invalidPath)
-                        return
-                    }
+                // Verify root path exists before enumerating
+                var isDirectory: ObjCBool = false
+                guard fileManager.fileExists(atPath: rootURL.path, isDirectory: &isDirectory) else {
+                    continuation.finish(throwing: ScanError.invalidPath)
+                    return
+                }
 
-                    // Create the enumerator with proper error handling
-                    let errorHandler: (URL, Error) -> Bool = { _, _ in
-                        true // Continue on errors
-                    }
+                guard isDirectory.boolValue else {
+                    continuation.finish(throwing: ScanError.invalidPath)
+                    return
+                }
 
-                    guard let enumerator = fileManager.enumerator(
-                        at: rootURL,
-                        includingPropertiesForKeys: Array(resourceKeys),
-                        options: enumerationOptions,
-                        errorHandler: errorHandler
-                    ) else {
-                        continuation.finish(throwing: ScanError.invalidPath)
-                        return
-                    }
+                // Create the enumerator with proper error handling
+                let errorHandler: (URL, Error) -> Bool = { _, _ in
+                    true // Continue on errors
+                }
 
-                    var count = 0
-                    for case let url as URL in enumerator {
-                        // Process each file with single resourceValues call
-                        if let result = await self.processFile(url: url, enumerator: enumerator) {
-                            continuation.yield(result)
-                            count += 1
-                            
-                            // Yield less frequently for better throughput
-                            if count % 2000 == 0 {
-                                await Task.yield()
-                            }
+                guard let enumerator = fileManager.enumerator(
+                    at: rootURL,
+                    includingPropertiesForKeys: Array(resourceKeys),
+                    options: enumerationOptions,
+                    errorHandler: errorHandler
+                ) else {
+                    continuation.finish(throwing: ScanError.invalidPath)
+                    return
+                }
+
+                var count = 0
+                for case let url as URL in enumerator {
+                    // Process each file with single resourceValues call
+                    if let result = await self.processFile(url: url, enumerator: enumerator) {
+                        continuation.yield(result)
+                        count += 1
+
+                        // Yield less frequently for better throughput
+                        if count % 2000 == 0 {
+                            await Task.yield()
                         }
                     }
-
-                    continuation.finish()
-
-                } catch {
-                    continuation.finish(throwing: ScanError.unknown(error))
                 }
+
+                continuation.finish()
             }
         }
     }
@@ -127,9 +103,9 @@ actor FileScanner {
                 return nil
             }
 
-            // Handle directories - skip heavy ones
+            // Handle directories
             if resourceValues.isDirectory == true {
-                if let name = resourceValues.name, skipDirectories.contains(name) {
+                if shouldSkipDirectory(url: url) {
                     enumerator.skipDescendants()
                     return nil
                 }
@@ -154,5 +130,15 @@ actor FileScanner {
         } catch {
             return nil
         }
+    }
+
+    private func shouldSkipDirectory(url: URL) -> Bool {
+        let path = url.path
+
+        for fragment in internalPathFragments where path.contains(fragment) {
+            return true
+        }
+
+        return false
     }
 }

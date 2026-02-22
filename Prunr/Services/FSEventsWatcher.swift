@@ -61,7 +61,7 @@ actor FSEventsWatcher {
         let paths = pathsToWatch.map { $0.path as CFString }
 
         // Create context to pass 'self' to the callback
-        let contextPtr = Unmanaged.passRetained(self as AnyObject).toOpaque()
+        let contextPtr = Unmanaged.passUnretained(self as AnyObject).toOpaque()
 
         // Set up the callback context structure
         var context = FSEventStreamContext(
@@ -77,9 +77,6 @@ actor FSEventsWatcher {
         guard let newStream = FSEventStreamCreate(
             kCFAllocatorDefault,
             { (streamRef, clientCallbackInfo, numEvents, eventPaths, eventFlags, eventIds) in
-                // Log: FSEvents callback invoked by OS
-                print("[FSEventsWatcher] OS callback invoked: \(numEvents) events")
-
                 // Extract the watcher instance from context
                 guard let info = clientCallbackInfo else { return }
 
@@ -97,9 +94,6 @@ actor FSEventsWatcher {
                     if let pathStr = String(validatingUTF8: cString) {
                         let url = URL(fileURLWithPath: pathStr)
                         changedPaths.insert(url)
-                        print("[FSEventsWatcher]   - \(pathStr)")
-                    } else {
-                        print("[FSEventsWatcher] WARNING: Could not convert path to string at index \(i)")
                     }
                 }
 
@@ -114,7 +108,6 @@ actor FSEventsWatcher {
             0.5,
             FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
         ) else {
-            print("[FSEventsWatcher] Failed to create FSEventStream")
             return
         }
 
@@ -127,9 +120,7 @@ actor FSEventsWatcher {
         // Start the stream
         if FSEventStreamStart(newStream) {
             isRunning = true
-            print("[FSEventsWatcher] Started monitoring \(paths.count) paths")
         } else {
-            print("[FSEventsWatcher] Failed to start FSEventStream")
             FSEventStreamInvalidate(newStream)
             stream = nil
         }
@@ -151,8 +142,6 @@ actor FSEventsWatcher {
 
         stream = nil
         isRunning = false
-
-        print("[FSEventsWatcher] Stopped monitoring")
     }
 
     // MARK: - Callback Management
@@ -185,12 +174,6 @@ actor FSEventsWatcher {
 
             // Only invoke if not cancelled
             guard !Task.isCancelled else { return }
-
-            // Log the changes
-            print("[FSEventsWatcher] Detected changes in:")
-            paths.forEach { path in
-                print("  - \(path.path)")
-            }
 
             onChange?(paths)
         }

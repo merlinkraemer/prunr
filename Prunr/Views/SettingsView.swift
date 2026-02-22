@@ -36,10 +36,12 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
     @State private var showingFilePicker = false
+    @State private var showingBasePathPicker = false
     @State private var pathsChanged = false
     @State private var showingSavedNotice = false
     @State private var baselineService = BaselineService.shared
     @State private var isResetting = false
+    @State private var showDeleteSnapshotsConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,6 +58,86 @@ private struct GeneralSettingsTab: View {
 
             Divider()
 
+            // Main base path section
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Main Base Directory")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+
+                HStack(spacing: 10) {
+                    Image(systemName: "externaldrive.fill")
+                        .foregroundStyle(.blue)
+                    Text(settingsStore.mainBasePath)
+                        .font(.system(size: 12, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Spacer()
+
+                    Button("Change") {
+                        showingBasePathPicker = true
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.horizontal)
+
+                Text("This is the primary folder Prunr watches. For now, keep this on your dev folder to keep scans fast.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+            }
+
+            Divider()
+
+            // Common paths section
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Common Paths")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+
+                if settingsStore.availableCommonPaths.isEmpty {
+                    Text("No common paths found on this machine yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
+                } else {
+                    List {
+                        ForEach(settingsStore.availableCommonPaths) { path in
+                            Toggle(isOn: Binding(
+                                get: { settingsStore.isCommonPathSelected(path) },
+                                set: { selected in
+                                    settingsStore.setCommonPathSelected(path, selected: selected)
+                                    pathsChanged = true
+                                }
+                            )) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "archivebox.fill")
+                                        .foregroundStyle(.teal)
+                                        .frame(width: 16)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(path.displayName)
+                                            .font(.system(size: 13))
+                                        Text(path.url.path)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                            .toggleStyle(.switch)
+                        }
+                    }
+                    .frame(height: 120)
+                    .listStyle(.plain)
+                }
+            }
+
+            Divider()
+
             // Scan Paths section
             VStack(alignment: .leading, spacing: 8) {
                 Text("Scan Paths")
@@ -65,8 +147,8 @@ private struct GeneralSettingsTab: View {
                     .padding(.top, 12)
 
                 List {
-                    // Default paths with toggles
-                    ForEach(TrackedPath.defaultPaths) { path in
+                    // Built-in paths with toggles
+                    ForEach([settingsStore.mainTrackedPath] + settingsStore.selectedCommonPaths) { path in
                         Toggle(isOn: Binding(
                             get: { settingsStore.isPathEnabled(path) },
                             set: { enabled in
@@ -165,22 +247,13 @@ private struct GeneralSettingsTab: View {
                 }
                 .buttonStyle(.bordered)
                 .help("Add custom scan path")
+                .accessibilityLabel("Add scan path")
 
                 Spacer()
 
                 // Delete All Snapshots button
                 Button {
-                    isResetting = true
-                    Task {
-                        try? await baselineService.resetBaseline()
-                        isResetting = false
-                        pathsChanged = false
-                        showingSavedNotice = true
-                        Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            showingSavedNotice = false
-                        }
-                    }
+                    showDeleteSnapshotsConfirmation = true
                 } label: {
                     HStack(spacing: 6) {
                         if isResetting {
@@ -193,8 +266,42 @@ private struct GeneralSettingsTab: View {
                     }
                 }
                 .disabled(isResetting)
+                .accessibilityLabel("Delete all snapshots")
+                .accessibilityHint("Removes all stored scan history")
             }
             .padding(12)
+        }
+        .confirmationDialog(
+            "Delete all snapshots?",
+            isPresented: $showDeleteSnapshotsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete All Snapshots", role: .destructive) {
+                isResetting = true
+                Task {
+                    try? await baselineService.resetBaseline()
+                    isResetting = false
+                    pathsChanged = false
+                    showingSavedNotice = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        showingSavedNotice = false
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes all saved history and cannot be undone.")
+        }
+        .fileImporter(
+            isPresented: $showingBasePathPicker,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                settingsStore.setMainBasePath(url)
+                pathsChanged = true
+            }
         }
         .fileImporter(
             isPresented: $showingFilePicker,
@@ -298,6 +405,7 @@ private struct FolderLimitsSettingsTab: View {
                 .buttonStyle(.bordered)
                 .disabled(newBoundary.trimmingCharacters(in: .whitespaces).isEmpty)
                 .help("Add custom folder limit")
+                .accessibilityLabel("Add folder limit")
             }
             .padding(12)
         }
