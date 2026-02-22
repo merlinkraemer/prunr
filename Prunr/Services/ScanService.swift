@@ -145,11 +145,11 @@ actor ScanService {
         logger.debug("Created snapshot ID: \(snapshotId)")
 
         // Batch insert configuration
-        let batchSize = 2000
+        let batchSize = 5000 // Increased from 2000 for better throughput
         var batch: [ScanResult] = []
         var count = 0
         var lastProgressUpdate = Date()
-        let progressUpdateInterval: TimeInterval = 0.5 // 500ms between updates
+        let progressUpdateInterval: TimeInterval = 1.0 // 1s between updates (reduced from 500ms)
 
         // Track scan start time for percentage estimation (ISS-033)
         let scanStartTime = Date()
