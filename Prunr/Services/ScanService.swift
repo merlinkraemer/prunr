@@ -302,7 +302,17 @@ actor ScanService {
                 throw ScanError.permissionDenied(path)
             }
 
-            logger.error("Unknown scan error: \(error.localizedDescription)")
+            if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileWriteOutOfSpaceError {
+                logger.error("Out of disk space while scanning path: \(path)")
+                let wrapped = NSError(
+                    domain: "ScanService",
+                    code: NSFileWriteOutOfSpaceError,
+                    userInfo: [NSLocalizedDescriptionKey: "Out of disk space while writing scan data"]
+                )
+                throw ScanError.unknown(wrapped)
+            }
+
+            logger.error("Unknown scan error domain=\(nsError.domain) code=\(nsError.code): \(error.localizedDescription)")
             throw ScanError.unknown(error)
         }
     }

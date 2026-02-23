@@ -249,6 +249,17 @@ extension DatabaseManager {
             _ = try Snapshot.filter(id: id).deleteAll(db)
         }
     }
+
+    /// Truncates the SQLite WAL file to reclaim space.
+    func checkpointWalTruncate() async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.write { db in
+            try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+        }
+    }
 }
 
 // MARK: - Delta Calculation

@@ -37,6 +37,9 @@ actor BaselineService {
     /// Boundary configuration for stopping drill-down
     private let boundaryConfig = BoundaryConfig.default
 
+    private let maxCategoryDrilldownItems = 3000
+    private let maxCategoryBigItems = 500
+
     /// MainActor-isolated property for UI state
     @MainActor var isCreatingBaseline = false
 
@@ -310,6 +313,11 @@ actor BaselineService {
             let bigItems = await categoryService.filterBigItems(items)
             let smallItems = await categoryService.filterSmallItems(items)
 
+            // Keep drill-down payload bounded to avoid UI memory blowups on huge categories
+            let sortedByGrowth = items.sorted { $0.growthBytes > $1.growthBytes }
+            let drilldownItems = Array(sortedByGrowth.prefix(maxCategoryDrilldownItems))
+            let cappedBigItems = Array(bigItems.sorted { $0.growthBytes > $1.growthBytes }.prefix(maxCategoryBigItems))
+
             // Calculate small item metrics
             let smallItemCount = smallItems.count
             let smallItemTotalBytes = await categoryService.calculateTotalGrowth(smallItems)
@@ -322,8 +330,8 @@ actor BaselineService {
                 category: category,
                 totalGrowthBytes: categoryGrowth,
                 currentSizeBytes: categorySize,
-                allItems: items, // All items for drill-down view
-                bigItems: bigItems,
+                allItems: drilldownItems,
+                bigItems: cappedBigItems,
                 smallItemCount: smallItemCount,
                 smallItemTotalBytes: smallItemTotalBytes,
                 percentOfTotal: percentOfTotal

@@ -20,6 +20,8 @@ struct CategoryGrowthListView: View {
     /// Forced category from external navigation (MenuBarView drill-down)
     var forcedCategory: CategoryGrowthItem? = nil
 
+    private let maxItemsPerExpandedFolder = 200
+
     /// Computed selected category - uses forced category if provided, otherwise internal selection
     private var computedSelectedCategory: CategoryGrowthItem? {
         let candidate = forcedCategory ?? selectedCategory
@@ -160,12 +162,24 @@ struct CategoryGrowthListView: View {
                         // Items (only if expanded)
                         if expandedFolders.contains(folder.path) {
                             VStack(spacing: 0) {
-                                ForEach(folder.items, id: \.path) { item in
+                                ForEach(folder.items.prefix(maxItemsPerExpandedFolder), id: \.path) { item in
                                     ItemRow(
                                         item: item,
                                         onTap: { onTapItem(item) }
                                     )
                                     .id(item.path)
+                                }
+
+                                if folder.items.count > maxItemsPerExpandedFolder {
+                                    HStack(spacing: 8) {
+                                        Spacer().frame(width: 38)
+                                        Text("Showing top \(maxItemsPerExpandedFolder) of \(folder.items.count) files")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
                                 }
                             }
                         }
@@ -178,15 +192,13 @@ struct CategoryGrowthListView: View {
 
     /// All items in the selected category, sorted by size (largest first)
     private func sortedItems(for category: CategoryGrowthItem) -> [GrowthItem] {
-        category.allItems.sorted { $0.growthBytes > $1.growthBytes }
+        category.allItems
     }
 
     /// Items grouped by their parent folder path
     private func itemsGroupedByFolder(for category: CategoryGrowthItem) -> [String: [GrowthItem]] {
         Dictionary(grouping: sortedItems(for: category)) { item in
-            URL(fileURLWithPath: item.path)
-                .deletingLastPathComponent()
-                .path
+            (item.path as NSString).deletingLastPathComponent
         }
     }
 
@@ -411,7 +423,7 @@ private struct FolderHeaderRow: View {
     @State private var hoverState = false
 
     private var folderName: String {
-        URL(fileURLWithPath: folderPath).lastPathComponent
+        (folderPath as NSString).lastPathComponent
     }
 
     private var totalGrowthText: String {
@@ -500,7 +512,7 @@ private struct ItemRow: View {
     @State private var hoverState = false
 
     private var fileName: String {
-        URL(fileURLWithPath: item.path).lastPathComponent
+        (item.path as NSString).lastPathComponent
     }
 
     private var sizeText: String {
@@ -576,7 +588,7 @@ private struct NestedBigItemRow: View {
     @State private var hoverState = false
 
     private var fileName: String {
-        URL(fileURLWithPath: item.path).lastPathComponent
+        (item.path as NSString).lastPathComponent
     }
 
     private var sizeText: String {

@@ -57,14 +57,20 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
         return "No path configured"
     }
-    var isLoading = false
-    var isAutoScanning = false // Visual feedback for background scans
+    var isLoading = false {
+        didSet { updateMenuBarActivityEffect() }
+    }
+    var isAutoScanning = false { // Visual feedback for background scans
+        didSet { updateMenuBarActivityEffect() }
+    }
     var errorMessage: String?
     var noBaseline = false
     var scanProgress: String = ""
     var scanCurrentPath: String = ""
     var filesScanned: Int = 0
-    var isAnalyzingChanges: Bool = false
+    var isAnalyzingChanges: Bool = false {
+        didSet { updateMenuBarActivityEffect() }
+    }
     // Percentage progress (0.0-1.0) for progress bar (ISS-033)
     var scanProgressPercentage: Double = 0.0
 
@@ -86,12 +92,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // Continuous update timer for GB meter (ISS-042)
     // nonisolated(unsafe) allows deinit to access it from nonisolated context
     private var updateTimer: Timer?
+    private var activityPulseTimer: Timer?
+    private var pulseAtLowAlpha = false
 
     // Event-driven lightweight scan automation
     private var fileEventsWatcher: FSEventsWatcher?
     private var watchedPathIDs: [UUID] = []
     private var autoScanTask: Task<Void, Never>?
     private var lastAutomaticScanAt: Date?
+    private var lastAutomaticScanAttemptAt: Date?
     private var isUnderDiskPressure = false
 
     var lastScanStatusText: String {
@@ -109,6 +118,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private let pressureAutoScanDebounce: TimeInterval = 20
     private let normalAutoScanInterval: TimeInterval = 20 * 60
     private let pressureAutoScanInterval: TimeInterval = 5 * 60
+    private let normalAutoScanAttemptInterval: TimeInterval = 4 * 60
+    private let pressureAutoScanAttemptInterval: TimeInterval = 90
     
     static var shared: MenuBarManager?
     
@@ -134,6 +145,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             button.action = #selector(handleButtonClick)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            button.alphaValue = 1.0
         }
 
         // Configure popover
@@ -756,6 +768,60 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         statusItem?.button?.title = freeSpace
     }
 
+    private var shouldPulseActivity: Bool {
+        isLoading || isAutoScanning || isAnalyzingChanges
+    }
+
+    private func updateMenuBarActivityEffect() {
+        if shouldPulseActivity {
+            startActivityPulseIfNeeded()
+        } else {
+            stopActivityPulse()
+        }
+    }
+
+    private func startActivityPulseIfNeeded() {
+        guard activityPulseTimer == nil else { return }
+
+        applyStatusItemAlpha(0.78, animated: true)
+        pulseAtLowAlpha = true
+
+        activityPulseTimer = Timer.scheduledTimer(withTimeInterval: 0.65, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                guard self.shouldPulseActivity else {
+                    self.stopActivityPulse()
+                    return
+                }
+
+                self.pulseAtLowAlpha.toggle()
+                let targetAlpha: CGFloat = self.pulseAtLowAlpha ? 0.62 : 0.98
+                self.applyStatusItemAlpha(targetAlpha, animated: true)
+            }
+        }
+    }
+
+    private func stopActivityPulse() {
+        activityPulseTimer?.invalidate()
+        activityPulseTimer = nil
+        pulseAtLowAlpha = false
+        applyStatusItemAlpha(1.0, animated: true)
+    }
+
+    private func applyStatusItemAlpha(_ alpha: CGFloat, animated: Bool) {
+        guard let button = statusItem?.button else { return }
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                button.animator().alphaValue = alpha
+            }
+        } else {
+            button.alphaValue = alpha
+        }
+    }
+
     /// Starts continuous 2-second updates to keep menu bar in sync (ISS-042)
     private func startRealtimeUpdates() {
         // Invalidate any existing timer
@@ -1063,6 +1129,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                Date().timeIntervalSince(lastAutomaticScanAt) < minimumInterval {
                 return
             }
+
+            let minimumAttemptInterval = isUnderDiskPressure ? pressureAutoScanAttemptInterval : normalAutoScanAttemptInterval
+            if let lastAutomaticScanAttemptAt,
+               Date().timeIntervalSince(lastAutomaticScanAttemptAt) < minimumAttemptInterval {
+                return
+            }
+
+            lastAutomaticScanAttemptAt = Date()
 
             isAutoScanning = true
             await loadCategoryGrowthList(isAutomatic: true)

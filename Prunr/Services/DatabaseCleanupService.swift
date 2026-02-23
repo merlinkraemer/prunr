@@ -11,6 +11,8 @@ actor DatabaseCleanupService {
     private static let maxSnapshotsPerPath = 2
     private static let vacuumInterval: TimeInterval = 12 * 60 * 60
     private static let vacuumTimestampKey = "databaseLastVacuumAt"
+    private static let checkpointInterval: TimeInterval = 10 * 60
+    private static let checkpointTimestampKey = "databaseLastCheckpointAt"
 
     // MARK: - Properties
 
@@ -34,6 +36,11 @@ actor DatabaseCleanupService {
                     UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.vacuumTimestampKey)
                 }
             }
+
+            if shouldCheckpointNow() {
+                try await db.checkpointWalTruncate()
+                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
+            }
         } catch {
             print("[DatabaseCleanupService] Auto-cleanup failed: \(error.localizedDescription)")
         }
@@ -43,6 +50,12 @@ actor DatabaseCleanupService {
         let last = UserDefaults.standard.double(forKey: Self.vacuumTimestampKey)
         guard last > 0 else { return true }
         return Date().timeIntervalSince1970 - last >= Self.vacuumInterval
+    }
+
+    private func shouldCheckpointNow() -> Bool {
+        let last = UserDefaults.standard.double(forKey: Self.checkpointTimestampKey)
+        guard last > 0 else { return true }
+        return Date().timeIntervalSince1970 - last >= Self.checkpointInterval
     }
 
     /// Deletes old snapshots, keeping only the most recent N per tracked path
