@@ -151,8 +151,8 @@ extension DatabaseManager {
             throw DatabaseError.notInitialized
         }
 
-        var entry = SnapshotEntry(snapshotId: snapshotId, path: path, sizeBytes: sizeBytes)
         try await dbPool.write { db in
+            var entry = SnapshotEntry(snapshotId: snapshotId, path: path, sizeBytes: sizeBytes)
             try entry.insert(db)
         }
     }

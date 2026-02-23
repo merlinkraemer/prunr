@@ -226,7 +226,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             // Bring Settings window to front immediately - ISS-024
             // Use a very short delay (50ms) to let window creation complete
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                NSApp.activate(ignoringOtherApps: true)
+                NSApp.activate()
 
                 // Find settings window by title
                 if let settingsWindow = NSApp.windows.first(where: {
@@ -246,7 +246,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 } else {
                     // If window not found yet, try once more with a longer delay
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        NSApp.activate(ignoringOtherApps: true)
+                        NSApp.activate()
                         if let settingsWindow = NSApp.windows.first(where: { $0.title.contains("Settings") }) {
                             settingsWindow.hidesOnDeactivate = false
                             settingsWindow.level = .floating
@@ -627,10 +627,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         // Also activate Finder to bring it to front
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             if let finderBundle = Bundle(url: URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")) {
                 let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: finderBundle.bundleIdentifier!).first
-                runningApp?.activate(options: [.activateIgnoringOtherApps])
+                runningApp?.activate()
             }
         }
     }
@@ -664,7 +664,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 }
 
                 // Activate app to ensure popup comes to front
-                NSApp.activate(ignoringOtherApps: false)
+                NSApp.activate()
 
                 // Disable animations for instant popup display
                 CATransaction.begin()

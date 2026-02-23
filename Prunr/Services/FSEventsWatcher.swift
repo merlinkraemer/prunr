@@ -113,9 +113,13 @@ actor FSEventsWatcher {
 
         stream = newStream
 
-        // Schedule on the MAIN run loop (critical: FSEvents must be on main runloop to receive events)
-        // Use RunLoop.Mode.default which is bridged to kCFRunLoopDefaultMode
-        FSEventStreamScheduleWithRunLoop(newStream, CFRunLoopGetMain(), RunLoop.Mode.default.rawValue as CFString)
+        // Schedule on the MAIN queue (critical: FSEvents must be on main runloop to receive events)
+        // Use dispatch queue on macOS 13+ to avoid deprecation warning
+        if #available(macOS 13.0, *) {
+            FSEventStreamSetDispatchQueue(newStream, DispatchQueue.main)
+        } else {
+            FSEventStreamScheduleWithRunLoop(newStream, CFRunLoopGetMain(), RunLoop.Mode.default.rawValue as CFString)
+        }
 
         // Start the stream
         if FSEventStreamStart(newStream) {
