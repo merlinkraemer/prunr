@@ -22,7 +22,9 @@ struct CategoryGrowthListView: View {
 
     /// Computed selected category - uses forced category if provided, otherwise internal selection
     private var computedSelectedCategory: CategoryGrowthItem? {
-        forcedCategory ?? selectedCategory
+        let candidate = forcedCategory ?? selectedCategory
+        guard let candidate else { return nil }
+        return categoryItems.contains(where: { $0.id == candidate.id }) ? candidate : nil
     }
 
     var body: some View {
@@ -37,14 +39,24 @@ struct CategoryGrowthListView: View {
                     ))
             } else {
                 // Detail view - enters from right, exits left on back
-                categoryDetailView(for: computedSelectedCategory!)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .trailing),
-                        removal: .move(edge: .leading)
-                    ))
+                if let category = computedSelectedCategory {
+                    categoryDetailView(for: category)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing),
+                            removal: .move(edge: .leading)
+                        ))
+                }
             }
         }
         .animation(.easeInOut(duration: 0.3), value: computedSelectedCategory)
+        .onChange(of: categoryItems.map(\.id)) { _, _ in
+            if selectedCategory != nil && computedSelectedCategory == nil {
+                selectedCategory = nil
+                expandedFolders.removeAll()
+                manager.isDrilledDown = false
+                manager.selectedCategoryForDrilldown = nil
+            }
+        }
         .onChange(of: manager.isDrilledDown) { _, newValue in
             if !newValue {
                 // External back button was pressed, reset internal selection

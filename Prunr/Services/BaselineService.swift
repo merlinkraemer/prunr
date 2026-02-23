@@ -133,8 +133,10 @@ actor BaselineService {
             throw BaselineError.insufficientSnapshots
         }
         
-        let currentId = snapshots[0].id!
-        let previousId = snapshots[1].id!
+        guard let currentId = snapshots[0].id,
+              let previousId = snapshots[1].id else {
+            throw BaselineError.noBaseline
+        }
 
         // Calculate deltas
         let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
@@ -160,8 +162,10 @@ actor BaselineService {
             throw BaselineError.insufficientSnapshots
         }
         
-        let currentId = snapshots[0].id!
-        let previousId = snapshots[1].id!
+        guard let currentId = snapshots[0].id,
+              let previousId = snapshots[1].id else {
+            throw BaselineError.noBaseline
+        }
 
         // Check if this is a boundary folder - stop drill-down
         let url = URL(fileURLWithPath: path)
@@ -255,8 +259,10 @@ actor BaselineService {
             throw BaselineError.insufficientSnapshots
         }
         
-        let currentId = snapshots[0].id!
-        let previousId = snapshots[1].id!
+        guard let currentId = snapshots[0].id,
+              let previousId = snapshots[1].id else {
+            throw BaselineError.noBaseline
+        }
 
         // Calculate deltas
         let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)

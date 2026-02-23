@@ -367,6 +367,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             // Then, get the growth list comparing the latest two snapshots
             let items = try await baselineService.getCategoryGrowthList(trackedPath: trackedPath)
             categoryItems = items
+            reconcileDrillDownSelection()
             scanProgress = ""
             scanCurrentPath = ""
 
@@ -381,11 +382,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 // We should show an empty list or a message.
                 noBaseline = false
                 categoryItems = []
+                reconcileDrillDownSelection()
             } else if let baselineError = error as? BaselineService.BaselineError,
                case .noBaseline = baselineError {
                 print("[MenuBarManager] No baseline exists")
                 noBaseline = true
                 categoryItems = []
+                reconcileDrillDownSelection()
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
                 print("[MenuBarManager] Scan was cancelled")
                 scanProgress = "Cancelled"
@@ -418,6 +421,22 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         lastAutomaticScanAt = Date()
 
         await updatePathSize()
+    }
+
+    private func reconcileDrillDownSelection() {
+        guard isDrilledDown else { return }
+
+        guard let currentSelection = selectedCategoryForDrilldown else {
+            isDrilledDown = false
+            return
+        }
+
+        if let refreshed = categoryItems.first(where: { $0.id == currentSelection.id }) {
+            selectedCategoryForDrilldown = refreshed
+        } else {
+            selectedCategoryForDrilldown = nil
+            isDrilledDown = false
+        }
     }
 
     /// Loads the growth list by comparing current state with baseline
