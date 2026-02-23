@@ -55,6 +55,7 @@ struct CategoryGrowthListView: View {
         }
         .onChange(of: selectedCategory) { _, newValue in
             if newValue == nil {
+                expandedFolders.removeAll()
                 manager.isDrilledDown = false
                 manager.selectedCategoryForDrilldown = nil
             }
@@ -92,9 +93,9 @@ struct CategoryGrowthListView: View {
                                 )
                                 .equatable() // Prevent unnecessary redraws
 
-                                // Nested big files (max 3)
+                                // Nested big files (max 5)
                                 if !item.bigItems.isEmpty {
-                                    ForEach(item.bigItems.prefix(3), id: \.path) { bigItem in
+                                    ForEach(item.bigItems.prefix(5), id: \.path) { bigItem in
                                         NestedBigItemRow(
                                             item: bigItem,
                                             onTap: { onTapItem(bigItem) }
@@ -102,10 +103,10 @@ struct CategoryGrowthListView: View {
                                         .id(bigItem.path)
                                     }
 
-                                    // Show "X more" if there are more than 3 big items
-                                    if item.bigItems.count > 3 {
+                                    // Show "X more" if there are more than 5 big items
+                                    if item.bigItems.count > 5 {
                                         MoreIndicatorRow(
-                                            count: item.bigItems.count - 3,
+                                            count: item.bigItems.count - 5,
                                             onTap: { selectCategory(item) }
                                         )
                                     }
@@ -211,6 +212,11 @@ struct CategoryGrowthListView: View {
     // MARK: - Actions
 
     private func selectCategory(_ item: CategoryGrowthItem) {
+        if let firstFolderPath = sortedFolders(for: item).first?.path {
+            expandedFolders = [firstFolderPath]
+        } else {
+            expandedFolders.removeAll()
+        }
         selectedCategory = item
         manager.isDrilledDown = true // Update drill-down state (ISS-037)
         manager.selectedCategoryForDrilldown = item // Update for external navigation (ISS-043 fix)
@@ -250,7 +256,7 @@ struct CategoryGrowthListView: View {
 /// Static column widths for consistent layout across all views
 private enum ColumnWidths {
     static let count: CGFloat = 70  // Fits "9999 items" with space
-    static let size: CGFloat = 90   // Fits "+999.9 GB" with arrow icon
+    static let size: CGFloat = 90   // Fits "+999.9 GB"
     // Note: name column is now flexible (maxWidth: .infinity) to prevent overflow
 }
 
@@ -279,16 +285,10 @@ private struct CategoryListRow: View, Equatable {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Growth amount (static width)
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(growthSeverityColor)
-
-                    Text(growthText)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(growthSeverityColor)
-                        .fixedSize()
-                }
+                Text(growthText)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(growthSeverityColor)
+                    .fixedSize()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -367,16 +367,10 @@ private struct FolderHeaderRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Total folder growth
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(growthSeverityColor)
-
-                    Text(totalGrowthText)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(growthSeverityColor)
-                        .fixedSize()
-                }
+                Text(totalGrowthText)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(growthSeverityColor)
+                    .fixedSize()
 
                 // Chevron (right when collapsed, down when expanded) - AFTER size
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -467,25 +461,11 @@ private struct ItemRow: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Size with percentage
-                HStack(spacing: 4) {
-                    Text(sizeText)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
-
-                    // Percentage badge
-                    if item.percentOfParent > 0 {
-                        let percent = String(format: "%.0f%%", item.percentOfParent * 100)
-                        Text(percent)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.secondary.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                    }
-                }
+                // Size
+                Text(sizeText)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

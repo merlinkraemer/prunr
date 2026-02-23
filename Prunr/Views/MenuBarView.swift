@@ -62,103 +62,56 @@ struct MenuBarView: View {
             mainCategoryView
         }
         .frame(width: 320, height: 480)
-        .overlay {
-            // Loading indicator with progress - full-screen integrated design
-            // Only show blocking overlay for manual scans, not auto-scans (ISS-038)
+        .overlay(alignment: .top) {
             if manager.isLoading && !manager.isAutoScanning {
-                VStack(spacing: 0) {
-                    Spacer()
+                VStack(spacing: 6) {
+                    HStack(spacing: 8) {
+                        ProgressView(value: max(0.0, min(1.0, manager.scanProgressPercentage)), total: 1.0)
+                            .progressViewStyle(.linear)
+                            .tint(.blue)
 
-                    VStack(spacing: 24) {
-                        // Header with title and stop button
-                        HStack(spacing: 12) {
-                            Text("Scanning files")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(.primary)
+                        Text("\(Int(max(0.0, min(1.0, manager.scanProgressPercentage)) * 100))%")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
 
-                            Spacer()
-
-                            Button {
-                                Task {
-                                    await manager.stopScan()
-                                }
-                            } label: {
-                                Text("Stop")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(.red)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 7)
-                                            .fill(Color.red.opacity(0.1))
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Stop scan")
-                            .accessibilityHint("Cancel the current scan operation")
+                        if manager.filesScanned > 0 {
+                            Text("\(manager.filesScanned)")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
                         }
 
-                        // Progress bar with percentage
-                        VStack(spacing: 12) {
-                            HStack(spacing: 10) {
-                                Text("\(Int(max(0.0, min(1.0, manager.scanProgressPercentage)) * 100))%")
-                                    .font(.system(.title2, design: .rounded))
-                                    .fontWeight(.medium)
-                                    .foregroundStyle(.primary)
-                                    .frame(width: 55, alignment: .leading)
+                        Spacer(minLength: 0)
 
-                                ProgressView(value: max(0.0, min(1.0, manager.scanProgressPercentage)), total: 1.0)
-                                    .progressViewStyle(.linear)
-                                    .tint(.blue)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                            // Files scanned count
-                            if manager.filesScanned > 0 {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "doc.text")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.tertiary)
-
-                                    Text("\(manager.filesScanned) files scanned")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
+                        Button("Stop") {
+                            Task { await manager.stopScan() }
                         }
-                        .padding(.horizontal, 4)
-
-                        // Current file path
-                        if !manager.scanCurrentPath.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(Color.blue)
-                                        .frame(width: 6, height: 6)
-
-                                    Text(manager.scanCurrentPath.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(3)
-                                        .truncationMode(.middle)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.gray.opacity(0.08))
-                            )
-                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.red)
                     }
-                    .padding(.horizontal, 20)
 
-                    Spacer()
+                    if !manager.scanCurrentPath.isEmpty {
+                        Text(manager.scanCurrentPath.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-                .frame(width: 320, height: 480)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(nsColor: .windowBackgroundColor).opacity(0.96))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .task {
@@ -322,22 +275,11 @@ struct MenuBarView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
 
-                    // Single path: show full path, Multiple paths: show tags
+                    // Single path: show full path, Multiple paths: show count
                     if hasMultiplePaths {
-                        // Folder tags (showing folder names)
-                        HStack(spacing: 6) {
-                            ForEach(manager.folderNames, id: \.self) { folderName in
-                                Text(folderName)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(
-                                        Capsule()
-                                            .fill(Color.gray.opacity(0.15))
-                                    )
-                            }
-                        }
+                        Text("\(SettingsStore.shared.enabledTrackedPaths.count) paths")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
                     } else if let firstPath = SettingsStore.shared.enabledTrackedPaths.first {
                         // Single path: show full path
                         Text(firstPath.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))

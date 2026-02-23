@@ -40,14 +40,14 @@ struct DriveBarView: View {
             }
             .frame(height: height)
 
-            // Text row: icon + "X GB of Y GB free" left-aligned, percentage tag right-aligned
+            // Text row: icon + "X GB of Y GB used" left-aligned, percentage tag right-aligned
             HStack(alignment: .center, spacing: 6) {
                 // Drive icon
                 Image(systemName: "internaldrive")
                     .font(.system(size: 14))
                     .foregroundStyle(usageColor)
 
-                Text(bytesToGBString(freeBytes))
+                Text(bytesToGBString(usedBytes))
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.primary)
 
@@ -59,7 +59,7 @@ struct DriveBarView: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.primary)
 
-                Text("free")
+                Text("used")
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.secondary)
 
