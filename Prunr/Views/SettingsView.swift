@@ -120,7 +120,6 @@ private struct ScanScopeSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
     @State private var baselineService = BaselineService.shared
     @State private var showingBasePathPicker = false
-    @State private var hasPendingScopeChanges = false
     @State private var isApplyingScopeChanges = false
     @State private var showApplyConfirmation = false
     @State private var showingAppliedNotice = false
@@ -163,7 +162,6 @@ private struct ScanScopeSettingsTab: View {
                                         get: { settingsStore.isCommonPathSelected(path) },
                                         set: { selected in
                                             settingsStore.setCommonPathSelected(path, selected: selected)
-                                            hasPendingScopeChanges = true
                                         }
                                     )) {
                                         HStack(spacing: 8) {
@@ -189,7 +187,7 @@ private struct ScanScopeSettingsTab: View {
                 .padding()
             }
 
-            if hasPendingScopeChanges {
+            if settingsStore.hasPendingScopeChanges {
                 Divider()
 
                 HStack(spacing: 10) {
@@ -243,7 +241,6 @@ private struct ScanScopeSettingsTab: View {
         ) { result in
             if case .success(let urls) = result, let url = urls.first {
                 settingsStore.setMainBasePath(url)
-                hasPendingScopeChanges = true
             }
         }
         .confirmationDialog(
@@ -256,7 +253,7 @@ private struct ScanScopeSettingsTab: View {
                 Task {
                     try? await baselineService.resetBaseline()
                     isApplyingScopeChanges = false
-                    hasPendingScopeChanges = false
+                    settingsStore.clearPendingScopeChanges()
                     showingAppliedNotice = true
                     Task {
                         try? await Task.sleep(for: .seconds(2))

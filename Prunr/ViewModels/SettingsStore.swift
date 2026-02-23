@@ -26,6 +26,7 @@ final class SettingsStore {
         static let launchAtLogin = "launchAtLogin"
         static let mainBasePath = "mainBasePath"
         static let selectedCommonPathIDs = "selectedCommonPathIDs"
+        static let hasPendingScopeChanges = "hasPendingScopeChanges"
     }
     
     // MARK: - Properties
@@ -71,6 +72,11 @@ final class SettingsStore {
             UserDefaults.standard.set(launchAtLogin, forKey: Keys.launchAtLogin)
             updateLaunchAtLogin()
         }
+    }
+
+    /// Scope changes pending apply/reset
+    var hasPendingScopeChanges: Bool {
+        didSet { UserDefaults.standard.set(hasPendingScopeChanges, forKey: Keys.hasPendingScopeChanges) }
     }
 
     // MARK: - Computed Properties
@@ -157,6 +163,8 @@ final class SettingsStore {
 
         // Load launch at login
         self.launchAtLogin = UserDefaults.standard.bool(forKey: Keys.launchAtLogin)
+
+        self.hasPendingScopeChanges = UserDefaults.standard.bool(forKey: Keys.hasPendingScopeChanges)
     }
     
     // MARK: - Path Management
@@ -164,11 +172,16 @@ final class SettingsStore {
     func addTrackedPath(_ path: TrackedPath) {
         guard !allTrackedPaths.contains(where: { $0.url == path.url }) else { return }
         customTrackedPaths.append(path)
+        markScopeChanged()
     }
     
     func removeTrackedPath(_ path: TrackedPath) {
+        let beforeCount = customTrackedPaths.count
         customTrackedPaths.removeAll { $0.id == path.id }
         disabledPathIDs.remove(path.id.uuidString)
+        if customTrackedPaths.count != beforeCount {
+            markScopeChanged()
+        }
     }
     
     func isPathEnabled(_ path: TrackedPath) -> Bool {
@@ -176,18 +189,25 @@ final class SettingsStore {
     }
     
     func setPathEnabled(_ path: TrackedPath, enabled: Bool) {
+        let wasEnabled = isPathEnabled(path)
+        guard wasEnabled != enabled else { return }
+
         if enabled {
             disabledPathIDs.remove(path.id.uuidString)
         } else {
             disabledPathIDs.insert(path.id.uuidString)
         }
+
+        markScopeChanged()
     }
 
     func setMainBasePath(_ url: URL) {
+        guard mainBasePath != url.path else { return }
         mainBasePath = url.path
 
         let availableIDs = Set(availableCommonPaths.map { $0.id.uuidString })
         selectedCommonPathIDs = selectedCommonPathIDs.intersection(availableIDs)
+        markScopeChanged()
     }
 
     func isCommonPathSelected(_ path: TrackedPath) -> Bool {
@@ -195,12 +215,21 @@ final class SettingsStore {
     }
 
     func setCommonPathSelected(_ path: TrackedPath, selected: Bool) {
+        let currentlySelected = selectedCommonPathIDs.contains(path.id.uuidString)
+        guard currentlySelected != selected else { return }
+
         if selected {
             selectedCommonPathIDs.insert(path.id.uuidString)
         } else {
             selectedCommonPathIDs.remove(path.id.uuidString)
             disabledPathIDs.remove(path.id.uuidString)
         }
+
+        markScopeChanged()
+    }
+
+    func clearPendingScopeChanges() {
+        hasPendingScopeChanges = false
     }
 
     func isCommonPath(_ path: TrackedPath) -> Bool {
@@ -261,6 +290,10 @@ final class SettingsStore {
 
     private func saveCustomScanIgnores() {
         UserDefaults.standard.set(customScanIgnores, forKey: Keys.customScanIgnores)
+    }
+
+    private func markScopeChanged() {
+        hasPendingScopeChanges = true
     }
     
     private func updateLaunchAtLogin() {
