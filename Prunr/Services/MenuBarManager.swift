@@ -76,6 +76,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var usedBytes: Int64 = 0
     var freeBytes: Int64 = 0
     var monitoredPathSizeBytes: Int64 = 0
+    var pathSizeBytesByID: [UUID: Int64] = [:]
     var isCalculatingPathSize = false
 
     // Cache for disk space updates (avoid excessive disk checks)
@@ -403,9 +404,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanStartTime = nil
         lastAutomaticScanAt = Date()
 
-        if let trackedPath = SettingsStore.shared.enabledTrackedPaths.first {
-            await updatePathSizeFromLatestSnapshot(for: trackedPath)
-        }
+        await updatePathSize()
     }
 
     /// Loads the growth list by comparing current state with baseline
@@ -732,30 +731,43 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Updates the monitored path size from the latest baseline or current state
     func updatePathSize() async {
-        guard let trackedPath = SettingsStore.shared.enabledTrackedPaths.first else {
+        let trackedPaths = SettingsStore.shared.enabledTrackedPaths
+        guard let trackedPath = trackedPaths.first else {
             self.monitoredPathSizeBytes = 0
+            self.pathSizeBytesByID = [:]
             return
         }
 
-        await updatePathSizeFromLatestSnapshot(for: trackedPath)
+        await updatePathSizesFromLatestSnapshots(for: trackedPaths, primaryPath: trackedPath)
     }
 
-    private func updatePathSizeFromLatestSnapshot(for trackedPath: TrackedPath) async {
+    private func updatePathSizesFromLatestSnapshots(for trackedPaths: [TrackedPath], primaryPath: TrackedPath) async {
         isCalculatingPathSize = true
         defer { isCalculatingPathSize = false }
 
-        do {
-            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
-            guard let latestId = snapshots.first?.id else {
-                monitoredPathSizeBytes = 0
-                return
-            }
+        var sizesByID: [UUID: Int64] = [:]
 
-            let entries = try await DatabaseManager.shared.fetchEntries(for: latestId)
-            monitoredPathSizeBytes = entries.reduce(0) { $0 + $1.sizeBytes }
-        } catch {
-            monitoredPathSizeBytes = 0
+        for trackedPath in trackedPaths {
+            do {
+                let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+                guard let latestId = snapshots.first?.id else {
+                    sizesByID[trackedPath.id] = 0
+                    continue
+                }
+
+                let entries = try await DatabaseManager.shared.fetchEntries(for: latestId)
+                sizesByID[trackedPath.id] = entries.reduce(0) { $0 + $1.sizeBytes }
+            } catch {
+                sizesByID[trackedPath.id] = 0
+            }
         }
+
+        pathSizeBytesByID = sizesByID
+        monitoredPathSizeBytes = sizesByID[primaryPath.id] ?? 0
+    }
+
+    func pathSizeBytes(for trackedPath: TrackedPath) -> Int64 {
+        pathSizeBytesByID[trackedPath.id] ?? 0
     }
 
     func closePopover() {

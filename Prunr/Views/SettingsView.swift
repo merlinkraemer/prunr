@@ -15,19 +15,25 @@ struct SettingsView: View {
                 }
                 .tag(0)
 
+            PathsSettingsTab(settingsStore: settingsStore)
+                .tabItem {
+                    Label("Paths", systemImage: "folder")
+                }
+                .tag(1)
+
             FolderLimitsSettingsTab(settingsStore: settingsStore)
                 .tabItem {
                     Label("Folder Limits", systemImage: "stop.circle")
                 }
-                .tag(1)
+                .tag(2)
 
             AboutSettingsTab()
                 .tabItem {
                     Label("About", systemImage: "info.circle")
                 }
-                .tag(2)
+                .tag(3)
         }
-        .frame(width: 480, height: 420)
+        .frame(width: 480, height: 440)
     }
 }
 
@@ -35,13 +41,6 @@ struct SettingsView: View {
 
 private struct GeneralSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
-    @State private var showingFilePicker = false
-    @State private var showingBasePathPicker = false
-    @State private var pathsChanged = false
-    @State private var showingSavedNotice = false
-    @State private var baselineService = BaselineService.shared
-    @State private var isResetting = false
-    @State private var showDeleteSnapshotsConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,8 +55,36 @@ private struct GeneralSettingsTab: View {
             }
             .padding()
 
-            Divider()
+            Spacer()
 
+            // Explanation
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Configure path settings and folder limits in their respective tabs.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding()
+
+            Spacer()
+        }
+    }
+}
+
+// MARK: - Paths Tab
+
+private struct PathsSettingsTab: View {
+    @Bindable var settingsStore: SettingsStore
+    @State private var showingFilePicker = false
+    @State private var showingBasePathPicker = false
+    @State private var pathsChanged = false
+    @State private var showingSavedNotice = false
+    @State private var baselineService = BaselineService.shared
+    @State private var isResetting = false
+    @State private var showDeleteSnapshotsConfirmation = false
+
+    var body: some View {
+        VStack(spacing: 0) {
             // Main base path section
             VStack(alignment: .leading, spacing: 8) {
                 Text("Main Base Directory")

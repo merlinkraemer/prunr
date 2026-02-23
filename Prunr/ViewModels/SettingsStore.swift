@@ -79,6 +79,10 @@ final class SettingsStore {
         availableCommonPaths.filter { selectedCommonPathIDs.contains($0.id.uuidString) }
     }
 
+    private var availableCommonPathIDStrings: Set<String> {
+        Set(availableCommonPaths.map { $0.id.uuidString })
+    }
+
     private var mainBaseURL: URL {
         URL(fileURLWithPath: mainBasePath, isDirectory: true)
     }
@@ -86,6 +90,11 @@ final class SettingsStore {
     /// Enabled tracked paths only
     var enabledTrackedPaths: [TrackedPath] {
         allTrackedPaths.filter { isPathEnabled($0) }
+    }
+
+    /// Enabled paths shown in overview path dropdown (exclude common paths)
+    var enabledOverviewPaths: [TrackedPath] {
+        enabledTrackedPaths.filter { !isCommonPath($0) }
     }
     
     /// All boundaries (standard + custom)
@@ -171,6 +180,10 @@ final class SettingsStore {
             selectedCommonPathIDs.remove(path.id.uuidString)
             disabledPathIDs.remove(path.id.uuidString)
         }
+    }
+
+    func isCommonPath(_ path: TrackedPath) -> Bool {
+        availableCommonPathIDStrings.contains(path.id.uuidString)
     }
     
     // MARK: - Boundary Management
