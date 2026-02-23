@@ -297,7 +297,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // and initialized above.
     
     /// Loads the category-based growth list
-    func loadCategoryGrowthList() async {
+    func loadCategoryGrowthList(isAutomatic: Bool = false) async {
         // Get first enabled tracked path from settings
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
         guard let trackedPath = enabledPaths.first else {
@@ -397,7 +397,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 wasCancelled = true
             } else {
                 print("[MenuBarManager] Error loading category growth list: \(error)")
-                errorMessage = "Scan failed: \(error.localizedDescription)"
+                if !isAutomatic {
+                    errorMessage = "Scan failed: \(error.localizedDescription)"
+                }
             }
         }
 
@@ -756,7 +758,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         updateTimer?.invalidate()
 
         // Create timer that fires every 2 seconds
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateFreeSpace()
                 self?.configureFileWatcherIfNeeded()
@@ -1059,7 +1061,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
 
             isAutoScanning = true
-            await loadCategoryGrowthList()
+            await loadCategoryGrowthList(isAutomatic: true)
             isAutoScanning = false
         }
     }

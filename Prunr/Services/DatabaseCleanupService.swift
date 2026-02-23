@@ -9,6 +9,8 @@ actor DatabaseCleanupService {
 
     /// Maximum snapshots to keep per tracked path (rolling comparison needs 2)
     private static let maxSnapshotsPerPath = 2
+    private static let vacuumInterval: TimeInterval = 12 * 60 * 60
+    private static let vacuumTimestampKey = "databaseLastVacuumAt"
 
     // MARK: - Properties
 
@@ -27,12 +29,20 @@ actor DatabaseCleanupService {
             let deleted = try await cleanupOldSnapshots()
             if deleted > 0 {
                 print("[DatabaseCleanupService] Auto-cleanup: deleted \(deleted) old snapshots")
-                // Vacuum periodically to reclaim space
-                try await vacuumDatabase()
+                if shouldVacuumNow() {
+                    try await vacuumDatabase()
+                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.vacuumTimestampKey)
+                }
             }
         } catch {
             print("[DatabaseCleanupService] Auto-cleanup failed: \(error.localizedDescription)")
         }
+    }
+
+    private func shouldVacuumNow() -> Bool {
+        let last = UserDefaults.standard.double(forKey: Self.vacuumTimestampKey)
+        guard last > 0 else { return true }
+        return Date().timeIntervalSince1970 - last >= Self.vacuumInterval
     }
 
     /// Deletes old snapshots, keeping only the most recent N per tracked path
