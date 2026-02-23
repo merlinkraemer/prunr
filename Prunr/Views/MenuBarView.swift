@@ -157,7 +157,7 @@ struct MenuBarView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if !manager.scanProgress.isEmpty && manager.scanCurrentPath.isEmpty {
+                if !manager.scanProgress.isEmpty && manager.scanCurrentPath.isEmpty && !manager.isAnalyzingChanges {
                     Text(manager.scanProgress)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)

@@ -332,7 +332,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 self.filesScanned = progress.foldersScanned
 
                 // Update percentage for progress bar (ISS-033)
-                self.scanProgressPercentage = progress.percentage
+                let clamped = max(0.0, min(1.0, progress.percentage))
+                // Keep visual progress just under 100% until scan is truly done.
+                self.scanProgressPercentage = clamped >= 1.0 ? 0.99 : clamped
                 self.scanCurrentPath = progress.currentPath
 
                 // Show detailed path immediately for better scan visibility
@@ -350,6 +352,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         do {
             // First, take a new snapshot
             _ = try await baselineService.createBaseline(trackedPath: trackedPath, progress: progressCallback)
+
+            // Briefly show real 100% only when scan is actually complete.
+            scanProgressPercentage = 1.0
+            scanProgress = "Finalizing scan..."
+            try? await Task.sleep(for: .milliseconds(120))
 
             // Scanning is complete; now compute deltas/categories
             isAnalyzingChanges = true

@@ -67,17 +67,28 @@ private struct GeneralSettingsTab: View {
                             .foregroundStyle(.green)
                     }
                 }
-
-                Section("App") {
-                    Text("Prunr 1.0")
-                        .foregroundStyle(.secondary)
-
-                    Button("Quit Prunr") {
-                        NSApplication.shared.terminate(nil)
-                    }
-                }
             }
             .formStyle(.grouped)
+
+            Spacer(minLength: 0)
+
+            Divider()
+
+            VStack(spacing: 6) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
+
+                Text("Prunr")
+                    .font(.system(size: 13, weight: .semibold))
+
+                Text("Version 1.0")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
         }
         .confirmationDialog(
             "Delete all snapshots?",
@@ -107,73 +118,123 @@ private struct GeneralSettingsTab: View {
 
 private struct ScanScopeSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
+    @State private var baselineService = BaselineService.shared
     @State private var showingBasePathPicker = false
+    @State private var hasPendingScopeChanges = false
+    @State private var isApplyingScopeChanges = false
+    @State private var showApplyConfirmation = false
+    @State private var showingAppliedNotice = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                GroupBox("Primary Scan Folder") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("This is your main monitored path. Keep it at ~/dev while testing for faster scans.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    GroupBox("Primary Scan Folder") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "externaldrive.fill")
+                                    .foregroundStyle(.blue)
 
-                        HStack(spacing: 10) {
-                            Image(systemName: "externaldrive.fill")
-                                .foregroundStyle(.blue)
+                                Text(settingsStore.mainBasePath)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
 
-                            Text(settingsStore.mainBasePath)
-                                .font(.system(size: 12, design: .monospaced))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                                Spacer()
 
-                            Spacer()
-
-                            Button("Change") {
-                                showingBasePathPicker = true
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-
-                GroupBox("Common Paths") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Optional high-growth paths. These are scanned but hidden from the overview path picker.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        if settingsStore.availableCommonPaths.isEmpty {
-                            Text("No common paths found on this machine.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(settingsStore.availableCommonPaths) { path in
-                                Toggle(isOn: Binding(
-                                    get: { settingsStore.isCommonPathSelected(path) },
-                                    set: { selected in
-                                        settingsStore.setCommonPathSelected(path, selected: selected)
-                                    }
-                                )) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(path.displayName)
-                                            .font(.system(size: 13, weight: .medium))
-                                        Text(path.url.path)
-                                            .font(.system(size: 11, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                    }
+                                Button("Change") {
+                                    showingBasePathPicker = true
                                 }
-                                .toggleStyle(.switch)
+                                .buttonStyle(.bordered)
                             }
                         }
+                        .padding(.top, 4)
                     }
-                    .padding(.top, 4)
+
+                    GroupBox("Common Paths") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if settingsStore.availableCommonPaths.isEmpty {
+                                Text("No common paths found on this machine.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                ForEach(settingsStore.availableCommonPaths) { path in
+                                    Toggle(isOn: Binding(
+                                        get: { settingsStore.isCommonPathSelected(path) },
+                                        set: { selected in
+                                            settingsStore.setCommonPathSelected(path, selected: selected)
+                                            hasPendingScopeChanges = true
+                                        }
+                                    )) {
+                                        HStack(spacing: 8) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(path.displayName)
+                                                    .font(.system(size: 13, weight: .medium))
+                                                Text(path.url.path)
+                                                    .font(.system(size: 11, design: .monospaced))
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
+                                                    .truncationMode(.middle)
+                                            }
+                                            Spacer(minLength: 0)
+                                        }
+                                    }
+                                    .toggleStyle(.switch)
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
                 }
+                .padding()
             }
-            .padding()
+
+            if hasPendingScopeChanges {
+                Divider()
+
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+
+                    Text("Scope changed. Apply to reset snapshots and start fresh.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button {
+                        showApplyConfirmation = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isApplyingScopeChanges {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "checkmark.circle")
+                            }
+                            Text("Apply")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isApplyingScopeChanges)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.orange.opacity(0.08))
+            }
+
+            if showingAppliedNotice {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("Scope applied. Snapshots were reset.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
         }
         .fileImporter(
             isPresented: $showingBasePathPicker,
@@ -182,7 +243,30 @@ private struct ScanScopeSettingsTab: View {
         ) { result in
             if case .success(let urls) = result, let url = urls.first {
                 settingsStore.setMainBasePath(url)
+                hasPendingScopeChanges = true
             }
+        }
+        .confirmationDialog(
+            "Apply scope changes?",
+            isPresented: $showApplyConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Apply and Reset Snapshots", role: .destructive) {
+                isApplyingScopeChanges = true
+                Task {
+                    try? await baselineService.resetBaseline()
+                    isApplyingScopeChanges = false
+                    hasPendingScopeChanges = false
+                    showingAppliedNotice = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        showingAppliedNotice = false
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Changing scan scope can invalidate previous comparisons. Applying will delete existing snapshots.")
         }
     }
 }
