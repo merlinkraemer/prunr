@@ -104,6 +104,7 @@ private struct GrowthItemRow: View {
                 .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
         )
         .padding(.horizontal, 6) // Small inset from edges (not full width)
+        .help(item.path)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoverState = hovering

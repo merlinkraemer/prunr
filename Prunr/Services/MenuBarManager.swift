@@ -783,10 +783,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func startActivityPulseIfNeeded() {
         guard activityPulseTimer == nil else { return }
 
-        applyStatusItemAlpha(0.78, animated: true)
+        applyStatusItemAlpha(0.94, animated: true)
         pulseAtLowAlpha = true
 
-        activityPulseTimer = Timer.scheduledTimer(withTimeInterval: 0.65, repeats: true) { [weak self] _ in
+        activityPulseTimer = Timer.scheduledTimer(withTimeInterval: 0.9, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 guard self.shouldPulseActivity else {
@@ -795,7 +795,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 }
 
                 self.pulseAtLowAlpha.toggle()
-                let targetAlpha: CGFloat = self.pulseAtLowAlpha ? 0.62 : 0.98
+                let targetAlpha: CGFloat = self.pulseAtLowAlpha ? 0.86 : 0.98
                 self.applyStatusItemAlpha(targetAlpha, animated: true)
             }
         }
@@ -813,7 +813,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         if animated {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
+                context.duration = 0.45
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 button.animator().alphaValue = alpha
             }

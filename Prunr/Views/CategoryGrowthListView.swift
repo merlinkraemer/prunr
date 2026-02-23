@@ -502,6 +502,7 @@ private struct ItemRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(item.path)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoverState = hovering
@@ -578,6 +579,7 @@ private struct NestedBigItemRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(item.path)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoverState = hovering

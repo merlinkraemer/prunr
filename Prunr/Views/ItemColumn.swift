@@ -145,6 +145,7 @@ private struct ItemRow: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
+        .help(delta.path)
     }
 }
 
