@@ -7,12 +7,20 @@ import ServiceManagement
 @Observable
 final class SettingsStore {
     static let shared = SettingsStore()
+
+    static let defaultScanIgnoreNames: Set<String> = [
+        ".DS_Store",
+        ".localized",
+        "Thumbs.db",
+        "desktop.ini"
+    ]
     
     // MARK: - Keys
     
     private enum Keys {
         static let trackedPaths = "trackedPaths"
         static let customBoundaries = "customBoundaries"
+        static let customScanIgnores = "customScanIgnores"
         static let disabledPaths = "disabledPaths"
         static let disabledBoundaries = "disabledBoundaries"
         static let launchAtLogin = "launchAtLogin"
@@ -40,6 +48,11 @@ final class SettingsStore {
     /// User-added boundary folder names
     var customBoundaries: [String] {
         didSet { saveCustomBoundaries() }
+    }
+
+    /// User-added scan ignore names
+    var customScanIgnores: [String] {
+        didSet { saveCustomScanIgnores() }
     }
     
     /// Disabled path IDs (for checkboxes)
@@ -101,6 +114,11 @@ final class SettingsStore {
     var allBoundaries: Set<String> {
         BoundaryConfig.standardBoundaries.union(Set(customBoundaries))
     }
+
+    /// All ignored file/folder names used during scan
+    var allScanIgnoreNames: Set<String> {
+        Self.defaultScanIgnoreNames.union(Set(customScanIgnores))
+    }
     
     /// Enabled boundaries only
     var enabledBoundaries: Set<String> {
@@ -127,6 +145,9 @@ final class SettingsStore {
         
         // Load custom boundaries
         self.customBoundaries = UserDefaults.standard.stringArray(forKey: Keys.customBoundaries) ?? []
+
+        // Load custom scan ignores
+        self.customScanIgnores = UserDefaults.standard.stringArray(forKey: Keys.customScanIgnores) ?? []
         
         // Load disabled paths
         self.disabledPathIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.disabledPaths) ?? [])
@@ -185,6 +206,21 @@ final class SettingsStore {
     func isCommonPath(_ path: TrackedPath) -> Bool {
         availableCommonPathIDStrings.contains(path.id.uuidString)
     }
+
+    func addScanIgnore(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let lowered = trimmed.lowercased()
+        let existing = allScanIgnoreNames.map { $0.lowercased() }
+        guard !existing.contains(lowered) else { return }
+
+        customScanIgnores.append(trimmed)
+    }
+
+    func removeScanIgnore(_ name: String) {
+        customScanIgnores.removeAll { $0 == name }
+    }
     
     // MARK: - Boundary Management
     
@@ -221,6 +257,10 @@ final class SettingsStore {
     
     private func saveCustomBoundaries() {
         UserDefaults.standard.set(customBoundaries, forKey: Keys.customBoundaries)
+    }
+
+    private func saveCustomScanIgnores() {
+        UserDefaults.standard.set(customScanIgnores, forKey: Keys.customScanIgnores)
     }
     
     private func updateLaunchAtLogin() {

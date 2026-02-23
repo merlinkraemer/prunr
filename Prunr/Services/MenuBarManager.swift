@@ -64,6 +64,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var scanProgress: String = ""
     var scanCurrentPath: String = ""
     var filesScanned: Int = 0
+    var isAnalyzingChanges: Bool = false
     // Percentage progress (0.0-1.0) for progress bar (ISS-033)
     var scanProgressPercentage: Double = 0.0
 
@@ -92,6 +93,17 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var autoScanTask: Task<Void, Never>?
     private var lastAutomaticScanAt: Date?
     private var isUnderDiskPressure = false
+
+    var lastScanStatusText: String {
+        guard let lastScanAt = lastAutomaticScanAt else {
+            return "Last scan: never"
+        }
+
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        let relative = formatter.localizedString(for: lastScanAt, relativeTo: Date())
+        return "Last scan: \(relative)"
+    }
 
     private let normalAutoScanDebounce: TimeInterval = 90
     private let pressureAutoScanDebounce: TimeInterval = 20
@@ -156,16 +168,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
-        // Delete All Snapshots
-        let resetItem = NSMenuItem(
-            title: "Delete All Snapshots",
-            action: #selector(resetBaseline),
-            keyEquivalent: "r"
-        )
-        resetItem.target = self
-        menu.addItem(resetItem)
-
-        // Separator
         menu.addItem(NSMenuItem.separator())
 
         // Quit Prunr
@@ -308,6 +310,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         errorMessage = nil
         noBaseline = false
         filesScanned = 0
+        isAnalyzingChanges = false
         scanProgress = "Scanning \(trackedPath.displayName)..."
         scanCurrentPath = trackedPath.url.path
         // Reset progress percentage at scan start (ISS-033)
@@ -349,9 +352,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             _ = try await baselineService.createBaseline(trackedPath: trackedPath, progress: progressCallback)
 
             // Scanning is complete; now compute deltas/categories
-            scanProgress = "Analyzing changes..."
+            isAnalyzingChanges = true
+            scanProgress = "Checking what changed since the last scan..."
             scanCurrentPath = ""
-            scanProgressPercentage = 0.0
+            scanProgressPercentage = 1.0
             
             // Then, get the growth list comparing the latest two snapshots
             let items = try await baselineService.getCategoryGrowthList(trackedPath: trackedPath)
@@ -379,6 +383,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 print("[MenuBarManager] Scan was cancelled")
                 scanProgress = "Cancelled"
                 scanCurrentPath = ""
+                isAnalyzingChanges = false
                 wasCancelled = true
             } else {
                 print("[MenuBarManager] Error loading category growth list: \(error)")
@@ -401,6 +406,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanCurrentPath = ""
         scanProgressPercentage = 0.0
         filesScanned = 0
+        isAnalyzingChanges = false
         scanStartTime = nil
         lastAutomaticScanAt = Date()
 
@@ -421,6 +427,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         errorMessage = nil
         noBaseline = false
         filesScanned = 0
+        isAnalyzingChanges = false
         scanProgress = "Scanning \(trackedPath.displayName)..."
         scanCurrentPath = trackedPath.url.path
 
@@ -458,6 +465,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isLoading = false
         scanProgress = ""
         scanProgressPercentage = 0.0
+        isAnalyzingChanges = false
     }
     
     /// Takes the initial snapshot for enabled paths
@@ -489,6 +497,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isLoading = true
         errorMessage = nil
         filesScanned = 0
+        isAnalyzingChanges = false
         scanProgress = "Taking initial snapshot for \(trackedPath.displayName)..."
         // Reset progress percentage at scan start (ISS-033)
         scanProgressPercentage = 0.0

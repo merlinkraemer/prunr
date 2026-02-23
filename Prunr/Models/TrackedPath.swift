@@ -1,36 +1,6 @@
 import Foundation
 
-/// A user-configurable path to be scanned for delta tracking
-struct TrackedPath: Codable, Identifiable, Equatable, Hashable {
-    /// Unique identifier for this path entry
-    let id: UUID
-
-    /// The file system URL to track
-    let url: URL
-
-    /// Display name shown in the sidebar
-    let displayName: String
-
-    /// Whether this is a default path (cannot be removed)
-    let isDefault: Bool
-
-    init(id: UUID = UUID(), url: URL, displayName: String, isDefault: Bool = false) {
-        self.id = id
-        self.url = url
-        self.displayName = displayName
-        self.isDefault = isDefault
-    }
-
-    /// Security-scoped bookmark data for sandbox compatibility
-    /// Use this when persisting paths to maintain access across app launches
-    var bookmarkData: Data? {
-        try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-    }
-}
-
-// MARK: - Default Paths
-
-extension TrackedPath {
+enum ScanPathPreset {
     static let mainBasePathID = UUID(uuidString: "B9E2C9D6-7A6C-4A8C-9A73-9DBA3DE27B57")!
 
     private struct CommonPreset {
@@ -91,6 +61,46 @@ extension TrackedPath {
                 isDefault: true
             )
         }
+    }
+}
+
+/// A user-configurable path to be scanned for delta tracking
+struct TrackedPath: Codable, Identifiable, Equatable, Hashable {
+    /// Unique identifier for this path entry
+    let id: UUID
+
+    /// The file system URL to track
+    let url: URL
+
+    /// Display name shown in the sidebar
+    let displayName: String
+
+    /// Whether this is a default path (cannot be removed)
+    let isDefault: Bool
+
+    init(id: UUID = UUID(), url: URL, displayName: String, isDefault: Bool = false) {
+        self.id = id
+        self.url = url
+        self.displayName = displayName
+        self.isDefault = isDefault
+    }
+
+    /// Security-scoped bookmark data for sandbox compatibility
+    /// Use this when persisting paths to maintain access across app launches
+    var bookmarkData: Data? {
+        try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+}
+
+// MARK: - Default Paths
+
+extension TrackedPath {
+    static func mainBasePath(url: URL) -> TrackedPath {
+        ScanPathPreset.mainBasePath(url: url)
+    }
+
+    static func commonPathPresets(baseDirectory: URL) -> [TrackedPath] {
+        ScanPathPreset.commonPathPresets(baseDirectory: baseDirectory)
     }
 
     /// Standard default paths most users want to track

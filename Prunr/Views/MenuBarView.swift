@@ -89,13 +89,15 @@ struct MenuBarView: View {
     }
 
     private var manualScanLoadingView: some View {
-        VStack(spacing: 0) {
+        let clampedProgress = max(0.0, min(1.0, manager.scanProgressPercentage))
+
+        return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.blue)
 
-                Text("Scanning files")
+                Text(manager.isAnalyzingChanges ? "Analyzing changes" : "Scanning files")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
 
@@ -115,15 +117,38 @@ struct MenuBarView: View {
 
             Divider()
 
-            VStack(spacing: 18) {
-                VStack(spacing: 10) {
-                    Text("\(Int(max(0.0, min(1.0, manager.scanProgressPercentage)) * 100))%")
-                        .font(.system(size: 36, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.primary)
+            Spacer(minLength: 0)
 
-                    ProgressView(value: max(0.0, min(1.0, manager.scanProgressPercentage)), total: 1.0)
-                        .progressViewStyle(.linear)
-                        .tint(.blue)
+            VStack(spacing: 18) {
+                if manager.isAnalyzingChanges {
+                    VStack(spacing: 10) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.green)
+                            Text("Scan complete")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.primary)
+                        }
+
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Analyzing file changes...")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    VStack(spacing: 10) {
+                        Text("\(Int(clampedProgress * 100))%")
+                            .font(.system(size: 36, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.primary)
+
+                        ProgressView(value: clampedProgress, total: 1.0)
+                            .progressViewStyle(.linear)
+                            .tint(.blue)
+                    }
                 }
 
                 if manager.filesScanned > 0 {
@@ -132,7 +157,15 @@ struct MenuBarView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if !manager.scanCurrentPath.isEmpty {
+                if !manager.scanProgress.isEmpty && manager.scanCurrentPath.isEmpty {
+                    Text(manager.scanProgress)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                if !manager.scanCurrentPath.isEmpty && !manager.isAnalyzingChanges {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Current path")
                             .font(.system(size: 10, weight: .medium))
@@ -163,22 +196,9 @@ struct MenuBarView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 26)
+            .padding(.vertical, 8)
 
             Spacer(minLength: 0)
-
-            if !manager.scanProgress.isEmpty {
-                Divider()
-
-                Text(manager.scanProgress)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-            }
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
@@ -488,6 +508,14 @@ struct MenuBarView: View {
             }
             .disabled(manager.isLoading)
             .help("Refresh View")
+
+            Spacer()
+
+            Text(manager.isAutoScanning ? "Background scan running..." : manager.lastScanStatusText)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
 
             Spacer()
 

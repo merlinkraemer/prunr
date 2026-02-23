@@ -170,7 +170,8 @@ actor ScanService {
         do {
             // Stream scan results and accumulate into batches
             logger.debug("Starting file enumeration stream")
-            let stream = await scanner.scan(url)
+            let ignoredNames = await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
+            let stream = await scanner.scan(url, ignoredNames: ignoredNames)
 
             for try await result in stream {
                 // Check for cancellation (more frequent check)

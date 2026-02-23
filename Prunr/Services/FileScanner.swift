@@ -34,7 +34,7 @@ actor FileScanner {
     ///
     /// - Parameter rootURL: The root URL to begin scanning from
     /// - Returns: An AsyncThrowingStream that yields ScanResult values
-    func scan(_ rootURL: URL) -> AsyncThrowingStream<ScanResult, Error> {
+    func scan(_ rootURL: URL, ignoredNames: Set<String>) -> AsyncThrowingStream<ScanResult, Error> {
         return AsyncThrowingStream<ScanResult, Error> { continuation in
             Task { [weak self] in
                 guard let self else {
@@ -72,9 +72,11 @@ actor FileScanner {
                 }
 
                 var count = 0
+                let normalizedIgnoredNames = Set(ignoredNames.map { $0.lowercased() })
+
                 for case let url as URL in enumerator {
                     // Process each file with single resourceValues call
-                    if let result = await self.processFile(url: url, enumerator: enumerator) {
+                    if let result = await self.processFile(url: url, enumerator: enumerator, ignoredNames: normalizedIgnoredNames) {
                         continuation.yield(result)
                         count += 1
 
@@ -93,10 +95,18 @@ actor FileScanner {
     // MARK: - Private Helpers
 
     /// Process a single file/directory - returns nil if should skip
-    private func processFile(url: URL, enumerator: FileManager.DirectoryEnumerator) -> ScanResult? {
+    private func processFile(url: URL, enumerator: FileManager.DirectoryEnumerator, ignoredNames: Set<String>) -> ScanResult? {
         do {
             // Single resourceValues call for all info
             let resourceValues = try url.resourceValues(forKeys: resourceKeys)
+            let fileName = (resourceValues.name ?? url.lastPathComponent).lowercased()
+
+            if ignoredNames.contains(fileName) {
+                if resourceValues.isDirectory == true {
+                    enumerator.skipDescendants()
+                }
+                return nil
+            }
 
             // Skip symlinks
             if resourceValues.isSymbolicLink == true {
@@ -105,7 +115,7 @@ actor FileScanner {
 
             // Handle directories
             if resourceValues.isDirectory == true {
-                if shouldSkipDirectory(url: url) {
+                if shouldSkipDirectory(url: url, ignoredNames: ignoredNames) {
                     enumerator.skipDescendants()
                     return nil
                 }
@@ -132,8 +142,13 @@ actor FileScanner {
         }
     }
 
-    private func shouldSkipDirectory(url: URL) -> Bool {
+    private func shouldSkipDirectory(url: URL, ignoredNames: Set<String>) -> Bool {
         let path = url.path
+        let name = url.lastPathComponent.lowercased()
+
+        if ignoredNames.contains(name) {
+            return true
+        }
 
         for fragment in internalPathFragments where path.contains(fragment) {
             return true
