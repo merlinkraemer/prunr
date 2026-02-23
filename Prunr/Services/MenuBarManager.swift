@@ -323,6 +323,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         print("[MenuBarManager] Starting scan for: \(trackedPath.displayName)")
 
         var wasCancelled = false
+        var completedSuccessfully = false
 
         // Create progress callback for updating UI during scan
         // Note: MainActor.run ensures UI updates happen on main thread
@@ -370,6 +371,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             reconcileDrillDownSelection()
             scanProgress = ""
             scanCurrentPath = ""
+            completedSuccessfully = true
 
             // Refresh storage space after scan (ISS-042)
             updateFreeSpace()
@@ -420,7 +422,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         filesScanned = 0
         isAnalyzingChanges = false
         scanStartTime = nil
-        lastAutomaticScanAt = Date()
+        if completedSuccessfully {
+            lastAutomaticScanAt = Date()
+        }
 
         await updatePathSize()
     }

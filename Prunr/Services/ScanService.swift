@@ -21,6 +21,9 @@ actor ScanService {
     /// Tracks whether a scan is currently in progress
     @MainActor var isScanning = false
 
+    /// Actor-local gate to prevent concurrent scan entry
+    private var scanInProgress = false
+
     /// Cancellation token for stopping in-progress scans
     private var isCancelled = false
 
@@ -81,8 +84,8 @@ actor ScanService {
     /// - Returns: The completed Snapshot with all entries stored
     /// - Throws: ScanError if the path is invalid or scanning fails
     func scan(path: String, trackedPathId: UUID, progress: ((ScanProgress) -> Void)?) async throws -> Snapshot {
-        // Check if already scanning
-        if await isScanning {
+        // Actor-local atomic gate (avoids race via MainActor hop)
+        guard !scanInProgress else {
             logger.error("Scan requested while already scanning")
             throw ScanError.unknown(NSError(
                 domain: "ScanService",
@@ -90,15 +93,10 @@ actor ScanService {
                 userInfo: [NSLocalizedDescriptionKey: "A scan is already in progress"]
             ))
         }
+        scanInProgress = true
 
         // Reset cancellation state
         resetCancellation()
-
-        // Store task handle for cancellation
-        let scanTask = Task<Void, Never> {
-            // Scan body
-        }
-        currentScanTask = scanTask
 
         // Set scanning state
         await MainActor.run {
@@ -110,6 +108,8 @@ actor ScanService {
         // Ensure scanning state is reset when done
         defer {
             logger.info("Scan cleanup complete")
+            scanInProgress = false
+            currentScanTask = nil
             Task { @MainActor in
                 isScanning = false
             }
