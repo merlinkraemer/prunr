@@ -10,6 +10,7 @@ struct MenuBarView: View {
     @State private var settingsHover = false
     @State private var isHeaderExpanded = false
     @State private var hasFullDiskAccess = false
+    @State private var hasCompletedFDAOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedFDAOnboarding")
 
     private var hasEnabledScanPath: Bool {
         !SettingsStore.shared.enabledTrackedPaths.isEmpty
@@ -71,7 +72,11 @@ struct MenuBarView: View {
                 if manager.isLoading && !manager.isAutoScanning {
                     manualScanLoadingView
                 } else if manager.noBaseline || manager.lastScanStatusText == "Last update: never" {
-                    firstScanView
+                    if hasCompletedFDAOnboarding {
+                        firstScanView
+                    } else {
+                        fdaOnboardingView
+                    }
                 } else {
                     VStack(spacing: 0) {
                         // Main category view with monitoring path header
@@ -101,6 +106,11 @@ struct MenuBarView: View {
                 withAnimation {
                     isHeaderExpanded = false
                 }
+            }
+        }
+        .onChange(of: hasFullDiskAccess) { _, newValue in
+            if newValue {
+                // Keep onboarding visible until user confirms, but update CTA state
             }
         }
     }
@@ -352,6 +362,48 @@ struct MenuBarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var fdaOnboardingView: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            VStack(spacing: 14) {
+                Image(systemName: hasFullDiskAccess ? "checkmark.seal.fill" : "lock.shield")
+                    .font(.system(size: 34))
+                    .foregroundStyle(hasFullDiskAccess ? .green : .orange)
+
+                Text("Full Disk Access")
+                    .font(.system(size: 18, weight: .semibold))
+
+                Text("Grant Full Disk Access so Prunr can scan system and user locations reliably.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 280)
+
+                if hasFullDiskAccess {
+                    Button("Continue") {
+                        completeFDAOnboarding()
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button("Open Full Disk Access") {
+                        openFullDiskAccessSettings()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("I granted access") {
+                        refreshFullDiskAccess()
+                    }
+                    .buttonStyle(.bordered)
+                    .font(.system(size: 12))
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     // MARK: - Drive Bar Section (Always Visible)
 
     private var driveBarSection: some View {
@@ -424,6 +476,11 @@ struct MenuBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color.orange.opacity(0.12))
+    }
+
+    private func completeFDAOnboarding() {
+        hasCompletedFDAOnboarding = true
+        UserDefaults.standard.set(true, forKey: "hasCompletedFDAOnboarding")
     }
 
     // MARK: - Page Navigation Content
