@@ -9,6 +9,7 @@ struct MenuBarView: View {
     @State private var scanHover = false
     @State private var settingsHover = false
     @State private var isHeaderExpanded = false
+    @State private var hasFullDiskAccess = false
 
     private var hasEnabledScanPath: Bool {
         !SettingsStore.shared.enabledTrackedPaths.isEmpty
@@ -74,6 +75,10 @@ struct MenuBarView: View {
             }
         }
         .frame(width: 320, height: 480)
+        .onAppear { refreshFullDiskAccess() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshFullDiskAccess()
+        }
         .task {
             // Fast: Check if baseline exists (UserDefaults lookup)
             await manager.checkBaseline()
@@ -268,43 +273,71 @@ struct MenuBarView: View {
             Spacer(minLength: 0)
 
             VStack(spacing: 14) {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 36))
-                    .foregroundStyle(.blue)
+                if hasFullDiskAccess {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 36))
+                        .foregroundStyle(.blue)
 
-                Text("Run your first scan")
-                    .font(.system(size: 18, weight: .semibold))
+                    Text("Run your first scan")
+                        .font(.system(size: 18, weight: .semibold))
 
-                Text("Scanning creates a baseline so Prunr can track growth.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 260)
-
-                if hasEnabledScanPath {
-                    Button {
-                        Task {
-                            await manager.loadCategoryGrowthList()
-                        }
-                    } label: {
-                        Text("Run first scan")
-                            .frame(minWidth: 140)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(manager.isLoading || manager.isAutoScanning)
-
-                } else {
-                    Button {
-                        closePopoverAndOpenSettings()
-                    } label: {
-                        Text("Enable scan path")
-                            .frame(minWidth: 160)
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Text("Choose a folder in Settings to start scanning.")
-                        .font(.system(size: 11))
+                    Text("Scanning creates a baseline so Prunr can track growth.")
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 260)
+
+                    if hasEnabledScanPath {
+                        Button {
+                            Task {
+                                await manager.loadCategoryGrowthList()
+                            }
+                        } label: {
+                            Text("Run first scan")
+                                .frame(minWidth: 140)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(manager.isLoading || manager.isAutoScanning)
+                    } else {
+                        Button {
+                            closePopoverAndOpenSettings()
+                        } label: {
+                            Text("Enable scan path")
+                                .frame(minWidth: 160)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Text("Choose a folder in Settings to start scanning.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Image(systemName: "lock.shield")
+                        .font(.system(size: 34))
+                        .foregroundStyle(.orange)
+
+                    Text("Full Disk Access required")
+                        .font(.system(size: 18, weight: .semibold))
+
+                    Text("Prunr needs Full Disk Access to scan system and user locations reliably.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 280)
+
+                    Button {
+                        openFullDiskAccessSettings()
+                    } label: {
+                        Text("Open Full Disk Access")
+                            .frame(minWidth: 180)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("I granted access") {
+                        refreshFullDiskAccess()
+                    }
+                    .buttonStyle(.bordered)
+                    .font(.system(size: 12))
                 }
             }
 
@@ -323,6 +356,17 @@ struct MenuBarView: View {
         )
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    private func refreshFullDiskAccess() {
+        hasFullDiskAccess = FileManager.default.fileExists(atPath: "/Library")
+    }
+
+    private func openFullDiskAccessSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - Page Navigation Content

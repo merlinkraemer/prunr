@@ -12,7 +12,7 @@ struct ScanResultsView: View {
     var comparisonSummary: String?
 
     /// Current snapshot entries for current-only mode display
-    var currentSnapshotEntries: [SnapshotEntry] = []
+    var currentSnapshotEntries: [SnapshotEntryWithPath] = []
 
     /// Whether we're in current-only mode (no historical data)
     var currentOnlyMode: Bool = false

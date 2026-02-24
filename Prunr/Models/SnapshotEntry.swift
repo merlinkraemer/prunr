@@ -9,16 +9,16 @@ struct SnapshotEntry: Codable, Identifiable {
     /// Foreign key to the parent snapshot
     var snapshotId: Int64
 
-    /// The file system path
-    var path: String
+    /// Foreign key to paths table
+    var pathId: Int64
 
     /// Size in bytes
     var sizeBytes: Int64
 
-    init(id: Int64? = nil, snapshotId: Int64, path: String, sizeBytes: Int64) {
+    init(id: Int64? = nil, snapshotId: Int64, pathId: Int64, sizeBytes: Int64) {
         self.id = id
         self.snapshotId = snapshotId
-        self.path = path
+        self.pathId = pathId
         self.sizeBytes = sizeBytes
     }
 }
@@ -33,7 +33,7 @@ extension SnapshotEntry: FetchableRecord, MutablePersistableRecord {
     enum Columns {
         static let id = Column(CodingKeys.id)
         static let snapshotId = Column(CodingKeys.snapshotId)
-        static let path = Column(CodingKeys.path)
+        static let pathId = Column(CodingKeys.pathId)
         static let sizeBytes = Column(CodingKeys.sizeBytes)
     }
 
@@ -61,4 +61,11 @@ extension Snapshot {
     var entries: QueryInterfaceRequest<SnapshotEntry> {
         request(for: Snapshot.entries)
     }
+}
+
+struct SnapshotEntryWithPath: Codable, Identifiable, FetchableRecord {
+    var id: Int64?
+    var snapshotId: Int64
+    var path: String
+    var sizeBytes: Int64
 }
