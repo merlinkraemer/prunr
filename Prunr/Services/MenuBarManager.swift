@@ -100,18 +100,25 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var watchedPathIDs: [UUID] = []
     private var autoScanTask: Task<Void, Never>?
     private var lastAutomaticScanAt: Date?
+    private var lastDetectedChangeAt: Date?
     private var lastAutomaticScanAttemptAt: Date?
     private var isUnderDiskPressure = false
 
     var lastScanStatusText: String {
-        guard let lastScanAt = lastAutomaticScanAt else {
-            return "Last scan: never"
-        }
-
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
+
+        if let lastChangeAt = lastDetectedChangeAt {
+            let relative = formatter.localizedString(for: lastChangeAt, relativeTo: Date())
+            return "Last update: \(relative)"
+        }
+
+        guard let lastScanAt = lastAutomaticScanAt else {
+            return "Last update: never"
+        }
+
         let relative = formatter.localizedString(for: lastScanAt, relativeTo: Date())
-        return "Last scan: \(relative)"
+        return "No changes (scanned \(relative))"
     }
 
     private let normalAutoScanDebounce: TimeInterval = 90
@@ -336,6 +343,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         var wasCancelled = false
         var completedSuccessfully = false
+        var completedSnapshot: Snapshot?
 
         // Create progress callback for updating UI during scan
         // Note: MainActor.run ensures UI updates happen on main thread
@@ -364,7 +372,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         do {
             // First, take a new snapshot
-            _ = try await baselineService.createBaseline(trackedPath: trackedPath, progress: progressCallback)
+            completedSnapshot = try await baselineService.createBaseline(trackedPath: trackedPath, progress: progressCallback)
 
             // Briefly show real 100% only when scan is actually complete.
             scanProgressPercentage = 1.0
@@ -384,6 +392,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             scanProgress = ""
             scanCurrentPath = ""
             completedSuccessfully = true
+
+            let snapshotTimestamp = completedSnapshot?.createdAt ?? Date()
+            if !items.isEmpty {
+                lastDetectedChangeAt = snapshotTimestamp
+            }
 
             // Refresh storage space after scan (ISS-042)
             updateFreeSpace()
@@ -435,7 +448,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isAnalyzingChanges = false
         scanStartTime = nil
         if completedSuccessfully {
-            lastAutomaticScanAt = Date()
+            lastAutomaticScanAt = completedSnapshot?.createdAt ?? Date()
         }
 
         await updatePathSize()
