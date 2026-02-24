@@ -771,12 +771,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         self.usedBytes = total - free
 
         // CRITICAL: Explicitly sync AppKit menu bar (ISS-042)
-        let gb = Double(free) / 1_000_000_000
-        if gb >= 1000 {
-            let tb = gb / 1000
-            updateFreeSpaceDisplay("\(String(format: "%.1f", tb)) TB")
+        if free > 0 {
+            let gb = Double(free) / 1_000_000_000
+            if gb >= 1000 {
+                let tb = gb / 1000
+                updateFreeSpaceDisplay("\(String(format: "%.1f", tb)) TB")
+            } else {
+                updateFreeSpaceDisplay("\(String(format: "%.1f", gb)) GB")
+            }
         } else {
-            updateFreeSpaceDisplay("\(String(format: "%.1f", gb)) GB")
+            updateFreeSpaceDisplay("Prunr")
         }
 
         // Update cache timestamp
