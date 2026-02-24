@@ -5,6 +5,7 @@ import AppKit
 struct SettingsView: View {
     @State private var settingsStore = SettingsStore.shared
     @State private var selectedTab = UserDefaults.standard.integer(forKey: "settingsSelectedTab")
+    @State private var isApplyingScopeChanges = false
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -12,7 +13,7 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gear") }
                 .tag(0)
 
-            ScanScopeSettingsTab(settingsStore: settingsStore)
+            ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
                 .tabItem { Label("Scan Scope", systemImage: "folder") }
                 .tag(1)
 
@@ -21,6 +22,7 @@ struct SettingsView: View {
                 .tag(2)
         }
         .frame(width: 520, height: 480)
+        .disabled(isApplyingScopeChanges)
     }
 }
 
@@ -127,7 +129,7 @@ private struct ScanScopeSettingsTab: View {
     @State private var baselineService = BaselineService.shared
     @State private var scanService = ScanService.shared
     @State private var showingBasePathPicker = false
-    @State private var isApplyingScopeChanges = false
+    @Binding var isApplyingScopeChanges: Bool
     @State private var showApplyConfirmation = false
     @State private var showingAppliedNotice = false
     @State private var applyStatusText = ""
@@ -275,20 +277,42 @@ private struct ScanScopeSettingsTab: View {
                     Color.black.opacity(0.08)
                         .ignoresSafeArea()
 
-                    VStack(spacing: 10) {
-                        ProgressView()
-                            .controlSize(.large)
+                    VStack(spacing: 0) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.blue)
 
-                        Text(applyStatusText.isEmpty ? "Resetting snapshots..." : applyStatusText)
-                            .font(.system(size: 13, weight: .semibold))
+                            Text("Resetting snapshots")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
 
-                        Text("You can run a new scan from the menu bar when this finishes.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 240)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+
+                        Divider()
+
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .controlSize(.large)
+
+                            Text(applyStatusText.isEmpty ? "Cleaning data and preparing for a new scan." : applyStatusText)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 240)
+
+                            Text("Run a new scan from the menu bar to rebuild your baseline.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 240)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
                     }
-                    .padding(20)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
                             .fill(Color(nsColor: .windowBackgroundColor))

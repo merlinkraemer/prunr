@@ -60,7 +60,7 @@ struct MenuBarView: View {
         Group {
             if manager.isLoading && !manager.isAutoScanning {
                 manualScanLoadingView
-            } else if manager.noBaseline {
+            } else if manager.noBaseline || manager.lastScanStatusText == "Last update: never" {
                 firstScanView
             } else {
                 VStack(spacing: 0) {
