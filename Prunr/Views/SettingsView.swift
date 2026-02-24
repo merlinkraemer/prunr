@@ -4,25 +4,51 @@ import AppKit
 /// Settings window for Prunr with tabbed interface
 struct SettingsView: View {
     @State private var settingsStore = SettingsStore.shared
+    @State private var scanService = ScanService.shared
     @State private var selectedTab = UserDefaults.standard.integer(forKey: "settingsSelectedTab")
     @State private var isApplyingScopeChanges = false
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            GeneralSettingsTab(settingsStore: settingsStore)
-                .tabItem { Label("General", systemImage: "gear") }
-                .tag(0)
+        ZStack {
+            VStack(spacing: 0) {
+                if scanService.isScanning {
+                    HStack(spacing: 8) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Text("Scan running — scope and rules are locked until it finishes.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.gray.opacity(0.08))
+                }
 
-            ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
-                .tabItem { Label("Scan Scope", systemImage: "folder") }
-                .tag(1)
+                TabView(selection: $selectedTab) {
+                    GeneralSettingsTab(settingsStore: settingsStore)
+                        .tabItem { Label("General", systemImage: "gear") }
+                        .tag(0)
 
-            ScanRulesSettingsTab(settingsStore: settingsStore)
-                .tabItem { Label("Scan Rules", systemImage: "line.3.horizontal.decrease.circle") }
-                .tag(2)
+                    ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
+                        .tabItem { Label("Scan Scope", systemImage: "folder") }
+                        .tag(1)
+
+                    ScanRulesSettingsTab(settingsStore: settingsStore)
+                        .tabItem { Label("Scan Rules", systemImage: "line.3.horizontal.decrease.circle") }
+                        .tag(2)
+                }
+                .disabled(isApplyingScopeChanges)
+            }
+            .frame(width: 520, height: 480)
+
+            if isApplyingScopeChanges {
+                Color.black.opacity(0.12)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(true)
+            }
         }
-        .frame(width: 520, height: 480)
-        .disabled(isApplyingScopeChanges)
     }
 }
 
@@ -210,7 +236,7 @@ private struct ScanScopeSettingsTab: View {
                     .padding()
                 }
 
-            if settingsStore.hasPendingScopeChanges {
+            if settingsStore.hasPendingScopeChanges && !isApplyingScopeChanges {
                 Divider()
 
                     HStack(spacing: 10) {
@@ -227,17 +253,12 @@ private struct ScanScopeSettingsTab: View {
                             showApplyConfirmation = true
                         } label: {
                             HStack(spacing: 6) {
-                                if isApplyingScopeChanges {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else {
-                                    Image(systemName: "checkmark.circle")
-                                }
+                                Image(systemName: "checkmark.circle")
                                 Text("Apply")
                             }
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(isApplyingScopeChanges || isScanInProgress)
+                        .disabled(isScanInProgress)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -313,11 +334,13 @@ private struct ScanScopeSettingsTab: View {
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
                     }
+                    .frame(maxWidth: 320)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
                             .fill(Color(nsColor: .windowBackgroundColor))
                             .shadow(radius: 8)
                     )
+                    .padding(20)
                 }
             }
         }
