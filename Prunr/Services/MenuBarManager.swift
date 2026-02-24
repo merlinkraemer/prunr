@@ -152,6 +152,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem?.button {
+            button.title = "Prunr"
+            button.image = NSImage(systemSymbolName: "externaldrive.fill", accessibilityDescription: "Prunr")
+            button.imagePosition = .imageLeading
             button.action = #selector(handleButtonClick)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
