@@ -10,6 +10,10 @@ struct MenuBarView: View {
     @State private var settingsHover = false
     @State private var isHeaderExpanded = false
 
+    private var hasEnabledScanPath: Bool {
+        !SettingsStore.shared.enabledTrackedPaths.isEmpty
+    }
+
     private func closePopoverAndOpenSettings() {
         // Close the popover first via manager to ensure state sync
         manager.closePopover()
@@ -277,15 +281,36 @@ struct MenuBarView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 260)
 
-                Button {
-                    Task {
-                        await manager.loadCategoryGrowthList()
+                if hasEnabledScanPath {
+                    Button {
+                        Task {
+                            await manager.loadCategoryGrowthList()
+                        }
+                    } label: {
+                        Text("Run first scan")
+                            .frame(minWidth: 140)
                     }
-                } label: {
-                    Text("Run first scan")
-                        .frame(minWidth: 140)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(manager.isLoading || manager.isAutoScanning)
+
+                    if manager.isAutoScanning {
+                        Text("Preparing baseline in the background...")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button {
+                        closePopoverAndOpenSettings()
+                    } label: {
+                        Text("Enable scan path")
+                            .frame(minWidth: 160)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Text("Choose a folder in Settings to start scanning.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
             }
 
             Spacer(minLength: 0)
