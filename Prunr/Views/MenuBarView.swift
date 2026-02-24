@@ -359,7 +359,12 @@ struct MenuBarView: View {
     }
 
     private func refreshFullDiskAccess() {
-        hasFullDiskAccess = FileManager.default.fileExists(atPath: "/Library")
+        let tccPath = "/Library/Application Support/com.apple.TCC/TCC.db"
+        if FileManager.default.fileExists(atPath: tccPath) {
+            hasFullDiskAccess = FileManager.default.isReadableFile(atPath: tccPath)
+        } else {
+            hasFullDiskAccess = false
+        }
     }
 
     private func openFullDiskAccessSettings() {
