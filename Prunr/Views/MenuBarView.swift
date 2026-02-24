@@ -62,15 +62,21 @@ struct MenuBarView: View {
     }
 
     var body: some View {
-        Group {
-            if manager.isLoading && !manager.isAutoScanning {
-                manualScanLoadingView
-            } else if manager.noBaseline || manager.lastScanStatusText == "Last update: never" {
-                firstScanView
-            } else {
-                VStack(spacing: 0) {
-                    // Main category view with monitoring path header
-                    mainCategoryView
+        VStack(spacing: 0) {
+            if !hasFullDiskAccess {
+                fullDiskAccessBanner
+            }
+
+            Group {
+                if manager.isLoading && !manager.isAutoScanning {
+                    manualScanLoadingView
+                } else if manager.noBaseline || manager.lastScanStatusText == "Last update: never" {
+                    firstScanView
+                } else {
+                    VStack(spacing: 0) {
+                        // Main category view with monitoring path header
+                        mainCategoryView
+                    }
                 }
             }
         }
@@ -359,12 +365,7 @@ struct MenuBarView: View {
     }
 
     private func refreshFullDiskAccess() {
-        let tccPath = "/Library/Application Support/com.apple.TCC/TCC.db"
-        if FileManager.default.fileExists(atPath: tccPath) {
-            hasFullDiskAccess = FileManager.default.isReadableFile(atPath: tccPath)
-        } else {
-            hasFullDiskAccess = false
-        }
+        hasFullDiskAccess = checkFullDiskAccess()
     }
 
     private func openFullDiskAccessSettings() {
@@ -372,6 +373,57 @@ struct MenuBarView: View {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    private func checkFullDiskAccess() -> Bool {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let candidates = [
+            home.appendingPathComponent("Library/Mail", isDirectory: true).path,
+            home.appendingPathComponent("Library/Messages", isDirectory: true).path,
+            home.appendingPathComponent("Library/Safari", isDirectory: true).path
+        ]
+
+        for path in candidates {
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+                return canReadDirectory(path)
+            }
+        }
+
+        return false
+    }
+
+    private func canReadDirectory(_ path: String) -> Bool {
+        do {
+            _ = try FileManager.default.contentsOfDirectory(atPath: path)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private var fullDiskAccessBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+
+            Text("Full Disk Access required")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.primary)
+
+            Spacer()
+
+            Button("Open") {
+                openFullDiskAccessSettings()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
     }
 
     // MARK: - Page Navigation Content
