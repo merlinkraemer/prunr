@@ -125,6 +125,7 @@ private struct GeneralSettingsTab: View {
 private struct ScanScopeSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
     @State private var baselineService = BaselineService.shared
+    @State private var scanService = ScanService.shared
     @State private var showingBasePathPicker = false
     @State private var isApplyingScopeChanges = false
     @State private var showApplyConfirmation = false
@@ -134,16 +135,26 @@ private struct ScanScopeSettingsTab: View {
     @State private var applyFilesScanned = 0
     @State private var applyStatusText = ""
 
+    private var isScanInProgress: Bool {
+        scanService.isScanning
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        GroupBox("Primary Scan Folder") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "externaldrive.fill")
-                                        .foregroundStyle(.blue)
+                    GroupBox("Primary Scan Folder") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if isScanInProgress {
+                                Label("Scan is running. Scope controls are temporarily locked.", systemImage: "lock.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            HStack(spacing: 10) {
+                                Image(systemName: "externaldrive.fill")
+                                    .foregroundStyle(.blue)
 
                                     Text(settingsStore.mainBasePath)
                                         .font(.system(size: 12, design: .monospaced))
@@ -156,6 +167,7 @@ private struct ScanScopeSettingsTab: View {
                                         showingBasePathPicker = true
                                     }
                                     .buttonStyle(.bordered)
+                                    .disabled(isScanInProgress)
                                 }
                             }
                             .padding(.top, 4)
@@ -189,6 +201,7 @@ private struct ScanScopeSettingsTab: View {
                                             }
                                         }
                                         .toggleStyle(.switch)
+                                        .disabled(isScanInProgress)
                                     }
                                 }
                             }
@@ -198,8 +211,8 @@ private struct ScanScopeSettingsTab: View {
                     .padding()
                 }
 
-                if settingsStore.hasPendingScopeChanges {
-                    Divider()
+            if settingsStore.hasPendingScopeChanges {
+                Divider()
 
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -225,11 +238,24 @@ private struct ScanScopeSettingsTab: View {
                             }
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(isApplyingScopeChanges)
+                        .disabled(isApplyingScopeChanges || isScanInProgress)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .background(Color.orange.opacity(0.08))
+                }
+
+                if settingsStore.hasPendingScopeChanges && isScanInProgress {
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(.secondary)
+                        Text("Apply is available when the current scan finishes.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 }
 
                 if showingAppliedNotice {
@@ -359,8 +385,13 @@ private struct ScanScopeSettingsTab: View {
 
 private struct ScanRulesSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
+    @State private var scanService = ScanService.shared
     @State private var newBoundary = ""
     @State private var newIgnoreName = ""
+
+    private var isScanInProgress: Bool {
+        scanService.isScanning
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -369,6 +400,12 @@ private struct ScanRulesSettingsTab: View {
                     Text("Use rules to control what gets scanned: stop expanding large folders, or ignore names entirely.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    if isScanInProgress {
+                        Label("Rules are locked while a scan is running.", systemImage: "lock.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Stop Expanding Folders") {
@@ -453,6 +490,7 @@ private struct ScanRulesSettingsTab: View {
                 }
             }
             .listStyle(.inset)
+            .disabled(isScanInProgress)
         }
     }
 }

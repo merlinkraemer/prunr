@@ -111,6 +111,23 @@ struct MenuBarView: View {
                 .foregroundStyle(.red)
                 .accessibilityLabel("Stop scan")
                 .accessibilityHint("Cancel the current scan operation")
+
+                Button {
+                    closePopoverAndOpenSettings()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .background(
+                            Circle()
+                                .fill(Color.gray.opacity(0.10))
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open settings")
+                .accessibilityHint("Open settings while scan continues")
+                .help("Settings (scan continues)")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
