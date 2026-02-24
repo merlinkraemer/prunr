@@ -293,11 +293,6 @@ struct MenuBarView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(manager.isLoading || manager.isAutoScanning)
 
-                    if manager.isAutoScanning {
-                        Text("Preparing baseline in the background...")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
                 } else {
                     Button {
                         closePopoverAndOpenSettings()

@@ -29,9 +29,6 @@ struct PrunrMenuBar: App {
                     if let window = NSApplication.shared.windows.first {
                         window.setIsVisible(false)
                     }
-                    
-                    // Auto-take initial snapshot if none exist (zero-friction onboarding)
-                    await menuBarManager.autoInitializeIfNeeded()
                 }
         }
         .windowStyle(.hiddenTitleBar)
