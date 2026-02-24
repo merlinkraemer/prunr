@@ -90,11 +90,6 @@ actor BaselineService {
 
         print("[BaselineService] Created snapshot ID: \(snapshotId)")
         
-        // Run cleanup in background so UI does not stall at 99%.
-        Task.detached(priority: .utility) {
-            await DatabaseCleanupService.shared.performAutoCleanup()
-        }
-
         return snapshot
     }
 

@@ -130,11 +130,7 @@ private struct ScanScopeSettingsTab: View {
     @State private var isApplyingScopeChanges = false
     @State private var showApplyConfirmation = false
     @State private var showingAppliedNotice = false
-    @State private var applyProgress: Double = 0
-    @State private var applyCurrentPath = ""
-    @State private var applyFilesScanned = 0
     @State private var applyStatusText = ""
-    @State private var applyIsAnalyzing = false
 
     private var isScanInProgress: Bool {
         scanService.isScanning
@@ -275,98 +271,30 @@ private struct ScanScopeSettingsTab: View {
             .disabled(isApplyingScopeChanges)
 
             if isApplyingScopeChanges {
-                VStack(spacing: 0) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.blue)
+                ZStack {
+                    Color.black.opacity(0.08)
+                        .ignoresSafeArea()
 
-                        Text(applyIsAnalyzing ? "Analyzing changes" : "Scanning files")
+                    VStack(spacing: 10) {
+                        ProgressView()
+                            .controlSize(.large)
+
+                        Text(applyStatusText.isEmpty ? "Resetting snapshots..." : applyStatusText)
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.primary)
 
-                        Spacer()
+                        Text("You can run a new scan from the menu bar when this finishes.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 240)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-
-                    Divider()
-
-                    Spacer(minLength: 0)
-
-                    VStack(spacing: 18) {
-                        if applyIsAnalyzing {
-                            VStack(spacing: 10) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(.green)
-                                    Text("Scan complete")
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundStyle(.primary)
-                                }
-
-                                HStack(spacing: 8) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("Analyzing file changes...")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        } else if applyProgress > 0 {
-                            VStack(spacing: 10) {
-                                Text("\(Int(max(0, min(1, applyProgress)) * 100))%")
-                                    .font(.system(size: 36, weight: .semibold, design: .rounded))
-                                    .foregroundStyle(.primary)
-
-                                ProgressView(value: max(0, min(1, applyProgress)), total: 1.0)
-                                    .progressViewStyle(.linear)
-                                    .tint(.blue)
-                            }
-                        } else {
-                            VStack(spacing: 10) {
-                                ProgressView()
-                                    .controlSize(.large)
-                                Text("Preparing scan...")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        if applyFilesScanned > 0 {
-                            Text("\(applyFilesScanned) files scanned")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if !applyCurrentPath.isEmpty && !applyIsAnalyzing {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Current path")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(.tertiary)
-                                    .textCase(.uppercase)
-
-                                HStack(spacing: 8) {
-                                    Circle()
-                                        .fill(Color.blue)
-                                        .frame(width: 6, height: 6)
-
-                                    Text(applyCurrentPath)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(minLength: 0)
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(nsColor: .windowBackgroundColor))
+                            .shadow(radius: 8)
+                    )
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .ignoresSafeArea()
             }
         }
         .fileImporter(
@@ -385,44 +313,13 @@ private struct ScanScopeSettingsTab: View {
         ) {
             Button("Apply and Reset Snapshots", role: .destructive) {
                 isApplyingScopeChanges = true
-                applyProgress = 0
-                applyCurrentPath = ""
-                applyFilesScanned = 0
                 applyStatusText = "Resetting old snapshots..."
-                applyIsAnalyzing = false
 
                 Task {
                     do {
                         try await baselineService.resetBaseline()
-
-                        if let trackedPath = SettingsStore.shared.enabledTrackedPaths.first {
-                            applyStatusText = "Scanning files"
-
-                            let progressCallback: (ScanService.ScanProgress) -> Void = { progress in
-                                Task { @MainActor in
-                                    applyFilesScanned = progress.foldersScanned
-                                    applyProgress = max(0, min(1, progress.percentage))
-
-                                    let rootPath = trackedPath.url.path
-                                    var displayPath = progress.currentPath
-                                    if displayPath.hasPrefix(rootPath) {
-                                        let relativePath = String(displayPath.dropFirst(rootPath.count))
-                                            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                                        displayPath = relativePath.isEmpty ? "." : "./\(relativePath)"
-                                    }
-                                    applyCurrentPath = displayPath
-                                }
-                            }
-
-                            _ = try await baselineService.createBaseline(
-                                trackedPath: trackedPath,
-                                progress: progressCallback
-                            )
-                            applyProgress = 1.0
-                            applyIsAnalyzing = true
-                            applyStatusText = "Analyzing changes"
-                            _ = try await baselineService.getCategoryGrowthList(trackedPath: trackedPath)
-                        }
+                        applyStatusText = "Cleaning up..."
+                        await DatabaseCleanupService.shared.performAutoCleanup()
 
                         settingsStore.clearPendingScopeChanges()
                         showingAppliedNotice = true

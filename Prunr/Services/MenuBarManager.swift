@@ -71,6 +71,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var isAnalyzingChanges: Bool = false {
         didSet { updateMenuBarActivityEffect() }
     }
+    var isCleaningUp: Bool = false {
+        didSet { updateMenuBarActivityEffect() }
+    }
     // Percentage progress (0.0-1.0) for progress bar (ISS-033)
     var scanProgressPercentage: Double = 0.0
 
@@ -440,6 +443,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
         }
 
+        if completedSnapshot != nil && !wasCancelled {
+            isCleaningUp = true
+            scanProgress = "Cleaning up..."
+            scanCurrentPath = ""
+            scanProgressPercentage = 1.0
+            await DatabaseCleanupService.shared.performAutoCleanup()
+            isCleaningUp = false
+        }
+
         isLoading = false
         scanProgress = ""
         scanCurrentPath = ""
@@ -782,7 +794,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private var shouldPulseActivity: Bool {
-        isLoading || isAutoScanning || isAnalyzingChanges
+        isLoading || isAutoScanning || isAnalyzingChanges || isCleaningUp
     }
 
     private func updateMenuBarActivityEffect() {

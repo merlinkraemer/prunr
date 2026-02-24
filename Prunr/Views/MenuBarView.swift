@@ -60,6 +60,8 @@ struct MenuBarView: View {
         Group {
             if manager.isLoading && !manager.isAutoScanning {
                 manualScanLoadingView
+            } else if manager.noBaseline {
+                firstScanView
             } else {
                 VStack(spacing: 0) {
                     // Main category view with monitoring path header
@@ -97,7 +99,7 @@ struct MenuBarView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.blue)
 
-                Text(manager.isAnalyzingChanges ? "Analyzing changes" : "Scanning files")
+                Text(manager.isCleaningUp ? "Cleaning up" : (manager.isAnalyzingChanges ? "Analyzing changes" : "Scanning files"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
 
@@ -137,7 +139,26 @@ struct MenuBarView: View {
             Spacer(minLength: 0)
 
             VStack(spacing: 18) {
-                if manager.isAnalyzingChanges {
+                if manager.isCleaningUp {
+                    VStack(spacing: 10) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.blue)
+                            Text("Cleaning up")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.primary)
+                        }
+
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Reclaiming database space...")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else if manager.isAnalyzingChanges {
                     VStack(spacing: 10) {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill")
@@ -236,6 +257,40 @@ struct MenuBarView: View {
             // Footer buttons (no separator)
             footerButtons
         }
+    }
+
+    private var firstScanView: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            VStack(spacing: 14) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.blue)
+
+                Text("Run your first scan")
+                    .font(.system(size: 18, weight: .semibold))
+
+                Text("Scanning creates a baseline so Prunr can track growth.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 260)
+
+                Button {
+                    Task {
+                        await manager.loadCategoryGrowthList()
+                    }
+                } label: {
+                    Text("Run first scan")
+                        .frame(minWidth: 140)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Drive Bar Section (Always Visible)
