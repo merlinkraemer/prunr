@@ -134,6 +134,7 @@ private struct ScanScopeSettingsTab: View {
     @State private var applyCurrentPath = ""
     @State private var applyFilesScanned = 0
     @State private var applyStatusText = ""
+    @State private var applyIsAnalyzing = false
 
     private var isScanInProgress: Bool {
         scanService.isScanning
@@ -274,40 +275,98 @@ private struct ScanScopeSettingsTab: View {
             .disabled(isApplyingScopeChanges)
 
             if isApplyingScopeChanges {
-                ZStack {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .ignoresSafeArea()
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.blue)
 
-                    VStack(spacing: 12) {
-                        ProgressView(value: max(0, min(1, applyProgress)), total: 1)
-                            .frame(width: 260)
+                        Text(applyIsAnalyzing ? "Analyzing changes" : "Scanning files")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.primary)
 
-                        Text(applyStatusText.isEmpty ? "Applying scan scope..." : applyStatusText)
-                            .font(.system(size: 13, weight: .medium))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
 
-                        if !applyCurrentPath.isEmpty {
-                            Text(applyCurrentPath)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: 300)
+                    Divider()
+
+                    Spacer(minLength: 0)
+
+                    VStack(spacing: 18) {
+                        if applyIsAnalyzing {
+                            VStack(spacing: 10) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.green)
+                                    Text("Scan complete")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                }
+
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Analyzing file changes...")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        } else if applyProgress > 0 {
+                            VStack(spacing: 10) {
+                                Text("\(Int(max(0, min(1, applyProgress)) * 100))%")
+                                    .font(.system(size: 36, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.primary)
+
+                                ProgressView(value: max(0, min(1, applyProgress)), total: 1.0)
+                                    .progressViewStyle(.linear)
+                                    .tint(.blue)
+                            }
+                        } else {
+                            VStack(spacing: 10) {
+                                ProgressView()
+                                    .controlSize(.large)
+                                Text("Preparing scan...")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
 
                         if applyFilesScanned > 0 {
                             Text("\(applyFilesScanned) files scanned")
-                                .font(.caption)
+                                .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
+
+                        if !applyCurrentPath.isEmpty && !applyIsAnalyzing {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Current path")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.tertiary)
+                                    .textCase(.uppercase)
+
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(Color.blue)
+                                        .frame(width: 6, height: 6)
+
+                                    Text(applyCurrentPath)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                            }
+                        }
                     }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(NSColor.windowBackgroundColor))
-                            .shadow(radius: 10)
-                    )
+
+                    Spacer(minLength: 0)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .ignoresSafeArea()
             }
         }
         .fileImporter(
@@ -330,13 +389,14 @@ private struct ScanScopeSettingsTab: View {
                 applyCurrentPath = ""
                 applyFilesScanned = 0
                 applyStatusText = "Resetting old snapshots..."
+                applyIsAnalyzing = false
 
                 Task {
                     do {
                         try await baselineService.resetBaseline()
 
                         if let trackedPath = SettingsStore.shared.enabledTrackedPaths.first {
-                            applyStatusText = "Scanning new scope..."
+                            applyStatusText = "Scanning files"
 
                             let progressCallback: (ScanService.ScanProgress) -> Void = { progress in
                                 Task { @MainActor in
@@ -359,6 +419,9 @@ private struct ScanScopeSettingsTab: View {
                                 progress: progressCallback
                             )
                             applyProgress = 1.0
+                            applyIsAnalyzing = true
+                            applyStatusText = "Analyzing changes"
+                            _ = try await baselineService.getCategoryGrowthList(trackedPath: trackedPath)
                         }
 
                         settingsStore.clearPendingScopeChanges()
