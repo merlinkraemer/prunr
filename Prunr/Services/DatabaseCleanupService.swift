@@ -11,7 +11,7 @@ actor DatabaseCleanupService {
     private static let maxSnapshotsPerPath = 2
     private static let vacuumInterval: TimeInterval = 12 * 60 * 60
     private static let vacuumTimestampKey = "databaseLastVacuumAt"
-    private static let checkpointInterval: TimeInterval = 10 * 60
+    private static let checkpointInterval: TimeInterval = 60
     private static let checkpointTimestampKey = "databaseLastCheckpointAt"
 
     // MARK: - Properties

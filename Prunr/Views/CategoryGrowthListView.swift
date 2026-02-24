@@ -20,7 +20,7 @@ struct CategoryGrowthListView: View {
     /// Forced category from external navigation (MenuBarView drill-down)
     var forcedCategory: CategoryGrowthItem? = nil
 
-    private let maxItemsPerExpandedFolder = 200
+    private let maxItemsPerExpandedFolder = 50
 
     /// Computed selected category - uses forced category if provided, otherwise internal selection
     private var computedSelectedCategory: CategoryGrowthItem? {
@@ -413,6 +413,7 @@ private struct FolderHeaderRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(folderPath)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoverState = hovering
