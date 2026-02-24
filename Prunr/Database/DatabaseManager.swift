@@ -117,6 +117,50 @@ final class DatabaseManager {
                 """)
         }
 
+        // Migration v7: Deduplicate paths into separate table
+        migrator.registerMigration("v7_path_dedup") { db in
+            let columns = try db.columns(in: "snapshotEntry")
+            let hasPathColumn = columns.contains { $0.name.lowercased() == "path" }
+            if !hasPathColumn {
+                return
+            }
+
+            try db.create(table: "paths", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("path", .text).notNull().unique()
+            }
+
+            try db.execute(sql: "INSERT OR IGNORE INTO paths(path) SELECT DISTINCT path FROM snapshotEntry")
+
+            try db.create(table: "snapshotEntry_new") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("snapshotId", .integer)
+                    .notNull()
+                    .references("snapshot", onDelete: .cascade)
+                t.column("pathId", .integer)
+                    .notNull()
+                    .references("paths", onDelete: .cascade)
+                t.column("sizeBytes", .integer).notNull()
+            }
+
+            try db.execute(sql: """
+                INSERT INTO snapshotEntry_new (id, snapshotId, pathId, sizeBytes)
+                SELECT se.id, se.snapshotId, p.id, se.sizeBytes
+                FROM snapshotEntry se
+                JOIN paths p ON p.path = se.path
+                """)
+
+            try db.execute(sql: "DROP TABLE snapshotEntry")
+            try db.execute(sql: "ALTER TABLE snapshotEntry_new RENAME TO snapshotEntry")
+
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_snapshotEntry_snapshotId_path")
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_snapshotEntry_snapshotId_path_nocase")
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_snapshotEntry_path")
+
+            try db.create(index: "idx_snapshotEntry_snapshotId", on: "snapshotEntry", columns: ["snapshotId"])
+            try db.create(index: "idx_snapshotEntry_snapshotId_pathId", on: "snapshotEntry", columns: ["snapshotId", "pathId"])
+        }
+
         try migrator.migrate(dbPool)
     }
 }
@@ -152,7 +196,8 @@ extension DatabaseManager {
         }
 
         try await dbPool.write { db in
-            var entry = SnapshotEntry(snapshotId: snapshotId, path: path, sizeBytes: sizeBytes)
+            let pathId = try getOrCreatePathId(path: path, db: db)
+            var entry = SnapshotEntry(snapshotId: snapshotId, pathId: pathId, sizeBytes: sizeBytes)
             try entry.insert(db)
         }
     }
@@ -174,18 +219,25 @@ extension DatabaseManager {
         // Use a single transaction for all batches (much faster)
         // Note: We can't call Task.yield() inside the database write block
         try await dbPool.write { db in
-            // Use prepared statement to avoid repeated SQL parsing
             let statement = try db.makeStatement(
-                sql: "INSERT INTO snapshotEntry (snapshotId, path, sizeBytes) VALUES (?, ?, ?)"
+                sql: "INSERT INTO snapshotEntry (snapshotId, pathId, sizeBytes) VALUES (?, ?, ?)"
             )
 
             for startIndex in stride(from: 0, to: entries.count, by: batchSize) {
                 let endIndex = min(startIndex + batchSize, entries.count)
                 let batch = entries[startIndex..<endIndex]
 
-                // Execute prepared statement for each entry
+                let uniquePaths = Set(batch.map { $0.path })
+                var pathIdByPath = try fetchPathIds(for: Array(uniquePaths), db: db)
+
                 for scanResult in batch {
-                    try statement.execute(arguments: [snapshotId, scanResult.path, scanResult.sizeBytes])
+                    if let pathId = pathIdByPath[scanResult.path] {
+                        try statement.execute(arguments: [snapshotId, pathId, scanResult.sizeBytes])
+                    } else {
+                        let pathId = try getOrCreatePathId(path: scanResult.path, db: db)
+                        pathIdByPath[scanResult.path] = pathId
+                        try statement.execute(arguments: [snapshotId, pathId, scanResult.sizeBytes])
+                    }
                 }
             }
         }
@@ -226,15 +278,19 @@ extension DatabaseManager {
     /// Fetches all entries for a specific snapshot ordered by path
     /// - Parameter snapshotId: The snapshot ID to fetch entries for
     /// - Returns: Array of SnapshotEntry values ordered by path ASC
-    func fetchEntries(for snapshotId: Int64) async throws -> [SnapshotEntry] {
+    func fetchEntries(for snapshotId: Int64) async throws -> [SnapshotEntryWithPath] {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
         return try await dbPool.read { db in
-            try SnapshotEntry.filter(SnapshotEntry.Columns.snapshotId == snapshotId)
-                .order(SnapshotEntry.Columns.path.asc)
-                .fetchAll(db)
+            try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
+                FROM snapshotEntry se
+                JOIN paths p ON p.id = se.pathId
+                WHERE se.snapshotId = ?
+                ORDER BY p.path ASC
+                """, arguments: [snapshotId])
         }
     }
 
@@ -259,6 +315,36 @@ extension DatabaseManager {
         try await dbPool.write { db in
             try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
         }
+    }
+
+    private func getOrCreatePathId(path: String, db: Database) throws -> Int64 {
+        try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [path])
+        if let row = try Row.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [path]),
+           let id: Int64 = row["id"] {
+            return id
+        }
+        throw DatabaseError.notInitialized
+    }
+
+    private func fetchPathIds(for paths: [String], db: Database) throws -> [String: Int64] {
+        guard !paths.isEmpty else { return [:] }
+
+        for path in paths {
+            try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [path])
+        }
+
+        let placeholders = Array(repeating: "?", count: paths.count).joined(separator: ", ")
+        let sql = "SELECT id, path FROM paths WHERE path IN (\(placeholders))"
+        let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(paths))
+
+        var result: [String: Int64] = [:]
+        for row in rows {
+            if let path: String = row["path"],
+               let id: Int64 = row["id"] {
+                result[path] = id
+            }
+        }
+        return result
     }
 }
 
@@ -294,27 +380,30 @@ extension DatabaseManager {
             let query = """
             WITH combined AS (
                 SELECT
-                    COALESCE(afterEntry.path, beforeEntry.path) as path,
+                    COALESCE(pAfter.path, pBefore.path) as path,
                     beforeEntry.sizeBytes as oldSizeBytes,
                     afterEntry.sizeBytes as newSizeBytes,
                     COALESCE(afterEntry.sizeBytes, 0) - COALESCE(beforeEntry.sizeBytes, 0) as changeBytes
-                FROM snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_path_nocase
-                LEFT JOIN snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_path_nocase
-                    ON beforeEntry.path = afterEntry.path COLLATE NOCASE
+                FROM snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
+                JOIN paths pBefore ON pBefore.id = beforeEntry.pathId
+                LEFT JOIN snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
+                    ON beforeEntry.pathId = afterEntry.pathId
                     AND afterEntry.snapshotId = ?
+                LEFT JOIN paths pAfter ON pAfter.id = afterEntry.pathId
                 WHERE beforeEntry.snapshotId = ?
                 UNION ALL
                 SELECT
-                    afterEntry.path as path,
+                    pAfter.path as path,
                     beforeEntry.sizeBytes as oldSizeBytes,
                     afterEntry.sizeBytes as newSizeBytes,
                     COALESCE(afterEntry.sizeBytes, 0) - COALESCE(beforeEntry.sizeBytes, 0) as changeBytes
-                FROM snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_path_nocase
-                LEFT JOIN snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_path_nocase
-                    ON afterEntry.path = beforeEntry.path COLLATE NOCASE
+                FROM snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
+                JOIN paths pAfter ON pAfter.id = afterEntry.pathId
+                LEFT JOIN snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
+                    ON afterEntry.pathId = beforeEntry.pathId
                     AND beforeEntry.snapshotId = ?
                 WHERE afterEntry.snapshotId = ?
-                    AND beforeEntry.path IS NULL
+                    AND beforeEntry.pathId IS NULL
             )
             SELECT * FROM combined
             WHERE changeBytes != 0

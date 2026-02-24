@@ -44,7 +44,7 @@ final class MainViewModel {
     }
 
     /// Current snapshot entries for current-only mode display
-    var currentSnapshotEntries: [SnapshotEntry] = []
+    var currentSnapshotEntries: [SnapshotEntryWithPath] = []
 
     // MARK: - Private Properties
 
