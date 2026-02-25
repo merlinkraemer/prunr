@@ -72,8 +72,12 @@ struct MenuBarView: View {
                 if manager.isLoading && !manager.isAutoScanning {
                     manualScanLoadingView
                 } else if manager.noBaseline || manager.lastScanStatusText == "Last update: never" {
-                    if hasCompletedFDAOnboarding {
-                        firstScanView
+                    if hasFullDiskAccess {
+                        if hasCompletedFDAOnboarding {
+                            firstScanView
+                        } else {
+                            fdaOnboardingView
+                        }
                     } else {
                         fdaOnboardingView
                     }
@@ -109,8 +113,9 @@ struct MenuBarView: View {
             }
         }
         .onChange(of: hasFullDiskAccess) { _, newValue in
-            if newValue {
-                // Keep onboarding visible until user confirms, but update CTA state
+            if !newValue && hasCompletedFDAOnboarding {
+                hasCompletedFDAOnboarding = false
+                UserDefaults.standard.set(false, forKey: "hasCompletedFDAOnboarding")
             }
         }
     }
@@ -349,11 +354,12 @@ struct MenuBarView: View {
                     }
                     .buttonStyle(.borderedProminent)
 
-                    Button("I granted access") {
-                        refreshFullDiskAccess()
-                    }
-                    .buttonStyle(.bordered)
-                    .font(.system(size: 12))
+                    Text("Toggle the switch next to Prunr in Settings. If Prunr is not listed, click the \"+\" button to add it from your Applications folder.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 280)
+                        .padding(.top, 4)
                 }
             }
 
@@ -391,11 +397,12 @@ struct MenuBarView: View {
                     }
                     .buttonStyle(.borderedProminent)
 
-                    Button("I granted access") {
-                        refreshFullDiskAccess()
-                    }
-                    .buttonStyle(.bordered)
-                    .font(.system(size: 12))
+                    Text("Toggle the switch next to Prunr in Settings. If Prunr is not listed, click the \"+\" button to add it from your Applications folder.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 280)
+                        .padding(.top, 4)
                 }
             }
 
