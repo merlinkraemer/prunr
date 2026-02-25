@@ -175,21 +175,18 @@ private struct GeneralSettingsTab: View {
     }
 
     private func refreshFullDiskAccess() {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let candidates = [
-            home.appendingPathComponent("Library/Mail", isDirectory: true).path,
-            home.appendingPathComponent("Library/Messages", isDirectory: true).path,
-            home.appendingPathComponent("Library/Safari", isDirectory: true).path
-        ]
-        
-        for path in candidates {
-            var isDirectory: ObjCBool = false
-            if fm.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
-                do { _ = try fm.contentsOfDirectory(atPath: path); hasFullDiskAccess = true; return } catch {}
-            }
+        let tccPath = "/Library/Application Support/com.apple.TCC/TCC.db"
+        guard FileManager.default.fileExists(atPath: tccPath) else {
+            hasFullDiskAccess = false
+            return
         }
-        hasFullDiskAccess = false
+        
+        // Using POSIX access test is the most reliable way to check true readability
+        if access(tccPath, R_OK) == 0 {
+            hasFullDiskAccess = true
+        } else {
+            hasFullDiskAccess = false
+        }
     }
 
     private func openFullDiskAccessSettings() {

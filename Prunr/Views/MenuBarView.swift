@@ -428,31 +428,16 @@ struct MenuBarView: View {
     }
 
     private func checkFullDiskAccess() -> Bool {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let candidates = [
-            home.appendingPathComponent("Library/Mail", isDirectory: true).path,
-            home.appendingPathComponent("Library/Messages", isDirectory: true).path,
-            home.appendingPathComponent("Library/Safari", isDirectory: true).path
-        ]
-
-        for path in candidates {
-            var isDirectory: ObjCBool = false
-            if fm.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
-                return canReadDirectory(path)
-            }
-        }
-
-        return false
-    }
-
-    private func canReadDirectory(_ path: String) -> Bool {
-        do {
-            _ = try FileManager.default.contentsOfDirectory(atPath: path)
-            return true
-        } catch {
+        let tccPath = "/Library/Application Support/com.apple.TCC/TCC.db"
+        guard FileManager.default.fileExists(atPath: tccPath) else {
             return false
         }
+        
+        // Using POSIX access test is the most reliable way to check true readability
+        if access(tccPath, R_OK) == 0 {
+            return true
+        }
+        return false
     }
 
     private var fullDiskAccessBanner: some View {
