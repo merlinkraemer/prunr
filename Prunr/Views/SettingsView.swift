@@ -175,16 +175,14 @@ private struct GeneralSettingsTab: View {
     }
 
     private func refreshFullDiskAccess() {
-        let tccPath = "/Library/Application Support/com.apple.TCC/TCC.db"
-        guard FileManager.default.fileExists(atPath: tccPath) else {
-            hasFullDiskAccess = false
-            return
-        }
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let testPath = home.appendingPathComponent("Library/Safari").path
         
-        // Using POSIX access test is the most reliable way to check true readability
-        if access(tccPath, R_OK) == 0 {
+        do {
+            let _ = try fm.contentsOfDirectory(atPath: testPath)
             hasFullDiskAccess = true
-        } else {
+        } catch {
             hasFullDiskAccess = false
         }
     }

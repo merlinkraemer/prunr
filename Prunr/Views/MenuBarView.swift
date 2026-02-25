@@ -427,16 +427,19 @@ struct MenuBarView: View {
     }
 
     private func checkFullDiskAccess() -> Bool {
-        let tccPath = "/Library/Application Support/com.apple.TCC/TCC.db"
-        guard FileManager.default.fileExists(atPath: tccPath) else {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        
+        // Checking Safari folder contents is often the most reliable FDA test
+        // as TCC.db can sometimes be read if terminal inheritance is active
+        let testPath = home.appendingPathComponent("Library/Safari").path
+        
+        do {
+            let _ = try fm.contentsOfDirectory(atPath: testPath)
+            return true
+        } catch {
             return false
         }
-        
-        // Using POSIX access test is the most reliable way to check true readability
-        if access(tccPath, R_OK) == 0 {
-            return true
-        }
-        return false
     }
 
     private var fullDiskAccessBanner: some View {
