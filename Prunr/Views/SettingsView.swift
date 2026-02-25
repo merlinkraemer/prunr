@@ -60,6 +60,7 @@ private struct GeneralSettingsTab: View {
     @State private var isResetting = false
     @State private var showDeleteSnapshotsConfirmation = false
     @State private var showingSavedNotice = false
+    @State private var hasFullDiskAccess = false
 
     private var appVersionText: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
@@ -73,6 +74,26 @@ private struct GeneralSettingsTab: View {
                 Section("Startup") {
                     Toggle("Launch Prunr at Login", isOn: $settingsStore.launchAtLogin)
                         .toggleStyle(.switch)
+                }
+
+                Section("Permissions") {
+                    HStack {
+                        Image(systemName: hasFullDiskAccess ? "checkmark.circle.fill" : "shield.fill")
+                            .foregroundStyle(hasFullDiskAccess ? .green : .orange)
+                        
+                        Text(hasFullDiskAccess ? "Full Disk Access granted" : "Full Disk Access required")
+                    }
+                    
+                    if !hasFullDiskAccess {
+                        Button("Open Full Disk Access") {
+                            openFullDiskAccessSettings()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    
+                    Text("Required to scan system and user locations accurately.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Data") {
@@ -144,6 +165,36 @@ private struct GeneralSettingsTab: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes all saved history and cannot be undone.")
+        }
+        .onAppear {
+            refreshFullDiskAccess()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshFullDiskAccess()
+        }
+    }
+
+    private func refreshFullDiskAccess() {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let candidates = [
+            home.appendingPathComponent("Library/Mail", isDirectory: true).path,
+            home.appendingPathComponent("Library/Messages", isDirectory: true).path,
+            home.appendingPathComponent("Library/Safari", isDirectory: true).path
+        ]
+        
+        for path in candidates {
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+                do { _ = try fm.contentsOfDirectory(atPath: path); hasFullDiskAccess = true; return } catch {}
+            }
+        }
+        hasFullDiskAccess = false
+    }
+
+    private func openFullDiskAccessSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
         }
     }
 }
