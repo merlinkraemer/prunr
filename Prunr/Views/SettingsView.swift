@@ -175,12 +175,9 @@ private struct GeneralSettingsTab: View {
     }
 
     private func refreshFullDiskAccess() {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let testPath = home.appendingPathComponent("Library/Safari").path
-        
+        let tccPath = "/Library/Application Support/com.apple.TCC"
         do {
-            let _ = try fm.contentsOfDirectory(atPath: testPath)
+            _ = try FileManager.default.contentsOfDirectory(atPath: tccPath)
             hasFullDiskAccess = true
         } catch {
             hasFullDiskAccess = false

@@ -427,15 +427,9 @@ struct MenuBarView: View {
     }
 
     private func checkFullDiskAccess() -> Bool {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        
-        // Checking Safari folder contents is often the most reliable FDA test
-        // as TCC.db can sometimes be read if terminal inheritance is active
-        let testPath = home.appendingPathComponent("Library/Safari").path
-        
+        let tccPath = "/Library/Application Support/com.apple.TCC"
         do {
-            let _ = try fm.contentsOfDirectory(atPath: testPath)
+            _ = try FileManager.default.contentsOfDirectory(atPath: tccPath)
             return true
         } catch {
             return false
