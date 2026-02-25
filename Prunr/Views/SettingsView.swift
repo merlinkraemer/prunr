@@ -175,13 +175,17 @@ private struct GeneralSettingsTab: View {
     }
 
     private func refreshFullDiskAccess() {
-        let tccPath = "/Library/Application Support/com.apple.TCC"
-        do {
-            _ = try FileManager.default.contentsOfDirectory(atPath: tccPath)
-            hasFullDiskAccess = true
-        } catch {
-            hasFullDiskAccess = false
+        let fm = FileManager.default
+        let path = "/Library/Preferences/com.apple.TimeMachine.plist"
+        
+        if fm.isReadableFile(atPath: path) {
+            do {
+                _ = try Data(contentsOf: URL(fileURLWithPath: path))
+                hasFullDiskAccess = true
+                return
+            } catch {}
         }
+        hasFullDiskAccess = false
     }
 
     private func openFullDiskAccessSettings() {

@@ -427,13 +427,18 @@ struct MenuBarView: View {
     }
 
     private func checkFullDiskAccess() -> Bool {
-        let tccPath = "/Library/Application Support/com.apple.TCC"
-        do {
-            _ = try FileManager.default.contentsOfDirectory(atPath: tccPath)
-            return true
-        } catch {
-            return false
+        let fm = FileManager.default
+        let path = "/Library/Preferences/com.apple.TimeMachine.plist"
+        
+        if fm.isReadableFile(atPath: path) {
+            do {
+                _ = try Data(contentsOf: URL(fileURLWithPath: path))
+                return true
+            } catch {
+                return false
+            }
         }
+        return false
     }
 
     private var fullDiskAccessBanner: some View {
