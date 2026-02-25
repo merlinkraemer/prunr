@@ -161,6 +161,13 @@ final class DatabaseManager {
             try db.create(index: "idx_snapshotEntry_snapshotId_pathId", on: "snapshotEntry", columns: ["snapshotId", "pathId"])
         }
 
+        // Migration v8: Add freeBytes column to snapshot table
+        migrator.registerMigration("v8_add_free_bytes") { db in
+            try db.alter(table: "snapshot") { t in
+                t.add(column: "freeBytes", .integer)
+            }
+        }
+
         try migrator.migrate(dbPool)
     }
 }
@@ -170,17 +177,19 @@ final class DatabaseManager {
 extension DatabaseManager {
 
     /// Creates a new snapshot with the current timestamp for a specific path
-    /// - Parameter trackedPathId: The ID of the TrackedPath this snapshot belongs to
+    /// - Parameters:
+    ///   - trackedPathId: The ID of the TrackedPath this snapshot belongs to
+    ///   - freeBytes: Optional volume free space at snapshot creation time
     /// - Returns: The inserted Snapshot with populated id
-    func createSnapshot(trackedPathId: UUID) async throws -> Snapshot {
+    func createSnapshot(trackedPathId: UUID, freeBytes: Int64? = nil) async throws -> Snapshot {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
         return try await dbPool.write { db in
-            var snapshot = Snapshot(trackedPathId: trackedPathId, createdAt: Date())
+            var snapshot = Snapshot(trackedPathId: trackedPathId, createdAt: Date(), freeBytes: freeBytes)
             try snapshot.insert(db)
-            print("[DEBUG] Created snapshot with id: \(snapshot.id ?? 0), trackedPathId: \(snapshot.trackedPathId)")
+            print("[DEBUG] Created snapshot with id: \(snapshot.id ?? 0), trackedPathId: \(snapshot.trackedPathId), freeBytes: \(freeBytes ?? -1)")
             return snapshot
         }
     }

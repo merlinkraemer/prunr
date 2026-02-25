@@ -12,17 +12,23 @@ struct Snapshot: Codable, Identifiable, Equatable, Hashable {
     /// When the snapshot was created
     var createdAt: Date
 
-    init(id: Int64? = nil, trackedPathId: UUID, createdAt: Date = Date()) {
+    /// Volume free space at snapshot creation time (bytes)
+    /// Nil for legacy snapshots before migration
+    var freeBytes: Int64?
+
+    init(id: Int64? = nil, trackedPathId: UUID, createdAt: Date = Date(), freeBytes: Int64? = nil) {
         self.id = id
         self.trackedPathId = trackedPathId
         self.createdAt = createdAt
+        self.freeBytes = freeBytes
     }
 
     /// Custom init for GRDB decoding that handles empty strings
-    init(id: Int64? = nil, trackedPathIdString: String?, createdAt: Date) {
+    init(id: Int64? = nil, trackedPathIdString: String?, createdAt: Date, freeBytes: Int64? = nil) {
         self.id = id
         self.trackedPathId = UUID(uuidString: trackedPathIdString ?? "") ?? UUID()
         self.createdAt = createdAt
+        self.freeBytes = freeBytes
     }
 }
 
@@ -37,12 +43,14 @@ extension Snapshot: FetchableRecord, MutablePersistableRecord {
         static let id = Column(CodingKeys.id)
         static let trackedPathId = Column(CodingKeys.trackedPathId)
         static let createdAt = Column(CodingKeys.createdAt)
+        static let freeBytes = Column(CodingKeys.freeBytes)
     }
 
     /// Decode from database row, handling UUID conversion
     init(row: Row) {
         id = row["id"]
         createdAt = row["createdAt"]
+        freeBytes = row["freeBytes"]
 
         // Handle trackedPathId - may be empty string for old snapshots
         if let pathIdString: String = row["trackedPathId"], !pathIdString.isEmpty {
@@ -57,6 +65,7 @@ extension Snapshot: FetchableRecord, MutablePersistableRecord {
         container["id"] = id
         container["createdAt"] = createdAt
         container["trackedPathId"] = trackedPathId.uuidString
+        container["freeBytes"] = freeBytes
     }
 
     /// Auto-generate ID on insert

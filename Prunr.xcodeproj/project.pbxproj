@@ -55,6 +55,7 @@
 		EE11223344556677889900EF /* CategoryGrowthItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB11223344556677889900BC /* CategoryGrowthItem.swift */; };
 		FF11223344556677889900F0 /* CategoryDetectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC11223344556677889900CD /* CategoryDetectionService.swift */; };
 		GG11223344556677889900F1 /* DatabaseCleanupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD11223344556677889900CE /* DatabaseCleanupService.swift */; };
+		RR1122334455667788990012 /* ReconciliationResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = RR2233445667788990023 /* ReconciliationResult.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -85,6 +86,7 @@
 		4CD1BD242A8EF0103002F1BD /* DeltaRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeltaRowView.swift; sourceTree = "<group>"; };
 		5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeltaService.swift; sourceTree = "<group>"; };
 		6001A5F6F87F3C900008091D /* ScanError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanError.swift; sourceTree = "<group>"; };
+		RR2233445667788990023 /* ReconciliationResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReconciliationResult.swift; sourceTree = "<group>"; };
 		6797B8CC6B8A7749EE273E30 /* MainViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewModel.swift; sourceTree = "<group>"; };
 		7E9F0A1B2C3D4E5F6A7B8C9D /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		9E245227FBA99587A6DF0C4A /* Snapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Snapshot.swift; sourceTree = "<group>"; };
@@ -196,6 +198,7 @@
 				E1FD965ED095B5AD6BC9CE03 /* Delta.swift */,
 				4B8C2A6E7D0E593C1A2F4B9D /* DeltaCategory.swift */,
 				AA11223344556677889900AB /* GrowthCategory.swift */,
+				RR2233445667788990023 /* ReconciliationResult.swift */,
 				6001A5F6F87F3C900008091D /* ScanError.swift */,
 				346A454CD5E69D90C84D7375 /* ScanResult.swift */,
 				9E245227FBA99587A6DF0C4A /* Snapshot.swift */,
@@ -370,6 +373,7 @@
 				DD11223344556677889900DE /* GrowthCategory.swift in Sources */,
 				EE11223344556677889900EF /* CategoryGrowthItem.swift in Sources */,
 				GG11223344556677889900F1 /* DatabaseCleanupService.swift in Sources */,
+				RR1122334455667788990012 /* ReconciliationResult.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

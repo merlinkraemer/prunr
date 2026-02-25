@@ -344,4 +344,69 @@ actor BaselineService {
         // Sort by total growth bytes descending
         return categoryItems.sorted { $0.totalGrowthBytes > $1.totalGrowthBytes }
     }
+
+    // MARK: - Reconciliation
+
+    /// Calculates a reconciliation result that ties together free-space delta with detected file-level changes.
+    ///
+    /// - Parameter trackedPath: The TrackedPath to compare
+    /// - Returns: ReconciliationResult with free-space and category delta data
+    /// - Throws: BaselineError if insufficient snapshots exist
+    func getReconciliation(trackedPath: TrackedPath) async throws -> ReconciliationResult {
+        let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+
+        guard snapshots.count >= 2 else {
+            throw BaselineError.insufficientSnapshots
+        }
+
+        let currentSnapshot = snapshots[0]
+        let previousSnapshot = snapshots[1]
+
+        guard let currentId = currentSnapshot.id,
+              let previousId = previousSnapshot.id else {
+            throw BaselineError.noBaseline
+        }
+
+        // Get category deltas (existing logic)
+        let categoryDeltas = try await getCategoryGrowthList(trackedPath: trackedPath)
+
+        // Calculate explained delta (sum of all positive growth from categories)
+        let explainedDelta = categoryDeltas.reduce(Int64(0)) { $0 + $1.totalGrowthBytes }
+
+        // Calculate free space delta
+        let previousFreeSpace = previousSnapshot.freeBytes
+        let currentFreeSpace = currentSnapshot.freeBytes
+
+        let freeSpaceDelta: Int64?
+        let unexplainedDelta: Int64?
+
+        if let prev = previousFreeSpace, let curr = currentFreeSpace {
+            // Both snapshots have freeBytes - compute delta
+            let delta = curr - prev  // Negative means space was consumed
+            freeSpaceDelta = delta
+
+            // Calculate unexplained delta
+            // abs(freeSpaceDelta) - explainedDelta, clamped to 0 if negative
+            let absFreeDelta = abs(delta)
+            if absFreeDelta > explainedDelta {
+                unexplainedDelta = absFreeDelta - explainedDelta
+            } else {
+                // Explained exceeds free space delta (files deleted, or measurement noise)
+                unexplainedDelta = 0
+            }
+        } else {
+            // Legacy snapshots without freeBytes - graceful degradation
+            freeSpaceDelta = nil
+            unexplainedDelta = nil
+        }
+
+        return ReconciliationResult(
+            freeSpaceDelta: freeSpaceDelta,
+            previousFreeSpace: previousFreeSpace,
+            currentFreeSpace: currentFreeSpace,
+            explainedDelta: explainedDelta,
+            unexplainedDelta: unexplainedDelta,
+            categoryDeltas: categoryDeltas
+        )
+    }
 }

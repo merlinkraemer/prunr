@@ -1,12 +1,76 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Custom Panel for Arrow-less Dropdown
+
+/// A custom panel that looks like native macOS menu bar dropdowns (no arrow)
+final class DropdownPanel: NSPanel {
+    private var onClose: (() -> Void)?
+    
+    init(contentView: NSView, onClose: @escaping () -> Void) {
+        self.onClose = onClose
+        
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 480),
+            styleMask: [.nonactivatingPanel, .borderless, .hudWindow],
+            backing: .buffered,
+            defer: false
+        )
+
+        // Create visual effect view for glass background
+        let visualEffectView = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        visualEffectView.blendingMode = .behindWindow
+        visualEffectView.material = .popover
+        visualEffectView.state = .active
+        visualEffectView.wantsLayer = true
+        visualEffectView.layer?.cornerRadius = 12
+        visualEffectView.layer?.masksToBounds = true
+        
+        // Add content as subview
+        contentView.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
+        visualEffectView.addSubview(contentView)
+        
+        self.contentView = visualEffectView
+        self.isFloatingPanel = true
+        self.level = .statusBar
+        self.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        self.isMovableByWindowBackground = false
+        self.backgroundColor = .clear
+        self.hasShadow = true
+        
+        // Observe when window loses key status
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidResignKey),
+            name: NSWindow.didResignKeyNotification,
+            object: self
+        )
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    @objc private func windowDidResignKey(_ notification: Notification) {
+        // Close panel when it loses key status (user clicked outside)
+        if isVisible {
+            orderOut(nil)
+            onClose?()
+        }
+    }
+    
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 @Observable
 final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     var popover: NSPopover?
+    var panel: DropdownPanel?
     var isPopoverShown = false
+    var usePanel = true // Use panel instead of popover for native dropdown look
 
     // For debugging menubar click reliability (ISS-013)
     private var lastClickTimestamp: Date?
@@ -23,6 +87,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // Published state for UI
     var growthItems: [GrowthItem] = []
     var categoryItems: [CategoryGrowthItem] = []
+    var reconciliationResult: ReconciliationResult? = nil // Free-space reconciliation data
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
     var selectedCategoryForDrilldown: CategoryGrowthItem? = nil // External category selection for drill-down (ISS-043)
     var monitoredPathName: String = ""
@@ -159,13 +224,19 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             button.alphaValue = 1.0
         }
 
-        // Configure popover
+        // Configure popover (fallback)
         popover = NSPopover()
-        popover?.contentSize = NSSize(width: 320, height: 480) // Increased from 420 to 480
+        popover?.contentSize = NSSize(width: 320, height: 480)
         popover?.behavior = .transient
         popover?.delegate = self
-        // Pass self to MenuBarView
         popover?.contentViewController = NSHostingController(rootView: MenuBarView(manager: self))
+        
+        // Configure panel for native dropdown look (no arrow)
+        let panelContent = NSHostingView(rootView: MenuBarView(manager: self))
+        panelContent.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
+        panel = DropdownPanel(contentView: panelContent) { [weak self] in
+            self?.isPopoverShown = false
+        }
     }
 
     private func setupContextMenu() {
@@ -389,16 +460,17 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             scanCurrentPath = ""
             scanProgressPercentage = 1.0
             
-            // Then, get the growth list comparing the latest two snapshots
-            let items = try await baselineService.getCategoryGrowthList(trackedPath: trackedPath)
-            categoryItems = items
+            // Get reconciliation result (includes category deltas and free-space delta)
+            let result = try await baselineService.getReconciliation(trackedPath: trackedPath)
+            reconciliationResult = result
+            categoryItems = result.categoryDeltas
             reconcileDrillDownSelection()
             scanProgress = ""
             scanCurrentPath = ""
             completedSuccessfully = true
 
             let snapshotTimestamp = completedSnapshot?.createdAt ?? Date()
-            if !items.isEmpty {
+            if !result.categoryDeltas.isEmpty {
                 lastDetectedChangeAt = snapshotTimestamp
             }
 
@@ -413,12 +485,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 // We should show an empty list or a message.
                 noBaseline = false
                 categoryItems = []
+                reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let baselineError = error as? BaselineService.BaselineError,
                case .noBaseline = baselineError {
                 print("[MenuBarManager] No baseline exists")
                 noBaseline = true
                 categoryItems = []
+                reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
                 print("[MenuBarManager] Scan was cancelled")
@@ -682,66 +756,41 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             return
         }
 
-        // Check actual popover state, not just cached flag (ISS-013)
-        let actualPopoverState = popover?.isShown ?? false
-
-        if let popover = popover, actualPopoverState {
-            // Popover is actually shown, close it
-            popover.performClose(nil)
+        if let panel = panel, panel.isVisible {
+            // Panel is shown, close it
+            panel.orderOut(nil)
             isPopoverShown = false
         } else {
-            // Popover is not shown, show it
-
-            // Ensure popover is not already shown before showing
-            if let popover = popover, !popover.isShown {
-                // ISS-025: Store the menubar screen for multi-monitor setups
-                // We'll use this to prevent the popup from jumping to other screens
-                guard let buttonWindow = button.window,
-                      let screen = buttonWindow.screen else {
-                    return
-                }
-
-                // Activate app to ensure popup comes to front
-                NSApp.activate()
-
-                // Disable animations for instant popup display
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-
-                // Show popover relative to button - NSPopover will handle positioning
-                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-
-                CATransaction.commit()
-
-                isPopoverShown = true
-
-                // ISS-025: Verify popup is on the correct screen after a short delay
-                // This allows NSPopover to complete its positioning first
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-                    if let popoverWindow = popover.contentViewController?.view.window {
-                        // Check if popup is on the wrong screen
-                        if let popupScreen = popoverWindow.screen,
-                           popupScreen != screen {
-                            // Close and reopen to force repositioning
-                            popover.performClose(nil)
-                            self.isPopoverShown = false
-
-                            // Small delay before reopening
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                if self.popover?.isShown == false {
-                                    CATransaction.begin()
-                                    CATransaction.setDisableActions(true)
-                                    self.popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-                                    CATransaction.commit()
-                                    self.isPopoverShown = true
-                                }
-                            }
-                        } else {
-                            popoverWindow.makeKey()
-                        }
-                    }
-                }
+            // Panel is not shown, show it
+            guard let buttonWindow = button.window,
+                  let buttonScreen = buttonWindow.screen else {
+                return
             }
+
+            // Activate app to ensure panel comes to front
+            NSApp.activate()
+
+            // Get button frame in screen coordinates
+            let buttonFrameInWindow = button.convert(button.bounds, to: nil)
+            let buttonFrameInScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
+            let screenFrame = buttonScreen.frame
+            
+            // Position panel below the button, aligned to right edge
+            let panelWidth: CGFloat = 320
+            let panelHeight: CGFloat = 480
+            
+            // Right-align panel with button
+            let panelX = buttonFrameInScreen.origin.x + buttonFrameInScreen.size.width - panelWidth
+            
+            // Position below menu bar (button bottom is at top of screen area)
+            // Menu bar is at the top of screenFrame, button is below it
+            let panelY = buttonFrameInScreen.origin.y - panelHeight - 5
+            
+            let panelFrame = NSRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight)
+            
+            panel?.setFrame(panelFrame, display: true)
+            panel?.makeKeyAndOrderFront(nil)
+            isPopoverShown = true
         }
     }
 

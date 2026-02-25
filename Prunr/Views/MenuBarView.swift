@@ -480,13 +480,84 @@ struct MenuBarView: View {
 
     private var pageNavigationContent: some View {
         VStack(spacing: 0) {
+            // Free-space headline section (above header)
+            freeSpaceHeadlineSection
+
             // Header section - switches between monitoring path and drill-down
             headerSection
             Divider()
             // Single CategoryGrowthListView instance handles internal animation
             categoryListView
+
+            // System & Other row (when unexplained delta is meaningful)
+            systemAndOtherRow
         }
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    // MARK: - Free-Space Headline Section
+
+    private var freeSpaceHeadlineSection: some View {
+        Group {
+            if let result = manager.reconciliationResult,
+               let currentFree = result.currentFreeSpace {
+                HStack(spacing: 8) {
+                    Image(systemName: "externaldrive")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+
+                    Text(result.formattedCurrentFreeSpace ?? "")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
+
+                    if let delta = result.freeSpaceDelta, delta != 0 {
+                        Text("(\(result.formattedFreeSpaceDelta ?? ""))")
+                            .font(.system(size: 12))
+                            .foregroundStyle(delta < 0 ? .orange : .green)
+                    }
+
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+            }
+        }
+    }
+
+    // MARK: - System & Other Row
+
+    private var systemAndOtherRow: some View {
+        Group {
+            if let result = manager.reconciliationResult,
+               result.shouldShowUnexplained,
+               !manager.isDrilledDown {
+                VStack(spacing: 0) {
+                    Divider()
+                    HStack(spacing: 10) {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                            .frame(width: 20, height: 20)
+
+                        Text("System & Other")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(result.formattedUnexplainedDelta ?? "")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .frame(minHeight: 28)
+                    .help("Includes macOS system files, temporary data, APFS snapshots, and other changes outside your scan scope")
+                }
+            }
+        }
     }
 
     // MARK: - Header Section

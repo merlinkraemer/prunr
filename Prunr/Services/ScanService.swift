@@ -75,6 +75,24 @@ actor ScanService {
 
     // MARK: - Public API
 
+    /// Captures the current volume free space using Apple's recommended API
+    /// Uses volumeAvailableCapacityForImportantUsageKey for accurate available space
+    /// - Returns: Volume free space in bytes, or nil if unavailable
+    private static func captureVolumeFreeSpace() -> Int64? {
+        let rootURL = URL(fileURLWithPath: "/")
+        let resourceKeys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
+        
+        do {
+            let resourceValues = try rootURL.resourceValues(forKeys: resourceKeys)
+            if let capacity = resourceValues.volumeAvailableCapacityForImportantUsage {
+                return Int64(capacity)
+            }
+        } catch {
+            print("[ScanService] Failed to capture volume free space: \(error)")
+        }
+        return nil
+    }
+
     /// Scans a directory and stores results in a new database snapshot
     ///
     /// - Parameters:
@@ -131,9 +149,17 @@ actor ScanService {
             throw ScanError.invalidPath
         }
 
+        // Capture volume free space before creating snapshot
+        let freeBytes = Self.captureVolumeFreeSpace()
+        if let bytes = freeBytes {
+            logger.debug("Captured volume free space: \(bytes) bytes")
+        } else {
+            logger.debug("Could not capture volume free space")
+        }
+
         // Create new snapshot
         logger.debug("Creating new snapshot")
-        let snapshot = try await db.createSnapshot(trackedPathId: trackedPathId)
+        let snapshot = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: freeBytes)
         guard let snapshotId = snapshot.id else {
             logger.error("Failed to create snapshot with ID")
             throw ScanError.unknown(NSError(

@@ -87,7 +87,31 @@ final class PermissionsService {
     ///
     /// - Returns: `true` if /Library can be accessed
     func canAccessRootLibrary() -> Bool {
-        testAccess(to: "/Library")
+        checkFullDiskAccess()
+    }
+
+    /// Checks Full Disk Access by attempting to read the TCC database.
+    ///
+    /// The TCC database is reliably protected by FDA on signed builds.
+    /// Uses Data(contentsOf:) to test actual read access.
+    ///
+    /// - Returns: `true` if FDA is granted, `false` otherwise
+    private func checkFullDiskAccess() -> Bool {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "debugForceFDADenied") {
+            return false
+        }
+        #endif
+
+        let tccDbPath = "/Library/Application Support/com.apple.TCC/TCC.db"
+        let tccDbURL = URL(fileURLWithPath: tccDbPath)
+
+        do {
+            _ = try Data(contentsOf: tccDbURL)
+            return true
+        } catch {
+            return false
+        }
     }
 }
 
