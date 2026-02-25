@@ -421,10 +421,9 @@ struct MenuBarView: View {
     }
 
     private func openFullDiskAccessSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else {
-            return
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
         }
-        NSWorkspace.shared.open(url)
     }
 
     private func checkFullDiskAccess() -> Bool {
