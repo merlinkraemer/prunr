@@ -88,6 +88,8 @@ actor DatabaseCleanupService {
                 let toDelete = snapshots.dropFirst(Self.maxSnapshotsPerPath)
                 for snapshot in toDelete {
                     if let snapshotId = snapshot.id {
+                        // Explicitly delete entries first (cascade may not work if FK was disabled at DB creation)
+                        try db.execute(sql: "DELETE FROM snapshotEntry WHERE snapshotId = ?", arguments: [snapshotId])
                         let deleted = try Snapshot.filter(id: snapshotId).deleteAll(db)
                         totalDeleted += deleted
                     }
@@ -106,6 +108,8 @@ actor DatabaseCleanupService {
             let orphanedToDelete = orphanedSnapshots.dropFirst(Self.maxSnapshotsPerPath)
             for snapshot in orphanedToDelete {
                 if let snapshotId = snapshot.id {
+                    // Explicitly delete entries first
+                    try db.execute(sql: "DELETE FROM snapshotEntry WHERE snapshotId = ?", arguments: [snapshotId])
                     let deleted = try Snapshot.filter(id: snapshotId).deleteAll(db)
                     totalDeleted += deleted
                 }

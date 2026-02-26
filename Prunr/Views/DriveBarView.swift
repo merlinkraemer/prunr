@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Visual drive bar showing used and free disk space with modern design
+/// Visual drive bar showing used and free disk space - minimal single row
 struct DriveBarView: View {
     /// Total disk space in bytes
     let totalBytes: Int64
@@ -12,22 +12,17 @@ struct DriveBarView: View {
     let freeBytes: Int64
 
     /// Bar height
-    var height: CGFloat = 16
-
-    /// Corner radius
-    var cornerRadius: CGFloat = 4
+    private let barHeight: CGFloat = 12
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Visual bar at top with gradient based on usage
+        HStack(spacing: 12) {
+            // Progress bar
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    // Background track
-                    RoundedRectangle(cornerRadius: cornerRadius)
+                    RoundedRectangle(cornerRadius: barHeight / 2)
                         .fill(Color.gray.opacity(0.15))
 
-                    // Used space bar with gradient
-                    RoundedRectangle(cornerRadius: cornerRadius)
+                    RoundedRectangle(cornerRadius: barHeight / 2)
                         .fill(
                             LinearGradient(
                                 colors: [usageColor.opacity(0.8), usageColor],
@@ -38,40 +33,16 @@ struct DriveBarView: View {
                         .frame(width: geometry.size.width * CGFloat(usedPercentage) / 100.0)
                 }
             }
-            .frame(height: height)
+            .frame(height: barHeight)
 
-            // Text row: icon + "X GB of Y GB used" left-aligned, percentage tag right-aligned
-            HStack(alignment: .center, spacing: 6) {
-                // Drive icon
-                Image(systemName: "internaldrive")
-                    .font(.system(size: 14))
-                    .foregroundStyle(usageColor)
-
-                Text(bytesToGBString(usedBytes))
-                    .font(.system(.body, design: .monospaced))
+            // Free space text
+            HStack(spacing: 4) {
+                Text(bytesToGBString(freeBytes))
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
-
-                Text("of")
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
-
-                Text(bytesToGBString(totalBytes))
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.primary)
-
-                Text("used")
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                // Percentage tag
-                Text("\(usedPercentage)%")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(usageColor, in: RoundedRectangle(cornerRadius: 5))
+                Text("free")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, 4)
@@ -113,7 +84,7 @@ struct DriveBarView: View {
 
 #Preview {
     VStack(alignment: .leading, spacing: 20) {
-        Text("Drive Bar - Redesigned")
+        Text("Drive Bar - Simple")
             .font(.headline)
 
         DriveBarView(totalBytes: 500_000_000_000, usedBytes: 450_000_000_000, freeBytes: 50_000_000_000)

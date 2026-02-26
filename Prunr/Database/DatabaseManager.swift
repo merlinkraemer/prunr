@@ -35,10 +35,13 @@ final class DatabaseManager {
         let dbPath = prunrDirectory.appendingPathComponent("prunr.db").path
         self.databasePath = dbPath
 
-        // Open/create the database
-        dbPool = try DatabasePool(path: dbPath)
+        var config = Configuration()
+        config.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA foreign_keys = ON")
+        }
 
-        // Run migrations
+        dbPool = try DatabasePool(path: dbPath, configuration: config)
+
         try runMigrations()
     }
 
@@ -166,6 +169,17 @@ final class DatabaseManager {
             try db.alter(table: "snapshot") { t in
                 t.add(column: "freeBytes", .integer)
             }
+        }
+
+        // Migration v9: Clean up orphaned entries (foreign keys weren't enabled before)
+        migrator.registerMigration("v9_cleanup_orphaned_entries") { db in
+            // Delete entries that reference non-existent snapshots
+            try db.execute(sql: """
+                DELETE FROM snapshotEntry 
+                WHERE snapshotId NOT IN (SELECT id FROM snapshot)
+                """)
+            // Run VACUUM to reclaim space
+            try db.execute(sql: "VACUUM")
         }
 
         try migrator.migrate(dbPool)
@@ -312,6 +326,19 @@ extension DatabaseManager {
 
         try await dbPool.write { db in
             _ = try Snapshot.filter(id: id).deleteAll(db)
+        }
+    }
+
+    /// Returns the number of entries for a given snapshot
+    /// - Parameter snapshotId: The snapshot ID
+    /// - Returns: Entry count
+    func fetchEntryCount(for snapshotId: Int64) async throws -> Int {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM snapshotEntry WHERE snapshotId = ?", arguments: [snapshotId]) ?? 0
         }
     }
 

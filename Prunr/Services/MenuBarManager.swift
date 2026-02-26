@@ -167,8 +167,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var fileEventsWatcher: FSEventsWatcher?
     private var watchedPathIDs: [UUID] = []
     private var autoScanTask: Task<Void, Never>?
-    private var lastAutomaticScanAt: Date?
-    private var lastDetectedChangeAt: Date?
+    private(set) var lastAutomaticScanAt: Date?
+    var lastDetectedChangeAt: Date?
     private var lastAutomaticScanAttemptAt: Date?
     private var isUnderDiskPressure = false
 
@@ -814,12 +814,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let free = DiskSpaceService.shared.getFreeSpace()
         let total = DiskSpaceService.shared.getTotalSpace()
 
-        // Update observable state for UI (DriveBarView reacts automatically)
         self.freeBytes = free
         self.totalBytes = total
         self.usedBytes = total - free
 
-        // CRITICAL: Explicitly sync AppKit menu bar (ISS-042)
         if free > 0 {
             let gb = Double(free) / 1_000_000_000
             if gb >= 1000 {
@@ -832,7 +830,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             updateFreeSpaceDisplay("Prunr")
         }
 
-        // Update cache timestamp
         lastFreeSpaceUpdate = Date()
 
         if total > 0 {
@@ -840,6 +837,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             isUnderDiskPressure = freeRatio < 0.15 || free < 40_000_000_000
         } else {
             isUnderDiskPressure = false
+        }
+
+        if let result = reconciliationResult {
+            reconciliationResult = result.withUpdatedFreeSpace(free)
         }
     }
 

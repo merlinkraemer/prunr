@@ -264,9 +264,30 @@ actor BaselineService {
             throw BaselineError.noBaseline
         }
 
+        // Validate previous snapshot has entries (avoid comparing to empty/incomplete snapshot)
+        let previousEntryCount = try await db.fetchEntryCount(for: previousId)
+        let currentEntryCount = try await db.fetchEntryCount(for: currentId)
+        
+        print("[BaselineService] Snapshot entry counts: previous=\(previousEntryCount), current=\(currentEntryCount)")
+        
+        guard previousEntryCount > 100 else {
+            print("[BaselineService] Previous snapshot has only \(previousEntryCount) entries - treating as first scan")
+            throw BaselineError.insufficientSnapshots
+        }
+        
+        // If current has way more entries than previous, previous was likely incomplete
+        // Allow up to 50% growth as reasonable, otherwise treat as first scan
+        let minExpectedPrevious = currentEntryCount / 2
+        if previousEntryCount < minExpectedPrevious {
+            print("[BaselineService] Previous snapshot (\(previousEntryCount) entries) too small compared to current (\(currentEntryCount)) - treating as first scan")
+            throw BaselineError.insufficientSnapshots
+        }
+
         // Calculate deltas
         let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
         try Task.checkCancellation()
+        
+        print("[BaselineService] Calculated \(deltas.count) deltas")
 
         // Filter to only items that grew
         let growingDeltas = deltas.filter { $0.changeBytes > 0 }
@@ -394,10 +415,12 @@ actor BaselineService {
                 // Explained exceeds free space delta (files deleted, or measurement noise)
                 unexplainedDelta = 0
             }
+            print("[BaselineService] Reconciliation: prevFree=\(prev), currFree=\(curr), delta=\(delta), explained=\(explainedDelta), unexplained=\(unexplainedDelta ?? 0)")
         } else {
             // Legacy snapshots without freeBytes - graceful degradation
             freeSpaceDelta = nil
             unexplainedDelta = nil
+            print("[BaselineService] Reconciliation: missing freeBytes (prev=\(previousFreeSpace ?? -1), curr=\(currentFreeSpace ?? -1))")
         }
 
         return ReconciliationResult(

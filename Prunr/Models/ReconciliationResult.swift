@@ -30,13 +30,18 @@ struct ReconciliationResult: Sendable, Equatable {
     /// The existing category deltas from BaselineService (unchanged)
     let categoryDeltas: [CategoryGrowthItem]
 
-    /// Threshold for showing "System & Other" row in UI (50 MB)
-    static let unexplainedThreshold: Int64 = 50 * 1024 * 1024
+    /// Threshold for showing "Out of scope" pill in UI (10 MB)
+    static let unexplainedThreshold: Int64 = 10 * 1024 * 1024
 
     /// Whether the unexplained delta is meaningful enough to show in UI
     var shouldShowUnexplained: Bool {
-        guard let unexplained = unexplainedDelta else { return false }
-        return unexplained >= Self.unexplainedThreshold
+        guard let unexplained = unexplainedDelta else { 
+            print("[ReconciliationResult] shouldShowUnexplained: false (unexplainedDelta is nil)")
+            return false 
+        }
+        let result = unexplained >= Self.unexplainedThreshold
+        print("[ReconciliationResult] shouldShowUnexplained: \(result) (unexplained=\(unexplained), threshold=\(Self.unexplainedThreshold))")
+        return result
     }
 
     /// Human-readable free space delta string with direction
@@ -63,5 +68,35 @@ struct ReconciliationResult: Sendable, Equatable {
     var formattedUnexplainedDelta: String? {
         guard let unexplained = unexplainedDelta else { return nil }
         return ByteCountFormatter.string(fromByteCount: unexplained, countStyle: .file)
+    }
+
+    /// Creates an updated copy with new current free space (for real-time updates)
+    func withUpdatedFreeSpace(_ newFreeSpace: Int64) -> ReconciliationResult {
+        let newDelta: Int64?
+        let newUnexplained: Int64?
+
+        if let prev = previousFreeSpace {
+            let delta = newFreeSpace - prev
+            newDelta = delta
+
+            let absFreeDelta = abs(delta)
+            if absFreeDelta > explainedDelta {
+                newUnexplained = absFreeDelta - explainedDelta
+            } else {
+                newUnexplained = 0
+            }
+        } else {
+            newDelta = nil
+            newUnexplained = nil
+        }
+
+        return ReconciliationResult(
+            freeSpaceDelta: newDelta,
+            previousFreeSpace: previousFreeSpace,
+            currentFreeSpace: newFreeSpace,
+            explainedDelta: explainedDelta,
+            unexplainedDelta: newUnexplained,
+            categoryDeltas: categoryDeltas
+        )
     }
 }

@@ -8,7 +8,6 @@ struct MenuBarView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scanHover = false
     @State private var settingsHover = false
-    @State private var isHeaderExpanded = false
     @State private var hasFullDiskAccess = false
     @State private var hasCompletedFDAOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedFDAOnboarding")
 
@@ -104,14 +103,6 @@ struct MenuBarView: View {
             // Update from latest snapshot (no filesystem rescan)
             await manager.updatePathSize()
         }
-        .onChange(of: manager.isDrilledDown) { _, newValue in
-            // Reset path header expansion when exiting drilldown
-            if !newValue {
-                withAnimation {
-                    isHeaderExpanded = false
-                }
-            }
-        }
         .onChange(of: hasFullDiskAccess) { _, newValue in
             if !newValue && hasCompletedFDAOnboarding {
                 hasCompletedFDAOnboarding = false
@@ -124,6 +115,7 @@ struct MenuBarView: View {
         let clampedProgress = max(0.0, min(1.0, manager.scanProgressPercentage))
 
         return VStack(spacing: 0) {
+            // Header bar
             HStack(spacing: 8) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 11, weight: .medium))
@@ -134,38 +126,13 @@ struct MenuBarView: View {
                     .foregroundStyle(.primary)
 
                 Spacer()
-
-                Button("Stop") {
-                    Task { await manager.stopScan() }
-                }
-                .font(.system(size: 12, weight: .medium))
-                .buttonStyle(.plain)
-                .foregroundStyle(.red)
-                .accessibilityLabel("Stop scan")
-                .accessibilityHint("Cancel the current scan operation")
-
-                Button {
-                    closePopoverAndOpenSettings()
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 20, height: 20)
-                        .background(
-                            Circle()
-                                .fill(Color.gray.opacity(0.10))
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open settings")
-                .accessibilityHint("Open settings while scan continues")
-                .help("Settings (scan continues)")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
             Divider()
 
+            // Centered scan content
             Spacer(minLength: 0)
 
             VStack(spacing: 18) {
@@ -262,13 +229,56 @@ struct MenuBarView: View {
                             .fill(Color.gray.opacity(0.08))
                     )
                 }
+
+                // Stop button centered with scan elements
+                Button("Stop") {
+                    Task { await manager.stopScan() }
+                }
+                .font(.system(size: 12, weight: .medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
+                .accessibilityLabel("Stop scan")
+                .accessibilityHint("Cancel the current scan operation")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
             Spacer(minLength: 0)
+
+            // Footer with settings in same position as normal view
+            VStack(spacing: 0) {
+                Divider()
+                HStack {
+                    Spacer()
+                    Spacer()
+                    
+                    Button {
+                        closePopoverAndOpenSettings()
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 13))
+                            .frame(width: 26, height: 26)
+                            .background(
+                                Circle()
+                                    .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
+                            )
+                            .foregroundStyle(.primary)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open settings")
+                    .accessibilityHint("Open settings while scan continues")
+                    .onHover { hovering in
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            settingsHover = hovering
+                        }
+                    }
+                    .help("Settings (scan continues)")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+            }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: - Main Category View
@@ -480,84 +490,12 @@ struct MenuBarView: View {
 
     private var pageNavigationContent: some View {
         VStack(spacing: 0) {
-            // Free-space headline section (above header)
-            freeSpaceHeadlineSection
-
-            // Header section - switches between monitoring path and drill-down
+            // Header section - switches between drill-down and out of scope
             headerSection
-            Divider()
             // Single CategoryGrowthListView instance handles internal animation
             categoryListView
-
-            // System & Other row (when unexplained delta is meaningful)
-            systemAndOtherRow
         }
         .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    // MARK: - Free-Space Headline Section
-
-    private var freeSpaceHeadlineSection: some View {
-        Group {
-            if let result = manager.reconciliationResult,
-               let currentFree = result.currentFreeSpace {
-                HStack(spacing: 8) {
-                    Image(systemName: "externaldrive")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-
-                    Text(result.formattedCurrentFreeSpace ?? "")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.primary)
-
-                    if let delta = result.freeSpaceDelta, delta != 0 {
-                        Text("(\(result.formattedFreeSpaceDelta ?? ""))")
-                            .font(.system(size: 12))
-                            .foregroundStyle(delta < 0 ? .orange : .green)
-                    }
-
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
-            }
-        }
-    }
-
-    // MARK: - System & Other Row
-
-    private var systemAndOtherRow: some View {
-        Group {
-            if let result = manager.reconciliationResult,
-               result.shouldShowUnexplained,
-               !manager.isDrilledDown {
-                VStack(spacing: 0) {
-                    Divider()
-                    HStack(spacing: 10) {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary.opacity(0.7))
-                            .frame(width: 20, height: 20)
-
-                        Text("System & Other")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Text(result.formattedUnexplainedDelta ?? "")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .fixedSize()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(minHeight: 28)
-                    .help("Includes macOS system files, temporary data, APFS snapshots, and other changes outside your scan scope")
-                }
-            }
-        }
     }
 
     // MARK: - Header Section
@@ -568,11 +506,80 @@ struct MenuBarView: View {
                 // Drill-down header: back button, category name, size
                 drillDownHeader(category: category)
             } else {
-                // Main header: monitoring path, size, settings link
-                monitoringPathHeader
+                // Main header: out of scope pill
+                outOfScopeHeader
             }
         }
         .animation(.easeInOut(duration: 0.3), value: manager.isDrilledDown)
+    }
+
+    // MARK: - Out of Scope Header
+
+    private var outOfScopeHeader: some View {
+        let paths = SettingsStore.shared.enabledOverviewPaths
+        let hasOutOfScope = manager.reconciliationResult?.shouldShowUnexplained == true
+        let totalGrowth = manager.categoryItems.reduce(Int64(0)) { $0 + $1.totalGrowthBytes }
+        
+        return Group {
+            if !paths.isEmpty || hasOutOfScope {
+                HStack(spacing: 6) {
+                    Spacer()
+                    
+                    // Tracked path pill
+                    if !paths.isEmpty {
+                        Button {
+                            closePopoverAndOpenSettings()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("+\(ByteCountFormatter.string(fromByteCount: totalGrowth, countStyle: .file))")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                Text("in")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                                Text(paths.count == 1 ? shortPath(paths[0].url) : "\(paths.count) paths")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .lineLimit(1)
+                            }
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Color.accentColor.opacity(0.12))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open scan scope settings")
+                    }
+                    
+                    // Outside scope pill
+                    if let result = manager.reconciliationResult,
+                       result.shouldShowUnexplained {
+                        HStack(spacing: 4) {
+                            Text("+\(result.formattedUnexplainedDelta ?? "")")
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            Text("outside scope")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(Color.gray.opacity(0.1))
+                        )
+                    }
+                    
+                    Spacer()
+                }
+                .padding(.vertical, 8)
+            }
+        }
+    }
+    
+    private func shortPath(_ url: URL) -> String {
+        url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
 
     // MARK: - Drill-down Header
@@ -634,127 +641,6 @@ struct MenuBarView: View {
         .padding(.vertical, 12)
     }
 
-    // MARK: - Monitoring Path Header
-
-    private var hasMultiplePaths: Bool {
-        SettingsStore.shared.enabledOverviewPaths.count > 1
-    }
-
-    private var overviewPaths: [TrackedPath] {
-        SettingsStore.shared.enabledOverviewPaths
-    }
-
-    private var monitoringPathHeader: some View {
-        VStack(spacing: 0) {
-            Button {
-                // Multiple paths: expand/collapse, Single path: open settings
-                if hasMultiplePaths {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        isHeaderExpanded.toggle()
-                    }
-                } else {
-                    closePopoverAndOpenSettings()
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    // Path icon
-                    Image(systemName: "folder")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    // Single path: show full path, Multiple paths: show count
-                    if hasMultiplePaths {
-                        Text("\(overviewPaths.count) paths")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    } else if let firstPath = overviewPaths.first {
-                        // Single path: show full path
-                        Text(firstPath.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    Spacer()
-
-                    // Auto-scan indicator (if scanning)
-                    if manager.isAutoScanning {
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Scanning...")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .transition(.opacity)
-                    }
-
-                    // Right icon: chevron for multiple paths, > for single path
-                    if hasMultiplePaths {
-                        Image(systemName: isHeaderExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Monitored paths")
-            .accessibilityHint(hasMultiplePaths ? "Expand or collapse tracked paths" : "Open settings")
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-
-            // Expanded paths list - full width dropdown (only for multiple paths)
-            if isHeaderExpanded && hasMultiplePaths {
-                Divider()
-
-                VStack(spacing: 0) {
-                    ForEach(Array(overviewPaths.enumerated()), id: \.element.id) { index, path in
-                        HStack(spacing: 8) {
-                            // Folder icon
-                            Image(systemName: "folder.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.blue)
-
-                            // Path text with tilde notation
-                            Text(path.url.path)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-
-                            Spacer()
-
-                            // Size badge if calculated
-                            if !manager.isCalculatingPathSize {
-                                let sizeBytes = manager.pathSizeBytes(for: path)
-                                Text(formattedBytes(sizeBytes))
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.gray.opacity(0.03))
-
-                        if index < overviewPaths.count - 1 {
-                            Divider()
-                                .padding(.leading, 36)
-                        }
-                    }
-                }
-                .background(Color(nsColor: .windowBackgroundColor))
-            }
-        }
-    }
-
     // MARK: - Category List View
 
     private var categoryListView: some View {
@@ -792,7 +678,7 @@ struct MenuBarView: View {
         }
     }
 
-    // MARK: - Footer Buttons (Icon Toolbar - No Separator)
+    // MARK: - Footer Buttons (Icon Toolbar)
 
     private var footerButtons: some View {
         HStack {
@@ -802,64 +688,84 @@ struct MenuBarView: View {
                     await manager.loadCategoryGrowthList()
                 }
             } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 13))
-                    .frame(width: 26, height: 26)
-                    .background(
-                        Circle()
-                            .fill(scanHover ? Color.gray.opacity(0.12) : Color.clear)
-                    )
-                    .foregroundStyle(.primary)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Run scan now")
-            .accessibilityHint("Create a new snapshot and refresh growth categories")
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    scanHover = hovering
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 13))
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(scanHover ? Color.gray.opacity(0.12) : Color.clear)
+                        )
+                        .foregroundStyle(.primary)
+                        .contentShape(Circle())
                 }
-            }
-            .disabled(manager.isLoading)
-            .help("Refresh View")
-
-            Spacer()
-
-            Text(manager.isAutoScanning ? "Background scan running..." : manager.lastScanStatusText)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-
-            Spacer()
-
-            // Settings button (lower right)
-            Button {
-                closePopoverAndOpenSettings()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 13))
-                    .frame(width: 26, height: 26)
-                    .background(
-                        Circle()
-                            .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
-                    )
-                    .foregroundStyle(.primary)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open settings")
-            .accessibilityHint("Open Prunr settings")
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    settingsHover = hovering
+                .buttonStyle(.plain)
+                .accessibilityLabel("Run scan now")
+                .accessibilityHint("Create a new snapshot and refresh growth categories")
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        scanHover = hovering
+                    }
                 }
-            }
-            .help("Settings")
+                .disabled(manager.isLoading)
+                .help("Refresh View")
+
+                Spacer()
+
+                footerStatusText
+
+                Spacer()
+
+                // Settings button (lower right)
+                Button {
+                    closePopoverAndOpenSettings()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 13))
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
+                        )
+                        .foregroundStyle(.primary)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open settings")
+                .accessibilityHint("Open Prunr settings")
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        settingsHover = hovering
+                    }
+                }
+                .help("Settings")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
-        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var footerStatusText: some View {
+        if manager.isAutoScanning {
+            Text("Scanning...")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        } else if let lastScan = manager.lastAutomaticScanAt {
+            Text(relativeTime(from: lastScan))
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+        } else {
+            Text(manager.lastScanStatusText)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+    }
+
+    private func relativeTime(from date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     // MARK: - Helper Methods
