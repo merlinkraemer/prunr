@@ -194,7 +194,7 @@ final class DatabaseManager {
             // Normalization: remove trailing slash (unless it's just "/")
             try db.execute(sql: """
                 INSERT OR IGNORE INTO paths_new (path)
-                SELECT CASE 
+                SELECT CASE
                     WHEN path = '/' THEN path
                     ELSE RTRIM(path, '/')
                 END
@@ -206,10 +206,10 @@ final class DatabaseManager {
             try db.execute(sql: """
                 UPDATE snapshotEntry
                 SET pathId = (
-                    SELECT pnew.id 
-                    FROM paths pold 
+                    SELECT pnew.id
+                    FROM paths pold
                     JOIN paths_new pnew ON (
-                        CASE 
+                        CASE
                             WHEN pold.path = '/' THEN pold.path
                             ELSE RTRIM(pold.path, '/')
                         END = pnew.path
@@ -221,6 +221,22 @@ final class DatabaseManager {
             // Drop old table and rename new one
             try db.execute(sql: "DROP TABLE paths")
             try db.execute(sql: "ALTER TABLE paths_new RENAME TO paths")
+        }
+
+        // Migration v11: Add categorySnapshot table for per-category size history
+        migrator.registerMigration("v11_add_category_snapshot") { db in
+            // Create categorySnapshot table for aggregated category totals per snapshot
+            try db.create(table: "categorySnapshot") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("snapshotId", .integer)
+                    .notNull()
+                    .references("snapshot", onDelete: .cascade)
+                t.column("category", .text).notNull()
+                t.column("totalBytes", .integer).notNull()
+            }
+
+            // Index for faster lookups by snapshotId
+            try db.create(index: "idx_categorySnapshot_snapshotId", on: "categorySnapshot", columns: ["snapshotId"])
         }
 
         try migrator.migrate(dbPool)
@@ -391,6 +407,86 @@ extension DatabaseManager {
 
         try await dbPool.write { db in
             try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+        }
+    }
+
+    // MARK: - Category Snapshot
+
+    /// Writes a category total to the categorySnapshot table
+    /// - Parameters:
+    ///   - snapshotId: The snapshot ID to associate with
+    ///   - category: The category name
+    ///   - totalBytes: The total bytes for this category
+    func writeCategorySnapshot(snapshotId: Int64, category: String, totalBytes: Int64) throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try dbPool.write { db in
+            try db.execute(
+                sql: "INSERT INTO categorySnapshot (snapshotId, category, totalBytes) VALUES (?, ?, ?)",
+                arguments: [snapshotId, category, totalBytes]
+            )
+        }
+    }
+
+    /// Fetches category snapshot history for a tracked path
+    /// - Parameters:
+    ///   - trackedPathId: The tracked path ID to filter by
+    ///   - limit: Maximum number of distinct snapshots to fetch (default 90)
+    /// - Returns: Array of (snapshotId, createdAt, category, totalBytes) tuples
+    func fetchCategorySnapshots(trackedPathId: String, limit: Int = 90) -> [(snapshotId: Int64, createdAt: Date, category: String, totalBytes: Int64)] {
+        guard let dbPool = dbPool else {
+            return []
+        }
+
+        do {
+            return try dbPool.read { db in
+                // First, get the distinct snapshot IDs limited by the number of snapshots
+                let snapshotIds = try Int64.fetchAll(
+                    db,
+                    sql: """
+                        SELECT s.id FROM snapshot s
+                        WHERE s.trackedPathId = ?
+                        ORDER BY s.createdAt DESC
+                        LIMIT ?
+                        """,
+                    arguments: [trackedPathId, limit]
+                )
+
+                guard !snapshotIds.isEmpty else {
+                    return []
+                }
+
+                // Create placeholders for IN clause
+                let placeholders = snapshotIds.map { _ in "?" }.joined(separator: ", ")
+
+                // Fetch all category rows for these snapshots
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT cs.snapshotId, s.createdAt, cs.category, cs.totalBytes
+                        FROM categorySnapshot cs
+                        JOIN snapshot s ON s.id = cs.snapshotId
+                        WHERE cs.snapshotId IN (\(placeholders))
+                        ORDER BY s.createdAt DESC, cs.category
+                        """,
+                    arguments: StatementArguments(snapshotIds)
+                )
+
+                var result: [(snapshotId: Int64, createdAt: Date, category: String, totalBytes: Int64)] = []
+                for row in rows {
+                    let snapshotId: Int64 = row["snapshotId"] ?? Int64(0)
+                    let createdAt: Date = row["createdAt"] ?? Date()
+                    let category: String = row["category"] ?? ""
+                    let totalBytes: Int64 = row["totalBytes"] ?? Int64(0)
+                    result.append((snapshotId: snapshotId, createdAt: createdAt, category: category, totalBytes: totalBytes))
+                }
+                return result
+            }
+        } catch {
+            print("[DatabaseManager] Error fetching category snapshots: \(error)")
+            return []
         }
     }
 

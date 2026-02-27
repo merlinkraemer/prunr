@@ -85,11 +85,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
     
     // Published state for UI
-    var growthItems: [GrowthItem] = []
-    var categoryItems: [CategoryGrowthItem] = []
-    var reconciliationResult: ReconciliationResult? = nil // Free-space reconciliation data
+    var categoryItems: [CategoryGrowthItem] = []  // Kept for legacy drill-down compatibility
+    var growingCategories: [CategoryInventoryItem] = []  // Categories with active growth trends
+    var stableCategories: [CategoryInventoryItem] = []   // Categories without growth trends
+    var stableTotalBytes: Int64 = 0  // Sum of stable category sizes
+    var reconciliationResult: DiskAccountingResult? = nil // Free-space accounting data
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
     var selectedCategoryForDrilldown: CategoryGrowthItem? = nil // External category selection for drill-down (ISS-043)
+    var selectedInventoryCategory: CategoryInventoryItem? = nil // New inventory-based drill-down selection
     var monitoredPathName: String = ""
     var enabledPathCount: Int {
         SettingsStore.shared.enabledTrackedPaths.count
@@ -367,8 +370,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             updateFreeSpace()
             await checkBaseline() // Update state
 
-            // Also clear growth items since baseline is gone/reset
-            growthItems = []
+            // Also clear categories since baseline is gone/reset
+            growingCategories = []
+            stableCategories = []
+            stableTotalBytes = 0
             categoryItems = []
         } catch {
             print("[MenuBarManager] Failed to reset baseline: \(error)")
@@ -390,8 +395,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // Properties are now synthesized by @Observable macro at class level
     // and initialized above.
     
-    /// Loads the category-based growth list
-    func loadCategoryGrowthList(isAutomatic: Bool = false) async {
+    /// Loads inventory data with growth trends for the first enabled tracked path
+    func loadInventory(isAutomatic: Bool = false) async {
         // Get first enabled tracked path from settings
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
         guard let trackedPath = enabledPaths.first else {
@@ -454,23 +459,54 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             scanProgress = "Finalizing scan..."
             try? await Task.sleep(for: .milliseconds(120))
 
-            // Scanning is complete; now compute deltas/categories
+            // Scanning is complete; now load inventory with trends
             isAnalyzingChanges = true
-            scanProgress = "Checking what changed since the last scan..."
+            scanProgress = "Analyzing inventory..."
             scanCurrentPath = ""
             scanProgressPercentage = 1.0
-            
-            // Get reconciliation result (includes category deltas and free-space delta)
-            let result = try await baselineService.getReconciliation(trackedPath: trackedPath)
-            reconciliationResult = result
-            categoryItems = result.categoryDeltas
+
+            // Get inventory with growth trends
+            let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
+
+            // Split into growing and stable categories
+            var growing: [CategoryInventoryItem] = []
+            var stable: [CategoryInventoryItem] = []
+            var stableTotal: Int64 = 0
+
+            for item in inventory {
+                if item.growthTrend != nil {
+                    growing.append(item)
+                } else {
+                    stable.append(item)
+                    stableTotal += item.currentSizeBytes
+                }
+            }
+
+            // Sort growing by size descending
+            growingCategories = growing.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+            stableCategories = stable.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+            stableTotalBytes = stableTotal
+
+            // Keep legacy categoryItems for drill-down compatibility during transition
+            // TODO: Remove once drill-down is migrated to inventory-based
+            categoryItems = []
+
+            // Also compute disk accounting for free space tracking
+            do {
+                let result = try await baselineService.getDiskAccounting(trackedPath: trackedPath)
+                reconciliationResult = result
+            } catch {
+                print("[MenuBarManager] Disk accounting failed: \(error)")
+                reconciliationResult = nil
+            }
+
             reconcileDrillDownSelection()
             scanProgress = ""
             scanCurrentPath = ""
             completedSuccessfully = true
 
             let snapshotTimestamp = completedSnapshot?.createdAt ?? Date()
-            if !result.categoryDeltas.isEmpty {
+            if !growingCategories.isEmpty {
                 lastDetectedChangeAt = snapshotTimestamp
             }
 
@@ -480,10 +516,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             if let baselineError = error as? BaselineService.BaselineError,
                case .insufficientSnapshots = baselineError {
                 print("[MenuBarManager] Insufficient snapshots for comparison")
-                // If we only have 1 snapshot, we can't compare yet.
-                // But we just took one, so this means it was the FIRST snapshot.
-                // We should show an empty list or a message.
                 noBaseline = false
+                growingCategories = []
+                stableCategories = []
+                stableTotalBytes = 0
                 categoryItems = []
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
@@ -491,6 +527,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                case .noBaseline = baselineError {
                 print("[MenuBarManager] No baseline exists")
                 noBaseline = true
+                growingCategories = []
+                stableCategories = []
+                stableTotalBytes = 0
                 categoryItems = []
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
@@ -501,7 +540,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 isAnalyzingChanges = false
                 wasCancelled = true
             } else {
-                print("[MenuBarManager] Error loading category growth list: \(error)")
+                print("[MenuBarManager] Error loading inventory: \(error)")
                 if !isAutomatic {
                     errorMessage = "Scan failed: \(error.localizedDescription)"
                 }
@@ -541,6 +580,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         await updatePathSize()
     }
 
+    /// Legacy: Loads the category-based growth list (deprecated, use loadInventory)
+    @available(*, deprecated, message: "Use loadInventory() instead")
+    func loadCategoryGrowthList(isAutomatic: Bool = false) async {
+        await loadInventory(isAutomatic: isAutomatic)
+    }
+
     private func reconcileDrillDownSelection() {
         guard isDrilledDown else { return }
 
@@ -557,61 +602,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Loads the growth list by comparing current state with baseline
-    func loadGrowthList() async {
-        // Get first enabled tracked path from settings
-        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
-        guard let trackedPath = enabledPaths.first else {
-            print("[MenuBarManager] No enabled tracked paths in settings")
-            errorMessage = "No paths enabled in Settings"
-            return
-        }
-
-        isLoading = true
-        errorMessage = nil
-        noBaseline = false
-        filesScanned = 0
-        isAnalyzingChanges = false
-        scanProgress = "Scanning \(trackedPath.displayName)..."
-        scanCurrentPath = trackedPath.url.path
-
-        do {
-            // First, take a new snapshot
-            _ = try await baselineService.createBaseline(trackedPath: trackedPath)
-            
-            let items = try await baselineService.getGrowthList(trackedPath: trackedPath)
-            growthItems = items
-            scanProgress = ""
-
-            // Refresh storage space after scan (ISS-042)
-            updateFreeSpace()
-        } catch {
-            if let baselineError = error as? BaselineService.BaselineError,
-               case .insufficientSnapshots = baselineError {
-                print("[MenuBarManager] Insufficient snapshots for comparison")
-                noBaseline = false
-                growthItems = []
-            } else if let baselineError = error as? BaselineService.BaselineError,
-               case .insufficientSnapshots = baselineError {
-                noBaseline = false
-                growthItems = []
-            } else if let baselineError = error as? BaselineService.BaselineError,
-               case .noBaseline = baselineError {
-                noBaseline = true
-                growthItems = []
-            } else if let scanError = error as? ScanError, case .cancelled = scanError {
-                scanProgress = "Cancelled"
-            } else {
-                errorMessage = "Scan failed: \(error.localizedDescription)"
-            }
-        }
-
-        isLoading = false
-        scanProgress = ""
-        scanProgressPercentage = 0.0
-        isAnalyzingChanges = false
-    }
-    
     /// Takes the initial snapshot for enabled paths
     func takeInitialSnapshot() async {
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
@@ -1219,7 +1209,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             lastAutomaticScanAttemptAt = Date()
 
             isAutoScanning = true
-            await loadCategoryGrowthList(isAutomatic: true)
+            await loadInventory(isAutomatic: true)
             isAutoScanning = false
         }
     }

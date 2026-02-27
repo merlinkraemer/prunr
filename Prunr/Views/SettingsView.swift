@@ -122,6 +122,29 @@ private struct GeneralSettingsTab: View {
                             .foregroundStyle(.green)
                     }
                 }
+
+                Section("History") {
+                    HStack {
+                        Text("Category history retention")
+                            .font(.system(size: 13))
+
+                        Spacer()
+
+                        Picker("", selection: $settingsStore.categoryHistoryRetentionDays) {
+                            Text("7 days").tag(7)
+                            Text("14 days").tag(14)
+                            Text("30 days").tag(30)
+                            Text("60 days").tag(60)
+                            Text("90 days").tag(90)
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 120)
+                    }
+
+                    Text("How long to keep category size history for trend detection. Shorter retention uses less disk space.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
 

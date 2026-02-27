@@ -321,7 +321,7 @@ struct MenuBarView: View {
                     if hasEnabledScanPath {
                         Button {
                             Task {
-                                await manager.loadCategoryGrowthList()
+                                await manager.loadInventory()
                             }
                         } label: {
                             Text("Run first scan")
@@ -490,7 +490,7 @@ struct MenuBarView: View {
 
     private var pageNavigationContent: some View {
         VStack(spacing: 0) {
-            // Header section - switches between drill-down and out of scope
+            // Header section - switches between drill-down and free space header
             headerSection
             // Single CategoryGrowthListView instance handles internal animation
             categoryListView
@@ -506,80 +506,31 @@ struct MenuBarView: View {
                 // Drill-down header: back button, category name, size
                 drillDownHeader(category: category)
             } else {
-                // Main header: out of scope pill
-                outOfScopeHeader
+                // Main header: free space display
+                freeSpaceHeader
             }
         }
         .animation(.easeInOut(duration: 0.3), value: manager.isDrilledDown)
     }
 
-    // MARK: - Out of Scope Header
+    // MARK: - Free Space Header
 
-    private var outOfScopeHeader: some View {
-        let paths = SettingsStore.shared.enabledOverviewPaths
-        let hasOutOfScope = manager.reconciliationResult?.shouldShowUnexplained == true
-        let totalGrowth = manager.categoryItems.reduce(Int64(0)) { $0 + $1.totalGrowthBytes }
-        
-        return Group {
-            if !paths.isEmpty || hasOutOfScope {
-                HStack(spacing: 6) {
-                    Spacer()
-                    
-                    // Tracked path pill
-                    if !paths.isEmpty {
-                        Button {
-                            closePopoverAndOpenSettings()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text("+\(ByteCountFormatter.string(fromByteCount: totalGrowth, countStyle: .file))")
-                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                Text("in")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.tertiary)
-                                Text(paths.count == 1 ? shortPath(paths[0].url) : "\(paths.count) paths")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .lineLimit(1)
-                            }
-                            .foregroundStyle(.primary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule()
-                                    .fill(Color.accentColor.opacity(0.12))
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .help("Open scan scope settings")
-                    }
-                    
-                    // Outside scope pill
-                    if let result = manager.reconciliationResult,
-                       result.shouldShowUnexplained {
-                        HStack(spacing: 4) {
-                            Text("+\(result.formattedUnexplainedDelta ?? "")")
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            Text("outside scope")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(Color.gray.opacity(0.1))
-                        )
-                    }
-                    
-                    Spacer()
-                }
-                .padding(.vertical, 8)
+    private var freeSpaceHeader: some View {
+        HStack(spacing: 6) {
+            Spacer()
+
+            // Free space display
+            HStack(spacing: 4) {
+                Text("Free: \(formattedBytes(manager.freeBytes)) of \(formattedBytes(manager.totalBytes))")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+
+            Spacer()
         }
-    }
-    
-    private func shortPath(_ url: URL) -> String {
-        url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        .padding(.vertical, 8)
     }
 
     // MARK: - Drill-down Header
@@ -625,7 +576,7 @@ struct MenuBarView: View {
             // Right: Category size
             HStack {
                 Spacer()
-                Text(formattedBytes(category.totalGrowthBytes))
+                Text(formattedBytes(category.currentSizeBytes))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
@@ -657,7 +608,7 @@ struct MenuBarView: View {
                         .multilineTextAlignment(.center)
                     Button("Retry") {
                         Task {
-                            await manager.loadCategoryGrowthList()
+                            await manager.loadInventory()
                         }
                     }
                     .buttonStyle(.bordered)
@@ -666,13 +617,14 @@ struct MenuBarView: View {
                 .padding()
             } else {
                 CategoryGrowthListView(
-                    categoryItems: manager.categoryItems,
+                    growingCategories: manager.growingCategories,
+                    stableCategories: manager.stableCategories,
+                    stableTotalBytes: manager.stableTotalBytes,
                     manager: manager,
-                    onTapItem: { item in
+                    onTapItem: { path in
                         // Reveal item in Finder
-                        NSWorkspace.shared.selectFile(item.path, inFileViewerRootedAtPath: "")
+                        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
                     }
-                    // No forcedCategory - uses internal selection
                 )
             }
         }
@@ -685,7 +637,7 @@ struct MenuBarView: View {
             // Scan/Refresh button (lower left)
             Button {
                 Task {
-                    await manager.loadCategoryGrowthList()
+                    await manager.loadInventory()
                 }
             } label: {
                     Image(systemName: "arrow.clockwise")

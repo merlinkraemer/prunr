@@ -16,7 +16,7 @@ final class SettingsStore {
     ]
     
     // MARK: - Keys
-    
+
     private enum Keys {
         static let trackedPaths = "trackedPaths"
         static let customBoundaries = "customBoundaries"
@@ -27,7 +27,12 @@ final class SettingsStore {
         static let mainBasePath = "mainBasePath"
         static let selectedCommonPathIDs = "selectedCommonPathIDs"
         static let hasPendingScopeChanges = "hasPendingScopeChanges"
+        static let categoryHistoryRetentionDays = "categoryHistoryRetentionDays"
     }
+
+    // MARK: - Constants
+
+    static let defaultCategoryHistoryRetentionDays = 30
     
     // MARK: - Properties
     
@@ -77,6 +82,11 @@ final class SettingsStore {
     /// Scope changes pending apply/reset
     var hasPendingScopeChanges: Bool {
         didSet { UserDefaults.standard.set(hasPendingScopeChanges, forKey: Keys.hasPendingScopeChanges) }
+    }
+
+    /// Category history retention period in days (default 30)
+    var categoryHistoryRetentionDays: Int {
+        didSet { UserDefaults.standard.set(categoryHistoryRetentionDays, forKey: Keys.categoryHistoryRetentionDays) }
     }
 
     // MARK: - Computed Properties
@@ -165,6 +175,10 @@ final class SettingsStore {
         self.launchAtLogin = UserDefaults.standard.bool(forKey: Keys.launchAtLogin)
 
         self.hasPendingScopeChanges = UserDefaults.standard.bool(forKey: Keys.hasPendingScopeChanges)
+
+        // Load category history retention days (default 30)
+        let savedRetentionDays = UserDefaults.standard.integer(forKey: Keys.categoryHistoryRetentionDays)
+        self.categoryHistoryRetentionDays = savedRetentionDays > 0 ? savedRetentionDays : Self.defaultCategoryHistoryRetentionDays
     }
     
     // MARK: - Path Management

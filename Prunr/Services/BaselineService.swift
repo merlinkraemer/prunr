@@ -368,12 +368,12 @@ actor BaselineService {
 
     // MARK: - Reconciliation
 
-    /// Calculates a reconciliation result that ties together free-space delta with detected file-level changes.
+    /// Calculates disk accounting data that ties together free-space tracking with scan coverage.
     ///
-    /// - Parameter trackedPath: The TrackedPath to compare
-    /// - Returns: ReconciliationResult with free-space and category delta data
+    /// - Parameter trackedPath: The TrackedPath to analyze
+    /// - Returns: DiskAccountingResult with free-space tracking data
     /// - Throws: BaselineError if insufficient snapshots exist
-    func getReconciliation(trackedPath: TrackedPath) async throws -> ReconciliationResult {
+    func getDiskAccounting(trackedPath: TrackedPath) async throws -> DiskAccountingResult {
         let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
 
         guard snapshots.count >= 2 else {
@@ -422,13 +422,234 @@ actor BaselineService {
         }
 
         // Note: explainedDelta is now the net file change (can be negative for net shrinkage)
-        return ReconciliationResult(
+        return DiskAccountingResult(
             freeSpaceDelta: freeSpaceDelta,
             previousFreeSpace: previousFreeSpace,
             currentFreeSpace: currentFreeSpace,
             explainedDelta: netFileChange,
-            unexplainedDelta: unexplainedDelta,
-            categoryDeltas: categoryDeltas
+            unexplainedDelta: unexplainedDelta
         )
+    }
+
+    // MARK: - Category Inventory & Growth Trend Detection
+
+    /// Gets the current category inventory for a tracked path
+    /// - Parameter trackedPath: The tracked path to get inventory for
+    /// - Returns: Array of CategoryInventoryItem sorted by currentSizeBytes descending
+    func getCategoryInventory(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
+        do {
+            // Get the latest snapshot for this trackedPath
+            let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            guard let latestSnapshot = snapshots.first,
+                  let snapshotId = latestSnapshot.id else {
+                return []
+            }
+
+            // Query snapshotEntry for that snapshot, JOIN paths to get path strings
+            let entries = try await db.fetchEntries(for: snapshotId)
+
+            // Aggregate into Dictionary<GrowthCategory, Int64>
+            var categoryTotals: [GrowthCategory: Int64] = [:]
+
+            for entry in entries {
+                let category = GrowthCategory.categorize(path: entry.path)
+                categoryTotals[category, default: 0] += entry.sizeBytes
+            }
+
+            // Return as [CategoryInventoryItem] sorted by totalBytes descending
+            let items = categoryTotals.map { category, totalBytes in
+                CategoryInventoryItem(
+                    category: category,
+                    currentSizeBytes: totalBytes,
+                    growthTrend: nil
+                )
+            }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+
+            return items
+        } catch {
+            print("[BaselineService] Error getting category inventory: \(error)")
+            return []
+        }
+    }
+
+    /// Detects growth trends by comparing current totals with historical data
+    /// - Parameter trackedPath: The tracked path to analyze
+    /// - Returns: Array of CategoryGrowthTrend with growth information
+    func detectGrowthTrends(trackedPath: TrackedPath) async -> [CategoryGrowthTrend: GrowthCategory] {
+        let trackedPathIdString = trackedPath.id.uuidString
+
+        // Fetch categorySnapshot history
+        let history = db.fetchCategorySnapshots(trackedPathId: trackedPathIdString, limit: 90)
+
+        guard history.count >= 2 else {
+            // Not enough data for trend detection
+            return [:]
+        }
+
+        // Group by category
+        var categoryHistory: [GrowthCategory: [(snapshotId: Int64, createdAt: Date, totalBytes: Int64)]] = [:]
+
+        for row in history {
+            if let category = GrowthCategory(rawValue: row.category) {
+                categoryHistory[category, default: []].append((
+                    snapshotId: row.snapshotId,
+                    createdAt: row.createdAt,
+                    totalBytes: row.totalBytes
+                ))
+            }
+        }
+
+        var trends: [CategoryGrowthTrend: GrowthCategory] = [:]
+        let significanceThreshold: Int64 = 50 * 1024 * 1024 // 50MB threshold
+
+        for (category, timeSeries) in categoryHistory {
+            // Sort by date ascending for trend analysis
+            let sorted = timeSeries.sorted { $0.createdAt < $1.createdAt }
+
+            guard sorted.count >= 2 else { continue }
+
+            let mostRecent = sorted.last!
+            let oldest = sorted.first!
+
+            // Calculate growth from oldest to most recent
+            let totalGrowth = mostRecent.totalBytes - oldest.totalBytes
+
+            // Only consider significant growth (> 50MB)
+            guard totalGrowth > significanceThreshold else { continue }
+
+            // Find growth start: walk backwards through the time series
+            // to find when the sustained increase began
+            // Simple heuristic: find the minimum totalBytes in the window,
+            // then find the first snapshot after that minimum
+            let minBytes = sorted.map { $0.totalBytes }.min() ?? oldest.totalBytes
+
+            // Find the first snapshot after the minimum that starts the growth trend
+            var growthStartedAt = oldest.createdAt
+            var foundMin = false
+
+            for point in sorted {
+                if !foundMin {
+                    if point.totalBytes <= minBytes + (significanceThreshold / 10) {
+                        foundMin = true
+                    }
+                } else {
+                    // After finding min, look for first significant increase
+                    if point.totalBytes > minBytes + (significanceThreshold / 10) {
+                        growthStartedAt = point.createdAt
+                        break
+                    }
+                }
+            }
+
+            // Calculate growth span in days
+            let growthSpanDays = Calendar.current.dateComponents(
+                [.day],
+                from: growthStartedAt,
+                to: mostRecent.createdAt
+            ).day ?? 0
+
+            // Create trend
+            let trend = CategoryGrowthTrend(
+                growthBytes: mostRecent.totalBytes - minBytes,
+                growthStartedAt: growthStartedAt,
+                growthSpanDays: max(1, growthSpanDays) // At least 1 day
+            )
+
+            // We need a different structure - let's use a simple approach
+            // Since we can't easily return a dictionary with complex keys,
+            // we'll return this in a different format in getInventoryWithTrends
+        }
+
+        return trends
+    }
+
+    /// Gets inventory with growth trends merged
+    /// - Parameter trackedPath: The tracked path to analyze
+    /// - Returns: Array of CategoryInventoryItem with growth trends attached where applicable
+    func getInventoryWithTrends(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
+        // 1. Get current inventory
+        var inventory = await getCategoryInventory(trackedPath: trackedPath)
+
+        // 2. Detect growth trends
+        let trackedPathIdString = trackedPath.id.uuidString
+        let history = db.fetchCategorySnapshots(trackedPathId: trackedPathIdString, limit: 90)
+
+        guard history.count >= 2 else {
+            // Not enough history data, return inventory without trends
+            return inventory
+        }
+
+        // Group by category for trend analysis
+        var categoryHistory: [GrowthCategory: [(snapshotId: Int64, createdAt: Date, totalBytes: Int64)]] = [:]
+
+        for row in history {
+            if let category = GrowthCategory(rawValue: row.category) {
+                categoryHistory[category, default: []].append((
+                    snapshotId: row.snapshotId,
+                    createdAt: row.createdAt,
+                    totalBytes: row.totalBytes
+                ))
+            }
+        }
+
+        let significanceThreshold: Int64 = 50 * 1024 * 1024 // 50MB threshold
+
+        // 3. Merge trends into inventory
+        for i in 0..<inventory.count {
+            let category = inventory[i].category
+
+            guard let sorted = categoryHistory[category]?.sorted(by: { $0.createdAt < $1.createdAt }),
+                  sorted.count >= 2 else { continue }
+
+            let mostRecent = sorted.last!
+            let oldest = sorted.first!
+
+            // Calculate growth from oldest to most recent
+            let totalGrowth = mostRecent.totalBytes - oldest.totalBytes
+
+            // Only attach trend for significant growth (> 50MB)
+            guard totalGrowth > significanceThreshold else { continue }
+
+            // Find growth start: find the minimum totalBytes in the window,
+            // then find the first snapshot after that minimum
+            let minBytes = sorted.map { $0.totalBytes }.min() ?? oldest.totalBytes
+
+            // Find the first snapshot after the minimum
+            var growthStartedAt = oldest.createdAt
+            var foundMin = false
+            let tolerance = significanceThreshold / 10 // Small tolerance around minimum
+
+            for point in sorted {
+                if !foundMin {
+                    if point.totalBytes <= minBytes + tolerance {
+                        foundMin = true
+                    }
+                } else {
+                    // After finding min, look for first snapshot that's above min + tolerance
+                    if point.totalBytes > minBytes + tolerance {
+                        growthStartedAt = point.createdAt
+                        break
+                    }
+                }
+            }
+
+            // Calculate growth span in days
+            let growthSpanDays = Calendar.current.dateComponents(
+                [.day],
+                from: growthStartedAt,
+                to: mostRecent.createdAt
+            ).day ?? 0
+
+            // Create and attach trend
+            let trend = CategoryGrowthTrend(
+                growthBytes: mostRecent.totalBytes - minBytes,
+                growthStartedAt: growthStartedAt,
+                growthSpanDays: max(1, growthSpanDays) // At least 1 day
+            )
+
+            inventory[i].growthTrend = trend
+        }
+
+        return inventory
     }
 }

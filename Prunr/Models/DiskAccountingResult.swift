@@ -1,15 +1,14 @@
 import Foundation
 
-/// Result of reconciling free-space delta with detected file-level changes.
+/// Result of disk accounting that ties together free-space tracking with scan coverage.
 ///
-/// This model ties together the actual free-space delta (from volume capacity)
-/// with the sum of detected category/file deltas from BaselineService.
-/// The difference represents "unexplained" storage changes such as:
+/// This model tracks free space changes and provides diagnostics for accounting
+/// discrepancies such as:
 /// - macOS system files outside scan scope
 /// - APFS snapshots
 /// - Swap/VM overhead
 /// - Inter-scan transient files
-struct ReconciliationResult: Sendable, Equatable {
+struct DiskAccountingResult: Sendable, Equatable {
     /// Free space delta in bytes (negative means space was consumed)
     let freeSpaceDelta: Int64?
 
@@ -19,29 +18,23 @@ struct ReconciliationResult: Sendable, Equatable {
     /// Current free space in bytes
     let currentFreeSpace: Int64?
 
-    /// Sum of all detected file-level growth from BaselineService (positive = growth)
+    /// Sum of all detected file-level changes from BaselineService (positive = growth)
     let explainedDelta: Int64
 
-    /// The difference: abs(freeSpaceDelta) - explainedDelta
+    /// The difference between free space change and explained changes
     /// Represents APFS snapshots, swap, VM overhead, inter-scan transient files, etc.
     /// Nil if freeSpaceDelta is nil (legacy snapshots without freeBytes)
     let unexplainedDelta: Int64?
 
-    /// The existing category deltas from BaselineService (unchanged)
-    let categoryDeltas: [CategoryGrowthItem]
-
-    /// Threshold for showing "Out of scope" pill in UI (10 MB)
+    /// Threshold for considering unexplained delta significant (10 MB)
     static let unexplainedThreshold: Int64 = 10 * 1024 * 1024
 
-    /// Whether the unexplained delta is meaningful enough to show in UI
+    /// Whether the unexplained delta is meaningful enough for diagnostics
     var shouldShowUnexplained: Bool {
-        guard let unexplained = unexplainedDelta else { 
-            print("[ReconciliationResult] shouldShowUnexplained: false (unexplainedDelta is nil)")
-            return false 
+        guard let unexplained = unexplainedDelta else {
+            return false
         }
-        let result = unexplained >= Self.unexplainedThreshold
-        print("[ReconciliationResult] shouldShowUnexplained: \(result) (unexplained=\(unexplained), threshold=\(Self.unexplainedThreshold))")
-        return result
+        return unexplained >= Self.unexplainedThreshold
     }
 
     /// Human-readable free space delta string with direction
@@ -71,7 +64,7 @@ struct ReconciliationResult: Sendable, Equatable {
     }
 
     /// Creates an updated copy with new current free space (for real-time updates)
-    func withUpdatedFreeSpace(_ newFreeSpace: Int64) -> ReconciliationResult {
+    func withUpdatedFreeSpace(_ newFreeSpace: Int64) -> DiskAccountingResult {
         let newDelta: Int64?
         let newUnexplained: Int64?
 
@@ -90,13 +83,18 @@ struct ReconciliationResult: Sendable, Equatable {
             newUnexplained = nil
         }
 
-        return ReconciliationResult(
+        return DiskAccountingResult(
             freeSpaceDelta: newDelta,
             previousFreeSpace: previousFreeSpace,
             currentFreeSpace: newFreeSpace,
             explainedDelta: explainedDelta,
-            unexplainedDelta: newUnexplained,
-            categoryDeltas: categoryDeltas
+            unexplainedDelta: newUnexplained
         )
     }
 }
+
+// MARK: - Deprecated Type Alias
+
+/// Deprecated: Use `DiskAccountingResult` instead
+@available(*, deprecated, renamed: "DiskAccountingResult")
+typealias ReconciliationResult = DiskAccountingResult
