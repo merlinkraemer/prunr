@@ -28,8 +28,15 @@ actor FileScanner {
     /// App-internal paths to avoid recursive self-observation.
     private let internalPathFragments: [String] = [
         "/Library/Application Support/Prunr/",
-        "/.build/derivedData/",
+        " /.build/derivedData/",
         "/dev/projects/prunr/.build/"
+    ]
+
+    /// iCloud paths that can hang when accessed
+    private let iCloudPathFragments: [String] = [
+        "/Library/Mobile Documents/",
+        "/.icloud/",
+        "/com~apple~"
     ]
 
     // MARK: - Public API
@@ -81,6 +88,14 @@ actor FileScanner {
                 let normalizedIgnoredNames = Set(ignoredNames.map { $0.lowercased() })
 
                 for case let url as URL in enumerator {
+                    let path = url.path
+
+                    // Skip iCloud paths before accessing resourceValues (can hang)
+                    if self.iCloudPathFragments.contains(where: { path.contains($0) }) {
+                        enumerator.skipDescendants()
+                        continue
+                    }
+
                     // Process each file with single resourceValues call
                     if let result = await self.processFile(url: url, enumerator: enumerator, ignoredNames: normalizedIgnoredNames) {
                         continuation.yield(result)
@@ -88,7 +103,7 @@ actor FileScanner {
 
                         // Log progress every 5000 files to detect hangs
                         if count - lastLogCount >= logInterval {
-                            print("[FileScanner] Scanned \(count) files, current: \(url.path)")
+                            print("[FileScanner] Scanned \(count) files, current: \(path)")
                             lastLogCount = count
                         }
 
@@ -174,6 +189,11 @@ actor FileScanner {
         }
 
         for fragment in internalPathFragments where path.contains(fragment) {
+            return true
+        }
+
+        // Skip iCloud directories that can hang
+        for fragment in iCloudPathFragments where path.contains(fragment) {
             return true
         }
 
