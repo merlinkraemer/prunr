@@ -193,20 +193,6 @@ actor ScanService {
             logger.debug("Initial progress update sent")
         }
 
-        var shouldDeleteSnapshot = false
-        defer {
-            if shouldDeleteSnapshot {
-                Task {
-                    do {
-                        try await db.deleteSnapshot(id: snapshotId)
-                        logger.info("Deleted incomplete snapshot ID: \(snapshotId)")
-                    } catch {
-                        logger.error("Failed to delete incomplete snapshot ID \(snapshotId): \(error.localizedDescription)")
-                    }
-                }
-            }
-        }
-
         do {
             // Stream scan results and accumulate into batches
             logger.debug("Starting file enumeration stream")
@@ -311,7 +297,13 @@ actor ScanService {
             return snapshot
 
         } catch {
-            shouldDeleteSnapshot = true
+            // Clean up orphaned snapshot before rethrowing
+            do {
+                try await db.deleteSnapshot(id: snapshotId)
+                logger.info("Deleted incomplete snapshot ID: \(snapshotId)")
+            } catch {
+                logger.error("Failed to delete incomplete snapshot ID \(snapshotId): \(error.localizedDescription)")
+            }
 
             // Wrap errors appropriately
             if let scanError = error as? ScanError {

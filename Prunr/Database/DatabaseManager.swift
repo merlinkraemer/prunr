@@ -182,6 +182,47 @@ final class DatabaseManager {
             try db.execute(sql: "VACUUM")
         }
 
+        // Migration v10: Normalize paths and add COLLATE NOCASE for case-insensitive uniqueness
+        migrator.registerMigration("v10_normalize_paths_nocase") { db in
+            // Create new paths table with COLLATE NOCASE on the unique constraint
+            try db.create(table: "paths_new", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("path", .text).notNull().unique(onConflict: .ignore).collate(.nocase)
+            }
+
+            // Migrate data with normalized paths
+            // Normalization: remove trailing slash (unless it's just "/")
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO paths_new (path)
+                SELECT CASE 
+                    WHEN path = '/' THEN path
+                    ELSE RTRIM(path, '/')
+                END
+                FROM paths
+                """)
+
+            // Update snapshotEntry to reference new path IDs
+            // First, map old path IDs to new ones
+            try db.execute(sql: """
+                UPDATE snapshotEntry
+                SET pathId = (
+                    SELECT pnew.id 
+                    FROM paths pold 
+                    JOIN paths_new pnew ON (
+                        CASE 
+                            WHEN pold.path = '/' THEN pold.path
+                            ELSE RTRIM(pold.path, '/')
+                        END = pnew.path
+                    )
+                    WHERE pold.id = snapshotEntry.pathId
+                )
+                """)
+
+            // Drop old table and rename new one
+            try db.execute(sql: "DROP TABLE paths")
+            try db.execute(sql: "ALTER TABLE paths_new RENAME TO paths")
+        }
+
         try migrator.migrate(dbPool)
     }
 }
@@ -353,9 +394,21 @@ extension DatabaseManager {
         }
     }
 
+    /// Normalizes a file path for consistent storage
+    /// - Removes trailing slash (unless it's just "/")
+    /// - Note: Case is preserved as-is; COLLATE NOCASE handles case-insensitive comparison
+    private static func normalizePath(_ path: String) -> String {
+        if path == "/" {
+            return path
+        }
+        return path.hasSuffix("/") ? String(path.dropLast()) : path
+    }
+
     private func getOrCreatePathId(path: String, db: Database) throws -> Int64 {
-        try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [path])
-        if let row = try Row.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [path]),
+        let normalizedPath = Self.normalizePath(path)
+        try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [normalizedPath])
+        // Use COLLATE NOCASE for lookup to match the table's unique constraint
+        if let row = try Row.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ? COLLATE NOCASE", arguments: [normalizedPath]),
            let id: Int64 = row["id"] {
             return id
         }
@@ -365,13 +418,17 @@ extension DatabaseManager {
     private func fetchPathIds(for paths: [String], db: Database) throws -> [String: Int64] {
         guard !paths.isEmpty else { return [:] }
 
-        for path in paths {
-            try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [path])
+        // Normalize all paths before insertion
+        let normalizedPaths = paths.map { Self.normalizePath($0) }
+
+        for normalizedPath in normalizedPaths {
+            try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [normalizedPath])
         }
 
-        let placeholders = Array(repeating: "?", count: paths.count).joined(separator: ", ")
-        let sql = "SELECT id, path FROM paths WHERE path IN (\(placeholders))"
-        let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(paths))
+        let placeholders = Array(repeating: "?", count: normalizedPaths.count).joined(separator: ", ")
+        // Use COLLATE NOCASE for lookup to match the table's unique constraint
+        let sql = "SELECT id, path FROM paths WHERE path IN (\(placeholders)) COLLATE NOCASE"
+        let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(normalizedPaths))
 
         var result: [String: Int64] = [:]
         for row in rows {

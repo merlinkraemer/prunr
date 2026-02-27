@@ -388,11 +388,13 @@ actor BaselineService {
             throw BaselineError.noBaseline
         }
 
-        // Get category deltas (existing logic)
+        // Get category deltas (positive growth only - for UI display)
         let categoryDeltas = try await getCategoryGrowthList(trackedPath: trackedPath)
 
-        // Calculate explained delta (sum of all positive growth from categories)
-        let explainedDelta = categoryDeltas.reduce(Int64(0)) { $0 + $1.totalGrowthBytes }
+        // Calculate net file change from ALL deltas (including shrinkage/deletions)
+        // This is the total change we can explain from our scan
+        let allDeltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
+        let netFileChange = allDeltas.reduce(Int64(0)) { $0 + $1.changeBytes }
 
         // Calculate free space delta
         let previousFreeSpace = previousSnapshot.freeBytes
@@ -403,19 +405,15 @@ actor BaselineService {
 
         if let prev = previousFreeSpace, let curr = currentFreeSpace {
             // Both snapshots have freeBytes - compute delta
-            let delta = curr - prev  // Negative means space was consumed
+            let delta = curr - prev  // Positive = space freed, negative = space consumed
             freeSpaceDelta = delta
 
             // Calculate unexplained delta
-            // abs(freeSpaceDelta) - explainedDelta, clamped to 0 if negative
-            let absFreeDelta = abs(delta)
-            if absFreeDelta > explainedDelta {
-                unexplainedDelta = absFreeDelta - explainedDelta
-            } else {
-                // Explained exceeds free space delta (files deleted, or measurement noise)
-                unexplainedDelta = 0
-            }
-            print("[BaselineService] Reconciliation: prevFree=\(prev), currFree=\(curr), delta=\(delta), explained=\(explainedDelta), unexplained=\(unexplainedDelta ?? 0)")
+            // If scanning is perfect: freeSpaceDelta ≈ -netFileChange
+            // (files growing = free space shrinking)
+            // Discrepancy = abs(freeSpaceDelta + netFileChange)
+            unexplainedDelta = abs(delta + netFileChange)
+            print("[BaselineService] Reconciliation: prevFree=\(prev), currFree=\(curr), freeSpaceDelta=\(delta), netFileChange=\(netFileChange), unexplained=\(unexplainedDelta ?? 0)")
         } else {
             // Legacy snapshots without freeBytes - graceful degradation
             freeSpaceDelta = nil
@@ -423,11 +421,12 @@ actor BaselineService {
             print("[BaselineService] Reconciliation: missing freeBytes (prev=\(previousFreeSpace ?? -1), curr=\(currentFreeSpace ?? -1))")
         }
 
+        // Note: explainedDelta is now the net file change (can be negative for net shrinkage)
         return ReconciliationResult(
             freeSpaceDelta: freeSpaceDelta,
             previousFreeSpace: previousFreeSpace,
             currentFreeSpace: currentFreeSpace,
-            explainedDelta: explainedDelta,
+            explainedDelta: netFileChange,
             unexplainedDelta: unexplainedDelta,
             categoryDeltas: categoryDeltas
         )

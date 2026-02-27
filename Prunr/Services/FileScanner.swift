@@ -19,7 +19,9 @@ actor FileScanner {
     /// Enumeration options for performance and safety.
     /// Keep hidden files included because they are often large contributors
     /// in developer environments (.docker, .Trash, cache folders).
-    private let enumerationOptions: FileManager.DirectoryEnumerationOptions = [.skipsPackageDescendants]
+    /// Note: We do NOT use .skipsPackageDescendants so that .app bundles and
+    /// other packages are traversed to count their file sizes.
+    private let enumerationOptions: FileManager.DirectoryEnumerationOptions = []
 
     /// App-internal paths to avoid recursive self-observation.
     private let internalPathFragments: [String] = [
@@ -132,6 +134,7 @@ actor FileScanner {
             if let totalSize = resourceValues.totalFileAllocatedSize {
                 sizeBytes = Int64(totalSize)
             } else {
+                print("[FileScanner] Skipped file with nil allocated size: \(url.lastPathComponent)")
                 return nil
             }
 
