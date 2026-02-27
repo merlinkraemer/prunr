@@ -13,7 +13,9 @@ actor FileScanner {
         .totalFileAllocatedSizeKey,
         .isSymbolicLinkKey,
         .isDirectoryKey,
-        .nameKey
+        .nameKey,
+        .isUbiquitousItemKey,  // iCloud file
+        .ubiquitousItemDownloadingStatusKey  // iCloud download status
     ]
 
     /// Enumeration options for performance and safety.
@@ -74,6 +76,8 @@ actor FileScanner {
                 }
 
                 var count = 0
+                var lastLogCount = 0
+                let logInterval = 5000
                 let normalizedIgnoredNames = Set(ignoredNames.map { $0.lowercased() })
 
                 for case let url as URL in enumerator {
@@ -82,12 +86,19 @@ actor FileScanner {
                         continuation.yield(result)
                         count += 1
 
+                        // Log progress every 5000 files to detect hangs
+                        if count - lastLogCount >= logInterval {
+                            print("[FileScanner] Scanned \(count) files, current: \(url.path)")
+                            lastLogCount = count
+                        }
+
                         // Yield less frequently for better throughput
                         if count % 2000 == 0 {
                             await Task.yield()
                         }
                     }
                 }
+                print("[FileScanner] Scan complete: \(count) files total")
 
                 continuation.finish()
             }
@@ -127,6 +138,15 @@ actor FileScanner {
             // Only process regular files
             if resourceValues.isRegularFile != true {
                 return nil
+            }
+
+            // Skip iCloud files that are not downloaded locally (avoid hang on download)
+            if resourceValues.isUbiquitousItem == true {
+                let downloadStatus = resourceValues.ubiquitousItemDownloadingStatus
+                if downloadStatus != URLUbiquitousItemDownloadingStatus.current {
+                    print("[FileScanner] Skipped non-local iCloud file: \(url.path)")
+                    return nil
+                }
             }
 
             // Get size (try allocated size first, then file size)

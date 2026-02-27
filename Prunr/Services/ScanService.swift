@@ -250,15 +250,22 @@ actor ScanService {
                             percentage = min(0.50, minimumProgress)
                             estimatedTotal = max(100, count * 3)
                         } else {
-                            // Larger scan: estimate based on scan rate
-                            let rate = Double(count) / elapsed
-                            // Estimate assuming current rate continues, with 50% buffer
-                            let estimated = Double(count) + (rate * 2.0)
-                            estimatedTotal = Int(estimated)
-                            // Progressive percentage that grows with scan
-                            percentage = min(0.95, Double(count) / max(1.0, estimated))
+                            // Time-based estimation for larger scans
+                            let filesPerSecond = Double(count) / elapsed
+                            let estimatedRemainingSeconds = max(1.0, filesPerSecond * 2) // Assume 2x more files
+                            let totalEstimatedTime = elapsed + estimatedRemainingSeconds
+                            let estimated = filesPerSecond * totalEstimatedTime
+                            
+                            // Progressive percentage that grows with scan (cap at 0.90 to avoid 95% hang perception)
+                            percentage = min(0.90, Double(count) / max(1.0, estimated))
                             // Ensure at least some progress is visible
                             percentage = max(minimumProgress, percentage)
+                            estimatedTotal = Int(estimated)
+                        }
+                        
+                        // Log progress for debugging hangs
+                        if count % 10000 == 0 {
+                            logger.debug("Scan progress: \(Int(percentage * 100))% (\(count) files, \(elapsed)s elapsed)")
                         }
 
                         let progressUpdate = ScanProgress(
