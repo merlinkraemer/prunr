@@ -5,13 +5,16 @@ struct MenuBarView: View {
     @Bindable var manager: MenuBarManager
 
     @Environment(\.openSettings) private var openSettings
-    @Environment(\.dismiss) private var dismiss
+    @State private var settingsStore = SettingsStore.shared
     @State private var scanHover = false
     @State private var settingsHover = false
     @State private var hasFullDiskAccess = false
-    @State private var hasCompletedFDAOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedFDAOnboarding")
     @State private var permissionsService = PermissionsService.shared
     @State private var highlightedStorageSegmentID: String? = nil
+    @State private var showingOnboardingFolderPicker = false
+    @State private var shouldShowOnboardingSuccess = false
+    @State private var startedOnboardingScan = false
+    @State private var onboardingSuccessTask: Task<Void, Never>? = nil
 
     private let outsideScopeSegmentID = "outside-scan-scope"
 
@@ -26,6 +29,53 @@ struct MenuBarView: View {
 
     private var scanPathLabel: String {
         manager.scanCurrentPathDisplay.isEmpty ? "Preparing scan..." : manager.scanCurrentPathDisplay
+    }
+
+    private var selectedScanFolderURL: URL {
+        URL(fileURLWithPath: settingsStore.mainBasePath, isDirectory: true)
+    }
+
+    private var hasValidScanFolder: Bool {
+        FileManager.default.fileExists(atPath: selectedScanFolderURL.path)
+    }
+
+    private var onboardingFolderStepComplete: Bool {
+        hasEnabledScanPath && hasValidScanFolder
+    }
+
+    private var onboardingCanRunFirstScan: Bool {
+        hasFullDiskAccess && onboardingFolderStepComplete && !manager.isLoading && !manager.isAutoScanning
+    }
+
+    private var selectedScanFolderLabel: String {
+        shortDisplayPath(for: selectedScanFolderURL)
+    }
+
+    private var scanFolderOptions: [OnboardingFolderOption] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let dev = home.appendingPathComponent("dev", isDirectory: true)
+        let recommendedURL = FileManager.default.fileExists(atPath: dev.path) ? dev : home
+
+        return [
+            OnboardingFolderOption(
+                id: "recommended",
+                title: FileManager.default.fileExists(atPath: dev.path) ? "Recommended" : "Recommended Home",
+                subtitle: shortDisplayPath(for: recommendedURL),
+                url: recommendedURL
+            ),
+            OnboardingFolderOption(
+                id: "home",
+                title: "Home Directory",
+                subtitle: shortDisplayPath(for: home),
+                url: home
+            ),
+            OnboardingFolderOption(
+                id: "full-disk",
+                title: "Full Disk",
+                subtitle: "/",
+                url: URL(fileURLWithPath: "/", isDirectory: true)
+            )
+        ]
     }
 
     private func closePopoverAndOpenSettings() {
@@ -83,16 +133,10 @@ struct MenuBarView: View {
             Group {
                 if manager.isLoading && !manager.isAutoScanning {
                     manualScanLoadingView
+                } else if shouldShowOnboardingSuccess {
+                    onboardingSuccessView
                 } else if manager.noBaseline {
-                    if hasFullDiskAccess {
-                        if hasCompletedFDAOnboarding {
-                            firstScanView
-                        } else {
-                            fdaOnboardingView
-                        }
-                    } else {
-                        fdaOnboardingView
-                    }
+                    setupOnboardingView
                 } else {
                     VStack(spacing: 0) {
                         // Main category view with monitoring path header
@@ -103,6 +147,9 @@ struct MenuBarView: View {
         }
         .frame(width: 320, height: 480)
         .onAppear { refreshFullDiskAccess() }
+        .onDisappear {
+            onboardingSuccessTask?.cancel()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshFullDiskAccess()
         }
@@ -120,10 +167,24 @@ struct MenuBarView: View {
                 await manager.loadInventoryFromLatestSnapshot()
             }
         }
+        .onChange(of: manager.noBaseline) { oldValue, newValue in
+            guard oldValue, !newValue, startedOnboardingScan else { return }
+            startedOnboardingScan = false
+            presentOnboardingSuccessState()
+        }
         .onChange(of: hasFullDiskAccess) { _, newValue in
-            if !newValue && hasCompletedFDAOnboarding {
-                hasCompletedFDAOnboarding = false
-                UserDefaults.standard.set(false, forKey: "hasCompletedFDAOnboarding")
+            if !newValue {
+                shouldShowOnboardingSuccess = false
+                onboardingSuccessTask?.cancel()
+            }
+        }
+        .fileImporter(
+            isPresented: $showingOnboardingFolderPicker,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                applyOnboardingScanFolder(url)
             }
         }
     }
@@ -222,56 +283,223 @@ struct MenuBarView: View {
         }
     }
 
-    private var firstScanView: some View {
-        onboardingCard(
-            icon: "doc.text.magnifyingglass",
-            iconColor: .blue,
-            title: "Run your first scan",
-            message: "Create a baseline so Prunr can track storage growth over time.",
-            primaryTitle: hasEnabledScanPath ? "Run first scan" : "Enable scan path",
-            primaryMinWidth: hasEnabledScanPath ? 150 : 170,
-            primaryDisabled: manager.isLoading || manager.isAutoScanning,
-            primaryAction: {
-                if hasEnabledScanPath {
-                    Task { await manager.loadInventory() }
-                } else {
-                    closePopoverAndOpenSettings()
+    private var setupOnboardingView: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("3-step setup")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.primary)
+
+                        Text("Grant access, choose a folder, then build your first baseline.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    onboardingStep(
+                        number: 1,
+                        title: "Full Disk Access",
+                        isComplete: hasFullDiskAccess,
+                        detail: hasFullDiskAccess
+                            ? "Permission looks good."
+                            : "Required for reliable scans outside the app sandbox."
+                    ) {
+                        if hasFullDiskAccess {
+                            Text("Ready")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.green)
+                        } else {
+                            VStack(alignment: .leading, spacing: 8) {
+                                primaryActionButton("Open Full Disk Access", minWidth: 168) {
+                                    openFullDiskAccessSettings()
+                                }
+
+                                secondaryActionButton("Reveal Current App") {
+                                    permissionsService.revealCurrentAppInFinder()
+                                }
+                            }
+                        }
+                    }
+
+                    onboardingStep(
+                        number: 2,
+                        title: "Choose scan folder",
+                        isComplete: onboardingFolderStepComplete,
+                        detail: onboardingFolderStepComplete
+                            ? "Scanning \(selectedScanFolderLabel)"
+                            : "Pick a starting scope for your first baseline."
+                    ) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(selectedScanFolderLabel)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(scanFolderOptions) { option in
+                                    Button {
+                                        applyOnboardingScanFolder(option.url)
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(option.title)
+                                                    .font(.system(size: 12, weight: .semibold))
+                                                    .foregroundStyle(.primary)
+
+                                                Text(option.subtitle)
+                                                    .font(.system(size: 11, design: .monospaced))
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
+                                                    .truncationMode(.middle)
+                                            }
+
+                                            Spacer()
+
+                                            if selectedScanFolderURL.standardizedFileURL == option.url.standardizedFileURL {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .foregroundStyle(.blue)
+                                            }
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .fill(Color.white.opacity(0.45))
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+
+                            secondaryActionButton("Choose Folder...") {
+                                showingOnboardingFolderPicker = true
+                            }
+                        }
+                    }
+
+                    expectationsCard
+
+                    onboardingStep(
+                        number: 3,
+                        title: "Run first scan",
+                        isComplete: false,
+                        detail: onboardingCanRunFirstScan
+                            ? "Build the first baseline now."
+                            : "Finish steps 1 and 2 first."
+                    ) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            primaryActionButton(
+                                "Run first scan",
+                                minWidth: 138,
+                                isDisabled: !onboardingCanRunFirstScan
+                            ) {
+                                startedOnboardingScan = true
+                                Task { await manager.loadInventory() }
+                            }
+
+                            if !onboardingCanRunFirstScan {
+                                Text(stepThreeHintText)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
-            },
-            secondaryTitle: nil,
-            secondaryAction: nil,
-            detailText: hasEnabledScanPath
-                ? "The first scan may take a while, but it only needs to build your initial baseline once."
-                : "Choose a folder in Settings first, then come back here to start the initial scan."
+                .frame(maxWidth: 292)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.gray.opacity(0.08))
+                )
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 18)
+        }
+        .scrollIndicators(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var expectationsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Before your first scan")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            expectationRow(
+                icon: "clock",
+                text: "Usually 30 seconds to a few minutes, depending on folder size."
+            )
+            expectationRow(
+                icon: "eye",
+                text: "After setup, Prunr watches for changes automatically."
+            )
+            expectationRow(
+                icon: "arrow.clockwise",
+                text: "Refresh reloads the latest saved snapshot. Complete rescan walks the file system again."
+            )
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.45))
         )
     }
 
-    private var fdaOnboardingView: some View {
-        onboardingCard(
-            icon: hasFullDiskAccess ? "checkmark.seal.fill" : "lock.shield",
-            iconColor: hasFullDiskAccess ? .green : .orange,
-            title: "Full Disk Access",
-            message: hasFullDiskAccess
-                ? "Permission is ready. Continue to set up your first scan."
-                : "Grant Full Disk Access so Prunr can scan system and user locations reliably.",
-            primaryTitle: hasFullDiskAccess ? "Continue" : "Open Full Disk Access",
-            primaryMinWidth: 180,
-            primaryDisabled: false,
-            primaryAction: {
-                if hasFullDiskAccess {
-                    completeFDAOnboarding()
-                } else {
-                    openFullDiskAccessSettings()
+    private var onboardingSuccessView: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.green)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Baseline ready")
+                            .font(.system(size: 17, weight: .semibold))
+
+                        Text("Prunr is now watching \(selectedScanFolderLabel).")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
-            },
-            secondaryTitle: hasFullDiskAccess ? nil : "Reveal Current App",
-            secondaryAction: hasFullDiskAccess ? nil : {
-                permissionsService.revealCurrentAppInFinder()
-            },
-            detailText: hasFullDiskAccess
-                ? "The next step will create your baseline scan."
-                : "If Prunr is not listed in Settings, use the + button and add the currently running app."
-        )
+
+                expectationRow(
+                    icon: "bolt.horizontal.circle",
+                    text: "Refresh reopens the latest saved delta without rescanning."
+                )
+                expectationRow(
+                    icon: "externaldrive.badge.timemachine",
+                    text: "Use Complete Rescan in Settings when you want a fresh filesystem pass."
+                )
+
+                primaryActionButton("Open inventory", minWidth: 136) {
+                    dismissOnboardingSuccess()
+                }
+            }
+            .frame(maxWidth: 292)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 22)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.gray.opacity(0.08))
+            )
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 18)
     }
 
     // MARK: - Drive Bar Section (Always Visible)
@@ -369,11 +597,6 @@ struct MenuBarView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color.orange.opacity(0.12))
-    }
-
-    private func completeFDAOnboarding() {
-        hasCompletedFDAOnboarding = true
-        UserDefaults.standard.set(true, forKey: "hasCompletedFDAOnboarding")
     }
 
     // MARK: - Page Navigation Content
@@ -671,77 +894,112 @@ struct MenuBarView: View {
         .buttonStyle(.plain)
     }
 
-    private func onboardingCard(
-        icon: String,
-        iconColor: Color,
+    private var stepThreeHintText: String {
+        if !hasFullDiskAccess {
+            return "Grant Full Disk Access first."
+        }
+
+        if !onboardingFolderStepComplete {
+            return "Choose a scan folder first."
+        }
+
+        return "Run the first scan to build your baseline."
+    }
+
+    private func applyOnboardingScanFolder(_ url: URL) {
+        settingsStore.setMainBasePath(url)
+        settingsStore.setPathEnabled(settingsStore.mainTrackedPath, enabled: true)
+
+        if manager.noBaseline {
+            settingsStore.clearPendingScopeChanges()
+        }
+    }
+
+    private func shortDisplayPath(for url: URL) -> String {
+        let standardizedPath = url.standardizedFileURL.path
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+
+        if standardizedPath == "/" {
+            return "/"
+        }
+
+        if standardizedPath.hasPrefix(homePath) {
+            let relativePath = String(standardizedPath.dropFirst(homePath.count))
+            if relativePath.isEmpty {
+                return "~"
+            }
+            return "~" + relativePath
+        }
+
+        return standardizedPath
+    }
+
+    @ViewBuilder
+    private func onboardingStep<Content: View>(
+        number: Int,
         title: String,
-        message: String,
-        primaryTitle: String,
-        primaryMinWidth: CGFloat,
-        primaryDisabled: Bool,
-        primaryAction: @escaping () -> Void,
-        secondaryTitle: String?,
-        secondaryAction: (() -> Void)?,
-        detailText: String
+        isComplete: Bool,
+        detail: String,
+        @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isComplete ? .green : .secondary)
 
-            VStack(spacing: 0) {
-                VStack(spacing: 14) {
-                    Image(systemName: icon)
-                        .font(.system(size: 34))
-                        .foregroundStyle(iconColor)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Step \(number) · \(title)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
 
-                    VStack(spacing: 6) {
-                        Text(title)
-                            .font(.system(size: 18, weight: .semibold))
-
-                        Text(message)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 260)
-                    }
-                }
-                .frame(height: 146)
-
-                VStack(spacing: 10) {
-                    primaryActionButton(
-                        primaryTitle,
-                        minWidth: primaryMinWidth,
-                        isDisabled: primaryDisabled,
-                        action: primaryAction
-                    )
-
-                    Group {
-                        if let secondaryTitle, let secondaryAction {
-                            secondaryActionButton(secondaryTitle, action: secondaryAction)
-                        } else {
-                            Color.clear.frame(height: 20)
-                        }
-                    }
-
-                    Text(detailText)
+                    Text(detail)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 270)
-                        .frame(height: 42, alignment: .top)
                 }
-                .frame(height: 112, alignment: .top)
+
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: 292)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 22)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.gray.opacity(0.08))
-            )
+
+            content()
+                .padding(.leading, 26)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.45))
+        )
+    }
+
+    private func expectationRow(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func presentOnboardingSuccessState() {
+        shouldShowOnboardingSuccess = true
+        onboardingSuccessTask?.cancel()
+        onboardingSuccessTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.8))
+            dismissOnboardingSuccess()
+        }
+    }
+
+    private func dismissOnboardingSuccess() {
+        onboardingSuccessTask?.cancel()
+        shouldShowOnboardingSuccess = false
     }
 
     private func scanStatusCard(clampedProgress: Double) -> some View {
@@ -870,6 +1128,13 @@ struct MenuBarView: View {
             return "\(bytes) B"
         }
     }
+}
+
+private struct OnboardingFolderOption: Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let url: URL
 }
 
 #Preview {
