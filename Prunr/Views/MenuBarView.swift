@@ -11,10 +11,10 @@ struct MenuBarView: View {
     @State private var hasFullDiskAccess = false
     @State private var permissionsService = PermissionsService.shared
     @State private var highlightedStorageSegmentID: String? = nil
-    @State private var showingOnboardingFolderPicker = false
     @State private var shouldShowOnboardingSuccess = false
     @State private var startedOnboardingScan = false
     @State private var onboardingSuccessTask: Task<Void, Never>? = nil
+    @State private var customOnboardingFolderPath: URL? = nil
 
     private let outsideScopeSegmentID = "outside-scan-scope"
 
@@ -52,30 +52,54 @@ struct MenuBarView: View {
     }
 
     private var scanFolderOptions: [OnboardingFolderOption] {
+        var options: [OnboardingFolderOption] = []
+        
         let home = FileManager.default.homeDirectoryForCurrentUser
         let dev = home.appendingPathComponent("dev", isDirectory: true)
         let recommendedURL = FileManager.default.fileExists(atPath: dev.path) ? dev : home
 
-        return [
+        options.append(
             OnboardingFolderOption(
                 id: "recommended",
                 title: FileManager.default.fileExists(atPath: dev.path) ? "Recommended" : "Recommended Home",
                 subtitle: shortDisplayPath(for: recommendedURL),
                 url: recommendedURL
-            ),
+            )
+        )
+        options.append(
             OnboardingFolderOption(
                 id: "home",
                 title: "Home Directory",
                 subtitle: shortDisplayPath(for: home),
                 url: home
-            ),
+            )
+        )
+        options.append(
             OnboardingFolderOption(
                 id: "full-disk",
                 title: "Full Disk",
                 subtitle: "/",
                 url: URL(fileURLWithPath: "/", isDirectory: true)
             )
-        ]
+        )
+        
+        // Add custom path if one was selected via file picker
+        if let customPath = customOnboardingFolderPath {
+            let isAlreadyInList = options.contains { $0.url.standardizedFileURL == customPath.standardizedFileURL }
+            if !isAlreadyInList {
+                options.insert(
+                    OnboardingFolderOption(
+                        id: "custom",
+                        title: "Custom Folder",
+                        subtitle: shortDisplayPath(for: customPath),
+                        url: customPath
+                    ),
+                    at: 0
+                )
+            }
+        }
+
+        return options
     }
 
     private func closePopoverAndOpenSettings() {
@@ -178,15 +202,6 @@ struct MenuBarView: View {
                 onboardingSuccessTask?.cancel()
             }
         }
-        .fileImporter(
-            isPresented: $showingOnboardingFolderPicker,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                applyOnboardingScanFolder(url)
-            }
-        }
     }
 
     private var manualScanLoadingView: some View {
@@ -221,6 +236,12 @@ struct MenuBarView: View {
                 .font(.system(size: 12, weight: .medium))
                 .buttonStyle(.plain)
                 .foregroundStyle(.red)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color.red.opacity(0.5), lineWidth: 1)
+                )
                 .accessibilityLabel("Stop scan")
                 .accessibilityHint("Cancel the current scan operation")
             }
@@ -285,113 +306,159 @@ struct MenuBarView: View {
 
     private var setupOnboardingView: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                Spacer(minLength: 0)
+            VStack(spacing: 16) {
+                // Header section
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Setup")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 4)
 
-                VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("3-step setup")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(.primary)
-
-                        Text("Grant access, choose a folder, then build your first baseline.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-
-                    onboardingStep(
-                        number: 1,
-                        title: "Full Disk Access",
-                        isComplete: hasFullDiskAccess,
-                        detail: hasFullDiskAccess
-                            ? "Permission looks good."
-                            : "Required for reliable scans outside the app sandbox."
-                    ) {
-                        if hasFullDiskAccess {
-                            Text("Ready")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.green)
-                        } else {
-                            VStack(alignment: .leading, spacing: 8) {
-                                primaryActionButton("Open Full Disk Access", minWidth: 168) {
-                                    openFullDiskAccessSettings()
-                                }
-
-                                secondaryActionButton("Reveal Current App") {
-                                    permissionsService.revealCurrentAppInFinder()
-                                }
-                            }
+                // Step 1: Full Disk Access
+                onboardingStepCard(
+                    number: 1,
+                    title: "Full Disk Access",
+                    isComplete: hasFullDiskAccess,
+                    detail: "",
+                    isActive: true
+                ) {
+                    if hasFullDiskAccess {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("Granted")
+                                .font(.system(size: 12, weight: .medium))
                         }
-                    }
-
-                    onboardingStep(
-                        number: 2,
-                        title: "Choose scan folder",
-                        isComplete: onboardingFolderStepComplete,
-                        detail: onboardingFolderStepComplete
-                            ? "Scanning \(selectedScanFolderLabel)"
-                            : "Pick a starting scope for your first baseline."
-                    ) {
+                        .foregroundStyle(.green)
+                    } else {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(selectedScanFolderLabel)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(scanFolderOptions) { option in
-                                    Button {
-                                        applyOnboardingScanFolder(option.url)
-                                    } label: {
-                                        HStack(spacing: 10) {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(option.title)
-                                                    .font(.system(size: 12, weight: .semibold))
-                                                    .foregroundStyle(.primary)
-
-                                                Text(option.subtitle)
-                                                    .font(.system(size: 11, design: .monospaced))
-                                                    .foregroundStyle(.secondary)
-                                                    .lineLimit(1)
-                                                    .truncationMode(.middle)
-                                            }
-
-                                            Spacer()
-
-                                            if selectedScanFolderURL.standardizedFileURL == option.url.standardizedFileURL {
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .foregroundStyle(.blue)
-                                            }
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 8)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                .fill(Color.white.opacity(0.45))
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                }
+                            primaryActionButton("Open Full Disk Access", minWidth: 168) {
+                                openFullDiskAccessSettings()
                             }
 
-                            secondaryActionButton("Choose Folder...") {
-                                showingOnboardingFolderPicker = true
+                            secondaryActionButton("Reveal Current App") {
+                                permissionsService.revealCurrentAppInFinder()
                             }
                         }
                     }
+                }
 
-                    expectationsCard
-
-                    onboardingStep(
-                        number: 3,
-                        title: "Run first scan",
-                        isComplete: false,
-                        detail: onboardingCanRunFirstScan
-                            ? "Build the first baseline now."
-                            : "Finish steps 1 and 2 first."
-                    ) {
+                // Step 2: Choose scan folder
+                onboardingStepCard(
+                    number: 2,
+                    title: "Choose scan folder",
+                    isComplete: onboardingFolderStepComplete,
+                    detail: "",
+                    isActive: hasFullDiskAccess
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        // Folder options - styled as selectable list
                         VStack(alignment: .leading, spacing: 8) {
+                            ForEach(scanFolderOptions) { option in
+                                let isSelected = selectedScanFolderURL.standardizedFileURL == option.url.standardizedFileURL
+
+                                Button {
+                                    guard hasFullDiskAccess else { return }
+                                    applyOnboardingScanFolder(option.url)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(option.title)
+                                                .font(.system(size: 11, weight: .medium))
+                                                .foregroundStyle(isSelected ? .white : (hasFullDiskAccess ? .primary : .secondary.opacity(0.5)))
+
+                                            Text(option.subtitle)
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundStyle(isSelected ? .white.opacity(0.85) : (hasFullDiskAccess ? .secondary : .secondary.opacity(0.4)))
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                        }
+
+                                        Spacer()
+
+                                        if isSelected {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(.white)
+                                        } else {
+                                            Circle()
+                                                .strokeBorder(Color.gray.opacity(hasFullDiskAccess ? 0.4 : 0.2), lineWidth: 1.5)
+                                                .frame(width: 14, height: 14)
+                                        }
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(isSelected ? Color.blue : Color.clear)
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .strokeBorder(
+                                                isSelected ? Color.clear : Color.gray.opacity(hasFullDiskAccess ? 0.25 : 0.12),
+                                                lineWidth: 1
+                                            )
+                                    )
+                                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            // Custom folder option - styled as action button
+                            Button {
+                                guard hasFullDiskAccess else { return }
+                                manager.showOnboardingFolderPicker { url in
+                                    if let url = url {
+                                        customOnboardingFolderPath = url
+                                        applyOnboardingScanFolder(url)
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "folder.badge.plus")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(hasFullDiskAccess ? .blue : Color.secondary.opacity(0.5))
+
+                                    Text("Choose Custom Folder")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(hasFullDiskAccess ? .primary : Color.secondary.opacity(0.5))
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity)
+                                .background(Color.clear)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(Color.gray.opacity(hasFullDiskAccess ? 0.25 : 0.12), lineWidth: 1)
+                                )
+                                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                // Step 3: Run first scan
+                onboardingStepCard(
+                    number: 3,
+                    title: "Run first scan",
+                    isComplete: false,
+                    detail: "",
+                    isActive: onboardingFolderStepComplete
+                ) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if startedOnboardingScan {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                Text("Starting scan...")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
                             primaryActionButton(
                                 "Run first scan",
                                 minWidth: 138,
@@ -400,57 +467,21 @@ struct MenuBarView: View {
                                 startedOnboardingScan = true
                                 Task { await manager.loadInventory() }
                             }
+                        }
 
-                            if !onboardingCanRunFirstScan {
-                                Text(stepThreeHintText)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                            }
+                        if !onboardingCanRunFirstScan {
+                            Text(stepThreeHintText)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-                .frame(maxWidth: 292)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 20)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.gray.opacity(0.08))
-                )
-
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 18)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
         }
         .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var expectationsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Before your first scan")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.primary)
-
-            expectationRow(
-                icon: "clock",
-                text: "Usually 30 seconds to a few minutes, depending on folder size."
-            )
-            expectationRow(
-                icon: "eye",
-                text: "After setup, Prunr watches for changes automatically."
-            )
-            expectationRow(
-                icon: "arrow.clockwise",
-                text: "Refresh reloads the latest saved snapshot. Complete rescan walks the file system again."
-            )
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.45))
-        )
     }
 
     private var onboardingSuccessView: some View {
@@ -649,20 +680,21 @@ struct MenuBarView: View {
     // MARK: - Drill-down Header
 
     private func drillDownHeader(category: CategoryInventoryItem) -> some View {
-        ZStack {
-            let headerIcon = manager.isSubcategoryDrillDown
-                ? (manager.selectedSubcategory?.subcategory?.icon ?? "folder.fill")
-                : category.category.icon
-            let headerName = manager.isSubcategoryDrillDown
-                ? (manager.selectedSubcategory?.displayName ?? category.category.displayName)
-                : category.category.displayName
-            let headerBytes = manager.isSubcategoryDrillDown
-                ? (manager.selectedSubcategory?.totalBytes ?? category.currentSizeBytes)
-                : category.currentSizeBytes
+        let headerIcon = manager.isSubcategoryDrillDown
+            ? (manager.selectedSubcategory?.subcategory?.icon ?? "folder.fill")
+            : category.category.icon
+        let headerName = manager.isSubcategoryDrillDown
+            ? (manager.selectedSubcategory?.displayName ?? category.category.displayName)
+            : category.category.displayName
+        let headerBytes = manager.isSubcategoryDrillDown
+            ? (manager.selectedSubcategory?.totalBytes ?? category.currentSizeBytes)
+            : category.currentSizeBytes
 
-            HStack(spacing: 8) {
+        return ZStack {
+            // Centered title
+            HStack(spacing: 6) {
                 Image(systemName: headerIcon)
-                    .font(.system(size: 13))
+                    .font(.system(size: 14))
                     .foregroundStyle(category.category.color)
 
                 Text(headerName)
@@ -696,7 +728,7 @@ struct MenuBarView: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                         Text("Back")
                             .font(.system(size: 13, weight: .medium))
                     }
@@ -707,25 +739,17 @@ struct MenuBarView: View {
                 .accessibilityHint("Return to category overview")
                 Spacer()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Right: Category size
+            // Right: Size
             HStack {
                 Spacer()
                 Text(formattedBytes(headerBytes))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(Color.gray.opacity(0.15))
-                    )
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Category List View
@@ -778,56 +802,63 @@ struct MenuBarView: View {
                     await manager.refreshVisibleInventory()
                 }
             } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 13))
-                        .frame(width: 26, height: 26)
-                        .background(
-                            Circle()
-                                .fill(scanHover ? Color.gray.opacity(0.12) : Color.clear)
-                        )
-                        .foregroundStyle(.primary)
-                        .contentShape(Circle())
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13))
+                    .frame(width: 26, height: 26)
+                    .background(
+                        Circle()
+                            .fill(scanHover ? Color.gray.opacity(0.12) : Color.clear)
+                    )
+                    .foregroundStyle(manager.isLoading || manager.isAutoScanning ? .tertiary : .primary)
+                    .contentShape(Circle())
+                    .rotationEffect(.degrees(manager.isLoading || manager.isAutoScanning ? 360 : 0))
+                    .animation(
+                        manager.isLoading || manager.isAutoScanning
+                            ? .linear(duration: 1).repeatForever(autoreverses: false)
+                            : .default,
+                        value: manager.isLoading || manager.isAutoScanning
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Refresh view")
+            .accessibilityHint("Reload growth categories from the latest snapshot")
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    scanHover = hovering
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Refresh view")
-                .accessibilityHint("Reload growth categories from the latest snapshot")
-                .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        scanHover = hovering
-                    }
+            }
+            .disabled(manager.isLoading || manager.isAutoScanning)
+            .help(manager.isLoading || manager.isAutoScanning ? "Refreshing..." : "Refresh Latest Delta")
+
+            Spacer()
+
+            footerStatusText
+
+            Spacer()
+
+            // Settings button (lower right)
+            Button {
+                closePopoverAndOpenSettings()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13))
+                    .frame(width: 26, height: 26)
+                    .background(
+                        Circle()
+                            .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
+                    )
+                    .foregroundStyle(.primary)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open settings")
+            .accessibilityHint("Open Prunr settings")
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    settingsHover = hovering
                 }
-                .disabled(manager.isLoading || manager.isAutoScanning)
-                .help("Refresh Latest Delta")
-
-                Spacer()
-
-                footerStatusText
-
-                Spacer()
-
-                // Settings button (lower right)
-                Button {
-                    closePopoverAndOpenSettings()
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 13))
-                        .frame(width: 26, height: 26)
-                        .background(
-                            Circle()
-                                .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
-                        )
-                        .foregroundStyle(.primary)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open settings")
-                .accessibilityHint("Open Prunr settings")
-                .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        settingsHover = hovering
-                    }
-                }
-                .help("Settings")
+            }
+            .help("Settings")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
@@ -872,14 +903,14 @@ struct MenuBarView: View {
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(isDisabled ? Color.blue.opacity(0.35) : Color.blue)
+                        .fill(isDisabled ? Color.gray.opacity(0.25) : Color.blue)
                 )
-                .foregroundStyle(.white)
+                .foregroundStyle(isDisabled ? .gray : .white)
                 .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
-        .opacity(isDisabled ? 0.7 : 1.0)
+        .opacity(isDisabled ? 0.5 : 1.0)
     }
 
     private func secondaryActionButton(
@@ -935,41 +966,54 @@ struct MenuBarView: View {
     }
 
     @ViewBuilder
-    private func onboardingStep<Content: View>(
+    private func onboardingStepCard<Content: View>(
         number: Int,
         title: String,
         isComplete: Bool,
         detail: String,
+        isActive: Bool = true,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(isComplete ? .green : .secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            // Header with step number and title
+            HStack(alignment: .center, spacing: 10) {
+                // Step indicator
+                ZStack {
+                    Circle()
+                        .fill(isComplete ? Color.green.opacity(0.15) : (isActive ? Color.blue.opacity(0.12) : Color.gray.opacity(0.08)))
+                        .frame(width: 28, height: 28)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Step \(number) · \(title)")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-
-                    Text(detail)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                    if isComplete {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.green)
+                    } else {
+                        Text("\(number)")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(isActive ? .blue : Color.secondary.opacity(0.5))
+                    }
                 }
+
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(isActive ? .primary : Color.secondary.opacity(0.5))
 
                 Spacer(minLength: 0)
             }
 
+            // Content area
             content()
-                .padding(.leading, 26)
+                .padding(.leading, 38)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.45))
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
+        .opacity(isActive ? 1.0 : 0.5)
     }
 
     private func expectationRow(icon: String, text: String) -> some View {
@@ -1096,7 +1140,7 @@ struct MenuBarView: View {
                 .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.45))
+                        .fill(Color.gray.opacity(0.06))
                 )
             }
         }
