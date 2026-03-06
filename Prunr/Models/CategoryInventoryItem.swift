@@ -20,6 +20,16 @@ struct CategoryGrowthTrend: Sendable, Equatable, Hashable {
     let growthSpanDays: Int
 }
 
+/// Supplemental inventory entry used for storage shown in the drive bar
+/// that does not map to a drill-down category.
+struct SupplementalInventoryItem: Identifiable, Sendable, Equatable {
+    let id: String
+    let title: String
+    let icon: String
+    let currentSizeBytes: Int64
+    let badgeText: String
+}
+
 struct SubcategoryGroup: Identifiable, Sendable, Equatable {
     let id = UUID()
     let subcategory: GrowthSubcategory?

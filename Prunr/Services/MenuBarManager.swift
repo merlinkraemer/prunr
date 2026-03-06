@@ -702,6 +702,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
+    func refreshVisibleInventory() async {
+        updateFreeSpaceIfNeeded()
+        await updatePathSize()
+        await loadInventoryFromLatestSnapshot()
+    }
+
     /// Legacy: Loads the category-based growth list (deprecated, use loadInventory)
     @available(*, deprecated, message: "Use loadInventory() instead")
     func loadCategoryGrowthList(isAutomatic: Bool = false) async {

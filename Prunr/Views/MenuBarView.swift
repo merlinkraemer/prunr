@@ -11,6 +11,9 @@ struct MenuBarView: View {
     @State private var hasFullDiskAccess = false
     @State private var hasCompletedFDAOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedFDAOnboarding")
     @State private var permissionsService = PermissionsService.shared
+    @State private var highlightedStorageSegmentID: String? = nil
+
+    private let outsideScopeSegmentID = "outside-scan-scope"
 
     private var hasEnabledScanPath: Bool {
         !SettingsStore.shared.enabledTrackedPaths.isEmpty
@@ -18,12 +21,6 @@ struct MenuBarView: View {
 
     private var scanFileCountLabel: String? {
         guard manager.filesScanned > 0 else { return nil }
-
-        if manager.hasReliableScanProgressEstimate,
-           manager.scanEstimatedTotalFiles > manager.filesScanned {
-            return "\(manager.filesScanned.formatted()) of about \(manager.scanEstimatedTotalFiles.formatted()) files"
-        }
-
         return "\(manager.filesScanned.formatted()) files scanned"
     }
 
@@ -197,25 +194,13 @@ struct MenuBarView: View {
                 } else {
                     VStack(spacing: 10) {
                         if manager.hasReliableScanProgressEstimate {
-                            Text("\(Int(clampedProgress * 100))%")
-                                .font(.system(size: 36, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.primary)
-                                .frame(minWidth: 96)
-
                             ProgressView(value: clampedProgress, total: 1.0)
                                 .progressViewStyle(.linear)
                                 .tint(.blue)
                         } else {
-                            Text("Estimating")
-                                .font(.system(size: 24, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.primary)
-
                             ProgressView()
-                                .controlSize(.small)
-
-                            Text("Building a scan estimate...")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
+                                .progressViewStyle(.linear)
+                                .tint(.blue)
                         }
                     }
                 }
@@ -467,14 +452,15 @@ struct MenuBarView: View {
             totalBytes: manager.totalBytes,
             usedBytes: manager.usedBytes,
             freeBytes: manager.freeBytes,
-            categorySegments: driveBarSegments
+            categorySegments: driveBarSegments,
+            highlightedSegmentID: $highlightedStorageSegmentID
         )
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
     private var driveBarSegments: [DriveBarSegment] {
-        (manager.growingCategories + manager.stableCategories)
+        var segments = (manager.growingCategories + manager.stableCategories)
             .filter { $0.currentSizeBytes > 0 }
             .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
             .map {
@@ -484,6 +470,43 @@ struct MenuBarView: View {
                     color: $0.category.color
                 )
             }
+
+        if outsideScanScopeBytes > 0 {
+            segments.append(
+                DriveBarSegment(
+                    id: outsideScopeSegmentID,
+                    bytes: outsideScanScopeBytes,
+                    color: Color.gray.opacity(0.55)
+                )
+            )
+        }
+
+        return segments
+    }
+
+    private var trackedInventoryBytes: Int64 {
+        (manager.growingCategories + manager.stableCategories)
+            .reduce(Int64(0)) { $0 + $1.currentSizeBytes }
+    }
+
+    private var outsideScanScopeBytes: Int64 {
+        max(0, manager.usedBytes - trackedInventoryBytes)
+    }
+
+    private var supplementalInventoryItems: [SupplementalInventoryItem] {
+        guard outsideScanScopeBytes > 0 else {
+            return []
+        }
+
+        return [
+            SupplementalInventoryItem(
+                id: outsideScopeSegmentID,
+                title: "Outside Scan Scope",
+                icon: "square.dashed",
+                currentSizeBytes: outsideScanScopeBytes,
+                badgeText: "Not scanned"
+            )
+        ]
     }
 
     private func refreshFullDiskAccess() {
@@ -680,8 +703,10 @@ struct MenuBarView: View {
                 CategoryGrowthListView(
                     growingCategories: manager.growingCategories,
                     stableCategories: manager.stableCategories,
+                    supplementalItems: supplementalInventoryItems,
                     stableTotalBytes: manager.stableTotalBytes,
                     manager: manager,
+                    highlightedSegmentID: $highlightedStorageSegmentID,
                     onTapItem: { path in
                         // Reveal item in Finder
                         NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
@@ -698,7 +723,7 @@ struct MenuBarView: View {
             // Scan/Refresh button (lower left)
             Button {
                 Task {
-                    await manager.loadInventory()
+                    await manager.refreshVisibleInventory()
                 }
             } label: {
                     Image(systemName: "arrow.clockwise")
@@ -712,15 +737,15 @@ struct MenuBarView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Run scan now")
-                .accessibilityHint("Create a new snapshot and refresh growth categories")
+                .accessibilityLabel("Refresh view")
+                .accessibilityHint("Reload growth categories from the latest snapshot")
                 .onHover { hovering in
                     withAnimation(.easeInOut(duration: 0.15)) {
                         scanHover = hovering
                     }
                 }
-                .disabled(manager.isLoading)
-                .help("Refresh View")
+                .disabled(manager.isLoading || manager.isAutoScanning)
+                .help("Refresh Latest Delta")
 
                 Spacer()
 

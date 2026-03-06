@@ -20,6 +20,9 @@ struct DriveBarView: View {
     /// Optional category breakdown rendered inside the used portion
     var categorySegments: [DriveBarSegment] = []
 
+    /// Shared hover state so the drive bar and list rows can highlight each other
+    @Binding var highlightedSegmentID: String?
+
     /// Bar height
     private let barHeight: CGFloat = 12
     private let segmentSpacing: CGFloat = 1
@@ -48,8 +51,14 @@ struct DriveBarView: View {
                         HStack(spacing: segmentSpacing) {
                             ForEach(renderedSegments) { segment in
                                 Rectangle()
-                                    .fill(segment.color.opacity(0.9))
+                                    .fill(fillColor(for: segment))
                                     .frame(width: max(0, availableSegmentWidth * segment.fraction))
+                                    .contentShape(Rectangle())
+                                    .onHover { hovering in
+                                        withAnimation(.easeInOut(duration: 0.12)) {
+                                            highlightedSegmentID = hovering ? segment.id : nil
+                                        }
+                                    }
                             }
                         }
                         .frame(width: usedWidth, alignment: .leading)
@@ -104,7 +113,6 @@ struct DriveBarView: View {
 
         let positiveSegments = categorySegments
             .filter { $0.bytes > 0 }
-            .sorted { $0.bytes > $1.bytes }
 
         guard !positiveSegments.isEmpty else {
             return []
@@ -167,6 +175,18 @@ struct DriveBarView: View {
         }
     }
 
+    private func fillColor(for segment: RenderedSegment) -> Color {
+        guard let highlightedSegmentID else {
+            return segment.color.opacity(0.9)
+        }
+
+        if highlightedSegmentID == segment.id {
+            return segment.color
+        }
+
+        return segment.color.opacity(0.3)
+    }
+
     /// Converts bytes to GB/TB string (no space)
     private func bytesToGBString(_ bytes: Int64) -> String {
         let gb = Double(bytes) / 1_000_000_000
@@ -201,18 +221,19 @@ private struct RenderedSegment: Identifiable {
                 DriveBarSegment(id: "apps", bytes: 90_000_000_000, color: .indigo),
                 DriveBarSegment(id: "media", bytes: 80_000_000_000, color: .pink),
                 DriveBarSegment(id: "downloads", bytes: 40_000_000_000, color: .blue)
-            ]
+            ],
+            highlightedSegmentID: .constant(nil)
         )
         Text("Nearly full (90% used)")
             .font(.caption)
             .foregroundStyle(.secondary)
 
-        DriveBarView(totalBytes: 500_000_000_000, usedBytes: 300_000_000_000, freeBytes: 200_000_000_000)
+        DriveBarView(totalBytes: 500_000_000_000, usedBytes: 300_000_000_000, freeBytes: 200_000_000_000, highlightedSegmentID: .constant(nil))
         Text("Normal usage (60% used)")
             .font(.caption)
             .foregroundStyle(.secondary)
 
-        DriveBarView(totalBytes: 500_000_000_000, usedBytes: 100_000_000_000, freeBytes: 400_000_000_000)
+        DriveBarView(totalBytes: 500_000_000_000, usedBytes: 100_000_000_000, freeBytes: 400_000_000_000, highlightedSegmentID: .constant(nil))
         Text("Lots of space (20% used)")
             .font(.caption)
             .foregroundStyle(.secondary)

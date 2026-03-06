@@ -58,6 +58,7 @@ private struct GeneralSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
     @State private var baselineService = BaselineService.shared
     @State private var permissionsService = PermissionsService.shared
+    @State private var scanService = ScanService.shared
     @State private var isResetting = false
     @State private var isCompactingDatabase = false
     @State private var showDeleteSnapshotsConfirmation = false
@@ -69,6 +70,14 @@ private struct GeneralSettingsTab: View {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
         return "Version \(short) (\(build))"
+    }
+
+    private var hasEnabledScanPath: Bool {
+        !settingsStore.enabledTrackedPaths.isEmpty
+    }
+
+    private var isScanInProgress: Bool {
+        scanService.isScanning
     }
 
     var body: some View {
@@ -102,6 +111,36 @@ private struct GeneralSettingsTab: View {
                     Text("Required to scan system and user locations accurately.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                Section("Scanning") {
+                    Text("Refresh in the menu bar only reloads the latest saved snapshot. Use this when you want a complete new filesystem scan.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        Task {
+                            await MenuBarManager.shared?.loadInventory()
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isScanInProgress {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                            }
+                            Text("Complete Rescan Now")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isScanInProgress || !hasEnabledScanPath)
+
+                    if !hasEnabledScanPath {
+                        Text("Enable at least one scan path in Scan Scope first.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Data") {

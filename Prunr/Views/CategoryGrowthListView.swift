@@ -9,11 +9,17 @@ struct CategoryGrowthListView: View {
     /// Stable categories without growth
     let stableCategories: [CategoryInventoryItem]
 
+    /// Supplemental rows for storage that appears in the drive bar but has no category drill-down
+    let supplementalItems: [SupplementalInventoryItem]
+
     /// Total size of all stable categories
     let stableTotalBytes: Int64
 
     /// Menu bar manager for drill-down state tracking
     @Bindable var manager: MenuBarManager
+
+    /// Shared hover state between the list and the drive bar
+    @Binding var highlightedSegmentID: String?
 
     /// Callback when an item is tapped (reveal in Finder)
     var onTapItem: (String) -> Void = { _ in }
@@ -130,6 +136,8 @@ struct CategoryGrowthListView: View {
                             CategoryInventoryRow(
                                 item: item,
                                 showsStableBadge: false,
+                                isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
+                                highlightedSegmentID: $highlightedSegmentID,
                                 onTap: { selectCategory(item) }
                             )
                             .equatable()
@@ -139,12 +147,23 @@ struct CategoryGrowthListView: View {
                             CategoryInventoryRow(
                                 item: item,
                                 showsStableBadge: true,
+                                isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
+                                highlightedSegmentID: $highlightedSegmentID,
                                 onTap: { selectCategory(item) }
                             )
                             .equatable()
                         }
+
+                        ForEach(supplementalItems) { item in
+                            SupplementalInventoryRow(
+                                item: item,
+                                isHighlightedFromBar: highlightedSegmentID == item.id,
+                                highlightedSegmentID: $highlightedSegmentID
+                            )
+                        }
                     }
                 }
+                .scrollIndicators(.hidden)
                 .frame(maxHeight: maxHeight)
             }
         }
@@ -186,6 +205,7 @@ struct CategoryGrowthListView: View {
                         }
                     }
                 }
+                .scrollIndicators(.hidden)
                 .frame(maxHeight: maxHeight)
             }
         }
@@ -284,6 +304,7 @@ struct CategoryGrowthListView: View {
                 }
             }
         }
+        .scrollIndicators(.hidden)
         .frame(maxHeight: maxHeight)
     }
     
@@ -432,83 +453,164 @@ private struct CategoryInventoryRow: View, Equatable {
         lhs.item.id == rhs.item.id &&
         lhs.item.currentSizeBytes == rhs.item.currentSizeBytes &&
         lhs.item.growthTrend == rhs.item.growthTrend &&
-        lhs.showsStableBadge == rhs.showsStableBadge
+        lhs.showsStableBadge == rhs.showsStableBadge &&
+        lhs.isHighlightedFromBar == rhs.isHighlightedFromBar
     }
 
     let item: CategoryInventoryItem
     let showsStableBadge: Bool
+    let isHighlightedFromBar: Bool
+    @Binding var highlightedSegmentID: String?
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 10) {
-                Image(systemName: item.category.icon)
-                    .font(.system(size: 16))
-                    .foregroundStyle(item.category.color)
-                    .frame(width: 20, height: 20)
-
-                Text(item.category.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(formattedBytes(item.currentSizeBytes))
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .fixedSize()
-
-                    if let trend = item.growthTrend {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text("+\(formattedBytes(trend.growthBytes)) · \(trend.growthSpanDays)d")
-                        }
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(Color.orange.opacity(0.12))
-                        )
-                    } else if showsStableBadge {
-                        HStack(spacing: 4) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text("Stable")
-                        }
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.green)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(Color.green.opacity(0.12))
-                        )
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(minHeight: 36)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
-            )
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
+            rowContent
         }
         .buttonStyle(.plain)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoverState = hovering
+                highlightedSegmentID = hovering ? item.category.rawValue : nil
             }
         }
     }
 
     @State private var hoverState = false
+
+    private var rowContent: some View {
+        HStack(spacing: 10) {
+            Image(systemName: item.category.icon)
+                .font(.system(size: 16))
+                .foregroundStyle(item.category.color)
+                .frame(width: 20, height: 20)
+
+            Text(item.category.displayName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formattedBytes(item.currentSizeBytes))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .fixedSize()
+
+                if let trend = item.growthTrend {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("+\(formattedBytes(trend.growthBytes)) · \(trend.growthSpanDays)d")
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color.orange.opacity(0.12))
+                    )
+                } else if showsStableBadge {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Stable")
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color.green.opacity(0.12))
+                    )
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(minHeight: 36)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill((hoverState || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
+        )
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+    }
+
+    private func formattedBytes(_ bytes: Int64) -> String {
+        let kb = Double(bytes) / 1_000
+        let mb = kb / 1_000
+        let gb = mb / 1_000
+
+        if abs(gb) >= 1 {
+            return "\(String(format: "%.1f", gb)) GB"
+        } else if abs(mb) >= 1 {
+            return "\(String(format: "%.0f", mb)) MB"
+        } else if abs(kb) >= 1 {
+            return "\(String(format: "%.0f", kb)) KB"
+        } else {
+            return "\(bytes) B"
+        }
+    }
+}
+
+private struct SupplementalInventoryRow: View {
+    let item: SupplementalInventoryItem
+    let isHighlightedFromBar: Bool
+    @Binding var highlightedSegmentID: String?
+
+    @State private var hoverState = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: item.icon)
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+                .frame(width: 20, height: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formattedBytes(item.currentSizeBytes))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .fixedSize()
+
+                Text(item.badgeText)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(Color.gray.opacity(0.12))
+                    )
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(minHeight: 42)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill((hoverState || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
+        )
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                hoverState = hovering
+                highlightedSegmentID = hovering ? item.id : nil
+            }
+        }
+    }
 
     private func formattedBytes(_ bytes: Int64) -> String {
         let kb = Double(bytes) / 1_000
