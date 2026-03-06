@@ -10,9 +10,25 @@ struct MenuBarView: View {
     @State private var settingsHover = false
     @State private var hasFullDiskAccess = false
     @State private var hasCompletedFDAOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedFDAOnboarding")
+    @State private var permissionsService = PermissionsService.shared
 
     private var hasEnabledScanPath: Bool {
         !SettingsStore.shared.enabledTrackedPaths.isEmpty
+    }
+
+    private var scanFileCountLabel: String? {
+        guard manager.filesScanned > 0 else { return nil }
+
+        if manager.hasReliableScanProgressEstimate,
+           manager.scanEstimatedTotalFiles > manager.filesScanned {
+            return "\(manager.filesScanned.formatted()) of about \(manager.scanEstimatedTotalFiles.formatted()) files"
+        }
+
+        return "\(manager.filesScanned.formatted()) files scanned"
+    }
+
+    private var scanPathLabel: String {
+        manager.scanCurrentPathDisplay.isEmpty ? "Preparing scan..." : manager.scanCurrentPathDisplay
     }
 
     private func closePopoverAndOpenSettings() {
@@ -70,7 +86,7 @@ struct MenuBarView: View {
             Group {
                 if manager.isLoading && !manager.isAutoScanning {
                     manualScanLoadingView
-                } else if manager.noBaseline || manager.lastScanStatusText == "Last update: never" {
+                } else if manager.noBaseline {
                     if hasFullDiskAccess {
                         if hasCompletedFDAOnboarding {
                             firstScanView
@@ -102,6 +118,10 @@ struct MenuBarView: View {
 
             // Update from latest snapshot (no filesystem rescan)
             await manager.updatePathSize()
+
+            if !manager.noBaseline {
+                await manager.loadInventoryFromLatestSnapshot()
+            }
         }
         .onChange(of: hasFullDiskAccess) { _, newValue in
             if !newValue && hasCompletedFDAOnboarding {
@@ -176,20 +196,35 @@ struct MenuBarView: View {
                     }
                 } else {
                     VStack(spacing: 10) {
-                        Text("\(Int(clampedProgress * 100))%")
-                            .font(.system(size: 36, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.primary)
+                        if manager.hasReliableScanProgressEstimate {
+                            Text("\(Int(clampedProgress * 100))%")
+                                .font(.system(size: 36, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.primary)
+                                .frame(minWidth: 96)
 
-                        ProgressView(value: clampedProgress, total: 1.0)
-                            .progressViewStyle(.linear)
-                            .tint(.blue)
+                            ProgressView(value: clampedProgress, total: 1.0)
+                                .progressViewStyle(.linear)
+                                .tint(.blue)
+                        } else {
+                            Text("Estimating")
+                                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.primary)
+
+                            ProgressView()
+                                .controlSize(.small)
+
+                            Text("Building a scan estimate...")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
-                if manager.filesScanned > 0 {
-                    Text("\(manager.filesScanned) files scanned")
+                if let scanFileCountLabel {
+                    Text(scanFileCountLabel)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
+                        .monospacedDigit()
                 }
 
                 if !manager.scanProgress.isEmpty && manager.scanCurrentPath.isEmpty && !manager.isAnalyzingChanges {
@@ -200,7 +235,7 @@ struct MenuBarView: View {
                         .truncationMode(.middle)
                 }
 
-                if !manager.scanCurrentPath.isEmpty && !manager.isAnalyzingChanges {
+                if !manager.isAnalyzingChanges && !manager.isCleaningUp {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Current path")
                             .font(.system(size: 10, weight: .medium))
@@ -212,16 +247,17 @@ struct MenuBarView: View {
                                 .fill(Color.blue)
                                 .frame(width: 6, height: 6)
 
-                            Text(manager.scanCurrentPath.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            Text(scanPathLabel)
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
-                                .lineLimit(2)
+                                .lineLimit(1)
                                 .truncationMode(.middle)
+                                .frame(maxWidth: .infinity, alignment: .leading)
 
                             Spacer(minLength: 0)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 10)
                     .background(
@@ -319,24 +355,19 @@ struct MenuBarView: View {
                         .frame(maxWidth: 260)
 
                     if hasEnabledScanPath {
-                        Button {
+                        primaryActionButton(
+                            "Run first scan",
+                            minWidth: 140,
+                            isDisabled: manager.isLoading || manager.isAutoScanning
+                        ) {
                             Task {
                                 await manager.loadInventory()
                             }
-                        } label: {
-                            Text("Run first scan")
-                                .frame(minWidth: 140)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(manager.isLoading || manager.isAutoScanning)
                     } else {
-                        Button {
+                        primaryActionButton("Enable scan path", minWidth: 160) {
                             closePopoverAndOpenSettings()
-                        } label: {
-                            Text("Enable scan path")
-                                .frame(minWidth: 160)
                         }
-                        .buttonStyle(.borderedProminent)
 
                         Text("Choose a folder in Settings to start scanning.")
                             .font(.system(size: 11))
@@ -356,15 +387,18 @@ struct MenuBarView: View {
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 280)
 
-                    Button {
+                    primaryActionButton("Open Full Disk Access", minWidth: 180) {
                         openFullDiskAccessSettings()
-                    } label: {
-                        Text("Open Full Disk Access")
-                            .frame(minWidth: 180)
                     }
-                    .buttonStyle(.borderedProminent)
 
-                    Text("Toggle the switch next to Prunr in Settings. If Prunr is not listed, click the \"+\" button to add it from your Applications folder.")
+                    Button("Reveal Current App") {
+                        permissionsService.revealCurrentAppInFinder()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.blue)
+
+                    Text("Toggle the switch next to Prunr in Settings. If it is not listed, use the \"+\" button and add the currently running Prunr.app.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -397,17 +431,22 @@ struct MenuBarView: View {
                     .frame(maxWidth: 280)
 
                 if hasFullDiskAccess {
-                    Button("Continue") {
+                    primaryActionButton("Continue") {
                         completeFDAOnboarding()
                     }
-                    .buttonStyle(.borderedProminent)
                 } else {
-                    Button("Open Full Disk Access") {
+                    primaryActionButton("Open Full Disk Access") {
                         openFullDiskAccessSettings()
                     }
-                    .buttonStyle(.borderedProminent)
 
-                    Text("Toggle the switch next to Prunr in Settings. If Prunr is not listed, click the \"+\" button to add it from your Applications folder.")
+                    Button("Reveal Current App") {
+                        permissionsService.revealCurrentAppInFinder()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.blue)
+
+                    Text("Toggle the switch next to Prunr in Settings. If it is not listed, use the \"+\" button and add the currently running Prunr.app.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -427,35 +466,34 @@ struct MenuBarView: View {
         DriveBarView(
             totalBytes: manager.totalBytes,
             usedBytes: manager.usedBytes,
-            freeBytes: manager.freeBytes
+            freeBytes: manager.freeBytes,
+            categorySegments: driveBarSegments
         )
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
+    private var driveBarSegments: [DriveBarSegment] {
+        (manager.growingCategories + manager.stableCategories)
+            .filter { $0.currentSizeBytes > 0 }
+            .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+            .map {
+                DriveBarSegment(
+                    id: $0.category.rawValue,
+                    bytes: $0.currentSizeBytes,
+                    color: $0.category.color
+                )
+            }
+    }
+
     private func refreshFullDiskAccess() {
-        hasFullDiskAccess = checkFullDiskAccess()
+        hasFullDiskAccess = permissionsService.hasFullDiskAccess
     }
 
     private func openFullDiskAccessSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        Task {
+            await permissionsService.requestFullDiskAccess()
         }
-    }
-
-    private func checkFullDiskAccess() -> Bool {
-        let fm = FileManager.default
-        let path = "/Library/Preferences/com.apple.TimeMachine.plist"
-        
-        if fm.isReadableFile(atPath: path) {
-            do {
-                _ = try Data(contentsOf: URL(fileURLWithPath: path))
-                return true
-            } catch {
-                return false
-            }
-        }
-        return false
     }
 
     private var fullDiskAccessBanner: some View {
@@ -502,7 +540,7 @@ struct MenuBarView: View {
 
     private var headerSection: some View {
         Group {
-            if manager.isDrilledDown, let category = manager.selectedCategoryForDrilldown {
+            if manager.isDrilledDown, let category = manager.selectedInventoryCategory {
                 // Drill-down header: back button, category name, size
                 drillDownHeader(category: category)
             } else {
@@ -535,15 +573,24 @@ struct MenuBarView: View {
 
     // MARK: - Drill-down Header
 
-    private func drillDownHeader(category: CategoryGrowthItem) -> some View {
+    private func drillDownHeader(category: CategoryInventoryItem) -> some View {
         ZStack {
-            // Center: Category icon and name (truly centered)
-            HStack(spacing: 8) {
-                Image(systemName: category.category.icon)
-                    .font(.system(size: 13))
-                    .foregroundStyle(category.category.color ?? .secondary)
+            let headerIcon = manager.isSubcategoryDrillDown
+                ? (manager.selectedSubcategory?.subcategory?.icon ?? "folder.fill")
+                : category.category.icon
+            let headerName = manager.isSubcategoryDrillDown
+                ? (manager.selectedSubcategory?.displayName ?? category.category.displayName)
+                : category.category.displayName
+            let headerBytes = manager.isSubcategoryDrillDown
+                ? (manager.selectedSubcategory?.totalBytes ?? category.currentSizeBytes)
+                : category.currentSizeBytes
 
-                Text(category.category.displayName)
+            HStack(spacing: 8) {
+                Image(systemName: headerIcon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(category.category.color)
+
+                Text(headerName)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
@@ -554,8 +601,22 @@ struct MenuBarView: View {
             HStack {
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.3)) {
-                        manager.isDrilledDown = false
-                        manager.selectedCategoryForDrilldown = nil
+                        if manager.isSubcategoryDrillDown {
+                            if category.category.supportsSubcategories {
+                                manager.isSubcategoryDrillDown = false
+                                manager.selectedSubcategory = nil
+                            } else {
+                                manager.isSubcategoryDrillDown = false
+                                manager.selectedSubcategory = nil
+                                manager.selectedInventoryCategory = nil
+                                manager.isDrilledDown = false
+                            }
+                        } else {
+                            manager.selectedSubcategory = nil
+                            manager.selectedInventoryCategory = nil
+                            manager.isSubcategoryDrillDown = false
+                            manager.isDrilledDown = false
+                        }
                     }
                 }) {
                     HStack(spacing: 4) {
@@ -576,7 +637,7 @@ struct MenuBarView: View {
             // Right: Category size
             HStack {
                 Spacer()
-                Text(formattedBytes(category.currentSizeBytes))
+                Text(formattedBytes(headerBytes))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
@@ -718,6 +779,30 @@ struct MenuBarView: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func primaryActionButton(
+        _ title: String,
+        minWidth: CGFloat = 140,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(minWidth: minWidth)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(isDisabled ? Color.blue.opacity(0.35) : Color.blue)
+                )
+                .foregroundStyle(.white)
+                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.7 : 1.0)
     }
 
     // MARK: - Helper Methods

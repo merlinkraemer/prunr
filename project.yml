@@ -8,8 +8,7 @@ options:
 
 packages:
   GRDB:
-    url: https://github.com/groue/GRDB.swift
-    from: 7.0.0
+    path: LocalPackages/GRDB.swift
 
 targets:
   Prunr:

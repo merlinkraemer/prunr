@@ -172,14 +172,15 @@ final class DatabaseManager {
         }
 
         // Migration v9: Clean up orphaned entries (foreign keys weren't enabled before)
+        // NOTE: VACUUM removed - it's too slow on large databases and not critical
         migrator.registerMigration("v9_cleanup_orphaned_entries") { db in
             // Delete entries that reference non-existent snapshots
             try db.execute(sql: """
-                DELETE FROM snapshotEntry 
+                DELETE FROM snapshotEntry
                 WHERE snapshotId NOT IN (SELECT id FROM snapshot)
                 """)
-            // Run VACUUM to reclaim space
-            try db.execute(sql: "VACUUM")
+            // VACUUM skipped - too slow on large databases (can take hours on 1GB+ DBs)
+            // Space will be reclaimed naturally through normal operations
         }
 
         // Migration v10: Normalize paths and add COLLATE NOCASE for case-insensitive uniqueness
@@ -237,6 +238,77 @@ final class DatabaseManager {
 
             // Index for faster lookups by snapshotId
             try db.create(index: "idx_categorySnapshot_snapshotId", on: "categorySnapshot", columns: ["snapshotId"])
+        }
+
+        // Migration v12: Reset categorySnapshot rows if legacy category names are present
+        migrator.registerMigration("v12_reset_legacy_category_snapshot_names") { db in
+            let validCategories = GrowthCategory.allCases.map(\.rawValue)
+            let placeholders = validCategories.map { _ in "?" }.joined(separator: ", ")
+
+            let invalidCount = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*)
+                    FROM categorySnapshot
+                    WHERE category NOT IN (\(placeholders))
+                    """,
+                arguments: StatementArguments(validCategories)
+            ) ?? 0
+
+            if invalidCount > 0 {
+                try db.execute(sql: "DELETE FROM categorySnapshot")
+                print("[DatabaseManager] Cleared legacy categorySnapshot history (\(invalidCount) legacy rows detected)")
+            }
+        }
+
+        // Migration v13: Cleanup any invalid categorySnapshot rows (post-refactor safety)
+        migrator.registerMigration("v13_cleanup_invalid_category_snapshot_rows") { db in
+            let validCategories = GrowthCategory.allCases.map(\.rawValue)
+            let placeholders = validCategories.map { _ in "?" }.joined(separator: ", ")
+
+            let invalidCount = try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COUNT(*)
+                    FROM categorySnapshot
+                    WHERE category NOT IN (\(placeholders))
+                    """,
+                arguments: StatementArguments(validCategories)
+            ) ?? 0
+
+            if invalidCount > 0 {
+                try db.execute(sql: "DELETE FROM categorySnapshot")
+                print("[DatabaseManager] Cleared invalid categorySnapshot rows (\(invalidCount) rows removed)")
+            }
+        }
+
+        // Migration v14: Add subcategorySnapshot table for drill-down summaries
+        migrator.registerMigration("v14_add_subcategory_snapshot") { db in
+            try db.create(table: "subcategorySnapshot", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("snapshotId", .integer)
+                    .notNull()
+                    .references("snapshot", onDelete: .cascade)
+                t.column("category", .text).notNull()
+                t.column("subcategory", .text).notNull().defaults(to: "")
+                t.column("totalBytes", .integer).notNull()
+                t.column("fileCount", .integer).notNull()
+                t.column("topItemsJSON", .text).notNull()
+            }
+
+            try db.create(
+                index: "idx_subcategorySnapshot_snapshotId_category",
+                on: "subcategorySnapshot",
+                columns: ["snapshotId", "category"]
+            )
+        }
+
+        // Migration v15: Add standalone pathId index for orphan cleanup and path lookups
+        migrator.registerMigration("v15_add_snapshot_entry_pathid_index") { db in
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_snapshotEntry_pathId
+                ON snapshotEntry(pathId)
+                """)
         }
 
         try migrator.migrate(dbPool)
@@ -399,6 +471,90 @@ extension DatabaseManager {
         }
     }
 
+    /// Fetches the top N largest entries for a snapshot, ordered by size descending.
+    /// This is much faster than fetchEntries for large snapshots when you only need big files.
+    /// - Parameters:
+    ///   - snapshotId: The snapshot ID
+    ///   - limit: Maximum number of entries to return (default 500)
+    /// - Returns: Array of SnapshotEntryWithPath ordered by sizeBytes DESC
+    func fetchTopEntries(for snapshotId: Int64, limit: Int = 500) async throws -> [SnapshotEntryWithPath] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
+                FROM snapshotEntry se
+                JOIN paths p ON p.id = se.pathId
+                WHERE se.snapshotId = ?
+                ORDER BY se.sizeBytes DESC
+                LIMIT ?
+                """, arguments: [snapshotId, limit])
+        }
+    }
+
+    /// Fetches entries for a snapshot with pagination, ordered by size descending.
+    /// - Parameters:
+    ///   - snapshotId: The snapshot ID
+    ///   - offset: Number of entries to skip
+    ///   - limit: Maximum number of entries to return
+    /// - Returns: Array of SnapshotEntryWithPath ordered by sizeBytes DESC
+    func fetchEntriesPaginated(for snapshotId: Int64, offset: Int, limit: Int) async throws -> [SnapshotEntryWithPath] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
+                FROM snapshotEntry se
+                JOIN paths p ON p.id = se.pathId
+                WHERE se.snapshotId = ?
+                ORDER BY se.sizeBytes DESC
+                LIMIT ? OFFSET ?
+                """, arguments: [snapshotId, limit, offset])
+        }
+    }
+
+    /// Fetches entries for a snapshot with pagination, without ordering.
+    /// Use when you need to scan the entire snapshot without paying sort costs.
+    /// - Parameters:
+    ///   - snapshotId: The snapshot ID
+    ///   - offset: Number of entries to skip
+    ///   - limit: Maximum number of entries to return
+    /// - Returns: Array of SnapshotEntryWithPath in database order
+    func fetchEntriesPaginatedUnordered(for snapshotId: Int64, offset: Int, limit: Int) async throws -> [SnapshotEntryWithPath] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
+                FROM snapshotEntry se
+                JOIN paths p ON p.id = se.pathId
+                WHERE se.snapshotId = ?
+                LIMIT ? OFFSET ?
+                """, arguments: [snapshotId, limit, offset])
+        }
+    }
+
+    /// Returns the total bytes stored in a snapshot without materializing every row.
+    func sumEntrySizes(for snapshotId: Int64) async throws -> Int64 {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: "SELECT COALESCE(SUM(sizeBytes), 0) FROM snapshotEntry WHERE snapshotId = ?",
+                arguments: [snapshotId]
+            ) ?? 0
+        }
+    }
+
     /// Truncates the SQLite WAL file to reclaim space.
     func checkpointWalTruncate() async throws {
         guard let dbPool = dbPool else {
@@ -427,6 +583,153 @@ extension DatabaseManager {
                 sql: "INSERT INTO categorySnapshot (snapshotId, category, totalBytes) VALUES (?, ?, ?)",
                 arguments: [snapshotId, category, totalBytes]
             )
+        }
+    }
+
+    /// Replaces all category totals for a snapshot in a single transaction.
+    func replaceCategorySnapshots(snapshotId: Int64, totals: [GrowthCategory: Int64]) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.write { db in
+            try db.execute(sql: "DELETE FROM categorySnapshot WHERE snapshotId = ?", arguments: [snapshotId])
+
+            guard !totals.isEmpty else { return }
+
+            let statement = try db.makeStatement(
+                sql: "INSERT INTO categorySnapshot (snapshotId, category, totalBytes) VALUES (?, ?, ?)"
+            )
+
+            for category in GrowthCategory.allCases {
+                guard let totalBytes = totals[category], totalBytes > 0 else { continue }
+                try statement.execute(arguments: [snapshotId, category.rawValue, totalBytes])
+            }
+        }
+    }
+
+    /// Fetches current category totals for a snapshot.
+    func fetchCategoryTotals(for snapshotId: Int64) async throws -> [CategoryInventoryItem] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT category, totalBytes
+                    FROM categorySnapshot
+                    WHERE snapshotId = ?
+                    ORDER BY totalBytes DESC
+                    """,
+                arguments: [snapshotId]
+            )
+
+            return rows.compactMap { row in
+                guard
+                    let categoryRaw: String = row["category"],
+                    let category = GrowthCategory(rawValue: categoryRaw)
+                else {
+                    return nil
+                }
+
+                let totalBytes: Int64 = row["totalBytes"] ?? 0
+                return CategoryInventoryItem(
+                    category: category,
+                    currentSizeBytes: totalBytes,
+                    growthTrend: nil
+                )
+            }
+        }
+    }
+
+    struct StoredSubcategorySnapshot: Sendable {
+        let category: GrowthCategory
+        let subcategory: GrowthSubcategory?
+        let totalBytes: Int64
+        let fileCount: Int
+        let topItems: [GrowthItem]
+    }
+
+    /// Replaces all subcategory summaries for a snapshot in a single transaction.
+    func replaceSubcategorySnapshots(snapshotId: Int64, rows: [StoredSubcategorySnapshot]) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let encoder = JSONEncoder()
+
+        try await dbPool.write { db in
+            try db.execute(sql: "DELETE FROM subcategorySnapshot WHERE snapshotId = ?", arguments: [snapshotId])
+
+            guard !rows.isEmpty else { return }
+
+            let statement = try db.makeStatement(
+                sql: """
+                    INSERT INTO subcategorySnapshot (snapshotId, category, subcategory, totalBytes, fileCount, topItemsJSON)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """
+            )
+
+            for row in rows {
+                let payload = try encoder.encode(row.topItems)
+                let json = String(decoding: payload, as: UTF8.self)
+                try statement.execute(arguments: [
+                    snapshotId,
+                    row.category.rawValue,
+                    row.subcategory?.rawValue ?? "",
+                    row.totalBytes,
+                    row.fileCount,
+                    json
+                ])
+            }
+        }
+    }
+
+    /// Fetches precomputed subcategory groups for a category within a snapshot.
+    func fetchSubcategoryGroups(for snapshotId: Int64, category: GrowthCategory) async throws -> [SubcategoryGroup] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let decoder = JSONDecoder()
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT subcategory, totalBytes, fileCount, topItemsJSON
+                    FROM subcategorySnapshot
+                    WHERE snapshotId = ? AND category = ?
+                    ORDER BY totalBytes DESC
+                    """,
+                arguments: [snapshotId, category.rawValue]
+            )
+
+            return try rows.map { row in
+                let rawSubcategory: String = row["subcategory"] ?? ""
+                let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
+                let totalBytes: Int64 = row["totalBytes"] ?? 0
+                let fileCount: Int = row["fileCount"] ?? 0
+                let topItemsJSON: String = row["topItemsJSON"] ?? "[]"
+                let topItems = try decoder.decode([GrowthItem].self, from: Data(topItemsJSON.utf8))
+
+                let displayName: String
+                if let subcategory {
+                    displayName = subcategory.displayName
+                } else {
+                    displayName = category.supportsSubcategories ? "Uncategorized" : "Files"
+                }
+
+                return SubcategoryGroup(
+                    subcategory: subcategory,
+                    displayName: displayName,
+                    totalBytes: totalBytes,
+                    fileCount: fileCount,
+                    topFiles: topItems
+                )
+            }
         }
     }
 

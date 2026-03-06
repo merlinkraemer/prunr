@@ -39,6 +39,10 @@ actor BaselineService {
 
     private let maxCategoryDrilldownItems = 3000
     private let maxCategoryBigItems = 500
+    // Initial files loaded per subcategory (user can load more)
+    private let initialSubcategoryFileLimit = SubcategoryGroup.initialLoadLimit
+    // Maximum files per subcategory to prevent memory issues
+    private let maxSubcategoryFiles = SubcategoryGroup.maxLoadableFiles
 
     /// MainActor-isolated property for UI state
     @MainActor var isCreatingBaseline = false
@@ -89,7 +93,7 @@ actor BaselineService {
         }
 
         print("[BaselineService] Created snapshot ID: \(snapshotId)")
-        
+
         return snapshot
     }
 
@@ -128,11 +132,11 @@ actor BaselineService {
     /// - Throws: BaselineError if insufficient snapshots exist
     func getGrowthList(trackedPath: TrackedPath) async throws -> [GrowthItem] {
         let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
-        
+
         guard snapshots.count >= 2 else {
             throw BaselineError.insufficientSnapshots
         }
-        
+
         guard let currentId = snapshots[0].id,
               let previousId = snapshots[1].id else {
             throw BaselineError.noBaseline
@@ -157,11 +161,11 @@ actor BaselineService {
     /// - Throws: BaselineError if insufficient snapshots exist
     func drillDown(path: String, trackedPath: TrackedPath) async throws -> [GrowthItem] {
         let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
-        
+
         guard snapshots.count >= 2 else {
             throw BaselineError.insufficientSnapshots
         }
-        
+
         guard let currentId = snapshots[0].id,
               let previousId = snapshots[1].id else {
             throw BaselineError.noBaseline
@@ -194,30 +198,30 @@ actor BaselineService {
     private func buildGrowthList(from deltas: [Delta], parentPath: String) -> [GrowthItem] {
         // Filter to only items that grew
         let growingDeltas = deltas.filter { $0.changeBytes > 0 }
-        
+
         // Calculate total growth for the parent
         let totalGrowth = growingDeltas.reduce(Int64(0)) { $0 + $1.changeBytes }
-        
+
         guard totalGrowth > 0 else {
             return []
         }
-        
+
         // Aggregate growth by direct child component
         var aggregatedGrowth: [String: (growth: Int64, size: Int64)] = [:]
         let parentWithSlash = parentPath.hasSuffix("/") ? parentPath : parentPath + "/"
-        
+
         for delta in growingDeltas {
             guard delta.path.hasPrefix(parentWithSlash) else { continue }
-            
+
             // Extract relative path: "images/img1.dat" or "file.txt"
             let relativePath = String(delta.path.dropFirst(parentWithSlash.count))
-            
+
             // Get the first component (direct child name)
             let components = relativePath.split(separator: "/", maxSplits: 1)
             guard let firstComponent = components.first else { continue }
             let childName = String(firstComponent)
             let fullChildPath = parentWithSlash + childName
-            
+
             // Accumulate
             let current = aggregatedGrowth[fullChildPath] ?? (growth: 0, size: 0)
             aggregatedGrowth[fullChildPath] = (
@@ -225,12 +229,12 @@ actor BaselineService {
                 size: current.size + (delta.newSizeBytes ?? 0)
             )
         }
-        
+
         var items: [GrowthItem] = []
-        
+
         for (path, data) in aggregatedGrowth {
             let percentOfParent = Double(data.growth) / Double(totalGrowth)
-            
+
             let item = GrowthItem(
                 path: path,
                 growthBytes: data.growth,
@@ -239,7 +243,7 @@ actor BaselineService {
             )
             items.append(item)
         }
-        
+
         return items
     }
 
@@ -254,11 +258,11 @@ actor BaselineService {
     func getCategoryGrowthList(trackedPath: TrackedPath) async throws -> [CategoryGrowthItem] {
         let start = Date()
         let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
-        
+
         guard snapshots.count >= 2 else {
             throw BaselineError.insufficientSnapshots
         }
-        
+
         guard let currentId = snapshots[0].id,
               let previousId = snapshots[1].id else {
             throw BaselineError.noBaseline
@@ -267,14 +271,14 @@ actor BaselineService {
         // Validate previous snapshot has entries (avoid comparing to empty/incomplete snapshot)
         let previousEntryCount = try await db.fetchEntryCount(for: previousId)
         let currentEntryCount = try await db.fetchEntryCount(for: currentId)
-        
+
         print("[BaselineService] Snapshot entry counts: previous=\(previousEntryCount), current=\(currentEntryCount)")
-        
+
         guard previousEntryCount > 100 else {
             print("[BaselineService] Previous snapshot has only \(previousEntryCount) entries - treating as first scan")
             throw BaselineError.insufficientSnapshots
         }
-        
+
         // If current has way more entries than previous, previous was likely incomplete
         // Allow up to 50% growth as reasonable, otherwise treat as first scan
         let minExpectedPrevious = currentEntryCount / 2
@@ -286,7 +290,7 @@ actor BaselineService {
         // Calculate deltas
         let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
         try Task.checkCancellation()
-        
+
         print("[BaselineService] Calculated \(deltas.count) deltas")
 
         // Filter to only items that grew
@@ -388,13 +392,21 @@ actor BaselineService {
             throw BaselineError.noBaseline
         }
 
-        // Get category deltas (positive growth only - for UI display)
-        let categoryDeltas = try await getCategoryGrowthList(trackedPath: trackedPath)
+        let previousTotals = try await db.fetchCategoryTotals(for: previousId)
+        let currentTotals = try await db.fetchCategoryTotals(for: currentId)
 
-        // Calculate net file change from ALL deltas (including shrinkage/deletions)
-        // This is the total change we can explain from our scan
-        let allDeltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
-        let netFileChange = allDeltas.reduce(Int64(0)) { $0 + $1.changeBytes }
+        let previousBytesByCategory = Dictionary(
+            uniqueKeysWithValues: previousTotals.map { ($0.category, $0.currentSizeBytes) }
+        )
+        let currentBytesByCategory = Dictionary(
+            uniqueKeysWithValues: currentTotals.map { ($0.category, $0.currentSizeBytes) }
+        )
+
+        let netFileChange = GrowthCategory.allCases.reduce(Int64(0)) { partial, category in
+            let previousBytes = previousBytesByCategory[category] ?? 0
+            let currentBytes = currentBytesByCategory[category] ?? 0
+            return partial + (currentBytes - previousBytes)
+        }
 
         // Calculate free space delta
         let previousFreeSpace = previousSnapshot.freeBytes
@@ -445,6 +457,11 @@ actor BaselineService {
                 return []
             }
 
+            let precomputedTotals = try await db.fetchCategoryTotals(for: snapshotId)
+            if !precomputedTotals.isEmpty {
+                return precomputedTotals
+            }
+
             // Query snapshotEntry for that snapshot, JOIN paths to get path strings
             let entries = try await db.fetchEntries(for: snapshotId)
 
@@ -468,6 +485,177 @@ actor BaselineService {
             return items
         } catch {
             print("[BaselineService] Error getting category inventory: \(error)")
+            return []
+        }
+    }
+
+    func getSubcategoryBreakdown(for category: GrowthCategory, snapshotId: Int64) async -> [SubcategoryGroup] {
+        do {
+            let precomputedGroups = try await db.fetchSubcategoryGroups(for: snapshotId, category: category)
+            if !precomputedGroups.isEmpty {
+                return precomputedGroups
+            }
+
+            struct SubcategoryAccumulator {
+                var totalBytes: Int64 = 0
+                var fileCount: Int = 0
+                var topEntries: [SnapshotEntryWithPath] = []
+                let limit: Int
+
+                mutating func add(_ entry: SnapshotEntryWithPath) {
+                    totalBytes += entry.sizeBytes
+                    fileCount += 1
+
+                    guard limit > 0 else { return }
+
+                    if topEntries.count < limit {
+                        topEntries.append(entry)
+                        return
+                    }
+
+                    guard let smallestIndex = topEntries.indices.min(by: {
+                        topEntries[$0].sizeBytes < topEntries[$1].sizeBytes
+                    }) else { return }
+                    guard entry.sizeBytes > topEntries[smallestIndex].sizeBytes else { return }
+                    topEntries[smallestIndex] = entry
+                }
+            }
+
+            var grouped: [GrowthSubcategory?: SubcategoryAccumulator] = [:]
+            let pageSize = 5_000
+            var offset = 0
+
+            while true {
+                if Task.isCancelled {
+                    return []
+                }
+
+                let entries = try await db.fetchEntriesPaginatedUnordered(for: snapshotId, offset: offset, limit: pageSize)
+                guard !entries.isEmpty else { break }
+
+                for entry in entries {
+                    if Task.isCancelled {
+                        return []
+                    }
+
+                    guard GrowthCategory.categorize(path: entry.path) == category else { continue }
+                    let subcategory = GrowthSubcategory.subcategorize(path: entry.path)
+
+                    grouped[subcategory, default: SubcategoryAccumulator(limit: initialSubcategoryFileLimit)].add(entry)
+                }
+
+                offset += entries.count
+            }
+
+            let groups = grouped.map { subcategory, accumulator -> SubcategoryGroup in
+                let displayName: String
+                if let subcategory {
+                    displayName = subcategory.displayName
+                } else {
+                    displayName = category.supportsSubcategories ? "Uncategorized" : "Files"
+                }
+
+                let totalBytes = accumulator.totalBytes
+                let sortedTopEntries = accumulator.topEntries.sorted { $0.sizeBytes > $1.sizeBytes }
+                let topFiles = sortedTopEntries.map { entry in
+                    let percent = totalBytes > 0
+                        ? Double(entry.sizeBytes) / Double(totalBytes)
+                        : 0
+
+                    return GrowthItem(
+                        path: entry.path,
+                        growthBytes: entry.sizeBytes,
+                        currentSizeBytes: entry.sizeBytes,
+                        percentOfParent: percent,
+                        subcategory: subcategory
+                    )
+                }
+
+                return SubcategoryGroup(
+                    subcategory: subcategory,
+                    displayName: displayName,
+                    totalBytes: totalBytes,
+                    fileCount: accumulator.fileCount,
+                    topFiles: topFiles
+                )
+            }
+
+            return groups.sorted { $0.totalBytes > $1.totalBytes }
+        } catch {
+            print("[BaselineService] Error getting subcategory breakdown for \(category.rawValue): \(error)")
+            return []
+        }
+    }
+
+    /// Loads additional files for a specific subcategory with pagination.
+    /// Used for "Load More" functionality to avoid loading all files at once.
+    ///
+    /// - Parameters:
+    ///   - category: The parent category
+    ///   - subcategory: The subcategory to load files for (nil for uncategorized)
+    ///   - snapshotId: The snapshot ID
+    ///   - totalBytes: Total bytes for the subcategory (used for percent calculation)
+    ///   - offset: Number of files to skip (already loaded)
+    ///   - limit: Maximum files to load
+    /// - Returns: Array of GrowthItem for the additional files
+    func loadMoreSubcategoryFiles(
+        for category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        snapshotId: Int64,
+        totalBytes: Int64,
+        offset: Int,
+        limit: Int = SubcategoryGroup.loadMoreBatchSize
+    ) async -> [GrowthItem] {
+        do {
+            var results: [GrowthItem] = []
+            var skipped = 0
+            var globalOffset = 0
+            let pageSize = 5_000
+
+            while results.count < limit {
+                if Task.isCancelled {
+                    return []
+                }
+
+                let entries = try await db.fetchEntriesPaginated(for: snapshotId, offset: globalOffset, limit: pageSize)
+                guard !entries.isEmpty else { break }
+
+                for entry in entries {
+                    if Task.isCancelled {
+                        return []
+                    }
+
+                    guard GrowthCategory.categorize(path: entry.path) == category else { continue }
+                    guard GrowthSubcategory.subcategorize(path: entry.path) == subcategory else { continue }
+
+                    if skipped < offset {
+                        skipped += 1
+                        continue
+                    }
+
+                    let percent = totalBytes > 0
+                        ? Double(entry.sizeBytes) / Double(totalBytes)
+                        : 0
+
+                    results.append(GrowthItem(
+                        path: entry.path,
+                        growthBytes: entry.sizeBytes,
+                        currentSizeBytes: entry.sizeBytes,
+                        percentOfParent: percent,
+                        subcategory: subcategory
+                    ))
+
+                    if results.count >= limit {
+                        break
+                    }
+                }
+
+                globalOffset += entries.count
+            }
+
+            return results
+        } catch {
+            print("[BaselineService] Error loading more files for subcategory: \(error)")
             return []
         }
     }
@@ -601,55 +789,68 @@ actor BaselineService {
             guard let sorted = categoryHistory[category]?.sorted(by: { $0.createdAt < $1.createdAt }),
                   sorted.count >= 2 else { continue }
 
-            let mostRecent = sorted.last!
-            let oldest = sorted.first!
-
-            // Calculate growth from oldest to most recent
-            let totalGrowth = mostRecent.totalBytes - oldest.totalBytes
-
-            // Only attach trend for significant growth (> 50MB)
-            guard totalGrowth > significanceThreshold else { continue }
-
-            // Find growth start: find the minimum totalBytes in the window,
-            // then find the first snapshot after that minimum
-            let minBytes = sorted.map { $0.totalBytes }.min() ?? oldest.totalBytes
-
-            // Find the first snapshot after the minimum
-            var growthStartedAt = oldest.createdAt
-            var foundMin = false
-            let tolerance = significanceThreshold / 10 // Small tolerance around minimum
-
-            for point in sorted {
-                if !foundMin {
-                    if point.totalBytes <= minBytes + tolerance {
-                        foundMin = true
-                    }
-                } else {
-                    // After finding min, look for first snapshot that's above min + tolerance
-                    if point.totalBytes > minBytes + tolerance {
-                        growthStartedAt = point.createdAt
-                        break
-                    }
-                }
+            if let trend = buildInventoryTrend(from: sorted, significanceThreshold: significanceThreshold) {
+                inventory[i].growthTrend = trend
             }
-
-            // Calculate growth span in days
-            let growthSpanDays = Calendar.current.dateComponents(
-                [.day],
-                from: growthStartedAt,
-                to: mostRecent.createdAt
-            ).day ?? 0
-
-            // Create and attach trend
-            let trend = CategoryGrowthTrend(
-                growthBytes: mostRecent.totalBytes - minBytes,
-                growthStartedAt: growthStartedAt,
-                growthSpanDays: max(1, growthSpanDays) // At least 1 day
-            )
-
-            inventory[i].growthTrend = trend
         }
 
         return inventory
+    }
+
+    private func buildInventoryTrend(
+        from history: [(snapshotId: Int64, createdAt: Date, totalBytes: Int64)],
+        significanceThreshold: Int64
+    ) -> CategoryGrowthTrend? {
+        guard history.count >= 2 else { return nil }
+
+        // Ignore the initial jump from "missing/zero" to the first real snapshot.
+        // That reads like "grew from 0" in the UI even when nothing recently changed.
+        let appearanceThreshold = significanceThreshold / 2
+        let trimmedHistory: ArraySlice<(snapshotId: Int64, createdAt: Date, totalBytes: Int64)>
+        if let firstMeaningfulIndex = history.firstIndex(where: { $0.totalBytes > appearanceThreshold }) {
+            trimmedHistory = history[firstMeaningfulIndex...]
+        } else {
+            trimmedHistory = history[history.startIndex...]
+        }
+
+        guard trimmedHistory.count >= 2,
+              let oldest = trimmedHistory.first,
+              let mostRecent = trimmedHistory.last else {
+            return nil
+        }
+
+        let totalGrowth = mostRecent.totalBytes - oldest.totalBytes
+        guard totalGrowth > significanceThreshold else {
+            return nil
+        }
+
+        let minBytes = trimmedHistory.map(\.totalBytes).min() ?? oldest.totalBytes
+        let tolerance = significanceThreshold / 10
+
+        var growthStartedAt = oldest.createdAt
+        var foundMinimum = false
+
+        for point in trimmedHistory {
+            if !foundMinimum {
+                if point.totalBytes <= minBytes + tolerance {
+                    foundMinimum = true
+                }
+            } else if point.totalBytes > minBytes + tolerance {
+                growthStartedAt = point.createdAt
+                break
+            }
+        }
+
+        let growthSpanDays = Calendar.current.dateComponents(
+            [.day],
+            from: growthStartedAt,
+            to: mostRecent.createdAt
+        ).day ?? 0
+
+        return CategoryGrowthTrend(
+            growthBytes: mostRecent.totalBytes - minBytes,
+            growthStartedAt: growthStartedAt,
+            growthSpanDays: max(1, growthSpanDays)
+        )
     }
 }

@@ -57,9 +57,12 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
     @State private var baselineService = BaselineService.shared
+    @State private var permissionsService = PermissionsService.shared
     @State private var isResetting = false
+    @State private var isCompactingDatabase = false
     @State private var showDeleteSnapshotsConfirmation = false
     @State private var showingSavedNotice = false
+    @State private var compactedNotice = ""
     @State private var hasFullDiskAccess = false
 
     private var appVersionText: String {
@@ -89,6 +92,11 @@ private struct GeneralSettingsTab: View {
                             openFullDiskAccessSettings()
                         }
                         .buttonStyle(.borderedProminent)
+
+                        Button("Reveal Current App") {
+                            permissionsService.revealCurrentAppInFinder()
+                        }
+                        .buttonStyle(.bordered)
                     }
                     
                     Text("Required to scan system and user locations accurately.")
@@ -115,6 +123,43 @@ private struct GeneralSettingsTab: View {
                         }
                     }
                     .disabled(isResetting)
+
+                    Button {
+                        isCompactingDatabase = true
+                        compactedNotice = ""
+
+                        Task {
+                            do {
+                                let report = try await DatabaseCleanupService.shared.compactDatabaseNow()
+                                let reclaimedDbBytes = max(0, report.dbBytesBefore - report.dbBytesAfter)
+                                let reclaimedWalBytes = max(0, report.walBytesBefore - report.walBytesAfter)
+                                let reclaimedTotal = reclaimedDbBytes + reclaimedWalBytes
+
+                                compactedNotice = "Reclaimed \(formattedBytes(reclaimedTotal)). Backfilled \(report.backfilledSnapshots) category snapshots and \(report.backfilledSubcategorySnapshots) subcategory snapshots, removed \(report.orphanedPathsDeleted) orphaned paths."
+                            } catch {
+                                compactedNotice = "Compaction failed: \(error.localizedDescription)"
+                            }
+
+                            isCompactingDatabase = false
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isCompactingDatabase {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "externaldrive.badge.timemachine")
+                            }
+                            Text("Compact Database Now")
+                        }
+                    }
+                    .disabled(isResetting || isCompactingDatabase)
+
+                    if !compactedNotice.isEmpty {
+                        Text(compactedNotice)
+                            .font(.caption)
+                            .foregroundStyle(compactedNotice.hasPrefix("Compaction failed") ? .red : .green)
+                    }
 
                     if showingSavedNotice {
                         Label("Snapshots deleted", systemImage: "checkmark.circle.fill")
@@ -198,23 +243,17 @@ private struct GeneralSettingsTab: View {
     }
 
     private func refreshFullDiskAccess() {
-        let fm = FileManager.default
-        let path = "/Library/Preferences/com.apple.TimeMachine.plist"
-        
-        if fm.isReadableFile(atPath: path) {
-            do {
-                _ = try Data(contentsOf: URL(fileURLWithPath: path))
-                hasFullDiskAccess = true
-                return
-            } catch {}
-        }
-        hasFullDiskAccess = false
+        hasFullDiskAccess = permissionsService.hasFullDiskAccess
     }
 
     private func openFullDiskAccessSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
-        }
+        Task { await permissionsService.requestFullDiskAccess() }
+    }
+
+    private func formattedBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 }
 

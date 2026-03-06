@@ -21,6 +21,9 @@ actor FSEventsWatcher {
     /// Current debounce task for pending changes.
     private var debounceTask: Task<Void, Never>?
 
+    /// Paths accumulated since the debounce window started.
+    private var pendingPaths = Set<URL>()
+
     /// Debounce interval in seconds (default: 3.0)
     private let debounceInterval: TimeInterval
 
@@ -73,6 +76,10 @@ actor FSEventsWatcher {
         )
         callbackContext = context
 
+        // Directory-level events are enough to trigger a rescan and cost far less CPU
+        // than per-file notifications on broad developer trees.
+        let flags = FSEventStreamCreateFlags(0)
+
         // Create the event stream
         guard let newStream = FSEventStreamCreate(
             kCFAllocatorDefault,
@@ -106,7 +113,7 @@ actor FSEventsWatcher {
             paths as CFArray,
             UInt64(kFSEventStreamEventIdSinceNow),
             0.5,
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
+            flags
         ) else {
             return
         }
@@ -169,17 +176,20 @@ actor FSEventsWatcher {
     ///
     /// - Parameter paths: Set of URLs that changed
     private func handleEventPaths(_ paths: Set<URL>) {
-        // Cancel existing task
-        debounceTask?.cancel()
+        pendingPaths.formUnion(paths)
 
-        // Create new debounced task
+        guard debounceTask == nil else { return }
+
         debounceTask = Task {
             try? await Task.sleep(nanoseconds: UInt64(debounceInterval * 1_000_000_000))
 
             // Only invoke if not cancelled
             guard !Task.isCancelled else { return }
 
-            onChange?(paths)
+            let pathsToDeliver = pendingPaths
+            pendingPaths.removeAll()
+            debounceTask = nil
+            onChange?(pathsToDeliver)
         }
     }
 

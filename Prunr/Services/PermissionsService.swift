@@ -45,6 +45,12 @@ final class PermissionsService {
         NSWorkspace.shared.open(url)
     }
 
+    /// Opens the current app bundle in Finder so the user can add the exact
+    /// running build to Full Disk Access, including debug builds in DerivedData.
+    func revealCurrentAppInFinder() {
+        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+    }
+
     // MARK: - Permission Status
 
     /// The current permission status based on Full Disk Access availability.

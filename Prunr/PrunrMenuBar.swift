@@ -14,6 +14,9 @@ struct PrunrMenuBar: App {
         do {
             try DatabaseManager.shared.initialize()
             print("Database initialized at: \(DatabaseManager.shared.databasePath ?? "unknown")")
+            Task.detached(priority: .utility) {
+                await DatabaseCleanupService.shared.performStartupMaintenance()
+            }
         } catch {
             print("Failed to initialize database: \(error)")
         }

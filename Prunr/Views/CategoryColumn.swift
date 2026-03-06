@@ -7,19 +7,7 @@ struct CategoryColumn: View {
 
     /// All deltas to categorize and count
     var deltas: [Delta]
-
-    /// Computed property: deltas grouped by category
-    private var categorizedDeltas: [DeltaCategory: [Delta]] {
-        var result: [DeltaCategory: [Delta]] = [:]
-        for category in DeltaCategory.allCases {
-            result[category] = []
-        }
-        for delta in deltas {
-            let category = DeltaCategory.categorize(path: delta.path)
-            result[category, default: []].append(delta)
-        }
-        return result
-    }
+    @State private var cachedCounts: [DeltaCategory: Int] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -40,13 +28,31 @@ struct CategoryColumn: View {
                 ForEach(DeltaCategory.allCases) { category in
                     CategoryRow(
                         category: category,
-                        count: categorizedDeltas[category]?.count ?? 0
+                        count: cachedCounts[category] ?? 0
                     )
                     .tag(category as DeltaCategory?)
                 }
             }
             .listStyle(.inset)
         }
+        .onAppear {
+            recomputeCounts()
+        }
+        .onChange(of: deltas) { _, _ in
+            recomputeCounts()
+        }
+    }
+
+    private func recomputeCounts() {
+        var result: [DeltaCategory: Int] = [:]
+        for category in DeltaCategory.allCases {
+            result[category] = 0
+        }
+        for delta in deltas {
+            let category = DeltaCategory.categorize(path: delta.path)
+            result[category, default: 0] += 1
+        }
+        cachedCounts = result
     }
 }
 

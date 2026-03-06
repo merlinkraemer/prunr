@@ -71,6 +71,9 @@ actor ScanService {
 
         /// Calculated progress percentage (0.0-1.0) based on time estimation (ISS-033)
         var percentage: Double
+
+        /// Whether the percentage is based on a stable estimate.
+        var hasReliableEstimate: Bool
     }
 
     // MARK: - Public API
@@ -175,7 +178,56 @@ actor ScanService {
         var batch: [ScanResult] = []
         var count = 0
         var lastProgressUpdate = Date()
-        let progressUpdateInterval: TimeInterval = 1.0 // 1s between updates (reduced from 500ms)
+        var lastReportedPercentage = 0.03
+        let progressUpdateInterval: TimeInterval = 0.25
+        let historicalEntryEstimate = await historicalEntryEstimate(for: trackedPathId)
+        var categoryTotals: [GrowthCategory: Int64] = [:]
+        struct SubcategoryKey: Hashable {
+            let category: GrowthCategory
+            let subcategory: GrowthSubcategory?
+        }
+        struct SubcategoryAccumulator {
+            var totalBytes: Int64 = 0
+            var fileCount = 0
+            var topItems: [GrowthItem] = []
+
+            mutating func add(path: String, sizeBytes: Int64, subcategory: GrowthSubcategory?) {
+                totalBytes += sizeBytes
+                fileCount += 1
+
+                let item = GrowthItem(
+                    path: path,
+                    growthBytes: sizeBytes,
+                    currentSizeBytes: sizeBytes,
+                    percentOfParent: 0,
+                    subcategory: subcategory
+                )
+
+                if topItems.count < SubcategoryGroup.initialLoadLimit {
+                    topItems.append(item)
+                } else if let smallestIndex = topItems.indices.min(by: {
+                    topItems[$0].currentSizeBytes < topItems[$1].currentSizeBytes
+                }), sizeBytes > topItems[smallestIndex].currentSizeBytes {
+                    topItems[smallestIndex] = item
+                }
+            }
+
+            func finalized(subcategory: GrowthSubcategory?) -> [GrowthItem] {
+                let sorted = topItems.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+                guard totalBytes > 0 else { return sorted }
+
+                return sorted.map { item in
+                    GrowthItem(
+                        path: item.path,
+                        growthBytes: item.currentSizeBytes,
+                        currentSizeBytes: item.currentSizeBytes,
+                        percentOfParent: Double(item.currentSizeBytes) / Double(totalBytes),
+                        subcategory: subcategory
+                    )
+                }
+            }
+        }
+        var subcategoryTotals: [SubcategoryKey: SubcategoryAccumulator] = [:]
 
         // Track scan start time for percentage estimation (ISS-033)
         let scanStartTime = Date()
@@ -187,7 +239,8 @@ actor ScanService {
                 foldersScanned: 0,
                 currentSnapshotId: snapshotId,
                 totalFiles: 100, // Initial estimate
-                percentage: 0.05 // 5% to ensure bar is visible immediately
+                percentage: 0.03,
+                hasReliableEstimate: historicalEntryEstimate != nil
             )
             progress(initialProgress)
             logger.debug("Initial progress update sent")
@@ -208,6 +261,12 @@ actor ScanService {
 
                 batch.append(result)
                 count += 1
+                let category = GrowthCategory.categorize(path: result.path)
+                categoryTotals[category, default: 0] += result.sizeBytes
+                let subcategory = GrowthCategory.subcategorize(path: result.path)
+                let subcategoryKey = SubcategoryKey(category: category, subcategory: subcategory)
+                subcategoryTotals[subcategoryKey, default: SubcategoryAccumulator()]
+                    .add(path: result.path, sizeBytes: result.sizeBytes, subcategory: subcategory)
 
                 // Insert batch when full
                 if batch.count >= batchSize {
@@ -237,31 +296,40 @@ actor ScanService {
                         let elapsed = now.timeIntervalSince(scanStartTime)
                         var percentage: Double
                         let estimatedTotal: Int
+                        let hasReliableEstimate: Bool
+                        let minimumProgressFloor = 0.03
+                        let filesPerSecond = Double(count) / max(elapsed, 0.25)
 
-                        // Minimum progress to show the bar immediately
-                        let minimumProgress = min(0.10, Double(count) / 100.0)
-
-                        if elapsed < 1.0 {
-                            // First second: show minimum progress (just started)
-                            percentage = minimumProgress
-                            estimatedTotal = max(100, count * 5) // Rough estimate
-                        } else if count < 100 {
-                            // Small scan: show progress based on count with minimum floor
-                            percentage = min(0.50, minimumProgress)
-                            estimatedTotal = max(100, count * 3)
+                        if let historicalEntryEstimate, historicalEntryEstimate > 0 {
+                            let historicalTarget = Double(historicalEntryEstimate)
+                            let growthBuffer = max(
+                                historicalTarget * 0.03,
+                                filesPerSecond * 1.5,
+                                100.0
+                            )
+                            let bufferedTarget = max(
+                                historicalTarget * 1.03,
+                                Double(count) + growthBuffer
+                            )
+                            percentage = min(0.97, Double(count) / max(bufferedTarget, Double(count) + 1))
+                            estimatedTotal = Int(bufferedTarget.rounded())
+                            hasReliableEstimate = elapsed >= 0.75 && count >= max(100, historicalEntryEstimate / 20)
+                        } else if elapsed >= 1.25 && count >= 500 {
+                            // First-ever scans have no baseline count. Wait for a real throughput sample,
+                            // then estimate using a shorter moving horizon so progress tracks visible work better.
+                            let dynamicHorizon = max(3.5, min(7.0, 4.0 + log10(max(10.0, filesPerSecond))))
+                            let estimated = Double(count) + (filesPerSecond * dynamicHorizon)
+                            percentage = min(0.90, Double(count) / max(estimated, Double(count) + 1))
+                            estimatedTotal = Int(estimated.rounded())
+                            hasReliableEstimate = elapsed >= 2.5 && count >= 1_500
                         } else {
-                            // Time-based estimation for larger scans
-                            let filesPerSecond = Double(count) / elapsed
-                            let estimatedRemainingSeconds = max(1.0, filesPerSecond * 2) // Assume 2x more files
-                            let totalEstimatedTime = elapsed + estimatedRemainingSeconds
-                            let estimated = filesPerSecond * totalEstimatedTime
-                            
-                            // Progressive percentage that grows with scan (cap at 0.90 to avoid 95% hang perception)
-                            percentage = min(0.90, Double(count) / max(1.0, estimated))
-                            // Ensure at least some progress is visible
-                            percentage = max(minimumProgress, percentage)
-                            estimatedTotal = Int(estimated)
+                            percentage = min(0.08, minimumProgressFloor + (elapsed * 0.012))
+                            estimatedTotal = max(100, count)
+                            hasReliableEstimate = false
                         }
+
+                        percentage = max(lastReportedPercentage, percentage)
+                        lastReportedPercentage = percentage
                         
                         // Log progress for debugging hangs
                         if count % 10000 == 0 {
@@ -273,7 +341,8 @@ actor ScanService {
                             foldersScanned: count,
                             currentSnapshotId: snapshotId,
                             totalFiles: estimatedTotal,
-                            percentage: percentage
+                            percentage: percentage,
+                            hasReliableEstimate: hasReliableEstimate
                         )
                         progress(progressUpdate)
                     }
@@ -286,6 +355,19 @@ actor ScanService {
                 try await db.addEntries(to: snapshotId, entries: batch)
             }
 
+            // Persist category totals while scan results are still hot in memory.
+            try await db.replaceCategorySnapshots(snapshotId: snapshotId, totals: categoryTotals)
+            let storedSubcategories = subcategoryTotals.map { key, accumulator in
+                DatabaseManager.StoredSubcategorySnapshot(
+                    category: key.category,
+                    subcategory: key.subcategory,
+                    totalBytes: accumulator.totalBytes,
+                    fileCount: accumulator.fileCount,
+                    topItems: accumulator.finalized(subcategory: key.subcategory)
+                )
+            }
+            try await db.replaceSubcategorySnapshots(snapshotId: snapshotId, rows: storedSubcategories)
+
             // Send final progress update at 100% completion (UAT-001 fix)
             if let progress = progress {
                 let finalProgress = ScanProgress(
@@ -293,7 +375,8 @@ actor ScanService {
                     foldersScanned: count,
                     currentSnapshotId: snapshotId,
                     totalFiles: count,
-                    percentage: 1.0 // 100% complete
+                    percentage: 1.0, // 100% complete
+                    hasReliableEstimate: true
                 )
                 progress(finalProgress)
                 logger.debug("Final progress update sent: \(count) files")
@@ -339,6 +422,26 @@ actor ScanService {
 
             logger.error("Unknown scan error domain=\(nsError.domain) code=\(nsError.code): \(error.localizedDescription)")
             throw ScanError.unknown(error)
+        }
+    }
+
+    private func historicalEntryEstimate(for trackedPathId: UUID) async -> Int? {
+        do {
+            let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPathId)
+            var candidateCounts: [Int] = []
+
+            for snapshot in snapshots.prefix(2) {
+                guard let snapshotId = snapshot.id else { continue }
+                let count = try await db.fetchEntryCount(for: snapshotId)
+                if count > 0 {
+                    candidateCounts.append(count)
+                }
+            }
+
+            return candidateCounts.max()
+        } catch {
+            logger.debug("Could not load historical entry estimate: \(error.localizedDescription)")
+            return nil
         }
     }
 }

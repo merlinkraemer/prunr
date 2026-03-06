@@ -28,7 +28,7 @@ actor FileScanner {
     /// App-internal paths to avoid recursive self-observation.
     private let internalPathFragments: [String] = [
         "/Library/Application Support/Prunr/",
-        " /.build/derivedData/",
+        "/.build/derivedData/",
         "/dev/projects/prunr/.build/"
     ]
 

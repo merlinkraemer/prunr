@@ -6,10 +6,10 @@ import SwiftUI
 /// A custom panel that looks like native macOS menu bar dropdowns (no arrow)
 final class DropdownPanel: NSPanel {
     private var onClose: (() -> Void)?
-    
+
     init(contentView: NSView, onClose: @escaping () -> Void) {
         self.onClose = onClose
-        
+
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 480),
             styleMask: [.nonactivatingPanel, .borderless, .hudWindow],
@@ -25,11 +25,11 @@ final class DropdownPanel: NSPanel {
         visualEffectView.wantsLayer = true
         visualEffectView.layer?.cornerRadius = 12
         visualEffectView.layer?.masksToBounds = true
-        
+
         // Add content as subview
         contentView.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
         visualEffectView.addSubview(contentView)
-        
+
         self.contentView = visualEffectView
         self.isFloatingPanel = true
         self.level = .statusBar
@@ -37,7 +37,7 @@ final class DropdownPanel: NSPanel {
         self.isMovableByWindowBackground = false
         self.backgroundColor = .clear
         self.hasShadow = true
-        
+
         // Observe when window loses key status
         NotificationCenter.default.addObserver(
             self,
@@ -46,11 +46,11 @@ final class DropdownPanel: NSPanel {
             object: self
         )
     }
-    
+
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
-    
+
     @objc private func windowDidResignKey(_ notification: Notification) {
         // Close panel when it loses key status (user clicked outside)
         if isVisible {
@@ -58,7 +58,7 @@ final class DropdownPanel: NSPanel {
             onClose?()
         }
     }
-    
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
@@ -81,9 +81,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Right-click menu
     private var contextMenu: NSMenu?
-    
+
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
-    
+
     // Published state for UI
     var categoryItems: [CategoryGrowthItem] = []  // Kept for legacy drill-down compatibility
     var growingCategories: [CategoryInventoryItem] = []  // Categories with active growth trends
@@ -91,8 +91,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var stableTotalBytes: Int64 = 0  // Sum of stable category sizes
     var reconciliationResult: DiskAccountingResult? = nil // Free-space accounting data
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
-    var selectedCategoryForDrilldown: CategoryGrowthItem? = nil // External category selection for drill-down (ISS-043)
     var selectedInventoryCategory: CategoryInventoryItem? = nil // New inventory-based drill-down selection
+    var selectedSubcategory: SubcategoryGroup? = nil
+    var isSubcategoryDrillDown: Bool = false
+    var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
     var monitoredPathName: String = ""
     var enabledPathCount: Int {
         SettingsStore.shared.enabledTrackedPaths.count
@@ -110,7 +112,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
     var monitoredPathDisplay: String {
         // Full path for header display with tilde notation (e.g., "~/dev" instead of "/Users/username/dev")
-        if let path = SettingsStore.shared.enabledTrackedPaths.first {
+        if let path = primaryTrackedPath() {
             let fullPath = path.url.path
             let homePath = FileManager.default.homeDirectoryForCurrentUser.path
 
@@ -125,6 +127,57 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
         return "No path configured"
     }
+
+    private func primaryTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
+        let candidates = paths ?? SettingsStore.shared.enabledTrackedPaths
+        guard !candidates.isEmpty else { return nil }
+
+        if let mainPath = candidates.first(where: { $0.id == ScanPathPreset.mainBasePathID }) {
+            return mainPath
+        }
+
+        let overviewPaths = candidates.filter { !SettingsStore.shared.isCommonPath($0) }
+        if let overviewPath = overviewPaths.max(by: { trackedPathPriority($0) < trackedPathPriority($1) }) {
+            return overviewPath
+        }
+
+        return preferredTrackedPath(from: candidates)
+    }
+
+    private func preferredTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
+        let candidates = paths ?? SettingsStore.shared.enabledTrackedPaths
+        guard !candidates.isEmpty else { return nil }
+
+        return candidates.max { lhs, rhs in
+            trackedPathPriority(lhs) < trackedPathPriority(rhs)
+        }
+    }
+
+    private func trackedPathPriority(_ path: TrackedPath) -> Int {
+        let pathDepth = path.url.standardizedFileURL.pathComponents.count
+        let isMainBasePath = path.id == ScanPathPreset.mainBasePathID
+
+        if isMainBasePath {
+            return pathDepth
+        }
+
+        return 10_000 + pathDepth
+    }
+
+    private func shouldAutoWatchTrackedPath(_ path: TrackedPath) -> Bool {
+        let standardized = path.url.standardizedFileURL
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+
+        if standardized == home {
+            return false
+        }
+
+        if standardized.path == "/" {
+            return false
+        }
+
+        return true
+    }
     var isLoading = false {
         didSet { updateMenuBarActivityEffect() }
     }
@@ -135,7 +188,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var noBaseline = false
     var scanProgress: String = ""
     var scanCurrentPath: String = ""
+    var scanCurrentPathDisplay: String = ""
     var filesScanned: Int = 0
+    var scanEstimatedTotalFiles: Int = 0
+    var hasReliableScanProgressEstimate = false
     var isAnalyzingChanges: Bool = false {
         didSet { updateMenuBarActivityEffect() }
     }
@@ -148,7 +204,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // Scan timing for minimum display duration
     private var scanStartTime: Date?
     private let minimumDisplayDuration: TimeInterval = 0.8 // 800ms
-    
+
     // Disk space state
     var totalBytes: Int64 = 0
     var usedBytes: Int64 = 0
@@ -168,12 +224,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     // Event-driven lightweight scan automation
     private var fileEventsWatcher: FSEventsWatcher?
-    private var watchedPathIDs: [UUID] = []
+    private var watchedPaths: [String] = []
     private var autoScanTask: Task<Void, Never>?
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
     private var lastAutomaticScanAttemptAt: Date?
     private var isUnderDiskPressure = false
+    private var lastFileEventAt: Date?
 
     var lastScanStatusText: String {
         let formatter = RelativeDateTimeFormatter()
@@ -192,15 +249,18 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         return "No changes (scanned \(relative))"
     }
 
-    private let normalAutoScanDebounce: TimeInterval = 90
-    private let pressureAutoScanDebounce: TimeInterval = 20
-    private let normalAutoScanInterval: TimeInterval = 20 * 60
-    private let pressureAutoScanInterval: TimeInterval = 5 * 60
-    private let normalAutoScanAttemptInterval: TimeInterval = 4 * 60
-    private let pressureAutoScanAttemptInterval: TimeInterval = 90
-    
+    private let normalAutoScanDebounce: TimeInterval = 20
+    private let pressureAutoScanDebounce: TimeInterval = 8
+    private let normalAutoScanInterval: TimeInterval = 5 * 60
+    private let pressureAutoScanInterval: TimeInterval = 90
+    private let normalAutoScanAttemptInterval: TimeInterval = 45
+    private let pressureAutoScanAttemptInterval: TimeInterval = 15
+    private let startupAutoScanGracePeriod: TimeInterval = 20
+    private var useFallbackAutoScan = false
+    private let appLaunchAt = Date()
+
     static var shared: MenuBarManager?
-    
+
     // MARK: - Init
 
     override init() {
@@ -233,7 +293,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         popover?.behavior = .transient
         popover?.delegate = self
         popover?.contentViewController = NSHostingController(rootView: MenuBarView(manager: self))
-        
+
         // Configure panel for native dropdown look (no arrow)
         let panelContent = NSHostingView(rootView: MenuBarView(manager: self))
         panelContent.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
@@ -244,7 +304,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func setupContextMenu() {
         let menu = NSMenu()
-        
+
         // Create Test Data (Debug)
         let createDataItem = NSMenuItem(
             title: "Create Test Data",
@@ -253,7 +313,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         )
         createDataItem.target = self
         menu.addItem(createDataItem)
-        
+
         menu.addItem(NSMenuItem.separator())
 
         // Settings...
@@ -362,7 +422,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         guard confirmDeleteAllSnapshots() else { return }
         Task { await performReset() }
     }
-    
+
     /// Public method to reset baseline (called by View)
     func performReset() async {
         do {
@@ -375,6 +435,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             stableCategories = []
             stableTotalBytes = 0
             categoryItems = []
+            subcategoryGroupsByCategory = [:]
+            selectedInventoryCategory = nil
+            selectedSubcategory = nil
+            isDrilledDown = false
+            isSubcategoryDrillDown = false
         } catch {
             print("[MenuBarManager] Failed to reset baseline: \(error)")
         }
@@ -389,17 +454,39 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
     }
-    
+
+    private func displayPath(for scannedPath: String, rootPath: String) -> String {
+        let standardizedRoot = URL(fileURLWithPath: rootPath).standardizedFileURL.path
+        let standardizedScannedPath = URL(fileURLWithPath: scannedPath).standardizedFileURL.path
+
+        if standardizedScannedPath == standardizedRoot {
+            return "."
+        }
+
+        let rootPrefix = standardizedRoot.hasSuffix("/") ? standardizedRoot : standardizedRoot + "/"
+        if standardizedScannedPath.hasPrefix(rootPrefix) {
+            let relativePath = String(standardizedScannedPath.dropFirst(rootPrefix.count))
+            return relativePath.isEmpty ? "." : "./\(relativePath)"
+        }
+
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+        if standardizedScannedPath.hasPrefix(homePath) {
+            return "~" + String(standardizedScannedPath.dropFirst(homePath.count))
+        }
+
+        return standardizedScannedPath
+    }
+
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
-     
+
     // Properties are now synthesized by @Observable macro at class level
     // and initialized above.
-    
-    /// Loads inventory data with growth trends for the first enabled tracked path
+
+    /// Loads inventory data with growth trends for the preferred enabled tracked path
     func loadInventory(isAutomatic: Bool = false) async {
-        // Get first enabled tracked path from settings
+        // Prefer the most specific enabled tracked path to avoid scanning huge umbrella roots.
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
-        guard let trackedPath = enabledPaths.first else {
+        guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
             print("[MenuBarManager] No enabled tracked paths in settings")
             errorMessage = "No paths enabled in Settings"
             return
@@ -412,8 +499,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isAnalyzingChanges = false
         scanProgress = "Scanning \(trackedPath.displayName)..."
         scanCurrentPath = trackedPath.url.path
-        // Reset progress percentage at scan start (ISS-033)
-        scanProgressPercentage = 0.0
+        scanCurrentPathDisplay = "."
+        // Start slightly above zero so the UI never appears stalled before the first callback lands.
+        scanProgressPercentage = 0.03
+        scanEstimatedTotalFiles = 0
+        hasReliableScanProgressEstimate = false
 
         // Record scan start time for minimum display duration
         let startTime = Date()
@@ -436,16 +526,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 let clamped = max(0.0, min(1.0, progress.percentage))
                 // Keep visual progress just under 100% until scan is truly done.
                 self.scanProgressPercentage = clamped >= 1.0 ? 0.99 : clamped
+                self.scanEstimatedTotalFiles = max(progress.totalFiles, progress.foldersScanned)
+                self.hasReliableScanProgressEstimate = progress.hasReliableEstimate
                 self.scanCurrentPath = progress.currentPath
 
-                // Show detailed path immediately for better scan visibility
                 let rootPath = trackedPath.url.path
-                var displayPath = progress.currentPath
-                if displayPath.hasPrefix(rootPath) {
-                    let relativePath = String(displayPath.dropFirst(rootPath.count))
-                        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                    displayPath = relativePath.isEmpty ? "." : "./\(relativePath)"
-                }
+                let displayPath = self.displayPath(for: progress.currentPath, rootPath: rootPath)
+                self.scanCurrentPathDisplay = displayPath
                 self.scanProgress = "Scanning \(displayPath)"
             }
         }
@@ -456,6 +543,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             // Briefly show real 100% only when scan is actually complete.
             scanProgressPercentage = 1.0
+            hasReliableScanProgressEstimate = true
             scanProgress = "Finalizing scan..."
             try? await Task.sleep(for: .milliseconds(120))
 
@@ -463,29 +551,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             isAnalyzingChanges = true
             scanProgress = "Analyzing inventory..."
             scanCurrentPath = ""
+            scanCurrentPathDisplay = ""
             scanProgressPercentage = 1.0
+            hasReliableScanProgressEstimate = true
 
             // Get inventory with growth trends
             let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
 
-            // Split into growing and stable categories
-            var growing: [CategoryInventoryItem] = []
-            var stable: [CategoryInventoryItem] = []
-            var stableTotal: Int64 = 0
-
-            for item in inventory {
-                if item.growthTrend != nil {
-                    growing.append(item)
-                } else {
-                    stable.append(item)
-                    stableTotal += item.currentSizeBytes
-                }
-            }
-
-            // Sort growing by size descending
-            growingCategories = growing.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
-            stableCategories = stable.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
-            stableTotalBytes = stableTotal
+            applyInventory(inventory)
 
             // Keep legacy categoryItems for drill-down compatibility during transition
             // TODO: Remove once drill-down is migrated to inventory-based
@@ -503,6 +576,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             reconcileDrillDownSelection()
             scanProgress = ""
             scanCurrentPath = ""
+            scanCurrentPathDisplay = ""
             completedSuccessfully = true
 
             let snapshotTimestamp = completedSnapshot?.createdAt ?? Date()
@@ -521,6 +595,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 stableCategories = []
                 stableTotalBytes = 0
                 categoryItems = []
+                subcategoryGroupsByCategory = [:]
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let baselineError = error as? BaselineService.BaselineError,
@@ -531,12 +606,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 stableCategories = []
                 stableTotalBytes = 0
                 categoryItems = []
+                subcategoryGroupsByCategory = [:]
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
                 print("[MenuBarManager] Scan was cancelled")
                 scanProgress = "Cancelled"
                 scanCurrentPath = ""
+                scanCurrentPathDisplay = ""
                 isAnalyzingChanges = false
                 wasCancelled = true
             } else {
@@ -561,7 +638,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             isCleaningUp = true
             scanProgress = "Cleaning up..."
             scanCurrentPath = ""
+            scanCurrentPathDisplay = ""
             scanProgressPercentage = 1.0
+            hasReliableScanProgressEstimate = true
             await DatabaseCleanupService.shared.performAutoCleanup()
             isCleaningUp = false
         }
@@ -569,7 +648,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isLoading = false
         scanProgress = ""
         scanCurrentPath = ""
+        scanCurrentPathDisplay = ""
         scanProgressPercentage = 0.0
+        scanEstimatedTotalFiles = 0
+        hasReliableScanProgressEstimate = false
         filesScanned = 0
         isAnalyzingChanges = false
         scanStartTime = nil
@@ -578,6 +660,46 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         await updatePathSize()
+    }
+
+    func loadInventoryFromLatestSnapshot() async {
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
+            noBaseline = true
+            clearInventoryState()
+            lastAutomaticScanAt = nil
+            updateMonitoredPathName()
+            return
+        }
+
+        do {
+            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            guard !snapshots.isEmpty else {
+                noBaseline = true
+                clearInventoryState()
+                lastAutomaticScanAt = nil
+                updateMonitoredPathName()
+                return
+            }
+
+            let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
+            noBaseline = false
+            lastAutomaticScanAt = snapshots.first?.createdAt
+            errorMessage = nil
+            applyInventory(inventory)
+
+            do {
+                reconciliationResult = try await baselineService.getDiskAccounting(trackedPath: trackedPath)
+            } catch {
+                reconciliationResult = nil
+            }
+
+            updateMonitoredPathName()
+        } catch {
+            print("[MenuBarManager] Failed to load cached inventory: \(error)")
+            errorMessage = "Couldn't load latest inventory"
+            clearInventoryState()
+        }
     }
 
     /// Legacy: Loads the category-based growth list (deprecated, use loadInventory)
@@ -589,16 +711,134 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func reconcileDrillDownSelection() {
         guard isDrilledDown else { return }
 
-        guard let currentSelection = selectedCategoryForDrilldown else {
+        guard let currentSelection = selectedInventoryCategory else {
             isDrilledDown = false
+            isSubcategoryDrillDown = false
+            selectedSubcategory = nil
             return
         }
 
-        if let refreshed = categoryItems.first(where: { $0.id == currentSelection.id }) {
-            selectedCategoryForDrilldown = refreshed
+        if let refreshed = (growingCategories + stableCategories).first(where: { $0.category == currentSelection.category }) {
+            selectedInventoryCategory = refreshed
         } else {
-            selectedCategoryForDrilldown = nil
+            selectedInventoryCategory = nil
+            selectedSubcategory = nil
+            isSubcategoryDrillDown = false
             isDrilledDown = false
+        }
+
+        if isSubcategoryDrillDown {
+            guard let selectedSubcategory else {
+                isSubcategoryDrillDown = false
+                return
+            }
+
+            let groups = subcategoryGroupsByCategory[currentSelection.category] ?? []
+            if let refreshedSubcategory = groups.first(where: { $0.displayName == selectedSubcategory.displayName }) {
+                self.selectedSubcategory = refreshedSubcategory
+            } else {
+                self.selectedSubcategory = nil
+                isSubcategoryDrillDown = false
+            }
+        }
+    }
+
+    func loadSubcategoryBreakdown(for category: GrowthCategory) async -> [SubcategoryGroup] {
+        if let cached = subcategoryGroupsByCategory[category] {
+            return cached
+        }
+
+        if Task.isCancelled {
+            return []
+        }
+
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
+            return []
+        }
+
+        do {
+            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            guard let latestSnapshotId = snapshots.first?.id else {
+                return []
+            }
+
+            let groups = await baselineService.getSubcategoryBreakdown(for: category, snapshotId: latestSnapshotId)
+            if Task.isCancelled {
+                return []
+            }
+            subcategoryGroupsByCategory[category] = groups
+            return groups
+        } catch {
+            print("[MenuBarManager] Failed loading subcategory breakdown for \(category.rawValue): \(error)")
+            return []
+        }
+    }
+
+    /// Loads more files for a specific subcategory (pagination support).
+    /// Updates the subcategoryGroupsByCategory cache with the new files.
+    /// - Parameter group: The SubcategoryGroup to load more files for
+    /// - Returns: Updated SubcategoryGroup with more files, or nil if failed/maxed out
+    @discardableResult
+    func loadMoreFiles(for group: SubcategoryGroup) async -> SubcategoryGroup? {
+        guard let category = selectedInventoryCategory?.category else { return nil }
+        let requestedCategory = category
+        let requestedGroupId = group.id
+
+        // Check if we've hit the maximum
+        guard group.loadedFileCount < SubcategoryGroup.maxLoadableFiles else {
+            print("[MenuBarManager] Max files limit reached for subcategory: \(group.displayName)")
+            return nil
+        }
+
+        // Check if there are more files to load
+        guard group.hasMoreFiles else { return nil }
+
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        guard let trackedPath = primaryTrackedPath(from: enabledPaths) else { return nil }
+
+        do {
+            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            guard let latestSnapshotId = snapshots.first?.id else { return nil }
+
+            let additionalFiles = await baselineService.loadMoreSubcategoryFiles(
+                for: category,
+                subcategory: group.subcategory,
+                snapshotId: latestSnapshotId,
+                totalBytes: group.totalBytes,
+                offset: group.loadedFileCount
+            )
+
+            guard !additionalFiles.isEmpty else { return nil }
+            guard !Task.isCancelled else { return nil }
+            guard selectedInventoryCategory?.category == requestedCategory else { return nil }
+
+            // Update the cached group with new files
+            var updatedGroup = group
+            updatedGroup.topFiles.append(contentsOf: additionalFiles)
+            updatedGroup.topFiles.sort { $0.currentSizeBytes > $1.currentSizeBytes }
+
+            // Update the cache
+            if var groups = subcategoryGroupsByCategory[requestedCategory] {
+                if let index = groups.firstIndex(where: { $0.id == requestedGroupId }) {
+                    groups[index] = updatedGroup
+                    subcategoryGroupsByCategory[requestedCategory] = groups
+                } else {
+                    return nil
+                }
+            } else {
+                return nil
+            }
+
+            // Update selectedSubcategory if it matches
+            if selectedSubcategory?.id == requestedGroupId {
+                selectedSubcategory = updatedGroup
+            }
+
+            return updatedGroup
+        } catch {
+            print("[MenuBarManager] Failed loading more files: \(error)")
+            return nil
         }
     }
 
@@ -633,14 +873,18 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         filesScanned = 0
         isAnalyzingChanges = false
         scanProgress = "Taking initial snapshot for \(trackedPath.displayName)..."
+        scanCurrentPathDisplay = "."
         // Reset progress percentage at scan start (ISS-033)
         scanProgressPercentage = 0.0
+        scanEstimatedTotalFiles = 0
+        hasReliableScanProgressEstimate = false
 
         do {
             _ = try await baselineService.createBaseline(trackedPath: trackedPath)
             noBaseline = false
             scanProgress = ""
             scanCurrentPath = ""
+            scanCurrentPathDisplay = ""
 
             // Refresh storage space after baseline creation (ISS-042)
             updateFreeSpace()
@@ -649,6 +893,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             if let scanError = error as? ScanError, case .cancelled = scanError {
                 scanProgress = "Cancelled"
                 scanCurrentPath = ""
+                scanCurrentPathDisplay = ""
             } else {
                 errorMessage = error.localizedDescription
             }
@@ -657,9 +902,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isLoading = false
         scanProgress = ""
         scanCurrentPath = ""
+        scanCurrentPathDisplay = ""
         scanProgressPercentage = 0.0
+        scanEstimatedTotalFiles = 0
+        hasReliableScanProgressEstimate = false
     }
-    
+
     /// Auto-initializes the app on first launch (zero-friction onboarding)
     /// Silently takes an initial snapshot if none exist
     func autoInitializeIfNeeded() async {
@@ -670,7 +918,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             noBaseline = false
             return
         }
-        
+
         // Enable default path if needed
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
         if enabledPaths.isEmpty {
@@ -681,23 +929,23 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
         }
 
-        guard let trackedPath = SettingsStore.shared.enabledTrackedPaths.first else {
+        guard let trackedPath = primaryTrackedPath() else {
             return
         }
-        
+
         // Take snapshot silently in background (isAutoScanning = true to avoid blocking UI)
         isAutoScanning = true
-        
+
         do {
             _ = try await baselineService.createBaseline(trackedPath: trackedPath)
             noBaseline = false
         } catch {
             // Silent failure - auto-init is optional
         }
-        
+
         isAutoScanning = false
     }
-    
+
     /// Stops the current scan
     func stopScan() async {
         await ScanService.shared.cancelScan()
@@ -706,22 +954,69 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Clear scan start time to skip minimum display delay
         scanStartTime = nil
     }
-    
+
     /// Checks if baseline exists without triggering a scan
     func checkBaseline() async {
-        let hasBaseline = await baselineService.hasBaseline()
-        noBaseline = !hasBaseline
+        guard let trackedPath = primaryTrackedPath() else {
+            noBaseline = true
+            lastAutomaticScanAt = nil
+            updateMonitoredPathName()
+            return
+        }
+
+        do {
+            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            noBaseline = snapshots.isEmpty
+            lastAutomaticScanAt = snapshots.first?.createdAt
+        } catch {
+            noBaseline = true
+            lastAutomaticScanAt = nil
+        }
         updateMonitoredPathName()
     }
-    
+
+    private func applyInventory(_ inventory: [CategoryInventoryItem]) {
+        var growing: [CategoryInventoryItem] = []
+        var stable: [CategoryInventoryItem] = []
+        var stableTotal: Int64 = 0
+
+        for item in inventory {
+            if item.growthTrend != nil {
+                growing.append(item)
+            } else {
+                stable.append(item)
+                stableTotal += item.currentSizeBytes
+            }
+        }
+
+        growingCategories = growing.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+        stableCategories = stable.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+        stableTotalBytes = stableTotal
+        subcategoryGroupsByCategory = [:]
+        reconcileDrillDownSelection()
+    }
+
+    private func clearInventoryState() {
+        growingCategories = []
+        stableCategories = []
+        stableTotalBytes = 0
+        categoryItems = []
+        subcategoryGroupsByCategory = [:]
+        selectedInventoryCategory = nil
+        selectedSubcategory = nil
+        isDrilledDown = false
+        isSubcategoryDrillDown = false
+        reconciliationResult = nil
+    }
+
     private func updateMonitoredPathName() {
-        if let path = SettingsStore.shared.enabledTrackedPaths.first {
+        if let path = primaryTrackedPath() {
             monitoredPathName = path.displayName
         } else {
             monitoredPathName = "None"
         }
     }
-    
+
     /// Reveals the given path in Finder and activates Finder
     func revealInFinder(path: String) {
         let url = URL(fileURLWithPath: path)
@@ -764,20 +1059,20 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             let buttonFrameInWindow = button.convert(button.bounds, to: nil)
             let buttonFrameInScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
             let screenFrame = buttonScreen.frame
-            
+
             // Position panel below the button, aligned to right edge
             let panelWidth: CGFloat = 320
             let panelHeight: CGFloat = 480
-            
+
             // Right-align panel with button
             let panelX = buttonFrameInScreen.origin.x + buttonFrameInScreen.size.width - panelWidth
-            
+
             // Position below menu bar (button bottom is at top of screen area)
             // Menu bar is at the top of screenFrame, button is below it
             let panelY = buttonFrameInScreen.origin.y - panelHeight - 5
-            
+
             let panelFrame = NSRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight)
-            
+
             panel?.setFrame(panelFrame, display: true)
             panel?.makeKeyAndOrderFront(nil)
             isPopoverShown = true
@@ -902,6 +1197,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             Task { @MainActor in
                 self?.updateFreeSpace()
                 self?.configureFileWatcherIfNeeded()
+                if self?.useFallbackAutoScan == true {
+                    self?.scheduleAutomaticScan(resetDebounce: false)
+                }
             }
         }
     }
@@ -909,7 +1207,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Updates the monitored path size from the latest baseline or current state
     func updatePathSize() async {
         let trackedPaths = SettingsStore.shared.enabledTrackedPaths
-        guard let trackedPath = trackedPaths.first else {
+        guard let trackedPath = primaryTrackedPath(from: trackedPaths) else {
             self.monitoredPathSizeBytes = 0
             self.pathSizeBytesByID = [:]
             return
@@ -932,8 +1230,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                     continue
                 }
 
-                let entries = try await DatabaseManager.shared.fetchEntries(for: latestId)
-                sizesByID[trackedPath.id] = entries.reduce(0) { $0 + $1.sizeBytes }
+                sizesByID[trackedPath.id] = try await DatabaseManager.shared.sumEntrySizes(for: latestId)
             } catch {
                 sizesByID[trackedPath.id] = 0
             }
@@ -953,16 +1250,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             isPopoverShown = false
         }
     }
-    
+
     // MARK: - Actions
-    
+
     @objc private func createTestDataAction() {
         // Run in background with low priority to avoid blocking UI
         Task.detached(priority: .utility) {
             await self.generateTestData()
         }
     }
-    
+
     /// Generates test data at the default test path
     /// Creates files in paths that match category patterns for testing
     /// Includes comprehensive boundary folders for testing boundary detection
@@ -1142,7 +1439,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             print("[MenuBarManager] Failed to create test data: \(error)")
         }
     }
-    
+
     // MARK: - NSPopoverDelegate
 
     func popoverDidClose(_ notification: Notification) {
@@ -1159,40 +1456,75 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func configureFileWatcherIfNeeded() {
-        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
-        let ids = enabledPaths.map(\.id)
-        guard ids != watchedPathIDs else { return }
+        let urls: [URL]
+        if let trackedPath = preferredTrackedPath(), shouldAutoWatchTrackedPath(trackedPath) {
+            urls = [trackedPath.url.standardizedFileURL]
+        } else {
+            urls = []
+        }
+        let watchedSignature = urls.map(\.path)
 
-        watchedPathIDs = ids
-        let urls = enabledPaths.map { $0.url.standardizedFileURL }
-
-        Task { @MainActor in
-            if let watcher = fileEventsWatcher {
-                await watcher.stop()
-            }
-            fileEventsWatcher = nil
-
-            guard !urls.isEmpty else { return }
-
-            let watcher = FSEventsWatcher(pathsToWatch: urls, debounceInterval: 2.0)
-            await watcher.setOnChange { [weak self] _ in
-                Task { @MainActor in
-                    self?.scheduleAutomaticScan()
+        if watchedSignature == watchedPaths {
+            Task { @MainActor in
+                if let watcher = fileEventsWatcher, await watcher.isRunning {
+                    return
                 }
+                await configureFileWatcher(with: urls)
             }
-            fileEventsWatcher = watcher
-            await watcher.start()
+            return
+        }
+
+        watchedPaths = watchedSignature
+        Task { @MainActor in
+            await configureFileWatcher(with: urls)
         }
     }
 
-    private func scheduleAutomaticScan() {
-        autoScanTask?.cancel()
+    @MainActor
+    private func configureFileWatcher(with urls: [URL]) async {
+        if let watcher = fileEventsWatcher {
+            await watcher.stop()
+        }
+        fileEventsWatcher = nil
+
+        guard !urls.isEmpty else {
+            useFallbackAutoScan = false
+            return
+        }
+
+        let watcher = FSEventsWatcher(pathsToWatch: urls, debounceInterval: 2.0)
+        await watcher.setOnChange { [weak self] changedPaths in
+            Task { @MainActor in
+                guard let self else { return }
+                guard !self.shouldIgnoreAutoScanChanges(changedPaths) else { return }
+                self.lastFileEventAt = Date()
+                self.scheduleAutomaticScan(resetDebounce: false)
+            }
+        }
+        fileEventsWatcher = watcher
+        await watcher.start()
+        useFallbackAutoScan = !(await watcher.isRunning)
+    }
+
+    private func scheduleAutomaticScan(resetDebounce: Bool = true) {
+        guard !watchedPaths.isEmpty else { return }
+        if Date().timeIntervalSince(appLaunchAt) < startupAutoScanGracePeriod {
+            return
+        }
+        if resetDebounce {
+            autoScanTask?.cancel()
+        } else if autoScanTask != nil {
+            return
+        }
 
         let debounce = isUnderDiskPressure ? pressureAutoScanDebounce : normalAutoScanDebounce
         autoScanTask = Task { @MainActor in
+            defer { autoScanTask = nil }
             try? await Task.sleep(for: .milliseconds(Int(debounce * 1000)))
             guard !Task.isCancelled else { return }
-            guard !isLoading else { return }
+            guard !isLoading else {
+                return
+            }
 
             let minimumInterval = isUnderDiskPressure ? pressureAutoScanInterval : normalAutoScanInterval
             if let lastAutomaticScanAt,
@@ -1212,6 +1544,41 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             await loadInventory(isAutomatic: true)
             isAutoScanning = false
         }
+    }
+
+    private func shouldIgnoreAutoScanChanges(_ changedPaths: Set<URL>) -> Bool {
+        guard !changedPaths.isEmpty else { return true }
+
+        let ignoredRoots = autoScanIgnoredRoots()
+        let relevantChanges = changedPaths.filter { url in
+            let standardized = url.standardizedFileURL
+            return !ignoredRoots.contains(where: { standardized.path.hasPrefix($0.path) })
+        }
+
+        return relevantChanges.isEmpty
+    }
+
+    private func autoScanIgnoredRoots() -> [URL] {
+        var roots: [URL] = []
+
+        let fileManager = FileManager.default
+
+        if let dbPath = DatabaseManager.shared.databasePath {
+            roots.append(URL(fileURLWithPath: dbPath).deletingLastPathComponent().standardizedFileURL)
+        }
+
+        let bundleURL = Bundle.main.bundleURL.standardizedFileURL
+        roots.append(bundleURL)
+        roots.append(bundleURL.deletingLastPathComponent().standardizedFileURL)
+
+        let repoBuild = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("dev/projects/prunr/.build", isDirectory: true)
+            .standardizedFileURL
+        if fileManager.fileExists(atPath: repoBuild.path) {
+            roots.append(repoBuild)
+        }
+
+        return roots
     }
 
     deinit {}

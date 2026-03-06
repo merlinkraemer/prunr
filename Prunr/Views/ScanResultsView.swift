@@ -16,40 +16,9 @@ struct ScanResultsView: View {
 
     /// Whether we're in current-only mode (no historical data)
     var currentOnlyMode: Bool = false
-
-    /// Grouped deltas by category
-    private var groupedDeltas: [DeltaCategory: [Delta]] {
-        Dictionary(grouping: deltas) { delta in
-            DeltaCategory.categorize(path: delta.path)
-        }
-    }
-
-    /// Categories sorted by total growth (largest first)
-    private var sortedCategories: [(category: DeltaCategory, totalChange: Int64, itemCount: Int)] {
-        groupedDeltas.map { (category, items) in
-            let totalChange = items.reduce(0) { $0 + $1.changeBytes }
-            return (category, totalChange, items.count)
-        }
-        .sorted { $0.totalChange > $1.totalChange }
-        .filter { $0.totalChange != 0 }  // Hide categories with no change
-    }
-
-    /// Maximum change for bar scaling
-    private var maxChange: Int64 {
-        sortedCategories.map(\.totalChange).map { abs($0) }.max() ?? 1
-    }
-
-    /// Current-only categories (grouped snapshot entries)
-    private var currentOnlyCategories: [(category: DeltaCategory, totalSize: Int64, itemCount: Int)] {
-        let grouped = Dictionary(grouping: currentSnapshotEntries) { entry in
-            DeltaCategory.categorize(path: entry.path)
-        }
-        return grouped.map { (category, entries) in
-            let totalSize = entries.reduce(0) { $0 + $1.sizeBytes }
-            return (category, totalSize, entries.count)
-        }
-        .sorted { $0.totalSize > $1.totalSize }
-    }
+    @State private var cachedSortedCategories: [(category: DeltaCategory, totalChange: Int64, itemCount: Int)] = []
+    @State private var cachedMaxChange: Int64 = 1
+    @State private var cachedCurrentOnlyCategories: [(category: DeltaCategory, totalSize: Int64, itemCount: Int)] = []
 
     var body: some View {
         ScrollView {
@@ -59,7 +28,7 @@ struct ScanResultsView: View {
                     currentOnlyHeader
 
                     // Current-only category cards
-                    ForEach(currentOnlyCategories, id: \.category) { item in
+                    ForEach(cachedCurrentOnlyCategories, id: \.category) { item in
                         CurrentOnlyCategoryCard(
                             category: item.category,
                             totalSize: item.totalSize,
@@ -76,12 +45,12 @@ struct ScanResultsView: View {
                     }
 
                     // Category cards with growth bars
-                    ForEach(sortedCategories, id: \.category) { item in
+                    ForEach(cachedSortedCategories, id: \.category) { item in
                         CategoryCard(
                             category: item.category,
                             totalChange: item.totalChange,
                             itemCount: item.itemCount,
-                            maxChange: maxChange
+                            maxChange: cachedMaxChange
                         ) {
                             selectedCategory = item.category
                         }
@@ -92,6 +61,44 @@ struct ScanResultsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
+        .onAppear {
+            recomputeCachedData()
+        }
+        .onChange(of: deltas) { _, _ in
+            recomputeCachedData()
+        }
+        .onChange(of: currentSnapshotEntries.count) { _, _ in
+            recomputeCachedData()
+        }
+        .onChange(of: currentOnlyMode) { _, _ in
+            recomputeCachedData()
+        }
+    }
+
+    private func recomputeCachedData() {
+        let groupedDeltas: [DeltaCategory: [Delta]] = Dictionary(grouping: deltas) { delta in
+            DeltaCategory.categorize(path: delta.path)
+        }
+
+        let sortedCategories: [(category: DeltaCategory, totalChange: Int64, itemCount: Int)] = groupedDeltas.map { (category, items) in
+            let totalChange = items.reduce(0) { $0 + $1.changeBytes }
+            return (category, totalChange, items.count)
+        }
+        let filteredSortedCategories = sortedCategories
+            .sorted { lhs, rhs in lhs.totalChange > rhs.totalChange }
+            .filter { item in item.totalChange != 0 }
+
+        cachedSortedCategories = filteredSortedCategories
+        cachedMaxChange = filteredSortedCategories.map { abs($0.totalChange) }.max() ?? 1
+
+        let groupedCurrent: [DeltaCategory: [SnapshotEntryWithPath]] = Dictionary(grouping: currentSnapshotEntries) { entry in
+            DeltaCategory.categorize(path: entry.path)
+        }
+        let currentOnlyCategories: [(category: DeltaCategory, totalSize: Int64, itemCount: Int)] = groupedCurrent.map { (category, entries) in
+            let totalSize = entries.reduce(0) { $0 + $1.sizeBytes }
+            return (category, totalSize, entries.count)
+        }
+        cachedCurrentOnlyCategories = currentOnlyCategories.sorted { lhs, rhs in lhs.totalSize > rhs.totalSize }
     }
 
     /// Current-only mode header
