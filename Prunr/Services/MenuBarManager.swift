@@ -1063,6 +1063,34 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
+    /// Shows a folder picker dialog for onboarding
+    /// - Parameter completion: Called with the selected folder URL, or nil if cancelled
+    func showOnboardingFolderPicker(completion: @escaping (URL?) -> Void) {
+        // Close the popover first
+        closePopover()
+
+        // Activate the app before showing the panel
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Create and configure the open panel
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a folder to scan for duplicate files"
+
+        // Show the panel
+        panel.begin { response in
+            DispatchQueue.main.async {
+                if response == .OK, let url = panel.url {
+                    completion(url)
+                } else {
+                    completion(nil)
+                }
+            }
+        }
+    }
+
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
     }
