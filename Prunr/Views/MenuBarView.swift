@@ -149,109 +149,11 @@ struct MenuBarView: View {
 
             Divider()
 
-            // Centered scan content
             Spacer(minLength: 0)
 
-            VStack(spacing: 18) {
-                if manager.isCleaningUp {
-                    VStack(spacing: 10) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.blue)
-                            Text("Cleaning up")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.primary)
-                        }
+            VStack(spacing: 16) {
+                scanStatusCard(clampedProgress: clampedProgress)
 
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Reclaiming database space...")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } else if manager.isAnalyzingChanges {
-                    VStack(spacing: 10) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.green)
-                            Text("Scan complete")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.primary)
-                        }
-
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Analyzing file changes...")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } else {
-                    VStack(spacing: 10) {
-                        if manager.hasReliableScanProgressEstimate {
-                            ProgressView(value: clampedProgress, total: 1.0)
-                                .progressViewStyle(.linear)
-                                .tint(.blue)
-                        } else {
-                            ProgressView()
-                                .progressViewStyle(.linear)
-                                .tint(.blue)
-                        }
-                    }
-                }
-
-                if let scanFileCountLabel {
-                    Text(scanFileCountLabel)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-
-                if !manager.scanProgress.isEmpty && manager.scanCurrentPath.isEmpty && !manager.isAnalyzingChanges {
-                    Text(manager.scanProgress)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-
-                if !manager.isAnalyzingChanges && !manager.isCleaningUp {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Current path")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.tertiary)
-                            .textCase(.uppercase)
-
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 6, height: 6)
-
-                            Text(scanPathLabel)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-
-                            Spacer(minLength: 0)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.08))
-                    )
-                }
-
-                // Stop button centered with scan elements
                 Button("Stop") {
                     Task { await manager.stopScan() }
                 }
@@ -261,7 +163,7 @@ struct MenuBarView: View {
                 .accessibilityLabel("Stop scan")
                 .accessibilityHint("Cancel the current scan operation")
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 20)
             .padding(.vertical, 8)
 
             Spacer(minLength: 0)
@@ -321,128 +223,55 @@ struct MenuBarView: View {
     }
 
     private var firstScanView: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-
-            VStack(spacing: 14) {
-                if hasFullDiskAccess {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 36))
-                        .foregroundStyle(.blue)
-
-                    Text("Run your first scan")
-                        .font(.system(size: 18, weight: .semibold))
-
-                    Text("Scanning creates a baseline so Prunr can track growth.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 260)
-
-                    if hasEnabledScanPath {
-                        primaryActionButton(
-                            "Run first scan",
-                            minWidth: 140,
-                            isDisabled: manager.isLoading || manager.isAutoScanning
-                        ) {
-                            Task {
-                                await manager.loadInventory()
-                            }
-                        }
-                    } else {
-                        primaryActionButton("Enable scan path", minWidth: 160) {
-                            closePopoverAndOpenSettings()
-                        }
-
-                        Text("Choose a folder in Settings to start scanning.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
+        onboardingCard(
+            icon: "doc.text.magnifyingglass",
+            iconColor: .blue,
+            title: "Run your first scan",
+            message: "Create a baseline so Prunr can track storage growth over time.",
+            primaryTitle: hasEnabledScanPath ? "Run first scan" : "Enable scan path",
+            primaryMinWidth: hasEnabledScanPath ? 150 : 170,
+            primaryDisabled: manager.isLoading || manager.isAutoScanning,
+            primaryAction: {
+                if hasEnabledScanPath {
+                    Task { await manager.loadInventory() }
                 } else {
-                    Image(systemName: "lock.shield")
-                        .font(.system(size: 34))
-                        .foregroundStyle(.orange)
-
-                    Text("Full Disk Access required")
-                        .font(.system(size: 18, weight: .semibold))
-
-                    Text("Prunr needs Full Disk Access to scan system and user locations reliably.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 280)
-
-                    primaryActionButton("Open Full Disk Access", minWidth: 180) {
-                        openFullDiskAccessSettings()
-                    }
-
-                    Button("Reveal Current App") {
-                        permissionsService.revealCurrentAppInFinder()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.blue)
-
-                    Text("Toggle the switch next to Prunr in Settings. If it is not listed, use the \"+\" button and add the currently running Prunr.app.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 280)
-                        .padding(.top, 4)
+                    closePopoverAndOpenSettings()
                 }
-            }
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+            },
+            secondaryTitle: nil,
+            secondaryAction: nil,
+            detailText: hasEnabledScanPath
+                ? "The first scan may take a while, but it only needs to build your initial baseline once."
+                : "Choose a folder in Settings first, then come back here to start the initial scan."
+        )
     }
 
     private var fdaOnboardingView: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-
-            VStack(spacing: 14) {
-                Image(systemName: hasFullDiskAccess ? "checkmark.seal.fill" : "lock.shield")
-                    .font(.system(size: 34))
-                    .foregroundStyle(hasFullDiskAccess ? .green : .orange)
-
-                Text("Full Disk Access")
-                    .font(.system(size: 18, weight: .semibold))
-
-                Text("Grant Full Disk Access so Prunr can scan system and user locations reliably.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 280)
-
+        onboardingCard(
+            icon: hasFullDiskAccess ? "checkmark.seal.fill" : "lock.shield",
+            iconColor: hasFullDiskAccess ? .green : .orange,
+            title: "Full Disk Access",
+            message: hasFullDiskAccess
+                ? "Permission is ready. Continue to set up your first scan."
+                : "Grant Full Disk Access so Prunr can scan system and user locations reliably.",
+            primaryTitle: hasFullDiskAccess ? "Continue" : "Open Full Disk Access",
+            primaryMinWidth: 180,
+            primaryDisabled: false,
+            primaryAction: {
                 if hasFullDiskAccess {
-                    primaryActionButton("Continue") {
-                        completeFDAOnboarding()
-                    }
+                    completeFDAOnboarding()
                 } else {
-                    primaryActionButton("Open Full Disk Access") {
-                        openFullDiskAccessSettings()
-                    }
-
-                    Button("Reveal Current App") {
-                        permissionsService.revealCurrentAppInFinder()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.blue)
-
-                    Text("Toggle the switch next to Prunr in Settings. If it is not listed, use the \"+\" button and add the currently running Prunr.app.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 280)
-                        .padding(.top, 4)
+                    openFullDiskAccessSettings()
                 }
-            }
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+            },
+            secondaryTitle: hasFullDiskAccess ? nil : "Reveal Current App",
+            secondaryAction: hasFullDiskAccess ? nil : {
+                permissionsService.revealCurrentAppInFinder()
+            },
+            detailText: hasFullDiskAccess
+                ? "The next step will create your baseline scan."
+                : "If Prunr is not listed in Settings, use the + button and add the currently running app."
+        )
     }
 
     // MARK: - Drive Bar Section (Always Visible)
@@ -828,6 +657,197 @@ struct MenuBarView: View {
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.7 : 1.0)
+    }
+
+    private func secondaryActionButton(
+        _ title: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.blue)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func onboardingCard(
+        icon: String,
+        iconColor: Color,
+        title: String,
+        message: String,
+        primaryTitle: String,
+        primaryMinWidth: CGFloat,
+        primaryDisabled: Bool,
+        primaryAction: @escaping () -> Void,
+        secondaryTitle: String?,
+        secondaryAction: (() -> Void)?,
+        detailText: String
+    ) -> some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            VStack(spacing: 0) {
+                VStack(spacing: 14) {
+                    Image(systemName: icon)
+                        .font(.system(size: 34))
+                        .foregroundStyle(iconColor)
+
+                    VStack(spacing: 6) {
+                        Text(title)
+                            .font(.system(size: 18, weight: .semibold))
+
+                        Text(message)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 260)
+                    }
+                }
+                .frame(height: 146)
+
+                VStack(spacing: 10) {
+                    primaryActionButton(
+                        primaryTitle,
+                        minWidth: primaryMinWidth,
+                        isDisabled: primaryDisabled,
+                        action: primaryAction
+                    )
+
+                    Group {
+                        if let secondaryTitle, let secondaryAction {
+                            secondaryActionButton(secondaryTitle, action: secondaryAction)
+                        } else {
+                            Color.clear.frame(height: 20)
+                        }
+                    }
+
+                    Text(detailText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 270)
+                        .frame(height: 42, alignment: .top)
+                }
+                .frame(height: 112, alignment: .top)
+            }
+            .frame(maxWidth: 292)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 22)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.gray.opacity(0.08))
+            )
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func scanStatusCard(clampedProgress: Double) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if manager.isCleaningUp {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.blue)
+
+                    Text("Cleaning up database")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+
+                ProgressView()
+                    .progressViewStyle(.linear)
+                    .tint(.blue)
+
+                Text("Reclaiming database space...")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            } else if manager.isAnalyzingChanges {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.green)
+
+                    Text("Analyzing changes")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+
+                ProgressView()
+                    .progressViewStyle(.linear)
+                    .tint(.green)
+
+                Text("Comparing the latest snapshot and grouping growth.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Scanning files")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.primary)
+
+                        if let scanFileCountLabel {
+                            Text(scanFileCountLabel)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                    }
+
+                    Spacer()
+
+                    Text(manager.hasReliableScanProgressEstimate ? "\(Int(clampedProgress * 100))%" : "...")
+                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.primary)
+                        .monospacedDigit()
+                }
+
+                Group {
+                    if manager.hasReliableScanProgressEstimate {
+                        ProgressView(value: clampedProgress, total: 1.0)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .progressViewStyle(.linear)
+                .tint(.blue)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Current path")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .textCase(.uppercase)
+
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 6, height: 6)
+
+                        Text(scanPathLabel)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.45))
+                )
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.gray.opacity(0.08))
+        )
     }
 
     // MARK: - Helper Methods
