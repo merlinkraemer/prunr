@@ -89,9 +89,7 @@ struct CategoryGrowthListView: View {
             }
 
         case .files:
-            if let selected = manager.selectedSubcategory {
-                fileListView(for: selected)
-            }
+            fileListView
         }
     }
 
@@ -130,41 +128,45 @@ struct CategoryGrowthListView: View {
             if growingCategories.isEmpty && stableCategories.isEmpty {
                 emptyStateView
             } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(growingCategories) { item in
-                            CategoryInventoryRow(
-                                item: item,
-                                showsStableBadge: false,
-                                isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
-                                highlightedSegmentID: $highlightedSegmentID,
-                                onTap: { selectCategory(item) }
-                            )
-                            .equatable()
-                        }
+                VStack(spacing: 0) {
+                    // Main categories - scrollable
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(growingCategories) { item in
+                                CategoryInventoryRow(
+                                    item: item,
+                                    showsStableBadge: false,
+                                    isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
+                                    highlightedSegmentID: $highlightedSegmentID,
+                                    onTap: { selectCategory(item) }
+                                )
+                                .equatable()
+                            }
 
-                        ForEach(stableCategories) { item in
-                            CategoryInventoryRow(
-                                item: item,
-                                showsStableBadge: true,
-                                isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
-                                highlightedSegmentID: $highlightedSegmentID,
-                                onTap: { selectCategory(item) }
-                            )
-                            .equatable()
-                        }
-
-                        ForEach(supplementalItems) { item in
-                            SupplementalInventoryRow(
-                                item: item,
-                                isHighlightedFromBar: highlightedSegmentID == item.id,
-                                highlightedSegmentID: $highlightedSegmentID
-                            )
+                            ForEach(stableCategories) { item in
+                                CategoryInventoryRow(
+                                    item: item,
+                                    showsStableBadge: true,
+                                    isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
+                                    highlightedSegmentID: $highlightedSegmentID,
+                                    onTap: { selectCategory(item) }
+                                )
+                                .equatable()
+                            }
                         }
                     }
+                    .scrollIndicators(.hidden)
+                    .frame(maxHeight: maxHeight - 36) // Reserve space for supplemental item
+
+                    // Supplemental items - fixed at bottom
+                    ForEach(supplementalItems) { item in
+                        SupplementalInventoryRow(
+                            item: item,
+                            isHighlightedFromBar: highlightedSegmentID == item.id,
+                            highlightedSegmentID: $highlightedSegmentID
+                        )
+                    }
                 }
-                .scrollIndicators(.hidden)
-                .frame(maxHeight: maxHeight)
             }
         }
     }
@@ -213,7 +215,21 @@ struct CategoryGrowthListView: View {
 
     // MARK: - File List View
 
-    private func fileListView(for group: SubcategoryGroup) -> some View {
+    private var fileListView: some View {
+        // Always read from manager.selectedSubcategory to get the latest state
+        guard let group = manager.selectedSubcategory else {
+            return AnyView(
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                    Text("No folder selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: maxHeight)
+            )
+        }
+
         let bigFiles = group.topFiles.filter { $0.currentSizeBytes >= bigFileThreshold }
         let bigBytes = bigFiles.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
         let smallCount = max(0, group.fileCount - bigFiles.count)
@@ -221,100 +237,104 @@ struct CategoryGrowthListView: View {
         let hasMoreFiles = group.hasMoreFiles
         let canLoadMore = hasMoreFiles && group.loadedFileCount < SubcategoryGroup.maxLoadableFiles
 
-        return ScrollView {
-            VStack(spacing: 0) {
-                if bigFiles.isEmpty && smallCount == 0 {
-                    VStack(spacing: 8) {
-                        Image(systemName: "tray")
-                            .foregroundStyle(.secondary)
-                        Text("No files found")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 120)
-                    .padding(.top, 12)
-                } else {
-                    ForEach(bigFiles) { item in
-                        Button {
-                            onTapItem(item.path)
-                        } label: {
+        return AnyView(
+            ScrollView {
+                VStack(spacing: 0) {
+                    if bigFiles.isEmpty && smallCount == 0 {
+                        VStack(spacing: 8) {
+                            Image(systemName: "tray")
+                                .foregroundStyle(.secondary)
+                            Text("No files found")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .padding(.top, 12)
+                    } else {
+                        ForEach(bigFiles) { item in
+                            Button {
+                                onTapItem(item.path)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "doc.fill")
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 18)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(URL(fileURLWithPath: item.path).lastPathComponent)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                        Text(item.path)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+
+                                    Spacer()
+
+                                    Text(formattedBytes(item.currentSizeBytes))
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundStyle(.primary)
+                                        .fixedSize()
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .frame(minHeight: 34)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 6)
+                        }
+
+                        if smallCount > 0 {
                             HStack(spacing: 10) {
-                                Image(systemName: "doc.fill")
+                                Image(systemName: "folder.fill")
                                     .font(.system(size: 14))
                                     .foregroundStyle(.secondary)
                                     .frame(width: 18)
 
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(URL(fileURLWithPath: item.path).lastPathComponent)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                    Text(item.path)
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
+                                Text("\(smallCount) files under 100MB")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.secondary)
 
                                 Spacer()
 
-                                Text(formattedBytes(item.currentSizeBytes))
+                                Text(formattedBytes(smallBytes))
                                     .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.primary)
-                                    .fixedSize()
+                                    .foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
                             .frame(minHeight: 34)
-                            .contentShape(Rectangle())
+                            .padding(.horizontal, 6)
                         }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 6)
-                    }
-
-                    if smallCount > 0 {
-                        HStack(spacing: 10) {
-                            Image(systemName: "folder.fill")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 18)
-
-                            Text("\(smallCount) files under 100MB")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary)
-
-                            Spacer()
-
-                            Text(formattedBytes(smallBytes))
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
+                        
+                        // Load More button
+                        if canLoadMore {
+                            loadMoreButton(totalFiles: group.fileCount)
+                        } else if hasMoreFiles {
+                            // Show "max reached" message if there are more files but we hit the limit
+                            maxFilesReachedView(loadedCount: group.loadedFileCount)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .frame(minHeight: 34)
-                        .padding(.horizontal, 6)
-                    }
-                    
-                    // Load More button
-                    if canLoadMore {
-                        loadMoreButton(for: group, totalFiles: group.fileCount)
-                    } else if hasMoreFiles {
-                        // Show "max reached" message if there are more files but we hit the limit
-                        maxFilesReachedView(loadedCount: group.loadedFileCount)
                     }
                 }
             }
-        }
-        .scrollIndicators(.hidden)
-        .frame(maxHeight: maxHeight)
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: maxHeight)
+        )
     }
     
     // MARK: - Load More Button
     
-    private func loadMoreButton(for group: SubcategoryGroup, totalFiles: Int) -> some View {
+    private func loadMoreButton(totalFiles: Int) -> some View {
         Button {
             Task {
+                // Read the current group from manager at button press time
+                guard let currentGroup = manager.selectedSubcategory else { return }
                 isLoadingMoreFiles = true
-                _ = await manager.loadMoreFiles(for: group)
+                _ = await manager.loadMoreFiles(for: currentGroup)
                 isLoadingMoreFiles = false
             }
         } label: {
@@ -328,7 +348,9 @@ struct CategoryGrowthListView: View {
                         .font(.system(size: 14))
                 }
                 
-                Text("Load more (\(totalFiles - group.loadedFileCount) remaining)")
+                // Read remaining count from current manager state
+                let remaining = manager.selectedSubcategory.map { totalFiles - $0.loadedFileCount } ?? 0
+                Text("Load more (\(remaining) remaining)")
                     .font(.system(size: 12, weight: .medium))
             }
             .foregroundStyle(.secondary)
@@ -561,55 +583,32 @@ private struct SupplementalInventoryRow: View {
     let isHighlightedFromBar: Bool
     @Binding var highlightedSegmentID: String?
 
-    @State private var hoverState = false
-
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: item.icon)
-                .font(.system(size: 16))
-                .foregroundStyle(.secondary)
-                .frame(width: 20, height: 20)
+                .font(.system(size: 14))
+                .foregroundStyle(.tertiary)
+                .frame(width: 18, height: 18)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(item.title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(formattedBytes(item.currentSizeBytes))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .fixedSize()
-
-                Text(item.badgeText)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(Color.gray.opacity(0.12))
-                    )
+                    .fixedSize()
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .frame(minHeight: 42)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill((hoverState || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
-        )
+        .padding(.vertical, 5)
+        .frame(minHeight: 28)
+        .background(Color.clear) // No hover effect
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                hoverState = hovering
-                highlightedSegmentID = hovering ? item.id : nil
-            }
-        }
     }
 
     private func formattedBytes(_ bytes: Int64) -> String {
@@ -632,6 +631,8 @@ private struct SupplementalInventoryRow: View {
 private struct SubcategoryRow: View {
     let group: SubcategoryGroup
     let onTap: () -> Void
+
+    @State private var hoverState = false
 
     var body: some View {
         Button(action: onTap) {
@@ -659,10 +660,19 @@ private struct SubcategoryRow: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .frame(minHeight: 34)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
+            )
             .padding(.horizontal, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                hoverState = hovering
+            }
+        }
     }
 
     private func formattedBytes(_ bytes: Int64) -> String {
