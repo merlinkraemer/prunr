@@ -95,6 +95,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var selectedSubcategory: SubcategoryGroup? = nil
     var isSubcategoryDrillDown: Bool = false
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
+    private var currentInventorySnapshotID: Int64?
     var monitoredPathName: String = ""
     var enabledPathCount: Int {
         SettingsStore.shared.enabledTrackedPaths.count
@@ -558,7 +559,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             // Get inventory with growth trends
             let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
 
-            applyInventory(inventory)
+            applyInventory(
+                inventory,
+                snapshotID: completedSnapshot?.id,
+                invalidateSubcategoryCache: true
+            )
 
             // Keep legacy categoryItems for drill-down compatibility during transition
             // TODO: Remove once drill-down is migrated to inventory-based
@@ -596,6 +601,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 stableTotalBytes = 0
                 categoryItems = []
                 subcategoryGroupsByCategory = [:]
+                currentInventorySnapshotID = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let baselineError = error as? BaselineService.BaselineError,
@@ -607,6 +613,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 stableTotalBytes = 0
                 categoryItems = []
                 subcategoryGroupsByCategory = [:]
+                currentInventorySnapshotID = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
@@ -683,10 +690,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
 
             let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
+            let latestSnapshotID = snapshots.first?.id
             noBaseline = false
             lastAutomaticScanAt = snapshots.first?.createdAt
             errorMessage = nil
-            applyInventory(inventory)
+            applyInventory(
+                inventory,
+                snapshotID: latestSnapshotID,
+                invalidateSubcategoryCache: latestSnapshotID != currentInventorySnapshotID
+            )
 
             do {
                 reconciliationResult = try await baselineService.getDiskAccounting(trackedPath: trackedPath)
@@ -981,7 +993,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         updateMonitoredPathName()
     }
 
-    private func applyInventory(_ inventory: [CategoryInventoryItem]) {
+    private func applyInventory(
+        _ inventory: [CategoryInventoryItem],
+        snapshotID: Int64?,
+        invalidateSubcategoryCache: Bool
+    ) {
         var growing: [CategoryInventoryItem] = []
         var stable: [CategoryInventoryItem] = []
         var stableTotal: Int64 = 0
@@ -998,7 +1014,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         growingCategories = growing.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
         stableCategories = stable.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
         stableTotalBytes = stableTotal
-        subcategoryGroupsByCategory = [:]
+        currentInventorySnapshotID = snapshotID
+
+        if invalidateSubcategoryCache {
+            subcategoryGroupsByCategory = [:]
+        } else {
+            let validCategories = Set((growingCategories + stableCategories).map(\.category))
+            subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
+        }
+
         reconcileDrillDownSelection()
     }
 
@@ -1013,6 +1037,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isDrilledDown = false
         isSubcategoryDrillDown = false
         reconciliationResult = nil
+        currentInventorySnapshotID = nil
     }
 
     private func updateMonitoredPathName() {
