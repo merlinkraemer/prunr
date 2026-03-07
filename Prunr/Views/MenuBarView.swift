@@ -25,6 +25,7 @@ struct MenuBarView: View {
     @State private var pendingHeaderTransition: PendingHeaderTransition? = nil
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
+    @State private var selectedOnboardingPage = OnboardingPage.permissions
     @State private var displayedOnboardingPage = OnboardingPage.permissions
     @State private var outgoingOnboardingPage: OnboardingPage? = nil
     @State private var onboardingOffset: CGFloat = 0
@@ -135,7 +136,7 @@ struct MenuBarView: View {
         hasFullDiskAccess && onboardingFolderStepComplete && !manager.isLoading && !manager.isAutoScanning
     }
 
-    private var currentOnboardingPage: OnboardingPage {
+    private var maxUnlockedOnboardingPage: OnboardingPage {
         if !hasFullDiskAccess {
             return .permissions
         }
@@ -145,6 +146,33 @@ struct MenuBarView: View {
         }
 
         return .scan
+    }
+
+    private var currentOnboardingPage: OnboardingPage {
+        guard selectedOnboardingPage.rawValue <= maxUnlockedOnboardingPage.rawValue else {
+            return maxUnlockedOnboardingPage
+        }
+        return selectedOnboardingPage
+    }
+
+    private var onboardingCardFillColor: Color {
+        Color(nsColor: .controlBackgroundColor).opacity(0.92)
+    }
+
+    private var onboardingControlFillColor: Color {
+        Color(nsColor: .windowBackgroundColor).opacity(0.9)
+    }
+
+    private var onboardingStrokeColor: Color {
+        Color(nsColor: .separatorColor).opacity(0.55)
+    }
+
+    private func onboardingStepIsComplete(_ page: OnboardingPage) -> Bool {
+        page.rawValue < maxUnlockedOnboardingPage.rawValue
+    }
+
+    private func onboardingStepIsUnlocked(_ page: OnboardingPage) -> Bool {
+        page.rawValue <= maxUnlockedOnboardingPage.rawValue
     }
 
     private var selectedScanFolderLabel: String {
@@ -270,7 +298,10 @@ struct MenuBarView: View {
             }
         }
         .frame(width: 320, height: 480)
-        .onAppear { refreshFullDiskAccess() }
+        .onAppear {
+            refreshFullDiskAccess()
+            selectedOnboardingPage = maxUnlockedOnboardingPage
+        }
         .onDisappear {
             onboardingSuccessTask?.cancel()
             onboardingTransitionTask?.cancel()
@@ -301,6 +332,16 @@ struct MenuBarView: View {
             if !newValue {
                 shouldShowOnboardingSuccess = false
                 onboardingSuccessTask?.cancel()
+            }
+        }
+        .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
+            if selectedOnboardingPage.rawValue > newValue.rawValue || selectedOnboardingPage == oldValue {
+                selectedOnboardingPage = newValue
+                return
+            }
+
+            if selectedOnboardingPage.rawValue < newValue.rawValue {
+                selectedOnboardingPage = newValue
             }
         }
     }
@@ -412,9 +453,9 @@ struct MenuBarView: View {
             GeometryReader { geometry in
                 Group {
                     if let outgoingOnboardingPage {
-                        onboardingSlidingPages(width: geometry.size.width, outgoingPage: outgoingOnboardingPage)
+                        onboardingSlidingPages(size: geometry.size, outgoingPage: outgoingOnboardingPage)
                     } else {
-                        onboardingPage(for: displayedOnboardingPage, width: geometry.size.width)
+                        onboardingPage(for: displayedOnboardingPage, size: geometry.size)
                     }
                 }
                 .clipped()
@@ -482,65 +523,91 @@ struct MenuBarView: View {
     }
 
     private func onboardingStepPill(for page: OnboardingPage) -> some View {
-        let isComplete = page.rawValue < currentOnboardingPage.rawValue
+        let isComplete = onboardingStepIsComplete(page)
         let isActive = page == currentOnboardingPage
+        let isUnlocked = onboardingStepIsUnlocked(page)
+        let pillFill: Color = isActive
+            ? Color.accentColor.opacity(0.14)
+            : (isUnlocked ? onboardingControlFillColor : Color.gray.opacity(0.12))
+        let pillStroke: Color = isActive
+            ? Color.accentColor.opacity(0.3)
+            : onboardingStrokeColor.opacity(isUnlocked ? 1.0 : 0.6)
+        let titleStyle: AnyShapeStyle = isActive
+            ? AnyShapeStyle(.primary)
+            : AnyShapeStyle(isUnlocked ? .secondary : .tertiary)
+        let numberStyle: AnyShapeStyle = isActive
+            ? AnyShapeStyle(Color.accentColor)
+            : AnyShapeStyle(isUnlocked ? .secondary : .tertiary)
 
-        return HStack(spacing: 6) {
-            ZStack {
-                Circle()
-                    .fill(isComplete ? Color.green.opacity(0.14) : (isActive ? Color.blue.opacity(0.14) : Color.gray.opacity(0.08)))
-                    .frame(width: 22, height: 22)
+        return Button {
+            guard isUnlocked else { return }
+            selectedOnboardingPage = page
+        } label: {
+            HStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            isComplete
+                                ? Color.green.opacity(0.14)
+                                : (isActive ? Color.accentColor.opacity(0.14) : Color.gray.opacity(isUnlocked ? 0.1 : 0.07))
+                        )
+                        .frame(width: 22, height: 22)
 
-                if isComplete {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.green)
-                } else {
-                    Text("\(page.number)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(isActive ? .blue : .secondary)
+                    if isComplete {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.green)
+                    } else {
+                        Text("\(page.number)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(numberStyle)
+                    }
                 }
-            }
 
-            Text(page.title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isActive ? .primary : .secondary)
+                Text(page.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(titleStyle)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(pillFill)
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(pillStroke, lineWidth: 1)
+            )
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(isActive ? Color.white.opacity(0.75) : Color.white.opacity(0.42))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(isActive ? Color.blue.opacity(0.24) : Color.gray.opacity(0.12), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .disabled(!isUnlocked)
+        .opacity(isUnlocked ? 1.0 : 0.72)
     }
 
     @ViewBuilder
-    private func onboardingPage(for page: OnboardingPage, width: CGFloat) -> some View {
-        VStack {
-            Spacer(minLength: 0)
-
-            onboardingPageCard(for: page)
-                .frame(maxWidth: 280)
-
-            Spacer(minLength: 0)
+    private func onboardingPage(for page: OnboardingPage, size: CGSize) -> some View {
+        ScrollView(.vertical) {
+            VStack {
+                onboardingPageCard(for: page)
+                    .frame(maxWidth: 284)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: size.height, alignment: .center)
+            .padding(.vertical, 6)
         }
-        .frame(width: width)
+        .frame(width: size.width, height: size.height)
         .id(page.rawValue)
     }
 
     @ViewBuilder
-    private func onboardingSlidingPages(width: CGFloat, outgoingPage: OnboardingPage) -> some View {
+    private func onboardingSlidingPages(size: CGSize, outgoingPage: OnboardingPage) -> some View {
         HStack(spacing: 0) {
             if onboardingTransitionDirection == .forward {
-                onboardingPage(for: outgoingPage, width: width)
-                onboardingPage(for: displayedOnboardingPage, width: width)
+                onboardingPage(for: outgoingPage, size: size)
+                onboardingPage(for: displayedOnboardingPage, size: size)
             } else {
-                onboardingPage(for: displayedOnboardingPage, width: width)
-                onboardingPage(for: outgoingPage, width: width)
+                onboardingPage(for: displayedOnboardingPage, size: size)
+                onboardingPage(for: outgoingPage, size: size)
             }
         }
         .offset(x: onboardingOffset)
@@ -622,11 +689,11 @@ struct MenuBarView: View {
                             .frame(maxWidth: .infinity)
                             .background(
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(isSelected ? Color.blue : Color.white.opacity(0.72))
+                                    .fill(isSelected ? Color.accentColor : onboardingControlFillColor)
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .strokeBorder(isSelected ? Color.clear : Color.gray.opacity(0.14), lineWidth: 1)
+                                    .strokeBorder(isSelected ? Color.clear : onboardingStrokeColor, lineWidth: 1)
                             )
                         }
                         .buttonStyle(.plain)
@@ -653,11 +720,11 @@ struct MenuBarView: View {
                         .frame(maxWidth: .infinity)
                         .background(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Color.white.opacity(0.58))
+                                .fill(onboardingControlFillColor)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Color.gray.opacity(0.14), lineWidth: 1)
+                                .strokeBorder(onboardingStrokeColor, lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)
@@ -688,7 +755,7 @@ struct MenuBarView: View {
                     .frame(maxWidth: .infinity)
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.white.opacity(0.56))
+                            .fill(onboardingControlFillColor)
                     )
 
                     if startedOnboardingScan {
@@ -767,22 +834,13 @@ struct MenuBarView: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.92),
-                            Color.white.opacity(0.72)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(onboardingCardFillColor)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.72), lineWidth: 1)
+                .strokeBorder(onboardingStrokeColor, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.08), radius: 14, x: 0, y: 8)
+        .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
     }
 
     private func startOnboardingTransition(from previousPage: OnboardingPage, to newPage: OnboardingPage, width: CGFloat) {
