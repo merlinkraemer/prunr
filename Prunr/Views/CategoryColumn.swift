@@ -34,6 +34,7 @@ struct CategoryColumn: View {
                 }
             }
             .listStyle(.inset)
+            .hiddenScrollIndicators()
         }
         .onAppear {
             recomputeCounts()

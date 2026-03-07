@@ -311,6 +311,54 @@ final class DatabaseManager {
                 """)
         }
 
+        // Migration v16: Add working set and recent growth journal tables
+        migrator.registerMigration("v16_add_working_set_and_growth_journal") { db in
+            try db.create(table: "workingSetEntry", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("trackedPathId", .text).notNull()
+                t.column("pathId", .integer)
+                    .notNull()
+                    .references("paths", onDelete: .cascade)
+                t.column("sizeBytes", .integer).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_workingSetEntry_trackedPath_path
+                ON workingSetEntry(trackedPathId, pathId)
+                """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_workingSetEntry_trackedPath
+                ON workingSetEntry(trackedPathId)
+                """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_workingSetEntry_pathId
+                ON workingSetEntry(pathId)
+                """)
+
+            try db.create(table: "growthJournalBucket", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("trackedPathId", .text).notNull()
+                t.column("bucketStart", .datetime).notNull()
+                t.column("category", .text).notNull()
+                t.column("subcategory", .text).notNull().defaults(to: "")
+                t.column("deltaBytes", .integer).notNull()
+            }
+
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_growthJournalBucket_identity
+                ON growthJournalBucket(trackedPathId, bucketStart, category, subcategory)
+                """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_growthJournalBucket_trackedPath_time
+                ON growthJournalBucket(trackedPathId, bucketStart)
+                """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_growthJournalBucket_trackedPath_category_time
+                ON growthJournalBucket(trackedPathId, category, bucketStart)
+                """)
+        }
+
         try migrator.migrate(dbPool)
     }
 }
@@ -318,6 +366,11 @@ final class DatabaseManager {
 // MARK: - Snapshot CRUD
 
 extension DatabaseManager {
+    struct JournalDeltaKey: Hashable, Sendable {
+        let category: GrowthCategory
+        let subcategory: GrowthSubcategory?
+    }
+
 
     /// Creates a new snapshot with the current timestamp for a specific path
     /// - Parameters:
@@ -638,7 +691,8 @@ extension DatabaseManager {
                 return CategoryInventoryItem(
                     category: category,
                     currentSizeBytes: totalBytes,
-                    growthTrend: nil
+                    growthTrend: nil,
+                    recentGrowthStory: nil
                 )
             }
         }
@@ -793,6 +847,279 @@ extension DatabaseManager {
         }
     }
 
+    func rebuildWorkingSet(from snapshotId: Int64, trackedPathId: UUID, updatedAt: Date = Date()) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        try await dbPool.write { db in
+            try db.execute(
+                sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
+                arguments: [trackedPathIdString]
+            )
+
+            try db.execute(
+                sql: """
+                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
+                    SELECT ?, pathId, sizeBytes, ?
+                    FROM snapshotEntry
+                    WHERE snapshotId = ?
+                    """,
+                arguments: [trackedPathIdString, updatedAt, snapshotId]
+            )
+        }
+    }
+
+    func replaceWorkingSetSubtree(
+        trackedPathId: UUID,
+        rootPath: String,
+        entries: [ScanResult],
+        updatedAt: Date = Date()
+    ) async throws -> [JournalDeltaKey: Int64] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+        let normalizedRoot = Self.normalizePath(rootPath)
+        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
+
+        return try await dbPool.write { db in
+            let oldRows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT p.path AS path, wse.sizeBytes AS sizeBytes
+                    FROM workingSetEntry wse
+                    JOIN paths p ON p.id = wse.pathId
+                    WHERE wse.trackedPathId = ?
+                      AND (p.path = ? OR p.path LIKE ?)
+                    """,
+                arguments: [trackedPathIdString, normalizedRoot, rootPrefix + "%"]
+            )
+
+            var oldSizes: [String: Int64] = [:]
+            oldSizes.reserveCapacity(oldRows.count)
+            for row in oldRows {
+                let path: String = row["path"] ?? ""
+                let sizeBytes: Int64 = row["sizeBytes"] ?? 0
+                oldSizes[path] = sizeBytes
+            }
+
+            var newSizes: [String: Int64] = [:]
+            newSizes.reserveCapacity(entries.count)
+            for entry in entries {
+                newSizes[Self.normalizePath(entry.path)] = entry.sizeBytes
+            }
+
+            let uniquePaths = Array(Set(newSizes.keys))
+            var pathIdByPath = try fetchPathIds(for: uniquePaths, db: db)
+
+            let allPaths = Set(oldSizes.keys).union(newSizes.keys)
+            var deltasByCategory: [JournalDeltaKey: Int64] = [:]
+            deltasByCategory.reserveCapacity(GrowthCategory.allCases.count)
+
+            for path in allPaths {
+                let oldSize = oldSizes[path] ?? 0
+                let newSize = newSizes[path] ?? 0
+                let delta = newSize - oldSize
+                guard delta != 0 else { continue }
+
+                let category = GrowthCategory.categorize(path: path)
+                let subcategory = GrowthCategory.subcategorize(path: path)
+                let key = JournalDeltaKey(category: category, subcategory: subcategory)
+                deltasByCategory[key, default: 0] += delta
+            }
+
+            try db.execute(
+                sql: """
+                    DELETE FROM workingSetEntry
+                    WHERE trackedPathId = ?
+                      AND pathId IN (
+                        SELECT p.id
+                        FROM paths p
+                        WHERE p.path = ? OR p.path LIKE ?
+                      )
+                    """,
+                arguments: [trackedPathIdString, normalizedRoot, rootPrefix + "%"]
+            )
+
+            guard !newSizes.isEmpty else {
+                return deltasByCategory
+            }
+
+            let statement = try db.makeStatement(
+                sql: """
+                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
+                    VALUES (?, ?, ?, ?)
+                    """
+            )
+
+            for (path, sizeBytes) in newSizes {
+                let pathId: Int64
+                if let existing = pathIdByPath[path] {
+                    pathId = existing
+                } else {
+                    let created = try getOrCreatePathId(path: path, db: db)
+                    pathIdByPath[path] = created
+                    pathId = created
+                }
+                try statement.execute(arguments: [trackedPathIdString, pathId, sizeBytes, updatedAt])
+            }
+
+            return deltasByCategory
+        }
+    }
+
+    func upsertGrowthJournalBuckets(
+        trackedPathId: UUID,
+        bucketStart: Date,
+        deltas: [JournalDeltaKey: Int64]
+    ) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        guard !deltas.isEmpty else { return }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        try await dbPool.write { db in
+            let statement = try db.makeStatement(
+                sql: """
+                    INSERT INTO growthJournalBucket (trackedPathId, bucketStart, category, subcategory, deltaBytes)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(trackedPathId, bucketStart, category, subcategory)
+                    DO UPDATE SET deltaBytes = deltaBytes + excluded.deltaBytes
+                    """
+            )
+
+            for (key, deltaBytes) in deltas where deltaBytes != 0 {
+                try statement.execute(arguments: [
+                    trackedPathIdString,
+                    bucketStart,
+                    key.category.rawValue,
+                    key.subcategory?.rawValue ?? "",
+                    deltaBytes
+                ])
+            }
+        }
+    }
+
+    func fetchGrowthJournalBuckets(
+        trackedPathId: UUID,
+        since: Date? = nil
+    ) async throws -> [GrowthJournalBucket] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.read { db in
+            if let since {
+                return try GrowthJournalBucket.fetchAll(
+                    db,
+                    sql: """
+                        SELECT *
+                        FROM growthJournalBucket
+                        WHERE trackedPathId = ? AND bucketStart >= ?
+                        ORDER BY bucketStart ASC
+                        """,
+                    arguments: [trackedPathIdString, since]
+                )
+            }
+
+            return try GrowthJournalBucket.fetchAll(
+                db,
+                sql: """
+                    SELECT *
+                    FROM growthJournalBucket
+                    WHERE trackedPathId = ?
+                    ORDER BY bucketStart ASC
+                    """,
+                arguments: [trackedPathIdString]
+            )
+        }
+    }
+
+    func fetchGrowthJournalTotalsByCategory(
+        trackedPathId: UUID,
+        since: Date
+    ) async throws -> [GrowthCategory: Int64] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT category, COALESCE(SUM(deltaBytes), 0) AS totalDelta
+                    FROM growthJournalBucket
+                    WHERE trackedPathId = ? AND bucketStart >= ?
+                    GROUP BY category
+                    """,
+                arguments: [trackedPathIdString, since]
+            )
+
+            var result: [GrowthCategory: Int64] = [:]
+            for row in rows {
+                guard
+                    let rawCategory: String = row["category"],
+                    let category = GrowthCategory(rawValue: rawCategory)
+                else {
+                    continue
+                }
+
+                let totalDelta: Int64 = row["totalDelta"] ?? 0
+                result[category] = totalDelta
+            }
+
+            return result
+        }
+    }
+
+    func pruneGrowthJournalBuckets(olderThan cutoff: Date) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.write { db in
+            try db.execute(
+                sql: "DELETE FROM growthJournalBucket WHERE bucketStart < ?",
+                arguments: [cutoff]
+            )
+        }
+    }
+
+    func clearRealtimeData(trackedPathId: UUID? = nil) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId?.uuidString
+
+        try await dbPool.write { db in
+            if let trackedPathIdString {
+                try db.execute(
+                    sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
+                    arguments: [trackedPathIdString]
+                )
+                try db.execute(
+                    sql: "DELETE FROM growthJournalBucket WHERE trackedPathId = ?",
+                    arguments: [trackedPathIdString]
+                )
+            } else {
+                try db.execute(sql: "DELETE FROM workingSetEntry")
+                try db.execute(sql: "DELETE FROM growthJournalBucket")
+            }
+        }
+    }
+
     /// Normalizes a file path for consistent storage
     /// - Removes trailing slash (unless it's just "/")
     /// - Note: Case is preserved as-is; COLLATE NOCASE handles case-insensitive comparison
@@ -838,6 +1165,91 @@ extension DatabaseManager {
         }
         return result
     }
+}
+
+// MARK: - Growth Contributors
+
+extension DatabaseManager {
+
+    /// Finds files in a category that grew or appeared since the last snapshot
+    /// by comparing working set entries against snapshot entries.
+    ///
+    /// - Parameters:
+    ///   - trackedPathId: The tracked path to query
+    ///   - snapshotId: The baseline snapshot to compare against
+    ///   - category: The growth category to filter by
+    ///   - subcategory: Optional subcategory filter
+    ///   - limit: Maximum number of results
+    /// - Returns: Array of (path, currentSizeBytes, growthBytes) tuples sorted by growthBytes DESC
+    func fetchGrowthContributors(
+        trackedPathId: UUID,
+        snapshotId: Int64,
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        limit: Int = 50
+    ) async throws -> [GrowthContributor] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.read { db in
+            // Find files where working set size > snapshot size, or file is new (not in snapshot)
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT
+                        p.path AS path,
+                        wse.sizeBytes AS currentSizeBytes,
+                        COALESCE(se.sizeBytes, 0) AS snapshotSizeBytes,
+                        wse.sizeBytes - COALESCE(se.sizeBytes, 0) AS growthBytes
+                    FROM workingSetEntry wse
+                    JOIN paths p ON p.id = wse.pathId
+                    LEFT JOIN snapshotEntry se
+                        ON se.pathId = wse.pathId
+                        AND se.snapshotId = ?
+                    WHERE wse.trackedPathId = ?
+                        AND wse.sizeBytes > COALESCE(se.sizeBytes, 0)
+                    ORDER BY (wse.sizeBytes - COALESCE(se.sizeBytes, 0)) DESC
+                    """,
+                arguments: [snapshotId, trackedPathIdString]
+            )
+
+            var results: [GrowthContributor] = []
+            for row in rows {
+                let path: String = row["path"] ?? ""
+                let currentSizeBytes: Int64 = row["currentSizeBytes"] ?? 0
+                let growthBytes: Int64 = row["growthBytes"] ?? 0
+
+                let fileCategory = GrowthCategory.categorize(path: path)
+                guard fileCategory == category else { continue }
+
+                if let subcategory {
+                    let fileSubcategory = GrowthSubcategory.subcategorize(path: path)
+                    guard fileSubcategory == subcategory else { continue }
+                }
+
+                results.append(GrowthContributor(
+                    path: path,
+                    currentSizeBytes: currentSizeBytes,
+                    growthBytes: growthBytes
+                ))
+
+                if results.count >= limit { break }
+            }
+
+            return results
+        }
+    }
+}
+
+/// A file that contributed to growth since the last snapshot
+struct GrowthContributor: Identifiable, Sendable, Equatable {
+    var id: String { path }
+    let path: String
+    let currentSizeBytes: Int64
+    let growthBytes: Int64
 }
 
 // MARK: - Delta Calculation

@@ -101,6 +101,7 @@ struct DetailColumn: View {
             }
             .padding()
         }
+        .hiddenScrollIndicators()
     }
 
     /// Empty state when no item is selected

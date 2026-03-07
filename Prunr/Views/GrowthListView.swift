@@ -29,6 +29,7 @@ struct GrowthListView: View {
                         }
                     }
                 }
+                .hiddenScrollIndicators()
                 .frame(maxHeight: maxHeight)
             }
         }

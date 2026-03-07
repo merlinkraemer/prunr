@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 
 /// Represents a category's current inventory (size) with optional growth trend
 struct CategoryInventoryItem: Identifiable, Sendable, Equatable {
@@ -6,6 +7,7 @@ struct CategoryInventoryItem: Identifiable, Sendable, Equatable {
     let category: GrowthCategory
     let currentSizeBytes: Int64
     var growthTrend: CategoryGrowthTrend?
+    var recentGrowthStory: RecentGrowthStory?
 }
 
 /// Represents a detected growth trend for a category
@@ -18,6 +20,37 @@ struct CategoryGrowthTrend: Sendable, Equatable, Hashable {
 
     /// Number of days between trend start and now
     let growthSpanDays: Int
+}
+
+struct RecentGrowthStory: Sendable, Equatable, Hashable {
+    let category: GrowthCategory
+    let subcategory: GrowthSubcategory?
+    let deltaBytes: Int64
+    let startedAt: Date
+    let endedAt: Date
+    let duration: TimeInterval
+    let displayLabel: String
+}
+
+struct GrowthJournalBucket: Codable, Identifiable, Sendable, Equatable, Hashable, FetchableRecord {
+    static let databaseTableName = "growthJournalBucket"
+
+    var id: Int64?
+    let trackedPathId: String
+    let bucketStart: Date
+    let category: String
+    let subcategory: String
+    let deltaBytes: Int64
+}
+
+struct WorkingSetEntry: Codable, Identifiable, Sendable, Equatable, Hashable, FetchableRecord {
+    static let databaseTableName = "workingSetEntry"
+
+    var id: Int64?
+    let trackedPathId: String
+    let pathId: Int64
+    let sizeBytes: Int64
+    let updatedAt: Date
 }
 
 /// Supplemental inventory entry used for storage shown in the drive bar

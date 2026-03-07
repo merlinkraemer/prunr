@@ -35,6 +35,7 @@ struct ItemColumn: View {
                         .tag(delta)
                 }
                 .listStyle(.inset)
+                .hiddenScrollIndicators()
             }
         }
     }

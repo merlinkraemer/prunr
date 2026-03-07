@@ -350,23 +350,6 @@ struct MenuBarView: View {
         let clampedProgress = max(0.0, min(1.0, manager.scanProgressPercentage))
 
         return VStack(spacing: 0) {
-            // Header bar
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.blue)
-
-                Text(manager.isCleaningUp ? "Cleaning up" : (manager.isAnalyzingChanges ? "Analyzing changes" : "Scanning files"))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-
-            Divider()
-
             Spacer(minLength: 0)
 
             VStack(spacing: 16) {
@@ -381,51 +364,58 @@ struct MenuBarView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(Color.red.opacity(0.5), lineWidth: 1)
                 )
                 .accessibilityLabel("Stop scan")
                 .accessibilityHint("Cancel the current scan operation")
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 22)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.92))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
+            .padding(.horizontal, 16)
 
             Spacer(minLength: 0)
 
-            // Footer with settings in same position as normal view
-            VStack(spacing: 0) {
-                Divider()
-                HStack {
-                    Spacer()
-                    Spacer()
-                    
-                    Button {
-                        closePopoverAndOpenSettings()
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 13))
-                            .frame(width: 26, height: 26)
-                            .background(
-                                Circle()
-                                    .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
-                            )
-                            .foregroundStyle(.primary)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Open settings")
-                    .accessibilityHint("Open settings while scan continues")
-                    .onHover { hovering in
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            settingsHover = hovering
-                        }
-                    }
-                    .help("Settings (scan continues)")
+            // Footer with settings
+            HStack {
+                Spacer()
+
+                Button {
+                    closePopoverAndOpenSettings()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 13))
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
+                        )
+                        .foregroundStyle(.primary)
+                        .contentShape(Circle())
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open settings")
+                .accessibilityHint("Open settings while scan continues")
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        settingsHover = hovering
+                    }
+                }
+                .help("Settings (scan continues)")
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
         }
+        .padding(.vertical, 18)
     }
 
     // MARK: - Main Category View
@@ -447,8 +437,14 @@ struct MenuBarView: View {
     }
 
     private var setupOnboardingView: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 0) {
             onboardingProgressHeader
+                .padding(.bottom, 14)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(onboardingStrokeColor.opacity(0.55))
+                        .frame(height: 1)
+                }
 
             GeometryReader { geometry in
                 Group {
@@ -493,6 +489,7 @@ struct MenuBarView: View {
                     startOnboardingTransition(from: oldValue, to: newValue, width: resolvedWidth)
                 }
             }
+            .padding(.top, 18)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 18)
@@ -504,14 +501,33 @@ struct MenuBarView: View {
 
     private var onboardingProgressHeader: some View {
         VStack(spacing: 12) {
-            VStack(spacing: 4) {
+            HStack {
+                if currentOnboardingPage != .permissions {
+                    Button {
+                        let prevIndex = max(0, currentOnboardingPage.rawValue - 1)
+                        if let prevPage = OnboardingPage(rawValue: prevIndex) {
+                            selectedOnboardingPage = prevPage
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer()
+
                 Text("Setup")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                Text("Three quick steps to start tracking disk growth.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                Spacer()
+
+                // Balance the back button width
+                if currentOnboardingPage != .permissions {
+                    Color.clear.frame(width: 12, height: 12)
+                }
             }
 
             HStack(spacing: 10) {
@@ -574,10 +590,6 @@ struct MenuBarView: View {
                 Capsule()
                     .fill(pillFill)
             )
-            .overlay(
-                Capsule()
-                    .strokeBorder(pillStroke, lineWidth: 1)
-            )
         }
         .buttonStyle(.plain)
         .disabled(!isUnlocked)
@@ -595,6 +607,7 @@ struct MenuBarView: View {
             .frame(minHeight: size.height, alignment: .center)
             .padding(.vertical, 6)
         }
+        .hiddenScrollIndicators()
         .frame(width: size.width, height: size.height)
         .id(page.rawValue)
     }
@@ -795,36 +808,12 @@ struct MenuBarView: View {
         subtitle: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(spacing: 18) {
-            VStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(Color.blue.opacity(0.12))
-                        .frame(width: 56, height: 56)
-
-                    Image(systemName: icon)
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(.blue)
-                }
-
-                Text("Step \(number)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-
-                VStack(spacing: 6) {
-                    Text(title)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.center)
-
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+        VStack(spacing: 14) {
+            Text(subtitle)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
 
             content()
                 .frame(maxWidth: .infinity)
@@ -833,11 +822,11 @@ struct MenuBarView: View {
         .padding(.vertical, 22)
         .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(onboardingCardFillColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(onboardingStrokeColor, lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
@@ -893,11 +882,11 @@ struct MenuBarView: View {
 
                 expectationRow(
                     icon: "bolt.horizontal.circle",
-                    text: "Refresh reopens the latest saved delta without rescanning."
+                    text: "Prunr keeps the latest scan cached and updates recent growth in the background."
                 )
                 expectationRow(
                     icon: "externaldrive.badge.timemachine",
-                    text: "Use Complete Rescan in Settings when you want a fresh filesystem pass."
+                    text: "Use Scan Now when you want a fresh filesystem pass."
                 )
 
                 primaryActionButton("Open inventory", minWidth: 136) {
@@ -908,7 +897,7 @@ struct MenuBarView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 22)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color.gray.opacity(0.08))
             )
 
@@ -985,7 +974,11 @@ struct MenuBarView: View {
 
     private var overallGrowthBytes: Int64 {
         manager.growingCategories.reduce(Int64(0)) { partial, item in
-            partial + (item.growthTrend?.growthBytes ?? 0)
+            if let story = item.recentGrowthStory {
+                return partial + story.deltaBytes
+            }
+
+            return partial + (item.growthTrend?.growthBytes ?? 0)
         }
     }
 
@@ -1102,7 +1095,7 @@ struct MenuBarView: View {
                 startHeaderTransition(from: oldValue, to: newValue, width: resolvedWidth)
             }
         }
-        .frame(height: 40)
+        .frame(height: 36)
     }
 
     @ViewBuilder
@@ -1191,46 +1184,37 @@ struct MenuBarView: View {
         let headerName = subcategory?.displayName ?? category.category.displayName
         let headerBytes = subcategory?.totalBytes ?? category.currentSizeBytes
 
-        return ZStack {
-            HStack(spacing: 6) {
-                Image(systemName: headerIcon)
-                    .font(.system(size: 14))
-                    .foregroundStyle(category.category.color)
-
-                Text(headerName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-
-            // Left: Back button
-            HStack {
-                Button(action: navigateBackFromDrilldown) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Back")
-                            .font(.system(size: 13, weight: .medium))
-                    }
+        return HStack(spacing: 10) {
+            // Back button
+            Button(action: navigateBackFromDrilldown) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.blue)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back")
-                .accessibilityHint("Return to category overview")
-                Spacer()
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back")
+            .accessibilityHint("Return to category overview")
 
-            // Right: Size
-            HStack {
-                Spacer()
-                Text(formattedBytes(headerBytes))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
+            Image(systemName: headerIcon)
+                .font(.system(size: 16))
+                .foregroundStyle(category.category.color)
+                .frame(width: 20, height: 20)
+
+            Text(headerName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(formattedBytes(headerBytes))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .fixedSize()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(minHeight: 36)
+        .padding(.horizontal, 6)
     }
 
     // MARK: - Category List View
@@ -1277,7 +1261,7 @@ struct MenuBarView: View {
 
     private var footerButtons: some View {
         HStack {
-            // Scan/Refresh button (lower left)
+            // Scan button (lower left)
             Button {
                 Task {
                     await manager.refreshVisibleInventory()
@@ -1302,15 +1286,15 @@ struct MenuBarView: View {
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Refresh view")
-            .accessibilityHint("Trigger a background refresh of growth categories")
+            .accessibilityLabel("Scan now")
+            .accessibilityHint("Trigger a fresh background scan")
             .onHover { hovering in
                 withAnimation(.easeInOut(duration: 0.15)) {
                     scanHover = hovering
                 }
             }
             .disabled(manager.isLoading || manager.isAutoScanning)
-            .help(manager.isLoading || manager.isAutoScanning ? "Refreshing..." : "Refresh in Background")
+            .help(manager.isLoading || manager.isAutoScanning ? "Scanning..." : "Scan Now")
 
             Spacer()
 
@@ -1352,6 +1336,14 @@ struct MenuBarView: View {
             Text("Scanning...")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+        } else if manager.isProcessingRecentChanges {
+            Text("Updating…")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        } else if manager.hasPendingRecentChanges {
+            Text("Changes detected")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
         } else if let lastScan = manager.lastAutomaticScanAt {
             Text(relativeTime(from: lastScan))
                 .font(.system(size: 11))
@@ -1384,11 +1376,11 @@ struct MenuBarView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(isDisabled ? Color.gray.opacity(0.25) : Color.blue)
                 )
                 .foregroundStyle(isDisabled ? .gray : .white)
-                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
@@ -1571,7 +1563,7 @@ struct MenuBarView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
                 .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color.gray.opacity(0.06))
                 )
             }
@@ -1579,7 +1571,7 @@ struct MenuBarView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.gray.opacity(0.08))
         )
     }

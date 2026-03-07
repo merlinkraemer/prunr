@@ -249,6 +249,7 @@ struct CategoryGrowthListView: View {
                         .padding(.bottom, supplementalItems.isEmpty ? pageTopInset : 0)
                     }
                     .scrollIndicators(.hidden)
+                    .hiddenScrollIndicators()
                     .frame(maxHeight: .infinity)
 
                     if !supplementalItems.isEmpty {
@@ -308,10 +309,14 @@ struct CategoryGrowthListView: View {
                     .padding(.bottom, pageTopInset)
                 }
                 .scrollIndicators(.hidden)
+                .hiddenScrollIndicators()
                 .frame(maxHeight: maxHeight)
             }
         }
     }
+
+    @State private var growthContributors: [GrowthContributor] = []
+    @State private var isLoadingContributors = false
 
     // MARK: - File List View
 
@@ -336,6 +341,10 @@ struct CategoryGrowthListView: View {
         let hasMoreFiles = group.hasMoreFiles
         let canLoadMore = hasMoreFiles && group.loadedFileCount < SubcategoryGroup.maxLoadableFiles
 
+        // Filter out growth contributors from the "all files" list to avoid duplicates
+        let contributorPaths = Set(growthContributors.map(\.path))
+        let nonGrowthFiles = loadedFiles.filter { !contributorPaths.contains($0.path) }
+
         return AnyView(
             ScrollView {
                 VStack(spacing: 0) {
@@ -350,8 +359,29 @@ struct CategoryGrowthListView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                         .padding(.top, 12)
                     } else {
-                        ForEach(loadedFiles) { item in
-                            fileRow(for: item)
+                        // Growth contributors section
+                        if !growthContributors.isEmpty {
+                            ForEach(growthContributors) { contributor in
+                                DrilldownGrowthRow(contributor: contributor, onTap: {
+                                    onTapItem(contributor.path)
+                                })
+                            }
+
+                            // Visual separator between growth and all files
+                            HStack {
+                                Rectangle()
+                                    .fill(Color.primary.opacity(0.06))
+                                    .frame(height: 1)
+                            }
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 4)
+                        }
+
+                        // All files section
+                        ForEach(nonGrowthFiles) { item in
+                            DrilldownFileRow(item: item, onTap: {
+                                onTapItem(item.path)
+                            })
                         }
 
                         if remainingCount > 0 {
@@ -382,7 +412,7 @@ struct CategoryGrowthListView: View {
                             .frame(minHeight: 34)
                             .padding(.horizontal, 6)
                         }
-                        
+
                         // Load More button
                         if canLoadMore {
                             loadMoreButton(totalFiles: group.fileCount)
@@ -396,14 +426,15 @@ struct CategoryGrowthListView: View {
                 .padding(.bottom, pageTopInset)
             }
             .scrollIndicators(.hidden)
+            .hiddenScrollIndicators()
             .frame(maxHeight: maxHeight)
+            .task(id: group.id) {
+                guard let category = manager.selectedInventoryCategory?.category else { return }
+                isLoadingContributors = true
+                growthContributors = await manager.loadGrowthContributors(for: group, category: category)
+                isLoadingContributors = false
+            }
         )
-    }
-
-    private func fileRow(for item: GrowthItem) -> some View {
-        DrilldownFileRow(item: item, onTap: {
-            onTapItem(item.path)
-        })
     }
     
     // MARK: - Load More Button
@@ -554,6 +585,7 @@ private struct CategoryInventoryRow: View, Equatable {
     static func == (lhs: CategoryInventoryRow, rhs: CategoryInventoryRow) -> Bool {
         lhs.item.id == rhs.item.id &&
         lhs.item.currentSizeBytes == rhs.item.currentSizeBytes &&
+        lhs.item.recentGrowthStory == rhs.item.recentGrowthStory &&
         lhs.item.growthTrend == rhs.item.growthTrend &&
         lhs.isHighlightedFromBar == rhs.isHighlightedFromBar
     }
@@ -597,7 +629,15 @@ private struct CategoryInventoryRow: View, Equatable {
                     .foregroundStyle(.primary)
                     .fixedSize()
 
-                if let trend = item.growthTrend {
+                if let story = item.recentGrowthStory {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("+\(formattedBytes(story.deltaBytes)) · \(story.displayLabel)")
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
+                } else if let trend = item.growthTrend {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 9, weight: .semibold))
@@ -605,12 +645,6 @@ private struct CategoryInventoryRow: View, Equatable {
                     }
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.orange)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(Color.orange.opacity(0.12))
-                    )
                 }
             }
         }
@@ -618,7 +652,7 @@ private struct CategoryInventoryRow: View, Equatable {
         .padding(.vertical, 7)
         .frame(minHeight: 36)
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 8)
                 .fill((hoverState || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
         )
         .padding(.horizontal, 6)
@@ -673,7 +707,7 @@ private struct SupplementalInventoryRow: View {
         .padding(.vertical, 5)
         .frame(minHeight: 28)
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 8)
                 .fill((hoverState || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
         )
         .padding(.horizontal, 6)
@@ -751,7 +785,7 @@ private struct DrilldownFileRow: View {
             .padding(.vertical, 7)
             .frame(minHeight: 34)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
             )
             .padding(.horizontal, 6)
@@ -759,6 +793,96 @@ private struct DrilldownFileRow: View {
         }
         .buttonStyle(.plain)
         .help(item.path)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                hoverState = hovering
+            }
+        }
+    }
+
+    private func formattedBytes(_ bytes: Int64) -> String {
+        let kb = Double(bytes) / 1_000
+        let mb = kb / 1_000
+        let gb = mb / 1_000
+
+        if abs(gb) >= 1 {
+            return "\(String(format: "%.1f", gb)) GB"
+        } else if abs(mb) >= 1 {
+            return "\(String(format: "%.0f", mb)) MB"
+        } else if abs(kb) >= 1 {
+            return "\(String(format: "%.0f", kb)) KB"
+        } else {
+            return "\(bytes) B"
+        }
+    }
+}
+
+private struct DrilldownGrowthRow: View {
+    let contributor: GrowthContributor
+    let onTap: () -> Void
+
+    @State private var hoverState = false
+
+    private var fileName: String {
+        URL(fileURLWithPath: contributor.path).lastPathComponent
+    }
+
+    private var parentPath: String {
+        let fileURL = URL(fileURLWithPath: contributor.path)
+        let path = fileURL.deletingLastPathComponent().path
+        return (path as NSString).abbreviatingWithTildeInPath
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                Image(systemName: "doc.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.orange)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(fileName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text(parentPath)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formattedBytes(contributor.currentSizeBytes))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .fixedSize()
+
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 8, weight: .semibold))
+                        Text("+\(formattedBytes(contributor.growthBytes))")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(.orange)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(minHeight: 34)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
+            )
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(contributor.path)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoverState = hovering
@@ -816,7 +940,7 @@ private struct SubcategoryRow: View {
             .padding(.vertical, 7)
             .frame(minHeight: 34)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
             )
             .padding(.horizontal, 6)

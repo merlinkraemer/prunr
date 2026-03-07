@@ -86,6 +86,7 @@ struct CategoryDetailView: View {
                 }
             }
         }
+        .hiddenScrollIndicators()
     }
 
     // MARK: - Empty State

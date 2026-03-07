@@ -5,6 +5,7 @@ import SwiftUI
 
 /// A custom panel that looks like native macOS menu bar dropdowns (no arrow)
 final class DropdownPanel: NSPanel {
+    var closesOnResignKey = true
     private var onClose: (() -> Void)?
 
     init(contentView: NSView, onClose: @escaping () -> Void) {
@@ -23,7 +24,7 @@ final class DropdownPanel: NSPanel {
         visualEffectView.material = .popover
         visualEffectView.state = .active
         visualEffectView.wantsLayer = true
-        visualEffectView.layer?.cornerRadius = 12
+        visualEffectView.layer?.cornerRadius = 14
         visualEffectView.layer?.masksToBounds = true
 
         // Add content as subview
@@ -53,7 +54,7 @@ final class DropdownPanel: NSPanel {
 
     @objc private func windowDidResignKey(_ notification: Notification) {
         // Close panel when it loses key status (user clicked outside)
-        if isVisible {
+        if closesOnResignKey, isVisible {
             orderOut(nil)
             onClose?()
         }
@@ -78,9 +79,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Baseline service for growth tracking
     private let baselineService = BaselineService.shared
+    private let recentChangeService = RecentChangeService.shared
+    private let growthJournalService = GrowthJournalService.shared
 
     /// Right-click menu
     private var contextMenu: NSMenu?
+    private var panelAutoCloseSuspensionCount = 0
 
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
 
@@ -95,6 +99,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var selectedSubcategory: SubcategoryGroup? = nil
     var isSubcategoryDrillDown: Bool = false
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
+    var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
     private var currentInventorySnapshotID: Int64?
     var monitoredPathName: String = ""
     var enabledPathCount: Int {
@@ -167,17 +172,30 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func shouldAutoWatchTrackedPath(_ path: TrackedPath) -> Bool {
         let standardized = path.url.standardizedFileURL
-        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
-
-        if standardized == home {
-            return false
-        }
-
         if standardized.path == "/" {
             return false
         }
 
         return true
+    }
+
+    private func automaticFullScanInterval(for trackedPath: TrackedPath?) -> TimeInterval {
+        guard let trackedPath else {
+            return isUnderDiskPressure ? 10 * 60 : 15 * 60
+        }
+
+        let standardized = trackedPath.url.standardizedFileURL
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+
+        if standardized.path == "/" {
+            return isUnderDiskPressure ? 10 * 60 : 45 * 60
+        }
+
+        if standardized == home {
+            return isUnderDiskPressure ? 8 * 60 : 15 * 60
+        }
+
+        return isUnderDiskPressure ? 4 * 60 : 7 * 60
     }
     var isLoading = false {
         didSet { updateMenuBarActivityEffect() }
@@ -227,15 +245,29 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var fileEventsWatcher: FSEventsWatcher?
     private var watchedPaths: [String] = []
     private var autoScanTask: Task<Void, Never>?
+    private var recentChangeTask: Task<Void, Never>?
+    private var pendingRecentChangePaths: Set<URL> = []
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
     private var lastAutomaticScanAttemptAt: Date?
     private var isUnderDiskPressure = false
     private var lastFileEventAt: Date?
+    var hasPendingRecentChanges = false
+    var isProcessingRecentChanges = false {
+        didSet { updateMenuBarActivityEffect() }
+    }
 
     var lastScanStatusText: String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
+
+        if isProcessingRecentChanges {
+            return "Updating recent changes…"
+        }
+
+        if hasPendingRecentChanges {
+            return "Changes detected"
+        }
 
         if let lastChangeAt = lastDetectedChangeAt {
             let relative = formatter.localizedString(for: lastChangeAt, relativeTo: Date())
@@ -252,8 +284,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private let normalAutoScanDebounce: TimeInterval = 20
     private let pressureAutoScanDebounce: TimeInterval = 8
-    private let normalAutoScanInterval: TimeInterval = 5 * 60
-    private let pressureAutoScanInterval: TimeInterval = 90
+    private let normalRecentChangeDebounce: TimeInterval = 75
+    private let pressureRecentChangeDebounce: TimeInterval = 45
     private let normalAutoScanAttemptInterval: TimeInterval = 45
     private let pressureAutoScanAttemptInterval: TimeInterval = 15
     private let startupAutoScanGracePeriod: TimeInterval = 20
@@ -437,6 +469,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             stableTotalBytes = 0
             categoryItems = []
             subcategoryGroupsByCategory = [:]
+            growthContributorsBySubcategory = [:]
             selectedInventoryCategory = nil
             selectedSubcategory = nil
             isDrilledDown = false
@@ -591,6 +624,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             // Refresh storage space after scan (ISS-042)
             updateFreeSpace()
+            hasPendingRecentChanges = false
         } catch {
             if let baselineError = error as? BaselineService.BaselineError,
                case .insufficientSnapshots = baselineError {
@@ -601,6 +635,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 stableTotalBytes = 0
                 categoryItems = []
                 subcategoryGroupsByCategory = [:]
+            growthContributorsBySubcategory = [:]
                 currentInventorySnapshotID = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
@@ -613,6 +648,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 stableTotalBytes = 0
                 categoryItems = []
                 subcategoryGroupsByCategory = [:]
+            growthContributorsBySubcategory = [:]
                 currentInventorySnapshotID = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
@@ -649,6 +685,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             scanProgressPercentage = 1.0
             hasReliableScanProgressEstimate = true
             await DatabaseCleanupService.shared.performAutoCleanup()
+            await growthJournalService.prune(retentionDays: SettingsStore.shared.categoryHistoryRetentionDays)
             isCleaningUp = false
         }
 
@@ -862,6 +899,34 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
+    /// Loads growth contributors for a specific subcategory group
+    func loadGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) async -> [GrowthContributor] {
+        if let cached = growthContributorsBySubcategory[group.id] {
+            return cached
+        }
+
+        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        guard let trackedPath = primaryTrackedPath(from: enabledPaths) else { return [] }
+
+        do {
+            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            guard let latestSnapshotId = snapshots.first?.id else { return [] }
+
+            let contributors = await baselineService.getGrowthContributors(
+                trackedPathId: trackedPath.id,
+                snapshotId: latestSnapshotId,
+                category: category,
+                subcategory: group.subcategory
+            )
+
+            growthContributorsBySubcategory[group.id] = contributors
+            return contributors
+        } catch {
+            print("[MenuBarManager] Failed loading growth contributors: \(error)")
+            return []
+        }
+    }
+
     /// Takes the initial snapshot for enabled paths
     func takeInitialSnapshot() async {
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
@@ -1005,7 +1070,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         var stableTotal: Int64 = 0
 
         for item in inventory {
-            if item.growthTrend != nil {
+            if item.recentGrowthStory != nil || item.growthTrend != nil {
                 growing.append(item)
             } else {
                 stable.append(item)
@@ -1020,6 +1085,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         if invalidateSubcategoryCache {
             subcategoryGroupsByCategory = [:]
+            growthContributorsBySubcategory = [:]
         } else {
             let validCategories = Set((growingCategories + stableCategories).map(\.category))
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
@@ -1068,11 +1134,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Shows a folder picker dialog for onboarding
     /// - Parameter completion: Called with the selected folder URL, or nil if cancelled
     func showOnboardingFolderPicker(completion: @escaping (URL?) -> Void) {
-        // Close the popover first
-        closePopover()
+        suspendPanelAutoClose()
 
-        // Activate the app before showing the panel
-        NSApp.activate(ignoringOtherApps: true)
+        // Temporarily lower panel level so Finder can appear in front
+        let originalLevel = panel?.level
+        panel?.level = .normal
 
         // Create and configure the open panel
         let panel = NSOpenPanel()
@@ -1082,8 +1148,17 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         panel.message = "Choose a folder to scan for duplicate files"
 
         // Show the panel
-        panel.begin { response in
+        panel.begin { [weak self] response in
             DispatchQueue.main.async {
+                self?.resumePanelAutoClose()
+
+                // Restore original panel level
+                if let dropdownPanel = self?.panel, self?.isPopoverShown == true {
+                    dropdownPanel.level = originalLevel ?? .statusBar
+                    NSApp.activate(ignoringOtherApps: true)
+                    dropdownPanel.makeKeyAndOrderFront(nil)
+                }
+
                 if response == .OK, let url = panel.url {
                     completion(url)
                 } else {
@@ -1195,7 +1270,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private var shouldPulseActivity: Bool {
-        isLoading || isAutoScanning || isAnalyzingChanges || isCleaningUp
+        isLoading || isAutoScanning || isAnalyzingChanges || isCleaningUp || isProcessingRecentChanges
     }
 
     private func updateMenuBarActivityEffect() {
@@ -1310,6 +1385,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             popover?.performClose(nil)
             isPopoverShown = false
         }
+    }
+
+    private func suspendPanelAutoClose() {
+        panelAutoCloseSuspensionCount += 1
+        panel?.closesOnResignKey = false
+    }
+
+    private func resumePanelAutoClose() {
+        panelAutoCloseSuspensionCount = max(0, panelAutoCloseSuspensionCount - 1)
+        panel?.closesOnResignKey = panelAutoCloseSuspensionCount == 0
     }
 
     // MARK: - Actions
@@ -1549,7 +1634,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         fileEventsWatcher = nil
 
         guard !urls.isEmpty else {
-            useFallbackAutoScan = false
+            useFallbackAutoScan = primaryTrackedPath() != nil
             return
         }
 
@@ -1559,6 +1644,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 guard let self else { return }
                 guard !self.shouldIgnoreAutoScanChanges(changedPaths) else { return }
                 self.lastFileEventAt = Date()
+                self.hasPendingRecentChanges = true
+                self.scheduleRecentChangeRefresh(changedPaths)
                 self.scheduleAutomaticScan(resetDebounce: false)
             }
         }
@@ -1567,8 +1654,56 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         useFallbackAutoScan = !(await watcher.isRunning)
     }
 
+    private func scheduleRecentChangeRefresh(_ changedPaths: Set<URL>) {
+        guard !changedPaths.isEmpty else { return }
+        guard let trackedPath = primaryTrackedPath(),
+              shouldAutoWatchTrackedPath(trackedPath) else {
+            return
+        }
+
+        pendingRecentChangePaths.formUnion(changedPaths.map(\.standardizedFileURL))
+        recentChangeTask?.cancel()
+
+        let debounce = isUnderDiskPressure ? pressureRecentChangeDebounce : normalRecentChangeDebounce
+        recentChangeTask = Task { @MainActor in
+            defer { recentChangeTask = nil }
+            try? await Task.sleep(for: .milliseconds(Int(debounce * 1000)))
+            guard !Task.isCancelled else { return }
+            await performRecentChangeRefresh()
+        }
+    }
+
+    private func performRecentChangeRefresh() async {
+        guard !pendingRecentChangePaths.isEmpty else { return }
+        guard !isLoading else { return }
+        guard let trackedPath = primaryTrackedPath() else {
+            pendingRecentChangePaths.removeAll()
+            hasPendingRecentChanges = false
+            return
+        }
+
+        let changedPaths = pendingRecentChangePaths
+        pendingRecentChangePaths.removeAll()
+        isProcessingRecentChanges = true
+
+        let result = await recentChangeService.refreshChangedPaths(changedPaths, trackedPath: trackedPath)
+        switch result {
+        case .updated:
+            lastDetectedChangeAt = Date()
+            await loadInventoryFromLatestSnapshot()
+        case .needsFullScan:
+            print("[MenuBarManager] Refresh scan overflowed — triggering full scan")
+            Task { await loadInventory() }
+        case .noChanges:
+            break
+        }
+
+        isProcessingRecentChanges = false
+        hasPendingRecentChanges = false
+    }
+
     private func scheduleAutomaticScan(resetDebounce: Bool = true) {
-        guard !watchedPaths.isEmpty else { return }
+        guard !watchedPaths.isEmpty || useFallbackAutoScan else { return }
         if Date().timeIntervalSince(appLaunchAt) < startupAutoScanGracePeriod {
             return
         }
@@ -1587,7 +1722,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 return
             }
 
-            let minimumInterval = isUnderDiskPressure ? pressureAutoScanInterval : normalAutoScanInterval
+            let minimumInterval = automaticFullScanInterval(for: primaryTrackedPath())
             if let lastAutomaticScanAt,
                Date().timeIntervalSince(lastAutomaticScanAt) < minimumInterval {
                 return

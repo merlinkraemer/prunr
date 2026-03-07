@@ -33,6 +33,7 @@ actor BaselineService {
 
     /// Scan service reference
     private let scanService = ScanService.shared
+    private let growthJournalService = GrowthJournalService.shared
 
     /// Boundary configuration for stopping drill-down
     private let boundaryConfig = BoundaryConfig.default
@@ -64,6 +65,10 @@ actor BaselineService {
     ) async throws -> Snapshot {
         print("[BaselineService] Starting scan for path: \(trackedPath.url.path)")
 
+        // Get previous snapshot for delta calculation
+        let previousSnapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        let previousSnapshotId = previousSnapshots.first?.id
+
         // Set UI state
         await MainActor.run {
             isCreatingBaseline = true
@@ -94,6 +99,32 @@ actor BaselineService {
 
         print("[BaselineService] Created snapshot ID: \(snapshotId)")
 
+        try await db.rebuildWorkingSet(
+            from: snapshotId,
+            trackedPathId: trackedPath.id,
+            updatedAt: snapshot.createdAt
+        )
+
+        // Record deltas to growth journal if we have a previous snapshot
+        if let previousSnapshotId {
+            let deltas = try await db.calculateDeltas(beforeId: previousSnapshotId, afterId: snapshotId)
+            if !deltas.isEmpty {
+                var deltasByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+                for delta in deltas {
+                    let category = GrowthCategory.categorize(path: delta.path)
+                    let subcategory = GrowthSubcategory.subcategorize(path: delta.path)
+                    let key = DatabaseManager.JournalDeltaKey(category: category, subcategory: subcategory)
+                    deltasByKey[key, default: 0] += delta.changeBytes
+                }
+                try await growthJournalService.recordDeltas(
+                    trackedPath: trackedPath,
+                    deltas: deltasByKey,
+                    at: snapshot.createdAt
+                )
+                print("[BaselineService] Recorded \(deltas.count) deltas to growth journal")
+            }
+        }
+
         return snapshot
     }
 
@@ -119,6 +150,7 @@ actor BaselineService {
                 try await db.deleteSnapshot(id: id)
             }
         }
+        try await db.clearRealtimeData()
         print("[BaselineService] Reset baseline: deleted all snapshots")
     }
 
@@ -457,8 +489,24 @@ actor BaselineService {
                 return []
             }
 
-            let precomputedTotals = try await db.fetchCategoryTotals(for: snapshotId)
+            var precomputedTotals = try await db.fetchCategoryTotals(for: snapshotId)
+            let liveDeltas = await growthJournalService.deltasSinceLastSnapshot(
+                trackedPath: trackedPath,
+                since: latestSnapshot.createdAt
+            )
+
             if !precomputedTotals.isEmpty {
+                for index in precomputedTotals.indices {
+                    let category = precomputedTotals[index].category
+                    let liveDelta = liveDeltas[category] ?? 0
+                    let adjustedSize = max(0, precomputedTotals[index].currentSizeBytes + liveDelta)
+                    precomputedTotals[index] = CategoryInventoryItem(
+                        category: category,
+                        currentSizeBytes: adjustedSize,
+                        growthTrend: precomputedTotals[index].growthTrend,
+                        recentGrowthStory: precomputedTotals[index].recentGrowthStory
+                    )
+                }
                 return precomputedTotals
             }
 
@@ -474,11 +522,13 @@ actor BaselineService {
             }
 
             // Return as [CategoryInventoryItem] sorted by totalBytes descending
-            let items = categoryTotals.map { category, totalBytes in
-                CategoryInventoryItem(
+            let items = categoryTotals.map { (category, totalBytes) -> CategoryInventoryItem in
+                let liveDelta = liveDeltas[category] ?? 0
+                return CategoryInventoryItem(
                     category: category,
-                    currentSizeBytes: totalBytes,
-                    growthTrend: nil
+                    currentSizeBytes: max(0, totalBytes + liveDelta),
+                    growthTrend: nil,
+                    recentGrowthStory: nil
                 )
             }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
 
@@ -583,6 +633,28 @@ actor BaselineService {
             return groups.sorted { $0.totalBytes > $1.totalBytes }
         } catch {
             print("[BaselineService] Error getting subcategory breakdown for \(category.rawValue): \(error)")
+            return []
+        }
+    }
+
+    /// Finds files that contributed to growth since the last snapshot for a specific category/subcategory.
+    func getGrowthContributors(
+        trackedPathId: UUID,
+        snapshotId: Int64,
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        limit: Int = 50
+    ) async -> [GrowthContributor] {
+        do {
+            return try await db.fetchGrowthContributors(
+                trackedPathId: trackedPathId,
+                snapshotId: snapshotId,
+                category: category,
+                subcategory: subcategory,
+                limit: limit
+            )
+        } catch {
+            print("[BaselineService] Error fetching growth contributors: \(error)")
             return []
         }
     }
@@ -757,6 +829,14 @@ actor BaselineService {
     func getInventoryWithTrends(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
         // 1. Get current inventory
         var inventory = await getCategoryInventory(trackedPath: trackedPath)
+        let recentStories = await growthJournalService.recentGrowthStories(
+            trackedPath: trackedPath,
+            retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+        )
+
+        for index in inventory.indices {
+            inventory[index].recentGrowthStory = recentStories[inventory[index].category]
+        }
 
         // 2. Detect growth trends
         let trackedPathIdString = trackedPath.id.uuidString
@@ -789,7 +869,8 @@ actor BaselineService {
             guard let sorted = categoryHistory[category]?.sorted(by: { $0.createdAt < $1.createdAt }),
                   sorted.count >= 2 else { continue }
 
-            if let trend = buildInventoryTrend(from: sorted, significanceThreshold: significanceThreshold) {
+            if inventory[i].recentGrowthStory == nil,
+               let trend = buildInventoryTrend(from: sorted, significanceThreshold: significanceThreshold) {
                 inventory[i].growthTrend = trend
             }
         }

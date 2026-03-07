@@ -32,6 +32,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .hiddenScrollIndicators()
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

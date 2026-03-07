@@ -32,9 +32,11 @@
 		6BC02D7C90832754117F54C9 /* ColumnContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 878CF46E400E72718C5AA497 /* ColumnContainerView.swift */; };
 		71630799DA1A7904938D97A5 /* DatabaseCleanupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80A10C308A2C694CD6B761DB /* DatabaseCleanupService.swift */; };
 		7255BD3EC45E00F82DF3529D /* BaselineService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B471387DC1C177001B18FCD1 /* BaselineService.swift */; };
+		8A1B2C3D4E5F6789AABBCC01 /* GrowthJournalService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B2C3D4E5F6789AABBCCDD02 /* GrowthJournalService.swift */; };
 		7350BAB08F46A3435CB6A374 /* CategoryInventoryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9710F15700CB12CB50CDC585 /* CategoryInventoryItem.swift */; };
 		7389AF844788619A1DF413F8 /* DriveBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43903A2B7D47CDB2B20369FB /* DriveBarView.swift */; };
 		757C9A064BD647AB176EA1E6 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = E2B22E46386C6B33EB942744 /* GRDB */; };
+		2C3D4E5F6789AABBCCDDEE03 /* RecentChangeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4E5F6789AABBCCDDEEFF04 /* RecentChangeService.swift */; };
 		7C5339B7F5B27A4AC2298FCD /* ScanService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */; };
 		7E70A2EDCB2DC6D1F60C07AE /* DeltaRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CD1BD242A8EF0103002F1BD /* DeltaRowView.swift */; };
 		83C527FDFEE5852731C91453 /* GrowthBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94049E57FB0FCA23630AE64C /* GrowthBarView.swift */; };
@@ -103,6 +105,8 @@
 		ADFA692654D900931A96C796 /* FSEventsWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSEventsWatcher.swift; sourceTree = "<group>"; };
 		AF0B553533A012BE2ECF5D8B /* PrunrMenuBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrunrMenuBar.swift; sourceTree = "<group>"; };
 		B471387DC1C177001B18FCD1 /* BaselineService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaselineService.swift; sourceTree = "<group>"; };
+		9B2C3D4E5F6789AABBCCDD02 /* GrowthJournalService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthJournalService.swift; sourceTree = "<group>"; };
+		3D4E5F6789AABBCCDDEEFF04 /* RecentChangeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentChangeService.swift; sourceTree = "<group>"; };
 		BC001C18FD4269712CA4509B /* TrackedPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackedPath.swift; sourceTree = "<group>"; };
 		C8A1DFF60610F129573AB582 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		CE59D0E4C4CF9EDC7891E253 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
@@ -246,8 +250,10 @@
 				1D9601CAA1193992B7E7AA1E /* DiskSpaceService.swift */,
 				40E989B2BA4D011B5C20B82D /* FileScanner.swift */,
 				ADFA692654D900931A96C796 /* FSEventsWatcher.swift */,
+				9B2C3D4E5F6789AABBCCDD02 /* GrowthJournalService.swift */,
 				08EB343218571F3B97D51611 /* MenuBarManager.swift */,
 				2B953D7CD08AC50B0B235D07 /* PermissionsService.swift */,
+				3D4E5F6789AABBCCDDEEFF04 /* RecentChangeService.swift */,
 				3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */,
 			);
 			path = Services;
@@ -374,6 +380,7 @@
 				83C527FDFEE5852731C91453 /* GrowthBarView.swift in Sources */,
 				B632B7B36A8CC8106FA8B352 /* GrowthCategory.swift in Sources */,
 				238C5FF22AD6E6943C727F93 /* GrowthListView.swift in Sources */,
+				8A1B2C3D4E5F6789AABBCC01 /* GrowthJournalService.swift in Sources */,
 				160D54BD0C676D3CAE5372B7 /* ItemColumn.swift in Sources */,
 				5E2B7A24B1405A0772020191 /* MainView.swift in Sources */,
 				25D53FEECF12CC55C4083ED4 /* MainViewModel.swift in Sources */,
@@ -382,6 +389,7 @@
 				3A37939A56ED47C2318745EC /* MenuBarViewModel.swift in Sources */,
 				3281BD75CCF8244614B7FD63 /* PathManager.swift in Sources */,
 				32E78179E10D430300BF7E64 /* PermissionsService.swift in Sources */,
+				2C3D4E5F6789AABBCCDDEE03 /* RecentChangeService.swift in Sources */,
 				ED197457292707818D38E966 /* PrunrApp_Legacy.swift in Sources */,
 				B6D6AFE7F87E1D2812FD6B2E /* PrunrMenuBar.swift in Sources */,
 				3BC5D94F5750BCC3414D584F /* RootView.swift in Sources */,

@@ -59,6 +59,7 @@ struct ScanResultsView: View {
             }
             .padding()
         }
+        .hiddenScrollIndicators()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
         .onAppear {

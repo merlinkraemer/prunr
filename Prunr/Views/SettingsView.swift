@@ -114,7 +114,7 @@ private struct GeneralSettingsTab: View {
                 }
 
                 Section("Scanning") {
-                    Text("Refresh in the menu bar only reloads the latest saved snapshot. Use this when you want a complete new filesystem scan.")
+                    Text("Scan Now in the menu bar runs a fresh background scan. Prunr also tracks recent growth between full rescans.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -130,7 +130,7 @@ private struct GeneralSettingsTab: View {
                             } else {
                                 Image(systemName: "arrow.triangle.2.circlepath")
                             }
-                            Text("Complete Rescan Now")
+                            Text("Scan Now")
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -231,6 +231,7 @@ private struct GeneralSettingsTab: View {
                 }
             }
             .formStyle(.grouped)
+            .hiddenScrollIndicators()
 
             Spacer(minLength: 0)
 
@@ -383,6 +384,7 @@ private struct ScanScopeSettingsTab: View {
                     }
                     .padding()
                 }
+                .hiddenScrollIndicators()
 
             if settingsStore.hasPendingScopeChanges && !isApplyingScopeChanges {
                 Divider()
@@ -645,6 +647,7 @@ private struct ScanRulesSettingsTab: View {
                 }
             }
             .listStyle(.inset)
+            .hiddenScrollIndicators()
             .disabled(isScanInProgress)
         }
     }
