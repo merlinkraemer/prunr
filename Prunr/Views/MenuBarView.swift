@@ -352,36 +352,8 @@ struct MenuBarView: View {
         return VStack(spacing: 0) {
             Spacer(minLength: 0)
 
-            VStack(spacing: 16) {
-                scanStatusCard(clampedProgress: clampedProgress)
-
-                Button("Stop") {
-                    Task { await manager.stopScan() }
-                }
-                .font(.system(size: 12, weight: .medium))
-                .buttonStyle(.plain)
-                .foregroundStyle(.red)
+            scanStatusCard(clampedProgress: clampedProgress, showStopButton: true)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.red.opacity(0.5), lineWidth: 1)
-                )
-                .accessibilityLabel("Stop scan")
-                .accessibilityHint("Cancel the current scan operation")
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 22)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.92))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
-            .padding(.horizontal, 16)
 
             Spacer(minLength: 0)
 
@@ -599,10 +571,10 @@ struct MenuBarView: View {
     @ViewBuilder
     private func onboardingPage(for page: OnboardingPage, size: CGSize) -> some View {
         ScrollView(.vertical) {
-            VStack {
+            VStack(spacing: 10) {
                 onboardingPageCard(for: page)
-                    .frame(maxWidth: 284)
             }
+            .frame(maxWidth: 284)
             .frame(maxWidth: .infinity)
             .frame(minHeight: size.height, alignment: .center)
             .padding(.vertical, 6)
@@ -630,131 +602,125 @@ struct MenuBarView: View {
     private func onboardingPageCard(for page: OnboardingPage) -> some View {
         switch page {
         case .permissions:
-            onboardingContentCard(
-                number: 1,
-                icon: "lock.shield",
-                title: "Grant Full Disk Access",
-                subtitle: "Needed so Prunr can inspect the folders you choose and build a real baseline."
-            ) {
-                if hasFullDiskAccess {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12, weight: .medium))
-                        Text("Access granted")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundStyle(.green)
-                } else {
-                    VStack(spacing: 10) {
-                        primaryActionButton("Open Full Disk Access", minWidth: 188) {
-                            openFullDiskAccessSettings()
-                        }
+            VStack(spacing: 10) {
+                onboardingTitleSection(
+                    number: 1,
+                    icon: "lock.shield",
+                    title: "Grant Full Disk Access",
+                    description: "Grant full disk access in order to do full disk scan."
+                )
 
-                        secondaryActionButton("Reveal Current App") {
-                            permissionsService.revealCurrentAppInFinder()
+                VStack(spacing: 14) {
+                    if hasFullDiskAccess {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("Access granted")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundStyle(.green)
+                    } else {
+                        VStack(spacing: 10) {
+                            primaryActionButton("Open Full Disk Access", minWidth: 188) {
+                                openFullDiskAccessSettings()
+                            }
+
+                            secondaryActionButton("Reveal Current App") {
+                                permissionsService.revealCurrentAppInFinder()
+                            }
                         }
                     }
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 22)
             }
 
         case .folder:
-            onboardingContentCard(
-                number: 2,
-                icon: "folder.badge.gearshape",
-                title: "Choose What To Watch",
-                subtitle: "Pick the folder scope for your first baseline. You need to make an explicit choice here."
-            ) {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(scanFolderOptions) { option in
-                        let isSelected = onboardingChosenFolderPath?.standardizedFileURL == option.url.standardizedFileURL
+            VStack(spacing: 10) {
+                onboardingTitleSection(
+                    number: 2,
+                    icon: "folder.badge.gearshape",
+                    title: "Setup Path",
+                    description: "Pick the scope for your first scan."
+                )
+
+                onboardingContentCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(scanFolderOptions) { option in
+                            let isSelected = onboardingChosenFolderPath?.standardizedFileURL == option.url.standardizedFileURL
+
+                            Button {
+                                guard hasFullDiskAccess else { return }
+                                applyOnboardingScanFolder(option.url)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(option.title)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(isSelected ? Color.accentColor : .primary)
+
+                                        Text(option.subtitle)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+
+                                    Spacer()
+
+                                    if isSelected {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 14))
+                                            .foregroundStyle(Color.accentColor)
+                                    } else {
+                                        Circle()
+                                            .strokeBorder(Color.gray.opacity(0.4), lineWidth: 1.5)
+                                            .frame(width: 14, height: 14)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        Divider()
+                            .padding(.vertical, 4)
 
                         Button {
                             guard hasFullDiskAccess else { return }
-                            applyOnboardingScanFolder(option.url)
-                        } label: {
-                            HStack(spacing: 10) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(option.title)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(isSelected ? .white : .primary)
-
-                                    Text(option.subtitle)
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-
-                                Spacer()
-
-                                if isSelected {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(.white)
-                                } else {
-                                    Circle()
-                                        .strokeBorder(Color.gray.opacity(0.28), lineWidth: 1.5)
-                                        .frame(width: 14, height: 14)
+                            manager.showOnboardingFolderPicker { url in
+                                if let url = url {
+                                    customOnboardingFolderPath = url
+                                    applyOnboardingScanFolder(url)
                                 }
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 9)
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(isSelected ? Color.accentColor : onboardingControlFillColor)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .strokeBorder(isSelected ? Color.clear : onboardingStrokeColor, lineWidth: 1)
-                            )
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "folder.badge.plus")
+                                    .font(.system(size: 12, weight: .medium))
+                                Text("Choose Custom Folder")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundStyle(.primary)
                         }
                         .buttonStyle(.plain)
                     }
-
-                    Button {
-                        guard hasFullDiskAccess else { return }
-                        manager.showOnboardingFolderPicker { url in
-                            if let url = url {
-                                customOnboardingFolderPath = url
-                                applyOnboardingScanFolder(url)
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder.badge.plus")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("Choose Custom Folder")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(onboardingControlFillColor)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(onboardingStrokeColor, lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
                 }
             }
 
         case .scan:
-            onboardingContentCard(
-                number: 3,
-                icon: "waveform.path.ecg",
-                title: "Run First Scan",
-                subtitle: "This builds the first baseline snapshot so new growth can be detected from then on."
-            ) {
-                VStack(spacing: 12) {
+            VStack(spacing: 10) {
+                onboardingTitleSection(
+                    number: 3,
+                    icon: "waveform.path.ecg",
+                    title: "Run First Scan",
+                    description: "Build your first baseline to track growth over time."
+                )
+
+                VStack(spacing: 14) {
                     HStack(spacing: 8) {
                         Image(systemName: "folder")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
 
                         Text(selectedScanFolderLabel)
@@ -763,13 +729,6 @@ struct MenuBarView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(onboardingControlFillColor)
-                    )
 
                     if startedOnboardingScan {
                         HStack(spacing: 8) {
@@ -797,24 +756,41 @@ struct MenuBarView: View {
                             .multilineTextAlignment(.center)
                     }
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 22)
             }
         }
     }
 
-    private func onboardingContentCard<Content: View>(
-        number: Int,
-        icon: String,
-        title: String,
-        subtitle: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(spacing: 14) {
-            Text(subtitle)
+    /// Title section displayed above the onboarding card
+    private func onboardingTitleSection(number: Int, icon: String, title: String, description: String) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            Text(description)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 24)
+    }
 
+    /// Card content wrapper - just the visual card with content
+    private func onboardingContentCard<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(spacing: 14) {
             content()
                 .frame(maxWidth: .infinity)
         }
@@ -860,52 +836,38 @@ struct MenuBarView: View {
     }
 
     private var onboardingSuccessView: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.green)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Baseline ready")
-                            .font(.system(size: 17, weight: .semibold))
-
-                        Text("Prunr is now watching \(selectedScanFolderLabel).")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                }
-
-                expectationRow(
-                    icon: "bolt.horizontal.circle",
-                    text: "Prunr keeps the latest scan cached and updates recent growth in the background."
-                )
-                expectationRow(
-                    icon: "externaldrive.badge.timemachine",
-                    text: "Use Scan Now when you want a fresh filesystem pass."
-                )
-
-                primaryActionButton("Open inventory", minWidth: 136) {
-                    dismissOnboardingSuccess()
-                }
-            }
-            .frame(maxWidth: 292)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 22)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.gray.opacity(0.08))
+        VStack(spacing: 10) {
+            onboardingTitleSection(
+                number: 0,
+                icon: "checkmark.circle.fill",
+                title: "Baseline Ready",
+                description: "Prunr is now watching \(selectedScanFolderLabel)."
             )
 
-            Spacer(minLength: 0)
+            onboardingContentCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    expectationRow(
+                        icon: "bolt.horizontal.circle",
+                        text: "Prunr keeps the latest scan cached and updates recent growth in the background."
+                    )
+                    expectationRow(
+                        icon: "externaldrive.badge.timemachine",
+                        text: "Use Scan Now when you want a fresh filesystem pass."
+                    )
+
+                    HStack(spacing: 10) {
+                        secondaryActionButton("Stop") {
+                            dismissOnboardingSuccess()
+                        }
+
+                        primaryActionButton("Open inventory", minWidth: 100) {
+                            dismissOnboardingSuccess()
+                        }
+                    }
+                }
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 18)
+        .frame(maxWidth: 284)
     }
 
     // MARK: - Drive Bar Section (Always Visible)
@@ -1149,6 +1111,7 @@ struct MenuBarView: View {
         HStack {
             Spacer()
 
+            // Centered growth indicator or stable pill
             if overallGrowthBytes > 0 {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.up.right")
@@ -1175,6 +1138,7 @@ struct MenuBarView: View {
 
             Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
@@ -1183,9 +1147,18 @@ struct MenuBarView: View {
         let headerIcon = subcategory?.subcategory?.icon ?? category.category.icon
         let headerName = subcategory?.displayName ?? category.category.displayName
         let headerBytes = subcategory?.totalBytes ?? category.currentSizeBytes
+        // Get growth info for the header (subcategory takes precedence, else category)
+        let growthBytes: Int64? = {
+            if let subcategory = subcategory {
+                // Sum growth from top files in subcategory
+                return subcategory.topFiles.reduce(Int64(0)) { $0 + $1.growthBytes }
+            }
+            return category.recentGrowthStory?.deltaBytes ?? category.growthTrend?.growthBytes
+        }()
+        let growthDays = category.growthTrend?.growthSpanDays
 
-        return HStack(spacing: 10) {
-            // Back button
+        return HStack(spacing: 0) {
+            // Back button (left aligned, compact)
             Button(action: navigateBackFromDrilldown) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 12, weight: .semibold))
@@ -1194,22 +1167,41 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
             .accessibilityHint("Return to category overview")
+            .frame(width: 20)
 
-            Image(systemName: headerIcon)
-                .font(.system(size: 16))
-                .foregroundStyle(category.category.color)
-                .frame(width: 20, height: 20)
+            // Centered icon + title + growth indicator below
+            VStack(spacing: 2) {
+                HStack(spacing: 5) {
+                    Image(systemName: headerIcon)
+                        .font(.system(size: 14))
+                        .foregroundStyle(category.category.color)
 
-            Text(headerName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(headerName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
 
+                // Growth indicator below title (small, centered)
+                if let growth = growthBytes, growth > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 8, weight: .semibold))
+                        Text("+\(formattedBytes(growth))\(growthDays != nil ? " · \(growthDays!)d" : "")")
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundStyle(.orange)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .offset(x: 18) // Offset right to visually center (56 - 20 = 36, half = 18)
+
+            // Bytes (right aligned, matches list item font)
             Text(formattedBytes(headerBytes))
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .fixedSize()
+                .frame(width: 56, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
@@ -1470,7 +1462,7 @@ struct MenuBarView: View {
         shouldShowOnboardingSuccess = false
     }
 
-    private func scanStatusCard(clampedProgress: Double) -> some View {
+    private func scanStatusCard(clampedProgress: Double, showStopButton: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             if manager.isCleaningUp {
                 HStack(spacing: 8) {
@@ -1567,13 +1559,39 @@ struct MenuBarView: View {
                         .fill(Color.gray.opacity(0.06))
                 )
             }
+
+            if showStopButton {
+                HStack {
+                    Spacer()
+                    Button("Stop") {
+                        Task { await manager.stopScan() }
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.red.opacity(0.5), lineWidth: 1)
+                    )
+                    .accessibilityLabel("Stop scan")
+                    .accessibilityHint("Cancel the current scan operation")
+                    Spacer()
+                }
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 22)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.gray.opacity(0.08))
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.92))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
     }
 
     // MARK: - Helper Methods

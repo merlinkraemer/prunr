@@ -35,11 +35,12 @@ struct CategoryGrowthListView: View {
     @State private var subcategoryLoadToken = UUID()
     @State private var navigationTask: Task<Void, Never>? = nil
     @State private var transitionDirection: NavigationDirection = .forward
-    @State private var displayedScreen = DrilldownScreen.main
+    @State private var displayedScreen: DrilldownScreen? = nil // nil until first appear
     @State private var outgoingScreen: DrilldownScreen? = nil
     @State private var pageOffset: CGFloat = 0
     @State private var pageWidth: CGFloat = 0
     @State private var pendingTransition: PendingNavigationTransition? = nil
+    @State private var hasInitializedDisplay = false
 
     private enum DrilldownLevel: Int {
         case main
@@ -102,14 +103,19 @@ struct CategoryGrowthListView: View {
             Group {
                 if let outgoingScreen {
                     slidingPages(width: geometry.size.width, outgoingScreen: outgoingScreen)
+                } else if let displayed = displayedScreen {
+                    screenPage(for: displayed, width: geometry.size.width)
                 } else {
-                    screenPage(for: displayedScreen, width: geometry.size.width)
+                    // Placeholder while initializing
+                    screenPage(for: currentScreen, width: geometry.size.width)
                 }
             }
             .clipped()
             .onAppear {
                 pageWidth = geometry.size.width
-                if pendingTransition == nil && outgoingScreen == nil {
+                // Initialize displayedScreen on first appear without animation
+                if !hasInitializedDisplay {
+                    hasInitializedDisplay = true
                     displayedScreen = currentScreen
                 }
             }
@@ -124,6 +130,13 @@ struct CategoryGrowthListView: View {
             }
             .onChange(of: currentScreen) { oldValue, newValue in
                 guard oldValue != newValue else { return }
+
+                // Skip transition if we haven't initialized yet
+                guard hasInitializedDisplay else {
+                    displayedScreen = newValue
+                    return
+                }
+
                 let direction: NavigationDirection = newValue.level.rawValue >= oldValue.level.rawValue ? .forward : .backward
                 transitionDirection = direction
                 let resolvedWidth = geometry.size.width > 0 ? geometry.size.width : pageWidth
@@ -179,9 +192,9 @@ struct CategoryGrowthListView: View {
         HStack(spacing: 0) {
             if transitionDirection == .forward {
                 screenPage(for: outgoingScreen, width: width)
-                screenPage(for: displayedScreen, width: width)
+                screenPage(for: displayedScreen ?? currentScreen, width: width)
             } else {
-                screenPage(for: displayedScreen, width: width)
+                screenPage(for: displayedScreen ?? currentScreen, width: width)
                 screenPage(for: outgoingScreen, width: width)
             }
         }

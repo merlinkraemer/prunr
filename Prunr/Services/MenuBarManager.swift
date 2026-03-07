@@ -332,6 +332,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         panelContent.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
         panel = DropdownPanel(contentView: panelContent) { [weak self] in
             self?.isPopoverShown = false
+            // Reset auto-close suspension state when panel closes via focus loss
+            self?.panelAutoCloseSuspensionCount = 0
+            self?.panel?.closesOnResignKey = true
         }
     }
 
@@ -1136,35 +1139,46 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     func showOnboardingFolderPicker(completion: @escaping (URL?) -> Void) {
         suspendPanelAutoClose()
 
-        // Temporarily lower panel level so Finder can appear in front
+        // Store original level and hide the dropdown panel
         let originalLevel = panel?.level
-        panel?.level = .normal
+        let wasVisible = panel?.isVisible ?? false
+
+        // Order out the panel so file picker can take focus
+        panel?.orderOut(nil)
 
         // Create and configure the open panel
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose a folder to scan for duplicate files"
+        let openPanel = NSOpenPanel()
+        openPanel.canChooseFiles = false
+        openPanel.canChooseDirectories = true
+        openPanel.allowsMultipleSelection = false
+        openPanel.message = "Choose a folder to scan for duplicate files"
+        openPanel.level = .floating  // Ensure it's above other windows
 
         // Show the panel
-        panel.begin { [weak self] response in
+        openPanel.begin { [weak self] response in
             DispatchQueue.main.async {
                 self?.resumePanelAutoClose()
 
-                // Restore original panel level
-                if let dropdownPanel = self?.panel, self?.isPopoverShown == true {
+                // Restore dropdown panel if it was visible
+                if let dropdownPanel = self?.panel, wasVisible {
                     dropdownPanel.level = originalLevel ?? .statusBar
                     NSApp.activate(ignoringOtherApps: true)
                     dropdownPanel.makeKeyAndOrderFront(nil)
+                    self?.isPopoverShown = true
                 }
 
-                if response == .OK, let url = panel.url {
+                if response == .OK, let url = openPanel.url {
                     completion(url)
                 } else {
                     completion(nil)
                 }
             }
+        }
+
+        // Activate the app and bring file picker to front after a brief delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NSApp.activate(ignoringOtherApps: true)
+            openPanel.makeKeyAndOrderFront(nil)
         }
     }
 
@@ -1181,12 +1195,20 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             // Panel is shown, close it
             panel.orderOut(nil)
             isPopoverShown = false
+
+            // Reset auto-close suspension state when manually closing
+            panelAutoCloseSuspensionCount = 0
+            panel.closesOnResignKey = true
         } else {
             // Panel is not shown, show it
             guard let buttonWindow = button.window,
                   let buttonScreen = buttonWindow.screen else {
                 return
             }
+
+            // Ensure auto-close is enabled when opening
+            panelAutoCloseSuspensionCount = 0
+            panel?.closesOnResignKey = true
 
             // Activate app to ensure panel comes to front
             NSApp.activate()
@@ -1382,8 +1404,17 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     func closePopover() {
         if isPopoverShown {
+            // Close panel if using panel mode
+            if let panel = panel, panel.isVisible {
+                panel.orderOut(nil)
+            }
+            // Also close popover for legacy support
             popover?.performClose(nil)
             isPopoverShown = false
+
+            // Reset auto-close suspension state when manually closing
+            panelAutoCloseSuspensionCount = 0
+            panel?.closesOnResignKey = true
         }
     }
 
