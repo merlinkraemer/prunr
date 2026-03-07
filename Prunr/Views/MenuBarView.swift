@@ -1610,7 +1610,6 @@ private struct DrilldownBackSwipeBridge: NSViewRepresentable {
 
         private lazy var panRecognizer: NSPanGestureRecognizer = {
             let recognizer = NSPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-            recognizer.allowedTouchTypes = [.indirect]
             recognizer.delegate = self
             return recognizer
         }()
