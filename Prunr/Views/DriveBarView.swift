@@ -71,11 +71,11 @@ struct DriveBarView: View {
             // Free space text
             HStack(spacing: 4) {
                 Text(bytesToGBString(freeBytes))
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .foregroundStyle(.primary)
                 Text("free")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)

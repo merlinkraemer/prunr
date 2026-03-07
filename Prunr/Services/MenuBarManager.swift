@@ -715,9 +715,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     func refreshVisibleInventory() async {
-        updateFreeSpaceIfNeeded()
-        await updatePathSize()
-        await loadInventoryFromLatestSnapshot()
+        guard !isLoading, !isAutoScanning else { return }
+        lastAutomaticScanAttemptAt = Date()
+        isAutoScanning = true
+        await loadInventory(isAutomatic: true)
+        isAutoScanning = false
     }
 
     /// Legacy: Loads the category-based growth list (deprecated, use loadInventory)

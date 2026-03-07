@@ -3,6 +3,8 @@ import AppKit
 
 /// List view showing inventory grouped by category with growth indicators and drill-down navigation
 struct CategoryGrowthListView: View {
+    private let pageTopInset: CGFloat = 6
+
     /// Growing categories with active growth trends
     let growingCategories: [CategoryInventoryItem]
 
@@ -31,7 +33,13 @@ struct CategoryGrowthListView: View {
     @State private var isLoadingMoreFiles = false
     @State private var subcategoryLoadTask: Task<Void, Never>? = nil
     @State private var subcategoryLoadToken = UUID()
+    @State private var navigationTask: Task<Void, Never>? = nil
     @State private var transitionDirection: NavigationDirection = .forward
+    @State private var displayedScreen = DrilldownScreen.main
+    @State private var outgoingScreen: DrilldownScreen? = nil
+    @State private var pageOffset: CGFloat = 0
+    @State private var pageWidth: CGFloat = 0
+    @State private var pendingTransition: PendingNavigationTransition? = nil
 
     private enum DrilldownLevel: Int {
         case main
@@ -42,6 +50,31 @@ struct CategoryGrowthListView: View {
     private enum NavigationDirection {
         case forward
         case backward
+    }
+
+    private struct PendingNavigationTransition {
+        let from: DrilldownScreen
+        let to: DrilldownScreen
+        let direction: NavigationDirection
+    }
+
+    private struct DrilldownScreen: Equatable {
+        let level: DrilldownLevel
+        let category: CategoryInventoryItem?
+        let subcategory: SubcategoryGroup?
+
+        static let main = DrilldownScreen(level: .main, category: nil, subcategory: nil)
+
+        var id: String {
+            switch level {
+            case .main:
+                return "main"
+            case .subcategories:
+                return "subcategories-\(category?.category.rawValue ?? "none")"
+            case .files:
+                return "files-\(subcategory?.id ?? "none")"
+            }
+        }
     }
 
     private var drilldownLevel: DrilldownLevel {
@@ -56,18 +89,55 @@ struct CategoryGrowthListView: View {
         return .subcategories
     }
 
+    private var currentScreen: DrilldownScreen {
+        DrilldownScreen(
+            level: drilldownLevel,
+            category: manager.selectedInventoryCategory,
+            subcategory: manager.selectedSubcategory
+        )
+    }
+
     var body: some View {
-        ZStack {
-            currentLevelView
-                .id(viewIdentity)
-                .transition(transitionForCurrentDirection)
+        GeometryReader { geometry in
+            Group {
+                if let outgoingScreen {
+                    slidingPages(width: geometry.size.width, outgoingScreen: outgoingScreen)
+                } else {
+                    screenPage(for: displayedScreen, width: geometry.size.width)
+                }
+            }
+            .clipped()
+            .onAppear {
+                pageWidth = geometry.size.width
+                if pendingTransition == nil && outgoingScreen == nil {
+                    displayedScreen = currentScreen
+                }
+            }
+            .onChange(of: geometry.size.width) { _, newWidth in
+                guard newWidth > 0 else { return }
+                pageWidth = newWidth
+
+                guard let pendingTransition else { return }
+                self.pendingTransition = nil
+                transitionDirection = pendingTransition.direction
+                startNavigationTransition(from: pendingTransition.from, to: pendingTransition.to, width: newWidth)
+            }
+            .onChange(of: currentScreen) { oldValue, newValue in
+                guard oldValue != newValue else { return }
+                let direction: NavigationDirection = newValue.level.rawValue >= oldValue.level.rawValue ? .forward : .backward
+                transitionDirection = direction
+                let resolvedWidth = geometry.size.width > 0 ? geometry.size.width : pageWidth
+
+                guard resolvedWidth > 0 else {
+                    pendingTransition = PendingNavigationTransition(from: oldValue, to: newValue, direction: direction)
+                    return
+                }
+
+                pendingTransition = nil
+                startNavigationTransition(from: oldValue, to: newValue, width: resolvedWidth)
+            }
         }
-        .clipped()
-        .animation(.snappy(duration: 0.22, extraBounce: 0), value: viewIdentity)
-        .onChange(of: drilldownLevel) { oldValue, newValue in
-            guard oldValue != newValue else { return }
-            transitionDirection = newValue.rawValue >= oldValue.rawValue ? .forward : .backward
-        }
+        .frame(maxHeight: maxHeight)
         .onChange(of: growingCategories.map(\.id) + stableCategories.map(\.id)) { _, _ in
             if manager.isDrilledDown, manager.selectedInventoryCategory == nil {
                 manager.isDrilledDown = false
@@ -75,49 +145,73 @@ struct CategoryGrowthListView: View {
                 manager.selectedSubcategory = nil
             }
         }
+        .onDisappear {
+            navigationTask?.cancel()
+        }
     }
 
     @ViewBuilder
-    private var currentLevelView: some View {
-        switch drilldownLevel {
+    private func screenView(for screen: DrilldownScreen) -> some View {
+        switch screen.level {
         case .main:
             categoryListView
 
         case .subcategories:
-            if let selected = manager.selectedInventoryCategory {
-                subcategoryListView(for: selected)
+            if let category = screen.category {
+                subcategoryListView(for: category)
+            } else {
+                Color.clear
             }
 
         case .files:
-            fileListView
+            fileListView(for: screen.subcategory)
         }
     }
 
-    private var viewIdentity: String {
-        switch drilldownLevel {
-        case .main:
-            return "main"
-        case .subcategories:
-            return "subcategories-\(manager.selectedInventoryCategory?.id.rawValue ?? "none")"
-        case .files:
-            return "files-\(manager.selectedSubcategory?.id.uuidString ?? "none")"
-        }
+    private func screenPage(for screen: DrilldownScreen, width: CGFloat) -> some View {
+        screenView(for: screen)
+            .frame(width: width)
+            .id(screen.id)
     }
 
-    private var transitionForCurrentDirection: AnyTransition {
-        let distance: CGFloat = 18
+    @ViewBuilder
+    private func slidingPages(width: CGFloat, outgoingScreen: DrilldownScreen) -> some View {
+        HStack(spacing: 0) {
+            if transitionDirection == .forward {
+                screenPage(for: outgoingScreen, width: width)
+                screenPage(for: displayedScreen, width: width)
+            } else {
+                screenPage(for: displayedScreen, width: width)
+                screenPage(for: outgoingScreen, width: width)
+            }
+        }
+        .offset(x: pageOffset)
+    }
 
-        switch transitionDirection {
-        case .forward:
-            return .asymmetric(
-                insertion: .offset(x: distance).combined(with: .opacity),
-                removal: .offset(x: -distance).combined(with: .opacity)
-            )
-        case .backward:
-            return .asymmetric(
-                insertion: .offset(x: -distance).combined(with: .opacity),
-                removal: .offset(x: distance).combined(with: .opacity)
-            )
+    private func startNavigationTransition(from previousScreen: DrilldownScreen, to newScreen: DrilldownScreen, width: CGFloat) {
+        navigationTask?.cancel()
+
+        guard width > 0 else {
+            outgoingScreen = nil
+            displayedScreen = newScreen
+            pageOffset = 0
+            return
+        }
+
+        displayedScreen = newScreen
+        outgoingScreen = previousScreen
+        pageOffset = transitionDirection == .forward ? 0 : -width
+
+        navigationTask = Task { @MainActor in
+            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
+                pageOffset = transitionDirection == .forward ? -width : 0
+            }
+
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
+
+            outgoingScreen = nil
+            pageOffset = 0
         }
     }
 
@@ -129,13 +223,11 @@ struct CategoryGrowthListView: View {
                 emptyStateView
             } else {
                 VStack(spacing: 0) {
-                    // Main categories - scrollable
                     ScrollView {
                         VStack(spacing: 0) {
                             ForEach(growingCategories) { item in
                                 CategoryInventoryRow(
                                     item: item,
-                                    showsStableBadge: false,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     highlightedSegmentID: $highlightedSegmentID,
                                     onTap: { selectCategory(item) }
@@ -146,7 +238,6 @@ struct CategoryGrowthListView: View {
                             ForEach(stableCategories) { item in
                                 CategoryInventoryRow(
                                     item: item,
-                                    showsStableBadge: true,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     highlightedSegmentID: $highlightedSegmentID,
                                     onTap: { selectCategory(item) }
@@ -154,19 +245,26 @@ struct CategoryGrowthListView: View {
                                 .equatable()
                             }
                         }
+                        .padding(.top, pageTopInset)
+                        .padding(.bottom, supplementalItems.isEmpty ? pageTopInset : 0)
                     }
                     .scrollIndicators(.hidden)
-                    .frame(maxHeight: maxHeight - 36) // Reserve space for supplemental item
+                    .frame(maxHeight: .infinity)
 
-                    // Supplemental items - fixed at bottom
-                    ForEach(supplementalItems) { item in
-                        SupplementalInventoryRow(
-                            item: item,
-                            isHighlightedFromBar: highlightedSegmentID == item.id,
-                            highlightedSegmentID: $highlightedSegmentID
-                        )
+                    if !supplementalItems.isEmpty {
+                        VStack(spacing: 0) {
+                            ForEach(supplementalItems) { item in
+                                SupplementalInventoryRow(
+                                    item: item,
+                                    isHighlightedFromBar: highlightedSegmentID == item.id,
+                                    highlightedSegmentID: $highlightedSegmentID
+                                )
+                            }
+                        }
+                        .padding(.top, 6)
                     }
                 }
+                .frame(maxHeight: maxHeight, alignment: .bottom)
             }
         }
     }
@@ -206,6 +304,8 @@ struct CategoryGrowthListView: View {
                             }
                         }
                     }
+                    .padding(.top, pageTopInset)
+                    .padding(.bottom, pageTopInset)
                 }
                 .scrollIndicators(.hidden)
                 .frame(maxHeight: maxHeight)
@@ -215,9 +315,8 @@ struct CategoryGrowthListView: View {
 
     // MARK: - File List View
 
-    private var fileListView: some View {
-        // Always read from manager.selectedSubcategory to get the latest state
-        guard let group = manager.selectedSubcategory else {
+    private func fileListView(for group: SubcategoryGroup?) -> some View {
+        guard let group else {
             return AnyView(
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
@@ -230,17 +329,17 @@ struct CategoryGrowthListView: View {
             )
         }
 
-        let bigFiles = group.topFiles.filter { $0.currentSizeBytes >= bigFileThreshold }
-        let bigBytes = bigFiles.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
-        let smallCount = max(0, group.fileCount - bigFiles.count)
-        let smallBytes = max(0, group.totalBytes - bigBytes)
+        let loadedFiles = group.topFiles.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+        let loadedBytes = loadedFiles.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
+        let remainingCount = max(0, group.fileCount - loadedFiles.count)
+        let remainingBytes = max(0, group.totalBytes - loadedBytes)
         let hasMoreFiles = group.hasMoreFiles
         let canLoadMore = hasMoreFiles && group.loadedFileCount < SubcategoryGroup.maxLoadableFiles
 
         return AnyView(
             ScrollView {
                 VStack(spacing: 0) {
-                    if bigFiles.isEmpty && smallCount == 0 {
+                    if loadedFiles.isEmpty && remainingCount == 0 {
                         VStack(spacing: 8) {
                             Image(systemName: "tray")
                                 .foregroundStyle(.secondary)
@@ -251,58 +350,31 @@ struct CategoryGrowthListView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                         .padding(.top, 12)
                     } else {
-                        ForEach(bigFiles) { item in
-                            Button {
-                                onTapItem(item.path)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "doc.fill")
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 18)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(URL(fileURLWithPath: item.path).lastPathComponent)
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-                                        Text(item.path)
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-
-                                    Spacer()
-
-                                    Text(formattedBytes(item.currentSizeBytes))
-                                        .font(.system(.caption, design: .monospaced))
-                                        .foregroundStyle(.primary)
-                                        .fixedSize()
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .frame(minHeight: 34)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 6)
+                        ForEach(loadedFiles) { item in
+                            fileRow(for: item)
                         }
 
-                        if smallCount > 0 {
+                        if remainingCount > 0 {
                             HStack(spacing: 10) {
                                 Image(systemName: "folder.fill")
                                     .font(.system(size: 14))
                                     .foregroundStyle(.secondary)
                                     .frame(width: 18)
 
-                                Text("\(smallCount) files under 100MB")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(remainingCount) more files not loaded")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.secondary)
+
+                                    Text("Load more to page in the next batch")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.tertiary)
+                                }
 
                                 Spacer()
 
-                                Text(formattedBytes(smallBytes))
-                                    .font(.system(.caption, design: .monospaced))
+                                Text(formattedBytes(remainingBytes))
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 12)
@@ -320,10 +392,18 @@ struct CategoryGrowthListView: View {
                         }
                     }
                 }
+                .padding(.top, pageTopInset)
+                .padding(.bottom, pageTopInset)
             }
             .scrollIndicators(.hidden)
             .frame(maxHeight: maxHeight)
         )
+    }
+
+    private func fileRow(for item: GrowthItem) -> some View {
+        DrilldownFileRow(item: item, onTap: {
+            onTapItem(item.path)
+        })
     }
     
     // MARK: - Load More Button
@@ -475,12 +555,10 @@ private struct CategoryInventoryRow: View, Equatable {
         lhs.item.id == rhs.item.id &&
         lhs.item.currentSizeBytes == rhs.item.currentSizeBytes &&
         lhs.item.growthTrend == rhs.item.growthTrend &&
-        lhs.showsStableBadge == rhs.showsStableBadge &&
         lhs.isHighlightedFromBar == rhs.isHighlightedFromBar
     }
 
     let item: CategoryInventoryItem
-    let showsStableBadge: Bool
     let isHighlightedFromBar: Bool
     @Binding var highlightedSegmentID: String?
     let onTap: () -> Void
@@ -533,20 +611,6 @@ private struct CategoryInventoryRow: View, Equatable {
                         Capsule()
                             .fill(Color.orange.opacity(0.12))
                     )
-                } else if showsStableBadge {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("Stable")
-                    }
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(Color.green.opacity(0.12))
-                    )
                 }
             }
         }
@@ -583,6 +647,8 @@ private struct SupplementalInventoryRow: View {
     let isHighlightedFromBar: Bool
     @Binding var highlightedSegmentID: String?
 
+    @State private var hoverState = false
+
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: item.icon)
@@ -606,9 +672,98 @@ private struct SupplementalInventoryRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .frame(minHeight: 28)
-        .background(Color.clear) // No hover effect
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill((hoverState || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
+        )
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                hoverState = hovering
+                highlightedSegmentID = hovering ? item.id : nil
+            }
+        }
+    }
+
+    private func formattedBytes(_ bytes: Int64) -> String {
+        let kb = Double(bytes) / 1_000
+        let mb = kb / 1_000
+        let gb = mb / 1_000
+
+        if abs(gb) >= 1 {
+            return "\(String(format: "%.1f", gb)) GB"
+        } else if abs(mb) >= 1 {
+            return "\(String(format: "%.0f", mb)) MB"
+        } else if abs(kb) >= 1 {
+            return "\(String(format: "%.0f", kb)) KB"
+        } else {
+            return "\(bytes) B"
+        }
+    }
+}
+
+private struct DrilldownFileRow: View {
+    let item: GrowthItem
+    let onTap: () -> Void
+
+    @State private var hoverState = false
+
+    private var isLargeFile: Bool {
+        item.currentSizeBytes >= bigFileThreshold
+    }
+
+    private var parentPath: String {
+        let fileURL = URL(fileURLWithPath: item.path)
+        let path = fileURL.deletingLastPathComponent().path
+        return (path as NSString).abbreviatingWithTildeInPath
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                Image(systemName: isLargeFile ? "doc.fill" : "doc")
+                    .font(.system(size: 14))
+                    .foregroundStyle(isLargeFile ? .secondary : .tertiary)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(URL(fileURLWithPath: item.path).lastPathComponent)
+                        .font(.system(size: 12, weight: isLargeFile ? .medium : .regular))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text(parentPath)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                Text(formattedBytes(item.currentSizeBytes))
+                    .font(.system(size: isLargeFile ? 11 : 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isLargeFile ? .secondary : .tertiary)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(minHeight: 34)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
+            )
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(item.path)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                hoverState = hovering
+            }
+        }
     }
 
     private func formattedBytes(_ bytes: Int64) -> String {
@@ -649,8 +804,8 @@ private struct SubcategoryRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(formattedBytes(group.totalBytes))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
                     .fixedSize()
 
                 Image(systemName: "chevron.right")

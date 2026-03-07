@@ -31,12 +31,27 @@ struct SupplementalInventoryItem: Identifiable, Sendable, Equatable {
 }
 
 struct SubcategoryGroup: Identifiable, Sendable, Equatable {
-    let id = UUID()
+    let id: String
     let subcategory: GrowthSubcategory?
     let displayName: String
     let totalBytes: Int64
     let fileCount: Int
     var topFiles: [GrowthItem]
+
+    init(
+        subcategory: GrowthSubcategory?,
+        displayName: String,
+        totalBytes: Int64,
+        fileCount: Int,
+        topFiles: [GrowthItem]
+    ) {
+        self.id = subcategory?.rawValue ?? "__uncategorized__:\(displayName)"
+        self.subcategory = subcategory
+        self.displayName = displayName
+        self.totalBytes = totalBytes
+        self.fileCount = fileCount
+        self.topFiles = topFiles
+    }
     
     /// Whether there are more files to load beyond what's in topFiles
     var hasMoreFiles: Bool {
