@@ -34,9 +34,8 @@ struct CategoryGrowthListView: View {
     @State private var subcategoryLoadTask: Task<Void, Never>? = nil
     @State private var subcategoryLoadToken = UUID()
     @State private var navigationTask: Task<Void, Never>? = nil
-    @State private var transitionDirection: NavigationDirection = .forward
     @State private var displayedScreen: DrilldownScreen? = nil // nil until first appear
-    @State private var outgoingScreen: DrilldownScreen? = nil
+    @State private var activeTransition: ActiveTransition? = nil
     @State private var pageOffset: CGFloat = 0
     @State private var pageWidth: CGFloat = 0
     @State private var pendingTransition: PendingNavigationTransition? = nil
@@ -52,6 +51,12 @@ struct CategoryGrowthListView: View {
     private enum NavigationDirection {
         case forward
         case backward
+    }
+
+    private struct ActiveTransition {
+        let outgoing: DrilldownScreen
+        let incoming: DrilldownScreen
+        let direction: NavigationDirection
     }
 
     private struct PendingNavigationTransition {
@@ -106,13 +111,21 @@ struct CategoryGrowthListView: View {
     var body: some View {
         GeometryReader { geometry in
             Group {
-                if let outgoingScreen {
-                    slidingPages(width: geometry.size.width, outgoingScreen: outgoingScreen)
-                } else if let displayed = displayedScreen {
-                    screenPage(for: displayed, width: geometry.size.width)
+                if let activeTransition {
+                    HStack(spacing: 0) {
+                        if activeTransition.direction == .forward {
+                            screenPage(for: activeTransition.outgoing, width: geometry.size.width)
+                            screenPage(for: activeTransition.incoming, width: geometry.size.width)
+                        } else {
+                            screenPage(for: activeTransition.incoming, width: geometry.size.width)
+                            screenPage(for: activeTransition.outgoing, width: geometry.size.width)
+                        }
+                    }
+                    .offset(x: pageOffset)
+                    .transition(.identity)
                 } else {
-                    // Placeholder while initializing
-                    screenPage(for: currentScreen, width: geometry.size.width)
+                    screenPage(for: displayedScreen ?? currentScreen, width: geometry.size.width)
+                        .transition(.identity)
                 }
             }
             .clipped()
@@ -130,8 +143,7 @@ struct CategoryGrowthListView: View {
 
                 guard let pendingTransition else { return }
                 self.pendingTransition = nil
-                transitionDirection = pendingTransition.direction
-                startNavigationTransition(from: pendingTransition.from, to: pendingTransition.to, width: newWidth)
+                startNavigationTransition(from: pendingTransition.from, to: pendingTransition.to, direction: pendingTransition.direction, width: newWidth)
             }
             .onChange(of: currentScreen) { oldValue, newValue in
                 guard oldValue != newValue else { return }
@@ -143,7 +155,6 @@ struct CategoryGrowthListView: View {
                 }
 
                 let direction: NavigationDirection = newValue.level.rawValue >= oldValue.level.rawValue ? .forward : .backward
-                transitionDirection = direction
                 let resolvedWidth = geometry.size.width > 0 ? geometry.size.width : pageWidth
 
                 guard resolvedWidth > 0 else {
@@ -152,7 +163,7 @@ struct CategoryGrowthListView: View {
                 }
 
                 pendingTransition = nil
-                startNavigationTransition(from: oldValue, to: newValue, width: resolvedWidth)
+                startNavigationTransition(from: oldValue, to: newValue, direction: direction, width: resolvedWidth)
             }
         }
         .frame(maxHeight: maxHeight)
@@ -166,7 +177,7 @@ struct CategoryGrowthListView: View {
         .onDisappear {
             navigationTask?.cancel()
             navigationTask = nil
-            outgoingScreen = nil
+            activeTransition = nil
             pageOffset = 0
             pendingTransition = nil
         }
@@ -210,46 +221,30 @@ struct CategoryGrowthListView: View {
             .id(screen.id)
     }
 
-    @ViewBuilder
-    private func slidingPages(width: CGFloat, outgoingScreen: DrilldownScreen) -> some View {
-        HStack(spacing: 0) {
-            if transitionDirection == .forward {
-                screenPage(for: outgoingScreen, width: width)
-                screenPage(for: displayedScreen ?? currentScreen, width: width)
-            } else {
-                screenPage(for: displayedScreen ?? currentScreen, width: width)
-                screenPage(for: outgoingScreen, width: width)
-            }
-        }
-        .offset(x: pageOffset)
-    }
-
-    private func startNavigationTransition(from previousScreen: DrilldownScreen, to newScreen: DrilldownScreen, width: CGFloat) {
+    private func startNavigationTransition(from previousScreen: DrilldownScreen, to newScreen: DrilldownScreen, direction: NavigationDirection, width: CGFloat) {
         navigationTask?.cancel()
 
         guard width > 0 else {
-            outgoingScreen = nil
+            activeTransition = nil
             displayedScreen = newScreen
             pageOffset = 0
             return
         }
 
-        let direction = transitionDirection
         let initialOffset = direction == .forward ? 0 : -width
         let targetOffset = direction == .forward ? -width : 0
 
-        // Setup state WITHOUT animation — prevents inherited animation context
-        // from causing the first-transition overlap
         var setupTransaction = Transaction()
         setupTransaction.disablesAnimations = true
         withTransaction(setupTransaction) {
-            displayedScreen = newScreen
-            outgoingScreen = previousScreen
+            activeTransition = ActiveTransition(
+                outgoing: previousScreen,
+                incoming: newScreen,
+                direction: direction
+            )
             pageOffset = initialOffset
         }
 
-        // Animate synchronously (not in a Task) so setup and animation
-        // are in the same update cycle
         withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
             pageOffset = targetOffset
         }
@@ -258,7 +253,8 @@ struct CategoryGrowthListView: View {
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
 
-            outgoingScreen = nil
+            displayedScreen = newScreen
+            activeTransition = nil
             pageOffset = 0
         }
     }
@@ -565,12 +561,17 @@ struct CategoryGrowthListView: View {
         subcategoryLoadToken = token
         let needsSubcategoryLoad = manager.subcategoryGroupsByCategory[item.category] == nil
 
-        isLoadingSubcategories = needsSubcategoryLoad
-
-        manager.selectedInventoryCategory = item
-        manager.selectedSubcategory = nil
-        manager.isDrilledDown = true
-        manager.isSubcategoryDrillDown = false
+        // Suppress implicit animations from state mutations so only the
+        // explicit slide animation in startNavigationTransition runs.
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) {
+            isLoadingSubcategories = needsSubcategoryLoad
+            manager.selectedInventoryCategory = item
+            manager.selectedSubcategory = nil
+            manager.isDrilledDown = true
+            manager.isSubcategoryDrillDown = false
+        }
 
         let selectedCategory = item.category
         let loadTask = Task { @MainActor in
