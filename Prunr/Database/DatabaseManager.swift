@@ -368,6 +368,44 @@ final class DatabaseManager {
                 """)
         }
 
+        // Migration v17: Add persistent path classification for SQL-side category filtering
+        migrator.registerMigration("v17_add_path_classification") { db in
+            try db.create(table: "pathClassification", ifNotExists: true) { t in
+                t.column("pathId", .integer)
+                    .notNull()
+                    .primaryKey()
+                    .references("paths", onDelete: .cascade)
+                t.column("category", .text).notNull()
+                t.column("subcategory", .text).notNull().defaults(to: "")
+            }
+
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_pathClassification_category_subcategory_pathId
+                ON pathClassification(category, subcategory, pathId)
+                """)
+
+            let upsert = try db.makeStatement(sql: """
+                INSERT INTO pathClassification (pathId, category, subcategory)
+                VALUES (?, ?, ?)
+                ON CONFLICT(pathId) DO UPDATE SET
+                    category = excluded.category,
+                    subcategory = excluded.subcategory
+                """)
+
+            let rows = try Row.fetchAll(db, sql: "SELECT id, path FROM paths")
+            for row in rows {
+                guard
+                    let pathId: Int64 = row["id"],
+                    let path: String = row["path"]
+                else {
+                    continue
+                }
+                let category = GrowthCategory.categorize(path: path)
+                let subcategory = GrowthCategory.subcategorize(path: path)?.rawValue ?? ""
+                try upsert.execute(arguments: [pathId, category.rawValue, subcategory])
+            }
+        }
+
         try migrator.migrate(dbPool)
     }
 }
@@ -441,17 +479,15 @@ extension DatabaseManager {
                 let endIndex = min(startIndex + batchSize, entries.count)
                 let batch = entries[startIndex..<endIndex]
 
-                let uniquePaths = Set(batch.map { $0.path })
-                var pathIdByPath = try fetchPathIds(for: Array(uniquePaths), db: db)
+                let normalizedBatch = batch.map { (path: Self.normalizePath($0.path), sizeBytes: $0.sizeBytes) }
+                let uniquePaths = Array(Set(normalizedBatch.map(\.path)))
+                let pathIdByPath = try fetchPathIds(for: uniquePaths, db: db)
 
-                for scanResult in batch {
-                    if let pathId = pathIdByPath[scanResult.path] {
-                        try statement.execute(arguments: [snapshotId, pathId, scanResult.sizeBytes])
-                    } else {
-                        let pathId = try getOrCreatePathId(path: scanResult.path, db: db)
-                        pathIdByPath[scanResult.path] = pathId
-                        try statement.execute(arguments: [snapshotId, pathId, scanResult.sizeBytes])
+                for scanResult in normalizedBatch {
+                    guard let pathId = pathIdByPath[scanResult.path] else {
+                        throw DatabaseError.pathLookupFailed(scanResult.path)
                     }
+                    try statement.execute(arguments: [snapshotId, pathId, scanResult.sizeBytes])
                 }
             }
         }
@@ -904,7 +940,11 @@ extension DatabaseManager {
                     FROM workingSetEntry wse
                     JOIN paths p ON p.id = wse.pathId
                     WHERE wse.trackedPathId = ?
-                      AND (p.path = ? OR p.path LIKE ?)
+                      AND wse.pathId IN (
+                        SELECT id
+                        FROM paths
+                        WHERE path = ? OR path LIKE ?
+                      )
                     """,
                 arguments: [trackedPathIdString, normalizedRoot, rootPrefix + "%"]
             )
@@ -924,7 +964,7 @@ extension DatabaseManager {
             }
 
             let uniquePaths = Array(Set(newSizes.keys))
-            var pathIdByPath = try fetchPathIds(for: uniquePaths, db: db)
+            let pathIdByPath = try fetchPathIds(for: uniquePaths, db: db)
 
             let allPaths = Set(oldSizes.keys).union(newSizes.keys)
             var deltasByCategory: [JournalDeltaKey: Int64] = [:]
@@ -967,13 +1007,8 @@ extension DatabaseManager {
             )
 
             for (path, sizeBytes) in newSizes {
-                let pathId: Int64
-                if let existing = pathIdByPath[path] {
-                    pathId = existing
-                } else {
-                    let created = try getOrCreatePathId(path: path, db: db)
-                    pathIdByPath[path] = created
-                    pathId = created
+                guard let pathId = pathIdByPath[path] else {
+                    throw DatabaseError.pathLookupFailed(path)
                 }
                 try statement.execute(arguments: [trackedPathIdString, pathId, sizeBytes, updatedAt])
             }
@@ -1093,6 +1128,43 @@ extension DatabaseManager {
         }
     }
 
+    func fetchGrowthJournalTotalsBySubcategory(
+        trackedPathId: UUID,
+        category: GrowthCategory,
+        since: Date
+    ) async throws -> [GrowthSubcategory?: Int64] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT subcategory, COALESCE(SUM(deltaBytes), 0) AS totalDelta
+                    FROM growthJournalBucket
+                    WHERE trackedPathId = ? AND category = ? AND bucketStart >= ?
+                    GROUP BY subcategory
+                    """,
+                arguments: [trackedPathIdString, category.rawValue, since]
+            )
+
+            var result: [GrowthSubcategory?: Int64] = [:]
+            for row in rows {
+                let rawSubcategory: String? = row["subcategory"]
+                let subcategory = rawSubcategory.flatMap { GrowthSubcategory(rawValue: $0) }
+                let totalDelta: Int64 = row["totalDelta"] ?? 0
+                if totalDelta > 0 {
+                    result[subcategory, default: 0] += totalDelta
+                }
+            }
+
+            return result
+        }
+    }
+
     func pruneGrowthJournalBuckets(olderThan cutoff: Date) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
@@ -1140,12 +1212,31 @@ extension DatabaseManager {
         return path.hasSuffix("/") ? String(path.dropLast()) : path
     }
 
+    private func upsertPathClassifications(pathIdByPath: [String: Int64], db: Database) throws {
+        guard !pathIdByPath.isEmpty else { return }
+
+        let statement = try db.makeStatement(sql: """
+            INSERT INTO pathClassification (pathId, category, subcategory)
+            VALUES (?, ?, ?)
+            ON CONFLICT(pathId) DO UPDATE SET
+                category = excluded.category,
+                subcategory = excluded.subcategory
+            """)
+
+        for (path, pathId) in pathIdByPath {
+            let category = GrowthCategory.categorize(path: path)
+            let subcategory = GrowthCategory.subcategorize(path: path)?.rawValue ?? ""
+            try statement.execute(arguments: [pathId, category.rawValue, subcategory])
+        }
+    }
+
     private func getOrCreatePathId(path: String, db: Database) throws -> Int64 {
         let normalizedPath = Self.normalizePath(path)
         try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [normalizedPath])
         // Use COLLATE NOCASE for lookup to match the table's unique constraint
         if let row = try Row.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ? COLLATE NOCASE", arguments: [normalizedPath]),
            let id: Int64 = row["id"] {
+            try upsertPathClassifications(pathIdByPath: [normalizedPath: id], db: db)
             return id
         }
         throw DatabaseError.notInitialized
@@ -1154,25 +1245,44 @@ extension DatabaseManager {
     private func fetchPathIds(for paths: [String], db: Database) throws -> [String: Int64] {
         guard !paths.isEmpty else { return [:] }
 
-        // Normalize all paths before insertion
-        let normalizedPaths = paths.map { Self.normalizePath($0) }
+        let normalizedPaths = Array(Set(paths.map { Self.normalizePath($0) }))
+        let pathChunkSize = 500
 
-        for normalizedPath in normalizedPaths {
-            try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [normalizedPath])
+        for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
+            let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
+            let chunk = Array(normalizedPaths[startIndex..<endIndex])
+            let values = Array(repeating: "(?)", count: chunk.count).joined(separator: ", ")
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO paths (path) VALUES \(values)",
+                arguments: StatementArguments(chunk)
+            )
         }
 
-        let placeholders = Array(repeating: "?", count: normalizedPaths.count).joined(separator: ", ")
-        // Use COLLATE NOCASE for lookup to match the table's unique constraint
-        let sql = "SELECT id, path FROM paths WHERE path IN (\(placeholders)) COLLATE NOCASE"
-        let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(normalizedPaths))
-
+        let requestedByLowercasedPath = Dictionary(uniqueKeysWithValues: normalizedPaths.map { ($0.lowercased(), $0) })
         var result: [String: Int64] = [:]
-        for row in rows {
-            if let path: String = row["path"],
-               let id: Int64 = row["id"] {
-                result[path] = id
+
+        for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
+            let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
+            let chunk = Array(normalizedPaths[startIndex..<endIndex])
+            let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+            let sql = "SELECT id, path FROM paths WHERE path IN (\(placeholders)) COLLATE NOCASE"
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(chunk))
+
+            for row in rows {
+                guard
+                    let storedPath: String = row["path"],
+                    let pathId: Int64 = row["id"]
+                else {
+                    continue
+                }
+
+                if let normalizedPath = requestedByLowercasedPath[storedPath.lowercased()] {
+                    result[normalizedPath] = pathId
+                }
             }
         }
+
+        try upsertPathClassifications(pathIdByPath: result, db: db)
         return result
     }
 }
@@ -1203,53 +1313,51 @@ extension DatabaseManager {
         }
 
         let trackedPathIdString = trackedPathId.uuidString
+        let subcategoryRawValue = subcategory?.rawValue ?? ""
+        let hasSubcategoryFilter = subcategory == nil ? 0 : 1
 
         return try await dbPool.read { db in
-            // Find files where working set size > snapshot size, or file is new (not in snapshot)
             let rows = try Row.fetchAll(
                 db,
                 sql: """
                     SELECT
                         p.path AS path,
                         wse.sizeBytes AS currentSizeBytes,
-                        COALESCE(se.sizeBytes, 0) AS snapshotSizeBytes,
                         wse.sizeBytes - COALESCE(se.sizeBytes, 0) AS growthBytes
                     FROM workingSetEntry wse
+                    JOIN pathClassification pc ON pc.pathId = wse.pathId
                     JOIN paths p ON p.id = wse.pathId
                     LEFT JOIN snapshotEntry se
                         ON se.pathId = wse.pathId
                         AND se.snapshotId = ?
                     WHERE wse.trackedPathId = ?
                         AND wse.sizeBytes > COALESCE(se.sizeBytes, 0)
-                    ORDER BY (wse.sizeBytes - COALESCE(se.sizeBytes, 0)) DESC
+                        AND pc.category = ?
+                        AND (? = 0 OR pc.subcategory = ?)
+                    ORDER BY growthBytes DESC
+                    LIMIT ?
                     """,
-                arguments: [snapshotId, trackedPathIdString]
+                arguments: [
+                    snapshotId,
+                    trackedPathIdString,
+                    category.rawValue,
+                    hasSubcategoryFilter,
+                    subcategoryRawValue,
+                    limit
+                ]
             )
 
-            var results: [GrowthContributor] = []
-            for row in rows {
+            return rows.map { row in
                 let path: String = row["path"] ?? ""
                 let currentSizeBytes: Int64 = row["currentSizeBytes"] ?? 0
                 let growthBytes: Int64 = row["growthBytes"] ?? 0
 
-                let fileCategory = GrowthCategory.categorize(path: path)
-                guard fileCategory == category else { continue }
-
-                if let subcategory {
-                    let fileSubcategory = GrowthSubcategory.subcategorize(path: path)
-                    guard fileSubcategory == subcategory else { continue }
-                }
-
-                results.append(GrowthContributor(
+                return GrowthContributor(
                     path: path,
                     currentSizeBytes: currentSizeBytes,
                     growthBytes: growthBytes
-                ))
-
-                if results.count >= limit { break }
+                )
             }
-
-            return results
         }
     }
 
@@ -1269,27 +1377,28 @@ extension DatabaseManager {
                 db,
                 sql: """
                     SELECT
-                        p.path AS path,
-                        wse.sizeBytes - COALESCE(se.sizeBytes, 0) AS growthBytes
+                        pc.subcategory AS subcategory,
+                        COALESCE(SUM(wse.sizeBytes - COALESCE(se.sizeBytes, 0)), 0) AS growthBytes
                     FROM workingSetEntry wse
-                    JOIN paths p ON p.id = wse.pathId
+                    JOIN pathClassification pc ON pc.pathId = wse.pathId
                     LEFT JOIN snapshotEntry se
                         ON se.pathId = wse.pathId
                         AND se.snapshotId = ?
                     WHERE wse.trackedPathId = ?
                         AND wse.sizeBytes > COALESCE(se.sizeBytes, 0)
+                        AND pc.category = ?
+                    GROUP BY pc.subcategory
                     """,
-                arguments: [snapshotId, trackedPathIdString]
+                arguments: [snapshotId, trackedPathIdString, category.rawValue]
             )
 
             var totals: [GrowthSubcategory?: Int64] = [:]
             for row in rows {
-                let path: String = row["path"] ?? ""
                 let growthBytes: Int64 = row["growthBytes"] ?? 0
                 guard growthBytes > 0 else { continue }
-                guard GrowthCategory.categorize(path: path) == category else { continue }
 
-                let subcategory = GrowthCategory.subcategorize(path: path)
+                let rawSubcategory: String = row["subcategory"] ?? ""
+                let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
                 totals[subcategory, default: 0] += growthBytes
             }
 
@@ -1304,6 +1413,72 @@ struct GrowthContributor: Identifiable, Sendable, Equatable {
     let path: String
     let currentSizeBytes: Int64
     let growthBytes: Int64
+}
+
+// MARK: - Snapshot Diff Growth Contributors
+
+extension DatabaseManager {
+
+    /// Compares two snapshots to find files that grew between them.
+    /// Used as a fallback when working-set comparison returns nothing.
+    func fetchSnapshotDiffContributors(
+        latestSnapshotId: Int64,
+        previousSnapshotId: Int64,
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        limit: Int = 50
+    ) async throws -> [GrowthContributor] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let subcategoryRawValue = subcategory?.rawValue ?? ""
+        let hasSubcategoryFilter = subcategory == nil ? 0 : 1
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT
+                        p.path AS path,
+                        newSe.sizeBytes AS currentSizeBytes,
+                        newSe.sizeBytes - COALESCE(oldSe.sizeBytes, 0) AS growthBytes
+                    FROM snapshotEntry newSe
+                    JOIN pathClassification pc ON pc.pathId = newSe.pathId
+                    JOIN paths p ON p.id = newSe.pathId
+                    LEFT JOIN snapshotEntry oldSe
+                        ON oldSe.pathId = newSe.pathId
+                        AND oldSe.snapshotId = ?
+                    WHERE newSe.snapshotId = ?
+                        AND newSe.sizeBytes > COALESCE(oldSe.sizeBytes, 0)
+                        AND pc.category = ?
+                        AND (? = 0 OR pc.subcategory = ?)
+                    ORDER BY growthBytes DESC
+                    LIMIT ?
+                    """,
+                arguments: [
+                    previousSnapshotId,
+                    latestSnapshotId,
+                    category.rawValue,
+                    hasSubcategoryFilter,
+                    subcategoryRawValue,
+                    limit
+                ]
+            )
+
+            return rows.map { row in
+                let path: String = row["path"] ?? ""
+                let currentSizeBytes: Int64 = row["currentSizeBytes"] ?? 0
+                let growthBytes: Int64 = row["growthBytes"] ?? 0
+
+                return GrowthContributor(
+                    path: path,
+                    currentSizeBytes: currentSizeBytes,
+                    growthBytes: growthBytes
+                )
+            }
+        }
+    }
 }
 
 // MARK: - Delta Calculation
@@ -1383,6 +1558,7 @@ extension DatabaseManager {
     enum DatabaseError: Error, LocalizedError {
         case directoryNotFound
         case notInitialized
+        case pathLookupFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -1390,6 +1566,8 @@ extension DatabaseManager {
                 return "Could not find Application Support directory"
             case .notInitialized:
                 return "Database has not been initialized"
+            case .pathLookupFailed(let path):
+                return "Failed to resolve path ID for: \(path)"
             }
         }
     }

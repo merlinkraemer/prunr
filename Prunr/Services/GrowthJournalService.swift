@@ -53,6 +53,26 @@ actor GrowthJournalService {
         }
     }
 
+    func subcategoryGrowthTotals(
+        trackedPath: TrackedPath,
+        category: GrowthCategory,
+        retentionDays: Int
+    ) async -> [GrowthSubcategory?: Int64] {
+        let retentionWindow = TimeInterval(max(1, retentionDays)) * 24 * 60 * 60
+        let cutoff = Date().addingTimeInterval(-retentionWindow)
+
+        do {
+            return try await db.fetchGrowthJournalTotalsBySubcategory(
+                trackedPathId: trackedPath.id,
+                category: category,
+                since: cutoff
+            )
+        } catch {
+            print("[GrowthJournalService] Failed to fetch subcategory growth totals: \(error)")
+            return [:]
+        }
+    }
+
     func prune(retentionDays: Int) async {
         let retentionWindow = TimeInterval(max(1, retentionDays)) * 24 * 60 * 60
         let cutoff = Date().addingTimeInterval(-retentionWindow)

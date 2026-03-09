@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Actor that recursively scans directories and streams scan results
 ///
@@ -6,6 +7,8 @@ import Foundation
 actor FileScanner {
 
     // MARK: - Properties
+
+    private nonisolated static let logger = Logger(subsystem: "com.prunr.FileScanner", category: "Scanning")
 
     /// Resource keys to fetch in ONE call per file (optimized)
     private let resourceKeys: Set<URLResourceKey> = [
@@ -68,8 +71,9 @@ actor FileScanner {
                 }
 
                 // Create the enumerator with proper error handling
-                let errorHandler: (URL, Error) -> Bool = { _, _ in
-                    true // Continue on errors
+                let errorHandler: (URL, Error) -> Bool = { url, error in
+                    Self.logger.error("Directory enumerator error at \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return true // Continue on errors
                 }
 
                 guard let enumerator = fileManager.enumerator(
@@ -103,7 +107,7 @@ actor FileScanner {
 
                         // Log progress every 5000 files to detect hangs
                         if count - lastLogCount >= logInterval {
-                            print("[FileScanner] Scanned \(count) files, current: \(path)")
+                            Self.logger.debug("Scanned \(count) files, current: \(path, privacy: .public)")
                             lastLogCount = count
                         }
 
@@ -113,7 +117,7 @@ actor FileScanner {
                         }
                     }
                 }
-                print("[FileScanner] Scan complete: \(count) files total")
+                Self.logger.debug("Scan complete: \(count) files total")
 
                 continuation.finish()
             }
@@ -159,7 +163,7 @@ actor FileScanner {
             if resourceValues.isUbiquitousItem == true {
                 let downloadStatus = resourceValues.ubiquitousItemDownloadingStatus
                 if downloadStatus != URLUbiquitousItemDownloadingStatus.current {
-                    print("[FileScanner] Skipped non-local iCloud file: \(url.path)")
+                    Self.logger.debug("Skipped non-local iCloud file: \(url.path, privacy: .public)")
                     return nil
                 }
             }
@@ -169,13 +173,14 @@ actor FileScanner {
             if let totalSize = resourceValues.totalFileAllocatedSize {
                 sizeBytes = Int64(totalSize)
             } else {
-                print("[FileScanner] Skipped file with nil allocated size: \(url.lastPathComponent)")
+                Self.logger.debug("Skipped file with nil allocated size: \(url.lastPathComponent, privacy: .public)")
                 return nil
             }
 
             return ScanResult(path: url.path, sizeBytes: sizeBytes)
 
         } catch {
+            Self.logger.error("Failed to process path \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }

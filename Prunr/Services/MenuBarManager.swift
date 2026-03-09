@@ -100,6 +100,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var isSubcategoryDrillDown: Bool = false
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
     var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
+    var growthContributorCacheGeneration: UInt64 = 0
     private var currentInventorySnapshotID: Int64?
     var monitoredPathName: String = ""
     var enabledPathCount: Int {
@@ -245,7 +246,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var fileEventsWatcher: FSEventsWatcher?
     private var watchedPaths: [String] = []
     private var autoScanTask: Task<Void, Never>?
+    private enum AutoScanTrigger {
+        case fileEvent
+        case fallbackTimer
+    }
+    private var pendingFallbackAutoScanTick = false
     private var recentChangeTask: Task<Void, Never>?
+    private var isInventoryRefreshInProgress = false
+    private var pendingOverflowFullScan = false
     private var pendingRecentChangePaths: Set<URL> = []
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
@@ -472,7 +480,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             stableTotalBytes = 0
             categoryItems = []
             subcategoryGroupsByCategory = [:]
-            growthContributorsBySubcategory = [:]
+            invalidateGrowthContributorCache()
             selectedInventoryCategory = nil
             selectedSubcategory = nil
             isDrilledDown = false
@@ -528,6 +536,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             errorMessage = "No paths enabled in Settings"
             return
         }
+        guard beginInventoryRefresh() else { return }
+        defer { endInventoryRefresh() }
 
         isLoading = true
         errorMessage = nil
@@ -627,7 +637,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             // Refresh storage space after scan (ISS-042)
             updateFreeSpace()
-            hasPendingRecentChanges = false
+            hasPendingRecentChanges = !pendingRecentChangePaths.isEmpty
         } catch {
             if let baselineError = error as? BaselineService.BaselineError,
                case .insufficientSnapshots = baselineError {
@@ -638,7 +648,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 stableTotalBytes = 0
                 categoryItems = []
                 subcategoryGroupsByCategory = [:]
-            growthContributorsBySubcategory = [:]
+                invalidateGrowthContributorCache()
                 currentInventorySnapshotID = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
@@ -651,7 +661,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 stableTotalBytes = 0
                 categoryItems = []
                 subcategoryGroupsByCategory = [:]
-            growthContributorsBySubcategory = [:]
+                invalidateGrowthContributorCache()
                 currentInventorySnapshotID = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
@@ -710,6 +720,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     func loadInventoryFromLatestSnapshot() async {
+        guard beginInventoryRefresh() else { return }
+        defer { endInventoryRefresh() }
+
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
             noBaseline = true
@@ -756,6 +769,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     func refreshVisibleInventory() async {
         guard !isLoading, !isAutoScanning else { return }
+        guard !isInventoryRefreshInProgress else { return }
         lastAutomaticScanAttemptAt = Date()
         isAutoScanning = true
         await loadInventory(isAutomatic: true)
@@ -829,11 +843,24 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 return []
             }
 
-            let growthTotals = await baselineService.getSubcategoryGrowthTotals(
+            // Try working-set-based growth first, then fall back to journal data
+            var growthTotals = await baselineService.getSubcategoryGrowthTotals(
                 trackedPathId: trackedPath.id,
                 snapshotId: latestSnapshotId,
                 category: category
             )
+
+            // If working set comparison found no growth, use journal data
+            if growthTotals.isEmpty {
+                let journalTotals = await growthJournalService.subcategoryGrowthTotals(
+                    trackedPath: trackedPath,
+                    category: category,
+                    retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+                )
+                if !journalTotals.isEmpty {
+                    growthTotals = journalTotals
+                }
+            }
 
             let hydratedGroups = groups.map { group in
                 SubcategoryGroup(
@@ -935,25 +962,79 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Loads growth contributors for a specific subcategory group
     func loadGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) async -> [GrowthContributor] {
-        if let cached = growthContributorsBySubcategory[group.id] {
-            return cached
-        }
-
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else { return [] }
 
         do {
             let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
             guard let latestSnapshotId = snapshots.first?.id else { return [] }
+            let cacheKey = growthContributorCacheKey(
+                snapshotId: latestSnapshotId,
+                category: category,
+                group: group
+            )
 
-            let contributors = await baselineService.getGrowthContributors(
+            if let cached = growthContributorsBySubcategory[cacheKey] {
+                return cached
+            }
+
+            let latestEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: latestSnapshotId)
+            let journalGrowthLimit = await growthContributorJournalLimit(
+                trackedPath: trackedPath,
+                category: category,
+                subcategory: group.subcategory
+            )
+
+            print("[GrowthDebug] \(snapshots.count) snapshots for tracked path, latest ID=\(latestSnapshotId), entries=\(latestEntryCount)")
+
+            // Try working-set comparison first
+            var contributors = await baselineService.getGrowthContributors(
                 trackedPathId: trackedPath.id,
                 snapshotId: latestSnapshotId,
                 category: category,
                 subcategory: group.subcategory
             )
+            print("[GrowthDebug] Working-set comparison returned \(contributors.count) contributors for \(category.rawValue)/\(group.subcategory?.rawValue ?? "nil")")
 
-            growthContributorsBySubcategory[group.id] = contributors
+            // Fallback: compare latest snapshot with the most recent comparable snapshot.
+            if contributors.isEmpty,
+               let previousSnapshotId = try await fallbackSnapshotDiffBaseline(
+                from: snapshots,
+                latestSnapshotId: latestSnapshotId,
+                latestEntryCount: latestEntryCount
+               ) {
+                print("[GrowthDebug] Falling back to snapshot diff: latest=\(latestSnapshotId) vs previous=\(previousSnapshotId)")
+                contributors = try await DatabaseManager.shared.fetchSnapshotDiffContributors(
+                    latestSnapshotId: latestSnapshotId,
+                    previousSnapshotId: previousSnapshotId,
+                    category: category,
+                    subcategory: group.subcategory
+                )
+                print("[GrowthDebug] Snapshot diff returned \(contributors.count) contributors")
+                for c in contributors.prefix(5) {
+                    print("[GrowthDebug]   \(URL(fileURLWithPath: c.path).lastPathComponent): current=\(c.currentSizeBytes), growth=\(c.growthBytes)")
+                }
+            } else if contributors.isEmpty,
+                      let previousSnapshotId = snapshots.dropFirst().compactMap(\.id).first,
+                      let journalGrowthLimit,
+                      previousSnapshotId != latestSnapshotId {
+                print("[GrowthDebug] Using bounded snapshot diff against snapshot \(previousSnapshotId) with journal target \(journalGrowthLimit)")
+                contributors = try await DatabaseManager.shared.fetchSnapshotDiffContributors(
+                    latestSnapshotId: latestSnapshotId,
+                    previousSnapshotId: previousSnapshotId,
+                    category: category,
+                    subcategory: group.subcategory
+                )
+                contributors = boundedGrowthContributors(
+                    contributors,
+                    targetGrowthBytes: journalGrowthLimit
+                )
+                print("[GrowthDebug] Bounded snapshot diff returned \(contributors.count) contributors")
+            } else if contributors.isEmpty {
+                print("[GrowthDebug] Skipping snapshot diff fallback: no comparable previous snapshot")
+            }
+
+            growthContributorsBySubcategory[cacheKey] = contributors
             return contributors
         } catch {
             print("[MenuBarManager] Failed loading growth contributors: \(error)")
@@ -1119,11 +1200,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         if invalidateSubcategoryCache {
             subcategoryGroupsByCategory = [:]
-            growthContributorsBySubcategory = [:]
         } else {
             let validCategories = Set((growingCategories + stableCategories).map(\.category))
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
         }
+        invalidateGrowthContributorCache()
 
         reconcileDrillDownSelection()
     }
@@ -1134,12 +1215,98 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         stableTotalBytes = 0
         categoryItems = []
         subcategoryGroupsByCategory = [:]
+        invalidateGrowthContributorCache()
         selectedInventoryCategory = nil
         selectedSubcategory = nil
         isDrilledDown = false
         isSubcategoryDrillDown = false
         reconciliationResult = nil
         currentInventorySnapshotID = nil
+    }
+
+    private func invalidateGrowthContributorCache() {
+        growthContributorsBySubcategory = [:]
+        growthContributorCacheGeneration &+= 1
+    }
+
+    private func growthContributorCacheKey(
+        snapshotId: Int64,
+        category: GrowthCategory,
+        group: SubcategoryGroup
+    ) -> String {
+        "\(snapshotId):\(category.rawValue):\(group.id)"
+    }
+
+    private func growthContributorJournalLimit(
+        trackedPath: TrackedPath,
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?
+    ) async -> Int64? {
+        let totals = await growthJournalService.subcategoryGrowthTotals(
+            trackedPath: trackedPath,
+            category: category,
+            retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+        )
+
+        guard let total = totals[subcategory], total > 0 else {
+            return nil
+        }
+
+        return total
+    }
+
+    private func boundedGrowthContributors(
+        _ contributors: [GrowthContributor],
+        targetGrowthBytes: Int64
+    ) -> [GrowthContributor] {
+        guard targetGrowthBytes > 0 else { return contributors }
+
+        var bounded: [GrowthContributor] = []
+        var accumulatedGrowth: Int64 = 0
+
+        for contributor in contributors {
+            bounded.append(contributor)
+            accumulatedGrowth += max(0, contributor.growthBytes)
+
+            if accumulatedGrowth >= targetGrowthBytes {
+                break
+            }
+        }
+
+        return bounded
+    }
+
+    private func fallbackSnapshotDiffBaseline(
+        from snapshots: [Snapshot],
+        latestSnapshotId: Int64,
+        latestEntryCount: Int
+    ) async throws -> Int64? {
+        guard latestEntryCount > 0 else { return nil }
+
+        let minimumComparableEntryCount = latestEntryCount / 2
+
+        for snapshot in snapshots.dropFirst() {
+            guard let candidateSnapshotId = snapshot.id else { continue }
+
+            let candidateEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: candidateSnapshotId)
+            if candidateEntryCount <= 100 {
+                print("[GrowthDebug] Skipping snapshot \(candidateSnapshotId): only \(candidateEntryCount) entries")
+                continue
+            }
+
+            if candidateEntryCount < minimumComparableEntryCount {
+                print("[GrowthDebug] Skipping snapshot \(candidateSnapshotId): \(candidateEntryCount) entries vs latest \(latestEntryCount)")
+                continue
+            }
+
+            if candidateSnapshotId == latestSnapshotId {
+                continue
+            }
+
+            return candidateSnapshotId
+        }
+
+        return nil
     }
 
     private func updateMonitoredPathName() {
@@ -1285,8 +1452,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     func updateFreeSpace() {
-        let free = DiskSpaceService.shared.getFreeSpace()
-        let total = DiskSpaceService.shared.getTotalSpace()
+        let targetURL = primaryTrackedPath()?.url ?? FileManager.default.homeDirectoryForCurrentUser
+        let free = DiskSpaceService.shared.getFreeSpace(for: targetURL)
+        let total = DiskSpaceService.shared.getTotalSpace(for: targetURL)
 
         self.freeBytes = free
         self.totalBytes = total
@@ -1387,7 +1555,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 self?.updateFreeSpace()
                 self?.configureFileWatcherIfNeeded()
                 if self?.useFallbackAutoScan == true {
-                    self?.scheduleAutomaticScan(resetDebounce: false)
+                    self?.scheduleAutomaticScan(resetDebounce: false, trigger: .fallbackTimer)
                 }
             }
         }
@@ -1708,7 +1876,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 self.lastFileEventAt = Date()
                 self.hasPendingRecentChanges = true
                 self.scheduleRecentChangeRefresh(changedPaths)
-                self.scheduleAutomaticScan(resetDebounce: false)
+                self.scheduleAutomaticScan(resetDebounce: false, trigger: .fileEvent)
             }
         }
         fileEventsWatcher = watcher
@@ -1724,20 +1892,19 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         pendingRecentChangePaths.formUnion(changedPaths.map(\.standardizedFileURL))
-        recentChangeTask?.cancel()
-
-        let debounce = isUnderDiskPressure ? pressureRecentChangeDebounce : normalRecentChangeDebounce
-        recentChangeTask = Task { @MainActor in
-            defer { recentChangeTask = nil }
-            try? await Task.sleep(for: .milliseconds(Int(debounce * 1000)))
-            guard !Task.isCancelled else { return }
-            await performRecentChangeRefresh()
-        }
+        hasPendingRecentChanges = true
+        scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
     }
 
     private func performRecentChangeRefresh() async {
-        guard !pendingRecentChangePaths.isEmpty else { return }
-        guard !isLoading else { return }
+        guard !pendingRecentChangePaths.isEmpty else {
+            hasPendingRecentChanges = false
+            return
+        }
+        guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning else {
+            scheduleRecentChangeRefreshTask(after: 5)
+            return
+        }
         guard let trackedPath = primaryTrackedPath() else {
             pendingRecentChangePaths.removeAll()
             hasPendingRecentChanges = false
@@ -1747,6 +1914,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let changedPaths = pendingRecentChangePaths
         pendingRecentChangePaths.removeAll()
         isProcessingRecentChanges = true
+        defer {
+            isProcessingRecentChanges = false
+            hasPendingRecentChanges = !pendingRecentChangePaths.isEmpty
+        }
 
         let result = await recentChangeService.refreshChangedPaths(changedPaths, trackedPath: trackedPath)
         switch result {
@@ -1755,32 +1926,39 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             await loadInventoryFromLatestSnapshot()
         case .needsFullScan:
             print("[MenuBarManager] Refresh scan overflowed — triggering full scan")
-            Task { await loadInventory() }
+            await requestOverflowFullScan()
         case .noChanges:
             break
         }
-
-        isProcessingRecentChanges = false
-        hasPendingRecentChanges = false
     }
 
-    private func scheduleAutomaticScan(resetDebounce: Bool = true) {
+    private func scheduleAutomaticScan(resetDebounce: Bool = true, trigger: AutoScanTrigger = .fileEvent) {
         guard !watchedPaths.isEmpty || useFallbackAutoScan else { return }
         if Date().timeIntervalSince(appLaunchAt) < startupAutoScanGracePeriod {
             return
         }
+
         if resetDebounce {
             autoScanTask?.cancel()
         } else if autoScanTask != nil {
+            if trigger == .fallbackTimer {
+                pendingFallbackAutoScanTick = true
+            }
             return
         }
 
         let debounce = isUnderDiskPressure ? pressureAutoScanDebounce : normalAutoScanDebounce
         autoScanTask = Task { @MainActor in
-            defer { autoScanTask = nil }
+            defer {
+                autoScanTask = nil
+                if pendingFallbackAutoScanTick {
+                    pendingFallbackAutoScanTick = false
+                    scheduleAutomaticScan(resetDebounce: false, trigger: .fallbackTimer)
+                }
+            }
             try? await Task.sleep(for: .milliseconds(Int(debounce * 1000)))
             guard !Task.isCancelled else { return }
-            guard !isLoading else {
+            guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning else {
                 return
             }
 
@@ -1797,11 +1975,56 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
 
             lastAutomaticScanAttemptAt = Date()
-
-            isAutoScanning = true
-            await loadInventory(isAutomatic: true)
-            isAutoScanning = false
+            await runAutomaticFullScan()
         }
+    }
+
+    private var currentRecentChangeDebounce: TimeInterval {
+        isUnderDiskPressure ? pressureRecentChangeDebounce : normalRecentChangeDebounce
+    }
+
+    private func scheduleRecentChangeRefreshTask(after delay: TimeInterval) {
+        recentChangeTask?.cancel()
+        recentChangeTask = Task { @MainActor in
+            defer { recentChangeTask = nil }
+            try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+            guard !Task.isCancelled else { return }
+            await performRecentChangeRefresh()
+        }
+    }
+
+    private func beginInventoryRefresh() -> Bool {
+        guard !isInventoryRefreshInProgress else { return false }
+        isInventoryRefreshInProgress = true
+        return true
+    }
+
+    private func endInventoryRefresh() {
+        isInventoryRefreshInProgress = false
+        if pendingOverflowFullScan {
+            Task { @MainActor [weak self] in
+                await self?.runAutomaticFullScanIfPossible()
+            }
+        }
+    }
+
+    private func requestOverflowFullScan() async {
+        pendingOverflowFullScan = true
+        await runAutomaticFullScanIfPossible()
+    }
+
+    private func runAutomaticFullScanIfPossible() async {
+        guard pendingOverflowFullScan else { return }
+        guard !isAutoScanning, !isLoading, !isInventoryRefreshInProgress else { return }
+        pendingOverflowFullScan = false
+        await runAutomaticFullScan()
+    }
+
+    private func runAutomaticFullScan() async {
+        guard !isAutoScanning, !isLoading, !isInventoryRefreshInProgress else { return }
+        isAutoScanning = true
+        defer { isAutoScanning = false }
+        await loadInventory(isAutomatic: true)
     }
 
     private func shouldIgnoreAutoScanChanges(_ changedPaths: Set<URL>) -> Bool {
@@ -1839,5 +2062,19 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         return roots
     }
 
-    deinit {}
+    deinit {
+        MainActor.assumeIsolated {
+            updateTimer?.invalidate()
+            activityPulseTimer?.invalidate()
+            autoScanTask?.cancel()
+            recentChangeTask?.cancel()
+
+            let watcher = fileEventsWatcher
+            if let watcher {
+                Task {
+                    await watcher.stop()
+                }
+            }
+        }
+    }
 }

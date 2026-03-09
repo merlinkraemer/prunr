@@ -23,62 +23,98 @@ struct DriveBarView: View {
     /// Shared hover state so the drive bar and list rows can highlight each other
     @Binding var highlightedSegmentID: String?
 
+    /// When set, forces a segment to appear highlighted (like hover) and shows this label next to the bar
+    var focusedSegmentID: String? = nil
+    var focusedLabel: String? = nil
+    var focusedIcon: String? = nil
+    var focusedIconColor: Color = .secondary
+    
+    /// When true, disables hover interactions on the bar segments
+    var disableHover: Bool = false
+
     /// Bar height
     private let barHeight: CGFloat = 12
     private let segmentSpacing: CGFloat = 1
     private let minimumSegmentFraction: CGFloat = 0.03
 
     var body: some View {
-        HStack(spacing: 12) {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: barHeight / 2)
-                        .fill(Color.gray.opacity(0.15))
+        HStack(spacing: 8) {
+            barContent
 
-                    if visibleSegments.isEmpty {
-                        RoundedRectangle(cornerRadius: barHeight / 2)
-                            .fill(
-                                LinearGradient(
-                                    colors: [usageColor.opacity(0.8), usageColor],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: geometry.size.width * usedFraction)
-                    } else {
-                        let usedWidth = geometry.size.width * usedFraction
-                        let availableSegmentWidth = max(0, usedWidth - (segmentSpacing * CGFloat(max(0, renderedSegments.count - 1))))
-                        HStack(spacing: segmentSpacing) {
-                            ForEach(renderedSegments) { segment in
-                                Rectangle()
-                                    .fill(fillColor(for: segment))
-                                    .frame(width: max(0, availableSegmentWidth * segment.fraction))
-                                    .contentShape(Rectangle())
-                                    .onHover { hovering in
-                                        withAnimation(.easeInOut(duration: 0.12)) {
-                                            highlightedSegmentID = hovering ? segment.id : nil
-                                        }
-                                    }
-                            }
-                        }
-                        .frame(width: usedWidth, alignment: .leading)
-                        .clipShape(RoundedRectangle(cornerRadius: barHeight / 2))
-                    }
-                }
-            }
-            .frame(height: barHeight)
-
-            // Free space text
-            HStack(spacing: 4) {
-                Text(bytesToGBString(freeBytes))
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.primary)
-                Text("free")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+            if let focusedLabel {
+                focusedDetailView(focusedLabel)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .padding(.vertical, 4)
+        .frame(height: 20)
+        .animation(.snappy(duration: 0.24, extraBounce: 0), value: focusedLabel)
+    }
+
+    private func focusedDetailView(_ label: String) -> some View {
+        let parts = label.split(separator: " ", maxSplits: 1)
+        let number = String(parts.first ?? "")
+        let unit = parts.count > 1 ? String(parts[1]) : ""
+
+        return HStack(spacing: 4) {
+            if let focusedIcon {
+                Image(systemName: focusedIcon)
+                    .font(.system(size: 11))
+                    .foregroundStyle(focusedIconColor)
+            }
+
+            Text(number)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.primary)
+
+            if !unit.isEmpty {
+                Text(unit)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .fixedSize()
+    }
+
+    private var barContent: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: barHeight / 2)
+                    .fill(Color.gray.opacity(0.15))
+
+                if visibleSegments.isEmpty {
+                    RoundedRectangle(cornerRadius: barHeight / 2)
+                        .fill(
+                            LinearGradient(
+                                colors: [usageColor.opacity(0.8), usageColor],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geometry.size.width * usedFraction)
+                } else {
+                    let usedWidth = geometry.size.width * usedFraction
+                    let availableSegmentWidth = max(0, usedWidth - (segmentSpacing * CGFloat(max(0, renderedSegments.count - 1))))
+                    HStack(spacing: segmentSpacing) {
+                        ForEach(renderedSegments) { segment in
+                            Rectangle()
+                                .fill(fillColor(for: segment))
+                                .frame(width: max(0, availableSegmentWidth * segment.fraction))
+                                .contentShape(Rectangle())
+                                .onHover { hovering in
+                                    guard !disableHover else { return }
+                                    withAnimation(.easeInOut(duration: 0.12)) {
+                                        highlightedSegmentID = hovering ? segment.id : nil
+                                    }
+                                }
+                        }
+                    }
+                    .frame(width: usedWidth, alignment: .leading)
+                    .clipShape(RoundedRectangle(cornerRadius: barHeight / 2))
+                }
+            }
+        }
+        .frame(height: barHeight)
     }
 
     // MARK: - Private Helpers
@@ -175,12 +211,20 @@ struct DriveBarView: View {
         }
     }
 
+    private var activeHighlightID: String? {
+        if disableHover {
+            return focusedSegmentID
+        }
+
+        return highlightedSegmentID ?? focusedSegmentID
+    }
+
     private func fillColor(for segment: RenderedSegment) -> Color {
-        guard let highlightedSegmentID else {
+        guard let activeHighlightID else {
             return segment.color.opacity(0.9)
         }
 
-        if highlightedSegmentID == segment.id {
+        if activeHighlightID == segment.id {
             return segment.color
         }
 

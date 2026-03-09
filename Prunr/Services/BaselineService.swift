@@ -547,27 +547,86 @@ actor BaselineService {
             }
 
             struct SubcategoryAccumulator {
+                struct TopEntryHeap {
+                    private(set) var entries: [SnapshotEntryWithPath] = []
+                    let limit: Int
+
+                    mutating func insert(_ entry: SnapshotEntryWithPath) {
+                        guard limit > 0 else { return }
+
+                        if entries.count < limit {
+                            entries.append(entry)
+                            siftUp(from: entries.count - 1)
+                            return
+                        }
+
+                        guard let smallest = entries.first, isBetter(entry, than: smallest) else {
+                            return
+                        }
+
+                        entries[0] = entry
+                        siftDown(from: 0)
+                    }
+
+                    private func comesBefore(_ lhs: SnapshotEntryWithPath, _ rhs: SnapshotEntryWithPath) -> Bool {
+                        if lhs.sizeBytes != rhs.sizeBytes {
+                            return lhs.sizeBytes < rhs.sizeBytes
+                        }
+                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedDescending
+                    }
+
+                    private func isBetter(_ lhs: SnapshotEntryWithPath, than rhs: SnapshotEntryWithPath) -> Bool {
+                        if lhs.sizeBytes != rhs.sizeBytes {
+                            return lhs.sizeBytes > rhs.sizeBytes
+                        }
+                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+                    }
+
+                    private mutating func siftUp(from index: Int) {
+                        var child = index
+                        while child > 0 {
+                            let parent = (child - 1) / 2
+                            guard comesBefore(entries[child], entries[parent]) else { break }
+                            entries.swapAt(child, parent)
+                            child = parent
+                        }
+                    }
+
+                    private mutating func siftDown(from index: Int) {
+                        var parent = index
+
+                        while true {
+                            let left = parent * 2 + 1
+                            let right = left + 1
+                            var candidate = parent
+
+                            if left < entries.count && comesBefore(entries[left], entries[candidate]) {
+                                candidate = left
+                            }
+
+                            if right < entries.count && comesBefore(entries[right], entries[candidate]) {
+                                candidate = right
+                            }
+
+                            guard candidate != parent else { break }
+                            entries.swapAt(parent, candidate)
+                            parent = candidate
+                        }
+                    }
+                }
+
                 var totalBytes: Int64 = 0
                 var fileCount: Int = 0
-                var topEntries: [SnapshotEntryWithPath] = []
-                let limit: Int
+                var topEntries: TopEntryHeap
+
+                init(limit: Int) {
+                    topEntries = TopEntryHeap(limit: limit)
+                }
 
                 mutating func add(_ entry: SnapshotEntryWithPath) {
                     totalBytes += entry.sizeBytes
                     fileCount += 1
-
-                    guard limit > 0 else { return }
-
-                    if topEntries.count < limit {
-                        topEntries.append(entry)
-                        return
-                    }
-
-                    guard let smallestIndex = topEntries.indices.min(by: {
-                        topEntries[$0].sizeBytes < topEntries[$1].sizeBytes
-                    }) else { return }
-                    guard entry.sizeBytes > topEntries[smallestIndex].sizeBytes else { return }
-                    topEntries[smallestIndex] = entry
+                    topEntries.insert(entry)
                 }
             }
 
@@ -606,7 +665,7 @@ actor BaselineService {
                 }
 
                 let totalBytes = accumulator.totalBytes
-                let sortedTopEntries = accumulator.topEntries.sorted {
+                let sortedTopEntries = accumulator.topEntries.entries.sorted {
                     if $0.sizeBytes == $1.sizeBytes {
                         return $0.path.localizedStandardCompare($1.path) == .orderedAscending
                     }

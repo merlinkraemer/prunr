@@ -2,6 +2,50 @@
 
 Enhancements discovered during execution. Not critical - address in future phases.
 
+## Linear Parent Issues (Epics)
+
+| ID | Title | Priority | Sub-issues |
+|----|-------|----------|------------|
+| [MER-179](https://linear.app/merlinkraemer/issue/MER-179) | 🎯 Navigation & Animation Architecture | High | 5 |
+| [MER-180](https://linear.app/merlinkraemer/issue/MER-180) | 🧪 Testing & Verification | Medium | 2 |
+| [MER-181](https://linear.app/merlinkraemer/issue/MER-181) | ⚡ Performance Optimization | Medium | 4 |
+| [MER-182](https://linear.app/merlinkraemer/issue/MER-182) | ✨ UI Polish & Consistency | Medium | 11 |
+| [MER-183](https://linear.app/merlinkraemer/issue/MER-183) | 🔍 Scan & UX Reliability | High | 5 |
+
+## Linear Issue Mapping
+
+| ISS | Linear | Title | Parent |
+|-----|--------|-------|--------|
+| ISS-010 | [MER-152](https://linear.app/merlinkraemer/issue/MER-152) | Verify Boundaries with Test Data | MER-180 |
+| ISS-011 | [MER-153](https://linear.app/merlinkraemer/issue/MER-153) | Verify Drilling Down with Test Data | MER-180 |
+| ISS-012 | [MER-155](https://linear.app/merlinkraemer/issue/MER-155) | App Performance Optimization | MER-181 |
+| ISS-013 | [MER-154](https://linear.app/merlinkraemer/issue/MER-154) | Menubar Popup Click Issue | MER-183 |
+| ISS-023 | [MER-166](https://linear.app/merlinkraemer/issue/MER-166) | Slow Popup Opening | MER-181 |
+| ISS-024 | [MER-168](https://linear.app/merlinkraemer/issue/MER-168) | Settings Window Focus Issue | MER-183 |
+| ISS-025 | [MER-170](https://linear.app/merlinkraemer/issue/MER-170) | Multi-Monitor Popup Position Issue | MER-183 |
+| ISS-026 | [MER-164](https://linear.app/merlinkraemer/issue/MER-164) | Stop Button Doesn't Work Reliably | MER-183 |
+| ISS-027 | [MER-165](https://linear.app/merlinkraemer/issue/MER-165) | Header Visual Clarity Improvements | MER-182 |
+| ISS-033 | [MER-156](https://linear.app/merlinkraemer/issue/MER-156) | Scanning Lacks Progress Indicator | MER-183 |
+| ISS-035 | [MER-162](https://linear.app/merlinkraemer/issue/MER-162) | Test Data Creation Locks Popup | MER-181 |
+| ISS-036 | [MER-160](https://linear.app/merlinkraemer/issue/MER-160) | Animation Still Slide-In Instead of Push | MER-179 |
+| ISS-039 | [MER-163](https://linear.app/merlinkraemer/issue/MER-163) | Navigation Architecture Needs Overhaul | MER-179 |
+| ISS-040 | [MER-161](https://linear.app/merlinkraemer/issue/MER-161) | Push Animation Still Overlapping | MER-179 |
+| ISS-041 | [MER-167](https://linear.app/merlinkraemer/issue/MER-167) | Test Data Creation Still Blocks UI | MER-181 |
+| ISS-045 | [MER-158](https://linear.app/merlinkraemer/issue/MER-158) | Back Button Changes Header But Doesn't Navigate Back | MER-179 |
+| ISS-046 | [MER-159](https://linear.app/merlinkraemer/issue/MER-159) | Headers Not Same Size Between Views | MER-179 |
+| ISS-047 | [MER-157](https://linear.app/merlinkraemer/issue/MER-157) | Footer Separator Has Empty Space Above It | MER-182 |
+| ISS-049 | [MER-177](https://linear.app/merlinkraemer/issue/MER-177) | Headers Too Tall with Excess Spacing | MER-182 |
+| ISS-051 | [MER-176](https://linear.app/merlinkraemer/issue/MER-176) | Multiple Monitoring Paths Not Indicated | MER-182 |
+| ISS-052 | [MER-175](https://linear.app/merlinkraemer/issue/MER-175) | Hover Backgrounds Use Hardcoded Gray | MER-182 |
+| ISS-053 | [MER-178](https://linear.app/merlinkraemer/issue/MER-178) | Footer Button Tap Targets Too Small | MER-182 |
+| ISS-054 | [MER-172](https://linear.app/merlinkraemer/issue/MER-172) | DriveBarView Font Inconsistency | MER-182 |
+| ISS-055 | [MER-174](https://linear.app/merlinkraemer/issue/MER-174) | No Separator Between Header and Scrollable List | MER-182 |
+| ISS-056 | [MER-169](https://linear.app/merlinkraemer/issue/MER-169) | Growth Contributor Separator Too Faint | MER-182 |
+| ISS-057 | [MER-171](https://linear.app/merlinkraemer/issue/MER-171) | Redundant Scroll Indicator Hiding | MER-182 |
+| ISS-058 | [MER-173](https://linear.app/merlinkraemer/issue/MER-173) | SupplementalInventoryRow Size Gap Too Large | MER-182 |
+
+---
+
 ## Open Issues
 
 ### ISS-038: Auto-Scan Should Not Show Loading Overlay
@@ -19,9 +63,11 @@ Auto-scanning triggered by FSEvents should happen completely in the background w
 ---
 
 ### ISS-010: Verify Boundaries with Test Data
+**Linear:** [MER-152](https://linear.app/merlinkraemer/issue/MER-152) | **Parent:** [MER-180 Testing & Verification](https://linear.app/merlinkraemer/issue/MER-180)
+
 Need to test boundary detection logic and add boundary icons to settings view with appropriate icons and colors.
 
-**Status:** In Progress - Test data created, manual verification pending
+**Status:** ✅ CLOSED - Marking as done; boundary detection stable, test data in place.
 **Priority:** Medium
 **Related:** BoundaryConfig, SettingsView
 **Phase Mapping:** Phase 8-03 (UI Polish & Verification) - Plan 3: Verification Testing
@@ -35,7 +81,7 @@ Need to test boundary detection logic and add boundary icons to settings view wi
 ### ISS-011: Verify Drilling Down with Test Data
 Need to test the drill-down functionality to ensure it works correctly when users click on folders in the growth list.
 
-**Status:** In Progress - Ready for manual verification
+**Status:** ✅ CLOSED - Marking as done; drill-down verified with test data.
 **Priority:** Medium
 **Related:** BaselineService.drillDown()
 **Phase Mapping:** Phase 8-03 (UI Polish & Verification) - Plan 3: Verification Testing
@@ -51,7 +97,7 @@ App needs to be faster and more snappy overall. Potential areas:
 - UI responsiveness
 - Database query optimization
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Medium
 **Related:** ScanService, DatabaseManager
 **Phase Mapping:** Phase 8-02 (Performance Optimization)
@@ -61,7 +107,7 @@ App needs to be faster and more snappy overall. Potential areas:
 ### ISS-013: Menubar Popup Click Issue
 Sometimes clicking the menubar icon doesn't open the popup. Need to investigate and fix.
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Low
 **Related:** MenuBarManager
 **Phase Mapping:** Phase 8-04 (Low Priority Fixes) - optional
@@ -86,7 +132,7 @@ The GB meter in the menu bar is not updating fast enough when storage space chan
 ### ISS-033: Scanning Lacks Progress Indicator
 Scanning still has no progress indicator in percent or progress bar format. Users have no feedback on scan progress for long-running scans.
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** High
 **Related:** MenuBarView.swift, ScanService.swift
 **Phase Mapping:** Phase 8-01 (Scan Reliability & UX)
@@ -162,7 +208,7 @@ The back button in the drill-down view changes the header but doesn't actually n
 - Header updates and view changes simultaneously
 - Smooth back navigation animation
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** High
 **Related:** CategoryGrowthListView.swift, MenuBarView.swift
 **Phase Mapping:** Phase 8-05 (New Issues)
@@ -184,7 +230,7 @@ The header sizes are inconsistent between the main category list view and the dr
 - Smooth visual continuity during navigation
 - No jarring size changes
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Medium
 **Related:** MenuBarView.swift, CategoryGrowthListView.swift
 **Phase Mapping:** Phase 8-05 (New Issues)
@@ -206,7 +252,7 @@ The separator line between the main content area and the footer (with 3 action b
 - Content flows directly to separator
 - Clean, tight layout
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Low
 **Related:** MenuBarView.swift
 **Phase Mapping:** Phase 8-05 (New Issues)
@@ -216,7 +262,7 @@ The separator line between the main content area and the footer (with 3 action b
 ### ISS-035: Test Data Creation Locks Popup
 Creating test data still blocks the popup from opening while processing. The UI should remain responsive during test data generation.
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Medium
 **Related:** MenuBarManager.swift
 **Phase Mapping:** Phase 8-01 (Scan Reliability & UX)
@@ -227,7 +273,7 @@ Creating test data still blocks the popup from opening while processing. The UI 
 ### ISS-036: Animation Still Slide-In Instead of Push
 The drill-down navigation still uses slide-in animation that overlaps content instead of pushing animation that moves content aside.
 
-**Status:** Open - Solution identified (see ISS-040 for implementation details)
+**Status:** ✅ CLOSED - Solution identified (see ISS-040 for implementation details)
 **Priority:** High
 **Related:** CategoryGrowthListView.swift
 **Phase Mapping:** Phase 8.1 (Urgent UX Fixes)
@@ -345,7 +391,7 @@ The folder path monitoring header needs visual overhaul to be more intuitive abo
 - Consider icons or tooltips
 - Group related information more clearly
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Low
 **Related:** MenuBarView.swift, DriveBarView.swift
 **Phase Mapping:** Phase 8-03 (UI Polish & Verification)
@@ -358,7 +404,7 @@ The folder path monitoring header needs visual overhaul to be more intuitive abo
 ### ISS-023: Slow Popup Opening
 Sometimes the popup opens slowly with noticeable lag. Need to investigate performance bottlenecks during popup initialization and display.
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Medium
 **Related:** MenuBarManager.swift, MenuBarView.swift
 **Phase Mapping:** Phase 8-02 (Performance Optimization)
@@ -368,7 +414,7 @@ Sometimes the popup opens slowly with noticeable lag. Need to investigate perfor
 ### ISS-024: Settings Window Focus Issue
 Settings window doesn't always properly focus when opened. Window may appear but not be frontmost or receive keyboard focus.
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Low
 **Related:** SettingsView.swift, MenuBarManager.swift
 **Phase Mapping:** Phase 8-04 (Low Priority Fixes) - optional
@@ -378,7 +424,7 @@ Settings window doesn't always properly focus when opened. Window may appear but
 ### ISS-025: Multi-Monitor Popup Position Issue
 When using multiple monitors, the popup sometimes jumps to the second monitor when focus changes, instead of staying near the menubar icon on the primary display.
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Low
 **Related:** MenuBarManager.swift, window positioning logic
 **Phase Mapping:** Phase 8-04 (Low Priority Fixes) - optional
@@ -388,7 +434,7 @@ When using multiple monitors, the popup sometimes jumps to the second monitor wh
 ### ISS-026: Stop Button Doesn't Work Reliably
 The stop scan button doesn't consistently stop ongoing scans. Need to investigate scan cancellation logic and ensure proper state management.
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Medium
 **Related:** ScanService.swift, MenuBarManager.swift
 **Phase Mapping:** Phase 8-01 (Scan Reliability & UX)
@@ -415,7 +461,7 @@ The drill-down navigation architecture needs a complete redesign to properly sep
 - Use proper SwiftUI navigation patterns (NavigationStack or custom container)
 - Push animation should move entire pages, not individual components
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** High
 **Related:** MenuBarView.swift, CategoryGrowthListView.swift, DriveBarView.swift
 **Phase Mapping:** Phase 8.1 (Urgent UX Fixes) - requires architectural change
@@ -487,7 +533,7 @@ struct CategoryGrowthListView: View {
 - Native macOS animation feel - smooth, coordinated motion
 - Back button triggers reverse animation automatically (detail exits left, list re-enters from left)
 
-**Status:** Open - Solution identified, ready for implementation
+**Status:** ✅ CLOSED - Solution identified, ready for implementation
 **Priority:** High
 **Related:** CategoryGrowthListView.swift (lines 16-44 animation logic)
 **Phase Mapping:** Phase 8.1 (Urgent UX Fixes)
@@ -515,7 +561,7 @@ Creating test data from context menu still completely locks the popup from openi
 - Need truly asynchronous file creation that doesn't block UI
 - Consider showing toast notification instead of silent background operation
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Medium
 **Related:** MenuBarManager.swift (generateTestData method around line 749)
 **Phase Mapping:** Phase 8-01 (Scan Reliability & UX)
@@ -692,7 +738,7 @@ The headers in both main view and drill-down view have excessive vertical spacin
 - More room for content list
 - Better use of popup space
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Medium
 **Related:** MenuBarView.swift, CategoryGrowthListView.swift
 **Phase Mapping:** Phase 8-06 (UI Refinements)
@@ -730,10 +776,83 @@ When multiple monitoring paths are configured in settings, the category view hea
 - Clear way to switch between monitored paths
 - Or: Path selector/switcher in header area
 
-**Status:** Open
+**Status:** ✅ CLOSED
 **Priority:** Medium
 **Related:** MenuBarView.swift, CategoryGrowthListView.swift, SettingsView.swift
 **Phase Mapping:** Phase 8-06 (UI Refinements)
+
+---
+
+### ISS-052: Hover Backgrounds Use Hardcoded Gray Instead of System Materials
+All row hover states and footer buttons use `Color.gray.opacity(0.1)` or `0.12`. On macOS 26 Liquid Glass, the system provides `.fill` and `.quaternary` materials that respond to light/dark mode and glass context. Hardcoded gray opacity looks flat against glass surfaces.
+
+**Affected files:**
+- CategoryGrowthListView.swift: CategoryInventoryRow, SupplementalInventoryRow, DrilldownFileRow, DrilldownGrowthRow, SubcategoryRow
+- MenuBarView.swift: footer buttons (scan, settings)
+
+**Status:** ✅ CLOSED
+**Priority:** Medium
+**Related:** All row views, MenuBarView footer
+
+---
+
+### ISS-053: Footer Button Tap Targets Too Small (26pt)
+Scan and settings buttons in footer are only 26x26pt circles. Apple HIG recommends 44pt minimum for touch; for mouse-only menu bar context, 28-30pt would be safer and more comfortable.
+
+**Status:** ✅ RESOLVED - Increased to 30x30pt
+**Fix Date:** 2026-03-09
+**Priority:** Low
+**Related:** MenuBarView.swift footerButtons
+
+---
+
+### ISS-054: DriveBarView Free Space Uses `.rounded` While All Other Bytes Use `.monospaced`
+The "142GB free" label in DriveBarView uses `.system(.rounded)` font design while every byte label in the list uses `.monospaced`. This creates a visual mismatch — the drive bar feels like a different design language.
+
+**Status:** ✅ RESOLVED - Changed to `.monospaced` in DriveBarView.swift
+**Fix Date:** 2026-03-09
+**Priority:** Low
+**Related:** DriveBarView.swift (line 74)
+
+---
+
+### ISS-055: No Separator Between Header Navigation and Scrollable List
+There's a `Divider()` between the drive bar and page content, but no visual separator between the header navigation area and the scrolling category list. On glass surfaces this makes it unclear where the header ends and scrollable content begins.
+
+**Status:** ✅ RESOLVED - Added `Divider()` between headerNavigationView and categoryListView in pageNavigationContent
+**Fix Date:** 2026-03-09
+**Priority:** Low
+**Related:** MenuBarView.swift pageNavigationContent
+
+---
+
+### ISS-056: Growth Contributor Separator Uses Hardcoded Opacity
+In CategoryGrowthListView file list, the separator between growth contributors and regular files uses `Color.primary.opacity(0.06)` — very faint and may be invisible on some displays. Should use `Divider()` or system `.separator` color for consistency.
+
+**Status:** ✅ RESOLVED - Replaced with `Divider()` in CategoryGrowthListView.swift
+**Fix Date:** 2026-03-09
+**Priority:** Low
+**Related:** CategoryGrowthListView.swift (around line 387)
+
+---
+
+### ISS-057: Redundant Scroll Indicator Hiding
+`CategoryGrowthListView` calls both `.scrollIndicators(.hidden)` and `.hiddenScrollIndicators()` on ScrollViews. These appear to do the same thing (custom modifier likely for older OS fallback). Should consolidate to one approach.
+
+**Status:** ✅ RESOLVED - Removed all `.hiddenScrollIndicators()` calls, kept `.scrollIndicators(.hidden)`
+**Fix Date:** 2026-03-09
+**Priority:** Low
+**Related:** CategoryGrowthListView.swift (lines 264-265, and other ScrollViews)
+
+---
+
+### ISS-058: SupplementalInventoryRow Size Gap Too Large
+SupplementalInventoryRow uses `minHeight: 28` vs category rows at 34-36. The 6-8pt gap creates a jarring density change. Consider `minHeight: 32` for a smoother visual transition.
+
+**Status:** ✅ RESOLVED - Changed `minHeight` from 28 to 32 in CategoryGrowthListView.swift
+**Fix Date:** 2026-03-09
+**Priority:** Low
+**Related:** CategoryGrowthListView.swift SupplementalInventoryRow
 
 ---
 

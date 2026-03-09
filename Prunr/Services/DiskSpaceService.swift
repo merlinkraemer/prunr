@@ -4,28 +4,25 @@ import Darwin
 final class DiskSpaceService {
     static let shared = DiskSpaceService()
 
-    private var url: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-    }
-
-    func getFreeSpace() -> Int64 {
-        let stats = fileSystemStats()
+    func getFreeSpace(for url: URL? = nil) -> Int64 {
+        let stats = fileSystemStats(for: url)
         return stats?.freeBytes ?? 0
     }
 
-    func getTotalSpace() -> Int64 {
-        let stats = fileSystemStats()
+    func getTotalSpace(for url: URL? = nil) -> Int64 {
+        let stats = fileSystemStats(for: url)
         return stats?.totalBytes ?? 0
     }
 
-    func getFreeSpaceFormatted() -> String {
-        let freeBytes = getFreeSpace()
+    func getFreeSpaceFormatted(for url: URL? = nil) -> String {
+        let freeBytes = getFreeSpace(for: url)
         return ByteCountFormatter.string(fromByteCount: freeBytes, countStyle: .file)
     }
 
-    private func fileSystemStats() -> (freeBytes: Int64, totalBytes: Int64)? {
+    private func fileSystemStats(for url: URL?) -> (freeBytes: Int64, totalBytes: Int64)? {
         var fs = statfs()
-        let path = url.path
+        let targetURL = (url ?? FileManager.default.homeDirectoryForCurrentUser).standardizedFileURL
+        let path = targetURL.path
 
         let result = path.withCString { cPath in
             statfs(cPath, &fs)

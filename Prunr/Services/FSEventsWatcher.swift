@@ -38,6 +38,7 @@ actor FSEventsWatcher {
 
     /// Callback context storage - needs to be stored to keep it alive
     private var callbackContext: FSEventStreamContext?
+    private var callbackInfoPointer: UnsafeMutableRawPointer?
 
     // MARK: - Initialization
 
@@ -64,7 +65,8 @@ actor FSEventsWatcher {
         let paths = pathsToWatch.map { $0.path as CFString }
 
         // Create context to pass 'self' to the callback
-        let contextPtr = Unmanaged.passUnretained(self as AnyObject).toOpaque()
+        let contextPtr = Unmanaged.passRetained(self as AnyObject).toOpaque()
+        callbackInfoPointer = contextPtr
 
         // Set up the callback context structure
         var context = FSEventStreamContext(
@@ -130,6 +132,7 @@ actor FSEventsWatcher {
             0.5,
             flags
         ) else {
+            releaseCallbackInfoIfNeeded()
             return
         }
 
@@ -148,7 +151,9 @@ actor FSEventsWatcher {
             isRunning = true
         } else {
             FSEventStreamInvalidate(newStream)
+            FSEventStreamRelease(newStream)
             stream = nil
+            releaseCallbackInfoIfNeeded()
         }
     }
 
@@ -156,18 +161,27 @@ actor FSEventsWatcher {
     ///
     /// This stops the stream, invalidates it, and cleans up resources.
     func stop() {
-        guard isRunning, let eventStream = stream else { return }
-
         // Cancel any pending debounce task
         debounceTask?.cancel()
         debounceTask = nil
+        pendingPaths.removeAll()
+
+        guard let eventStream = stream else {
+            isRunning = false
+            releaseCallbackInfoIfNeeded()
+            return
+        }
+
+        isRunning = false
+        stream = nil
 
         // Stop and invalidate the stream
         FSEventStreamStop(eventStream)
         FSEventStreamInvalidate(eventStream)
+        FSEventStreamRelease(eventStream)
 
+        releaseCallbackInfoIfNeeded()
         stream = nil
-        isRunning = false
     }
 
     // MARK: - Callback Management
@@ -193,6 +207,8 @@ actor FSEventsWatcher {
     ///   - paths: Set of URLs that changed
     ///   - requiresFullRescan: Whether the stream reported dropped/root-change events
     private func handleEventPaths(_ paths: Set<URL>, requiresFullRescan: Bool = false) {
+        guard isRunning else { return }
+
         pendingPaths.formUnion(paths)
         if requiresFullRescan {
             pendingPaths.formUnion(pathsToWatch.map(\.standardizedFileURL))
@@ -204,6 +220,7 @@ actor FSEventsWatcher {
 
             // Only invoke if not cancelled
             guard !Task.isCancelled else { return }
+            guard isRunning else { return }
 
             let pathsToDeliver = pendingPaths
             pendingPaths.removeAll()
@@ -214,11 +231,28 @@ actor FSEventsWatcher {
 
     // MARK: - Cleanup
 
+    private func releaseCallbackInfoIfNeeded() {
+        guard let callbackInfoPointer else { return }
+        self.callbackInfoPointer = nil
+        callbackContext = nil
+        Self.releaseCallbackInfo(callbackInfoPointer)
+    }
+
+    private nonisolated static func releaseCallbackInfo(_ callbackInfoPointer: UnsafeMutableRawPointer?) {
+        guard let callbackInfoPointer else { return }
+        Unmanaged<AnyObject>.fromOpaque(callbackInfoPointer).release()
+    }
+
     deinit {
+        debounceTask?.cancel()
+
         // Clean up stream if still running
-        if isRunning, let eventStream = stream {
+        if let eventStream = stream {
             FSEventStreamStop(eventStream)
             FSEventStreamInvalidate(eventStream)
+            FSEventStreamRelease(eventStream)
         }
+
+        Self.releaseCallbackInfo(callbackInfoPointer)
     }
 }

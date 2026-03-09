@@ -19,7 +19,7 @@ struct MenuBarView: View {
     @State private var headerTransitionTask: Task<Void, Never>? = nil
     @State private var headerTransitionDirection: HeaderNavigationDirection = .forward
     @State private var displayedHeader = HeaderScreen.overview
-    @State private var outgoingHeader: HeaderScreen? = nil
+    @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
     @State private var headerOffset: CGFloat = 0
     @State private var headerWidth: CGFloat = 0
     @State private var pendingHeaderTransition: PendingHeaderTransition? = nil
@@ -42,6 +42,12 @@ struct MenuBarView: View {
     private struct PendingHeaderTransition {
         let from: HeaderScreen
         let to: HeaderScreen
+        let direction: HeaderNavigationDirection
+    }
+
+    private struct ActiveHeaderTransition {
+        let outgoing: HeaderScreen
+        let incoming: HeaderScreen
         let direction: HeaderNavigationDirection
     }
 
@@ -90,6 +96,10 @@ struct MenuBarView: View {
 
         static let overview = HeaderScreen(level: .overview, category: nil, subcategory: nil)
 
+        static func == (lhs: HeaderScreen, rhs: HeaderScreen) -> Bool {
+            lhs.id == rhs.id
+        }
+
         var id: String {
             switch level {
             case .overview:
@@ -97,7 +107,7 @@ struct MenuBarView: View {
             case .category:
                 return "category-\(category?.category.rawValue ?? "none")"
             case .files:
-                return "files-\(subcategory?.id ?? "none")"
+                return "files-\(category?.category.rawValue ?? "none")-\(subcategory?.id ?? "none")"
             }
         }
     }
@@ -878,7 +888,12 @@ struct MenuBarView: View {
             usedBytes: manager.usedBytes,
             freeBytes: manager.freeBytes,
             categorySegments: driveBarSegments,
-            highlightedSegmentID: $highlightedStorageSegmentID
+            highlightedSegmentID: $highlightedStorageSegmentID,
+            focusedSegmentID: focusedDriveBarCategory?.category.rawValue,
+            focusedLabel: focusedDriveBarLabel,
+            focusedIcon: focusedDriveBarCategory?.category.icon,
+            focusedIconColor: focusedDriveBarCategory?.category.color ?? .secondary,
+            disableHover: shouldDisableDriveBarHover
         )
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -956,6 +971,23 @@ struct MenuBarView: View {
         return HeaderScreen(level: .category, category: category, subcategory: nil)
     }
 
+    private var focusedDriveBarCategory: CategoryInventoryItem? {
+        guard manager.isDrilledDown, let selectedCategory = manager.selectedInventoryCategory else {
+            return nil
+        }
+
+        return (manager.growingCategories + manager.stableCategories)
+            .first { $0.category == selectedCategory.category } ?? selectedCategory
+    }
+
+    private var focusedDriveBarLabel: String? {
+        focusedDriveBarCategory.map { formattedBytes($0.currentSizeBytes) }
+    }
+
+    private var shouldDisableDriveBarHover: Bool {
+        focusedDriveBarCategory != nil
+    }
+
     private func refreshFullDiskAccess() {
         hasFullDiskAccess = permissionsService.hasFullDiskAccess
     }
@@ -1011,14 +1043,14 @@ struct MenuBarView: View {
     private var headerNavigationView: some View {
         GeometryReader { geometry in
             Group {
-                if let outgoingHeader {
+                if let activeHeaderTransition {
                     HStack(spacing: 0) {
-                        if headerTransitionDirection == .forward {
-                            headerPage(for: outgoingHeader, width: geometry.size.width)
-                            headerPage(for: displayedHeader, width: geometry.size.width)
+                        if activeHeaderTransition.direction == .forward {
+                            headerPage(for: activeHeaderTransition.outgoing, width: geometry.size.width)
+                            headerPage(for: activeHeaderTransition.incoming, width: geometry.size.width)
                         } else {
-                            headerPage(for: displayedHeader, width: geometry.size.width)
-                            headerPage(for: outgoingHeader, width: geometry.size.width)
+                            headerPage(for: activeHeaderTransition.incoming, width: geometry.size.width)
+                            headerPage(for: activeHeaderTransition.outgoing, width: geometry.size.width)
                         }
                     }
                     .offset(x: headerOffset)
@@ -1029,7 +1061,7 @@ struct MenuBarView: View {
             .clipped()
             .onAppear {
                 headerWidth = geometry.size.width
-                if pendingHeaderTransition == nil && outgoingHeader == nil {
+                if pendingHeaderTransition == nil && activeHeaderTransition == nil {
                     displayedHeader = currentHeaderScreen
                 }
             }
@@ -1066,37 +1098,74 @@ struct MenuBarView: View {
         case .overview:
             overviewHeader
         case .category, .files:
-            if let category = screen.category {
-                drillDownHeader(category: category, subcategory: screen.subcategory)
+            if let category = resolvedHeaderCategory(for: screen) {
+                drillDownHeader(category: category, subcategory: resolvedHeaderSubcategory(for: screen))
             } else {
                 Color.clear
             }
         }
     }
 
+    private func resolvedHeaderCategory(for screen: HeaderScreen) -> CategoryInventoryItem? {
+        guard let screenCategory = screen.category else {
+            return manager.selectedInventoryCategory
+        }
+
+        guard let selectedCategory = manager.selectedInventoryCategory else {
+            return screenCategory
+        }
+
+        return selectedCategory.category == screenCategory.category ? selectedCategory : screenCategory
+    }
+
+    private func resolvedHeaderSubcategory(for screen: HeaderScreen) -> SubcategoryGroup? {
+        guard screen.level == .files else { return screen.subcategory }
+
+        guard let selectedSubcategory = manager.selectedSubcategory else {
+            return screen.subcategory
+        }
+
+        guard let screenSubcategory = screen.subcategory else {
+            return selectedSubcategory
+        }
+
+        return selectedSubcategory.id == screenSubcategory.id ? selectedSubcategory : screenSubcategory
+    }
+
     private func startHeaderTransition(from previousHeader: HeaderScreen, to newHeader: HeaderScreen, width: CGFloat) {
         headerTransitionTask?.cancel()
 
         guard width > 0 else {
-            outgoingHeader = nil
+            activeHeaderTransition = nil
             displayedHeader = newHeader
             headerOffset = 0
             return
         }
 
-        displayedHeader = newHeader
-        outgoingHeader = previousHeader
-        headerOffset = headerTransitionDirection == .forward ? 0 : -width
+        let initialOffset = headerTransitionDirection == .forward ? 0 : -width
+        let targetOffset = headerTransitionDirection == .forward ? -width : 0
+
+        var setupTransaction = Transaction()
+        setupTransaction.disablesAnimations = true
+        withTransaction(setupTransaction) {
+            activeHeaderTransition = ActiveHeaderTransition(
+                outgoing: previousHeader,
+                incoming: newHeader,
+                direction: headerTransitionDirection
+            )
+            headerOffset = initialOffset
+        }
+
+        withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
+            headerOffset = targetOffset
+        }
 
         headerTransitionTask = Task { @MainActor in
-            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-                headerOffset = headerTransitionDirection == .forward ? -width : 0
-            }
-
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
 
-            outgoingHeader = nil
+            displayedHeader = newHeader
+            activeHeaderTransition = nil
             headerOffset = 0
         }
     }
@@ -1143,9 +1212,7 @@ struct MenuBarView: View {
     }
 
     private func drillDownHeader(category: CategoryInventoryItem, subcategory: SubcategoryGroup?) -> some View {
-        let headerIcon = subcategory?.subcategory?.icon ?? category.category.icon
         let headerName = subcategory?.displayName ?? category.category.displayName
-        let headerBytes = subcategory?.totalBytes ?? category.currentSizeBytes
 
         return HStack(spacing: 0) {
             // Back button — fixed width for centering balance
@@ -1160,21 +1227,10 @@ struct MenuBarView: View {
             .frame(width: 32, height: 32)
             .contentShape(Rectangle())
 
-            // Centered: single-line icon + title + size
-            HStack(spacing: 6) {
-                Image(systemName: headerIcon)
-                    .font(.system(size: 13))
-                    .foregroundStyle(category.category.color)
-
-                Text(headerName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                Text(formattedBytes(headerBytes))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
+            Text(headerName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
             .frame(maxWidth: .infinity)
 
             // Balance spacer matches back button width

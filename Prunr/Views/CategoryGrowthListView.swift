@@ -41,6 +41,7 @@ struct CategoryGrowthListView: View {
     @State private var pageWidth: CGFloat = 0
     @State private var pendingTransition: PendingNavigationTransition? = nil
     @State private var hasInitializedDisplay = false
+    @State private var loadedContributorTaskID: String? = nil
 
     private enum DrilldownLevel: Int {
         case main
@@ -66,6 +67,10 @@ struct CategoryGrowthListView: View {
 
         static let main = DrilldownScreen(level: .main, category: nil, subcategory: nil)
 
+        static func == (lhs: DrilldownScreen, rhs: DrilldownScreen) -> Bool {
+            lhs.id == rhs.id
+        }
+
         var id: String {
             switch level {
             case .main:
@@ -73,7 +78,7 @@ struct CategoryGrowthListView: View {
             case .subcategories:
                 return "subcategories-\(category?.category.rawValue ?? "none")"
             case .files:
-                return "files-\(subcategory?.id ?? "none")"
+                return "files-\(category?.category.rawValue ?? "none")-\(subcategory?.id ?? "none")"
             }
         }
     }
@@ -160,6 +165,10 @@ struct CategoryGrowthListView: View {
         }
         .onDisappear {
             navigationTask?.cancel()
+            navigationTask = nil
+            outgoingScreen = nil
+            pageOffset = 0
+            pendingTransition = nil
         }
     }
 
@@ -177,8 +186,22 @@ struct CategoryGrowthListView: View {
             }
 
         case .files:
-            fileListView(for: screen.subcategory)
+            fileListView(for: resolvedSubcategory(for: screen))
         }
+    }
+
+    private func resolvedSubcategory(for screen: DrilldownScreen) -> SubcategoryGroup? {
+        guard screen.level == .files else { return screen.subcategory }
+
+        guard let selectedSubcategory = manager.selectedSubcategory else {
+            return screen.subcategory
+        }
+
+        guard let screenSubcategory = screen.subcategory else {
+            return selectedSubcategory
+        }
+
+        return selectedSubcategory.id == screenSubcategory.id ? selectedSubcategory : screenSubcategory
     }
 
     private func screenPage(for screen: DrilldownScreen, width: CGFloat) -> some View {
@@ -211,13 +234,14 @@ struct CategoryGrowthListView: View {
             return
         }
 
+        let direction = transitionDirection
         displayedScreen = newScreen
         outgoingScreen = previousScreen
-        pageOffset = transitionDirection == .forward ? 0 : -width
+        pageOffset = direction == .forward ? 0 : -width
 
         navigationTask = Task { @MainActor in
             withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-                pageOffset = transitionDirection == .forward ? -width : 0
+                pageOffset = direction == .forward ? -width : 0
             }
 
             try? await Task.sleep(for: .milliseconds(280))
@@ -351,9 +375,14 @@ struct CategoryGrowthListView: View {
         let remainingBytes = max(0, group.totalBytes - loadedBytes)
         let hasMoreFiles = group.hasMoreFiles
         let canLoadMore = hasMoreFiles && group.loadedFileCount < SubcategoryGroup.maxLoadableFiles
+        let selectedCategory = manager.selectedInventoryCategory?.category
+        let contributorTaskID = selectedCategory.map {
+            contributorTaskKey(for: group, category: $0)
+        } ?? "contributors-\(group.id)"
+        let visibleGrowthContributors = loadedContributorTaskID == contributorTaskID ? growthContributors : []
 
         // Filter out growth contributors from the "all files" list to avoid duplicates
-        let contributorPaths = Set(growthContributors.map(\.path))
+        let contributorPaths = Set(visibleGrowthContributors.map(\.path))
         let nonGrowthFiles = loadedFiles.filter { !contributorPaths.contains($0.path) }
 
         return AnyView(
@@ -371,8 +400,8 @@ struct CategoryGrowthListView: View {
                         .padding(.top, 12)
                     } else {
                         // Growth contributors section
-                        if !growthContributors.isEmpty {
-                            ForEach(growthContributors) { contributor in
+                        if !visibleGrowthContributors.isEmpty {
+                            ForEach(visibleGrowthContributors) { contributor in
                                 DrilldownGrowthRow(contributor: contributor, onTap: {
                                     onTapItem(contributor.path)
                                 })
@@ -439,13 +468,30 @@ struct CategoryGrowthListView: View {
             .scrollIndicators(.hidden)
             .hiddenScrollIndicators()
             .frame(maxHeight: maxHeight)
-            .task(id: group.id) {
-                guard let category = manager.selectedInventoryCategory?.category else { return }
+            .task(id: contributorTaskID) {
+                loadedContributorTaskID = nil
+                growthContributors = []
+                guard let category = selectedCategory else {
+                    isLoadingContributors = false
+                    return
+                }
                 isLoadingContributors = true
-                growthContributors = await manager.loadGrowthContributors(for: group, category: category)
+                let contributors = await manager.loadGrowthContributors(for: group, category: category)
+                guard !Task.isCancelled else { return }
+                growthContributors = contributors
+                loadedContributorTaskID = contributorTaskID
                 isLoadingContributors = false
             }
         )
+    }
+
+    private func contributorTaskKey(for group: SubcategoryGroup, category: GrowthCategory) -> String {
+        [
+            "contributors",
+            String(manager.growthContributorCacheGeneration),
+            category.rawValue,
+            group.id
+        ].joined(separator: ":")
     }
     
     // MARK: - Load More Button
@@ -506,11 +552,14 @@ struct CategoryGrowthListView: View {
         subcategoryLoadTask?.cancel()
         let token = UUID()
         subcategoryLoadToken = token
+        let needsSubcategoryLoad = manager.subcategoryGroupsByCategory[item.category] == nil
+
+        isLoadingSubcategories = needsSubcategoryLoad
+
         manager.selectedInventoryCategory = item
         manager.selectedSubcategory = nil
         manager.isDrilledDown = true
         manager.isSubcategoryDrillDown = false
-        isLoadingSubcategories = true
 
         let selectedCategory = item.category
         let loadTask = Task { @MainActor in
@@ -847,6 +896,14 @@ private struct SubcategoryRow: View {
 
     @State private var hoverState = false
 
+    private var positiveGrowthBytes: Int64? {
+        guard let growthBytes = group.growthBytes, growthBytes > 0 else {
+            return nil
+        }
+
+        return growthBytes
+    }
+
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
@@ -861,10 +918,22 @@ private struct SubcategoryRow: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(formattedBytes(group.totalBytes))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formattedBytes(group.totalBytes))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+
+                    if let positiveGrowthBytes {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 8, weight: .semibold))
+                            Text("+\(formattedBytes(positiveGrowthBytes))")
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    }
+                }
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))

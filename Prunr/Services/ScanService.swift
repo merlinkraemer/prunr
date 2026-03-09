@@ -18,11 +18,9 @@ actor ScanService {
     /// Database manager reference
     private let db = DatabaseManager.shared
 
-    /// Tracks whether a scan is currently in progress
+    /// Tracks whether a scan is currently in progress.
+    /// This is the single source of truth for scan state.
     @MainActor var isScanning = false
-
-    /// Actor-local gate to prevent concurrent scan entry
-    private var scanInProgress = false
 
     /// Cancellation token for stopping in-progress scans
     private var isCancelled = false
@@ -51,6 +49,13 @@ actor ScanService {
         isCancelled = false
         currentScanTask = nil
         logger.debug("Cancellation state reset")
+    }
+
+    private func throwIfCancelled(_ stage: String) throws {
+        if isCancelled || Task.isCancelled {
+            logger.info("Scan cancelled during \(stage)")
+            throw ScanError.cancelled
+        }
     }
 
     // MARK: - Types
@@ -111,8 +116,12 @@ actor ScanService {
         ignoredNames: Set<String>? = nil,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> Snapshot {
-        // Actor-local atomic gate (avoids race via MainActor hop)
-        guard !scanInProgress else {
+        let didAcquireScanState = await MainActor.run { () -> Bool in
+            guard !isScanning else { return false }
+            isScanning = true
+            return true
+        }
+        guard didAcquireScanState else {
             logger.error("Scan requested while already scanning")
             throw ScanError.unknown(NSError(
                 domain: "ScanService",
@@ -120,22 +129,15 @@ actor ScanService {
                 userInfo: [NSLocalizedDescriptionKey: "A scan is already in progress"]
             ))
         }
-        scanInProgress = true
 
         // Reset cancellation state
         resetCancellation()
-
-        // Set scanning state
-        await MainActor.run {
-            isScanning = true
-        }
 
         logger.info("Starting scan for path: \(path)")
 
         // Ensure scanning state is reset when done
         defer {
             logger.info("Scan cleanup complete")
-            scanInProgress = false
             currentScanTask = nil
             Task { @MainActor in
                 isScanning = false
@@ -286,14 +288,12 @@ actor ScanService {
                 // Insert batch when full
                 if batch.count >= batchSize {
                     logger.debug("Inserting batch of \(batch.count) entries (total: \(count))")
+                    try throwIfCancelled("batch insert preflight")
                     try await db.addEntries(to: snapshotId, entries: batch)
                     batch.removeAll()
 
                     // Check cancellation after database write
-                    if isCancelled || Task.isCancelled {
-                        logger.info("Scan cancelled after batch insert at item \(count)")
-                        throw ScanError.cancelled
-                    }
+                    try throwIfCancelled("batch insert completion")
 
                     // Yield every 2 batches (4000 items) to reduce coordination overhead
                     if count % (batchSize * 2) == 0 {
@@ -367,10 +367,12 @@ actor ScanService {
             // Insert any remaining entries in partial batch
             if !batch.isEmpty {
                 logger.debug("Inserting final batch of \(batch.count) entries")
+                try throwIfCancelled("final batch insert preflight")
                 try await db.addEntries(to: snapshotId, entries: batch)
             }
 
             // Persist category totals while scan results are still hot in memory.
+            try throwIfCancelled("category snapshot persistence preflight")
             try await db.replaceCategorySnapshots(snapshotId: snapshotId, totals: categoryTotals)
             let storedSubcategories = subcategoryTotals.map { key, accumulator in
                 DatabaseManager.StoredSubcategorySnapshot(
@@ -381,6 +383,7 @@ actor ScanService {
                     topItems: accumulator.finalized(subcategory: key.subcategory)
                 )
             }
+            try throwIfCancelled("subcategory snapshot persistence preflight")
             try await db.replaceSubcategorySnapshots(snapshotId: snapshotId, rows: storedSubcategories)
 
             // Send final progress update at 100% completion (UAT-001 fix)

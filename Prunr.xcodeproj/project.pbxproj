@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		14A65FE3E00DBAD38BB48448 /* cache_1768131253_1_3948.dat in Resources */ = {isa = PBXBuildFile; fileRef = F0198325D8651CDD86D813BE /* cache_1768131253_1_3948.dat */; };
+		A1F2B3C4D5E6071829304B01 /* FormattedBytes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F2B3C4D5E6071829304B02 /* FormattedBytes.swift */; };
 		160D54BD0C676D3CAE5372B7 /* ItemColumn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DAB0E79D94B279D6577D234 /* ItemColumn.swift */; };
 		1F2640969451EF4323DCABED /* DiskAccountingResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9921DE49FF88377717A1B3B5 /* DiskAccountingResult.swift */; };
 		238C5FF22AD6E6943C727F93 /* GrowthListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11A2DA610608FCFFA59611BD /* GrowthListView.swift */; };
@@ -132,6 +133,7 @@
 		E66E49820CB5A9702B7565F3 /* Prunr.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prunr.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ED22215848F7B27478151FD0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F0198325D8651CDD86D813BE /* cache_1768131253_1_3948.dat */ = {isa = PBXFileReference; path = cache_1768131253_1_3948.dat; sourceTree = "<group>"; };
+		A1F2B3C4D5E6071829304B02 /* FormattedBytes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormattedBytes.swift; sourceTree = "<group>"; };
 		F71C9E671ACF5631597E9040 /* BoundaryConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundaryConfig.swift; sourceTree = "<group>"; };
 		FEB05F9B1DEF616E6B7143BE /* ComparisonPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComparisonPicker.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5D /* PrunrSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrunrSmokeTests.swift; sourceTree = "<group>"; };
@@ -192,6 +194,7 @@
 				AF0B553533A012BE2ECF5D8B /* PrunrMenuBar.swift */,
 				8F23DB28E31316735735A386 /* Actions */,
 				56751E7EE62C9E82649CB0AA /* Database */,
+				A1F2B3C4D5E6071829304B03 /* Helpers */,
 				7FC2CEE2B1A350A861DFDE24 /* Legacy */,
 				6603BC89DB63F850EB1142DA /* Models */,
 				A2C90757D9C5F1EB240440BB /* Services */,
@@ -242,6 +245,14 @@
 				8D536AAF096EA2B51CDD5B99 /* PrunrApp_Legacy.swift */,
 			);
 			path = Legacy;
+			sourceTree = "<group>";
+		};
+		A1F2B3C4D5E6071829304B03 /* Helpers */ = {
+			isa = PBXGroup;
+			children = (
+				A1F2B3C4D5E6071829304B02 /* FormattedBytes.swift */,
+			);
+			path = Helpers;
 			sourceTree = "<group>";
 		};
 		8F23DB28E31316735735A386 /* Actions */ = {
@@ -441,6 +452,7 @@
 				23C6B435F8650971423F8967 /* DiskSpaceService.swift in Sources */,
 				7389AF844788619A1DF413F8 /* DriveBarView.swift in Sources */,
 				4B0B33CD9EAE0386D6E163A6 /* FSEventsWatcher.swift in Sources */,
+				A1F2B3C4D5E6071829304B01 /* FormattedBytes.swift in Sources */,
 				8D1CA082042D60BC7B5D588C /* FileScanner.swift in Sources */,
 				83C527FDFEE5852731C91453 /* GrowthBarView.swift in Sources */,
 				B632B7B36A8CC8106FA8B352 /* GrowthCategory.swift in Sources */,
