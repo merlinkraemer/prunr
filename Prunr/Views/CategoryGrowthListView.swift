@@ -40,7 +40,6 @@ struct CategoryGrowthListView: View {
     @State private var pageWidth: CGFloat = 0
     @State private var pendingTransition: PendingNavigationTransition? = nil
     @State private var hasInitializedDisplay = false
-    @State private var hasPreWarmedViews = false
     @State private var loadedContributorTaskID: String? = nil
 
     private enum DrilldownLevel: Int {
@@ -132,11 +131,6 @@ struct CategoryGrowthListView: View {
             .offset(x: pageOffset)
             .frame(width: geometry.size.width, alignment: .leading)
             .clipped()
-            .background {
-                if !hasPreWarmedViews {
-                    preWarmViews
-                }
-            }
             .onAppear {
                 pageWidth = geometry.size.width
                 // Initialize displayedScreen on first appear without animation
@@ -189,20 +183,42 @@ struct CategoryGrowthListView: View {
             pageOffset = 0
             pendingTransition = nil
         }
+        // Always-present pre-warm — no onAppear, no flags, no async
+        // Keeps all branch types materialized in the view tree permanently
+        .background {
+            ZStack {
+                categoryListView
+                if let firstCategory = GrowthCategory.allCases.first {
+                    subcategoryListView(for: CategoryInventoryItem(
+                        category: firstCategory,
+                        currentSizeBytes: 0
+                    ))
+                }
+                fileListView(for: nil)
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
 
-    private func screenView(for screen: DrilldownScreen) -> AnyView {
+    @ViewBuilder
+    private func screenView(for screen: DrilldownScreen) -> some View {
         switch screen.level {
         case .main:
-            return AnyView(categoryListView.transition(.identity))
+            categoryListView
+                .transition(.identity)
         case .subcategories:
             if let category = screen.category {
-                return AnyView(subcategoryListView(for: category).transition(.identity))
+                subcategoryListView(for: category)
+                    .transition(.identity)
             } else {
-                return AnyView(Color.clear)
+                Color.clear
             }
         case .files:
-            return AnyView(fileListView(for: resolvedSubcategory(for: screen)).transition(.identity))
+            fileListView(for: resolvedSubcategory(for: screen))
+                .transition(.identity)
         }
     }
 
@@ -225,41 +241,40 @@ struct CategoryGrowthListView: View {
             .frame(width: width)
     }
 
-    /// Renders all screen view types once (invisible) so SwiftUI materializes them.
-    /// Prevents the first-time insertion opacity fade on initial navigation.
-    private var preWarmViews: some View {
-        let dummySubcatScreen = DrilldownScreen(level: .subcategories, category: growingCategories.first ?? stableCategories.first, subcategory: nil)
-        let dummyFilesScreen = DrilldownScreen(level: .files, category: nil, subcategory: nil)
-        return VStack {
-            screenView(for: dummySubcatScreen)
-            screenView(for: dummyFilesScreen)
-        }
-        .frame(width: 0, height: 0)
-        .opacity(0)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-        .onAppear {
-            hasPreWarmedViews = true
-        }
-    }
-
-    private func startNavigationTransition(from previousScreen: DrilldownScreen, to newScreen: DrilldownScreen, direction: NavigationDirection, width: CGFloat) {
+    private func startNavigationTransition(
+        from previousScreen: DrilldownScreen,
+        to newScreen: DrilldownScreen,
+        direction: NavigationDirection,
+        width: CGFloat
+    ) {
         navigationTask?.cancel()
 
         guard width > 0 else {
-            activeTransition = nil
-            displayedScreen = newScreen
-            pageOffset = 0
+            // Wrap early-return mutations — without disablesAnimations,
+            // SwiftUI treats these as unanimated state changes and may
+            // apply implicit transitions to the structural teardown
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) {
+                activeTransition = nil
+                displayedScreen = newScreen
+                pageOffset = 0
+            }
             return
         }
 
-        let initialOffset = direction == .forward ? 0 : -width
-        let targetOffset = direction == .forward ? -width : 0
+        let initialOffset: CGFloat = direction == .forward ? 0 : -width
+        let targetOffset: CGFloat = direction == .forward ? -width : 0
 
-        // Phase 1: Set up pages with no animation (committed this frame)
-        var setupTransaction = Transaction()
-        setupTransaction.disablesAnimations = true
-        withTransaction(setupTransaction) {
+        // Phase 1 — structural swap, no animation
+        // disablesAnimations is the documented way to suppress animation
+        // during the setup phase of a two-part transition update.
+        // Official docs: developer.apple.com/documentation/swiftui/transaction/disablesanimations
+        // "Indicates whether views should disable animations during the
+        //  initial phase of a two-part transition update"
+        var setupTx = Transaction()
+        setupTx.disablesAnimations = true
+        withTransaction(setupTx) {
             activeTransition = ActiveTransition(
                 outgoing: previousScreen,
                 incoming: newScreen,
@@ -268,9 +283,22 @@ struct CategoryGrowthListView: View {
             pageOffset = initialOffset
         }
 
-        // Phase 2: Animate offset on the NEXT frame so .snappy doesn't
-        // contaminate the structural content changes above
+        // Phase 2 — animate offset after layout commits
+        // Task { @MainActor } serializes after the current synchronous
+        // code but its run loop cycle boundary is not guaranteed by the
+        // Swift concurrency spec — it may resume before SwiftUI has
+        // committed Phase 1 layout to the display.
+        // RunLoop.main.perform is a Foundation primitive that explicitly
+        // enqueues work at the END of the current run loop iteration,
+        // after the current call stack fully unwinds. This is the only
+        // documented guarantee that Phase 1 layout has committed before
+        // the withAnimation transaction is created.
         navigationTask = Task { @MainActor in
+            await withCheckedContinuation { continuation in
+                RunLoop.main.perform { continuation.resume() }
+            }
+            guard !Task.isCancelled else { return }
+
             withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
                 pageOffset = targetOffset
             }
@@ -278,9 +306,18 @@ struct CategoryGrowthListView: View {
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
 
-            displayedScreen = newScreen
-            activeTransition = nil
-            pageOffset = 0
+            // Phase 3 — structural teardown, no animation
+            // activeTransition = nil changes what leftScreen/rightScreen
+            // compute. Without disablesAnimations, SwiftUI animates this
+            // structural change, causing a visible snap or jump at the
+            // end of every slide transition.
+            var cleanupTx = Transaction()
+            cleanupTx.disablesAnimations = true
+            withTransaction(cleanupTx) {
+                displayedScreen = newScreen
+                activeTransition = nil
+                pageOffset = 0
+            }
         }
     }
 
