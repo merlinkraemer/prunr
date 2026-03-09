@@ -235,15 +235,26 @@ struct CategoryGrowthListView: View {
         }
 
         let direction = transitionDirection
-        displayedScreen = newScreen
-        outgoingScreen = previousScreen
-        pageOffset = direction == .forward ? 0 : -width
+        let initialOffset = direction == .forward ? 0 : -width
+        let targetOffset = direction == .forward ? -width : 0
+
+        // Setup state WITHOUT animation — prevents inherited animation context
+        // from causing the first-transition overlap
+        var setupTransaction = Transaction()
+        setupTransaction.disablesAnimations = true
+        withTransaction(setupTransaction) {
+            displayedScreen = newScreen
+            outgoingScreen = previousScreen
+            pageOffset = initialOffset
+        }
+
+        // Animate synchronously (not in a Task) so setup and animation
+        // are in the same update cycle
+        withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
+            pageOffset = targetOffset
+        }
 
         navigationTask = Task { @MainActor in
-            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-                pageOffset = direction == .forward ? -width : 0
-            }
-
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
 
