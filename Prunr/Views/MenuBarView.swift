@@ -1057,7 +1057,7 @@ struct MenuBarView: View {
                 startHeaderTransition(from: oldValue, to: newValue, width: resolvedWidth)
             }
         }
-        .frame(height: 36)
+        .frame(height: 44)
     }
 
     @ViewBuilder
@@ -1139,25 +1139,16 @@ struct MenuBarView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
     }
 
     private func drillDownHeader(category: CategoryInventoryItem, subcategory: SubcategoryGroup?) -> some View {
         let headerIcon = subcategory?.subcategory?.icon ?? category.category.icon
         let headerName = subcategory?.displayName ?? category.category.displayName
         let headerBytes = subcategory?.totalBytes ?? category.currentSizeBytes
-        // Get growth info for the header (subcategory takes precedence, else category)
-        let growthBytes: Int64? = {
-            if let subcategory = subcategory {
-                return subcategory.growthBytes
-            }
-            return category.recentGrowthStory?.deltaBytes ?? category.growthTrend?.growthBytes
-        }()
-        let growthDays = category.growthTrend?.growthSpanDays
 
         return HStack(spacing: 0) {
-            // Back button (left aligned, compact)
+            // Back button — fixed width for centering balance
             Button(action: navigateBackFromDrilldown) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 12, weight: .semibold))
@@ -1166,46 +1157,32 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
             .accessibilityHint("Return to category overview")
-            .frame(width: 20)
+            .frame(width: 32, height: 32)
+            .contentShape(Rectangle())
 
-            // Centered icon + title + growth indicator below
-            VStack(spacing: 2) {
-                HStack(spacing: 5) {
-                    Image(systemName: headerIcon)
-                        .font(.system(size: 14))
-                        .foregroundStyle(category.category.color)
+            // Centered: single-line icon + title + size
+            HStack(spacing: 6) {
+                Image(systemName: headerIcon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(category.category.color)
 
-                    Text(headerName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                }
+                Text(headerName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
 
-                // Growth indicator below title (small, centered)
-                if let growth = growthBytes, growth > 0 {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 8, weight: .semibold))
-                        Text("+\(formattedBytes(growth))\(growthDays != nil ? " · \(growthDays!)d" : "")")
-                            .font(.system(size: 9, weight: .medium))
-                    }
-                    .foregroundStyle(.orange)
-                }
+                Text(formattedBytes(headerBytes))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
-            .offset(x: 18) // Offset right to visually center (56 - 20 = 36, half = 18)
 
-            // Bytes (right aligned, matches list item font)
-            Text(formattedBytes(headerBytes))
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .fixedSize()
-                .frame(width: 56, alignment: .trailing)
+            // Balance spacer matches back button width
+            Color.clear
+                .frame(width: 32)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .frame(minHeight: 36)
-        .padding(.horizontal, 6)
+        .frame(maxHeight: .infinity)
     }
 
     // MARK: - Category List View
@@ -1623,24 +1600,6 @@ struct MenuBarView: View {
         }
     }
 
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let kb = Double(bytes) / 1_000
-        let mb = kb / 1_000
-        let gb = mb / 1_000
-        let tb = gb / 1_000
-
-        if abs(tb) >= 1 {
-            return "\(String(format: "%.1f", tb)) TB"
-        } else if abs(gb) >= 1 {
-            return "\(String(format: "%.1f", gb)) GB"
-        } else if abs(mb) >= 1 {
-            return "\(String(format: "%.0f", mb)) MB"
-        } else if abs(kb) >= 1 {
-            return "\(String(format: "%.0f", kb)) KB"
-        } else {
-            return "\(bytes) B"
-        }
-    }
 }
 
 private struct DrilldownBackSwipeBridge: NSViewRepresentable {
