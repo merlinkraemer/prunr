@@ -1580,23 +1580,21 @@ struct MenuBarView: View {
         guard let category = manager.selectedInventoryCategory else { return }
         let isFileLevel = manager.isSubcategoryDrillDown && manager.selectedSubcategory != nil
 
-        withAnimation(.easeInOut(duration: 0.3)) {
-            if isFileLevel {
-                if category.category.supportsSubcategories {
-                    manager.isSubcategoryDrillDown = false
-                    manager.selectedSubcategory = nil
-                } else {
-                    manager.isSubcategoryDrillDown = false
-                    manager.selectedSubcategory = nil
-                    manager.selectedInventoryCategory = nil
-                    manager.isDrilledDown = false
-                }
+        if isFileLevel {
+            if category.category.supportsSubcategories {
+                manager.isSubcategoryDrillDown = false
+                manager.selectedSubcategory = nil
             } else {
+                manager.isSubcategoryDrillDown = false
                 manager.selectedSubcategory = nil
                 manager.selectedInventoryCategory = nil
-                manager.isSubcategoryDrillDown = false
                 manager.isDrilledDown = false
             }
+        } else {
+            manager.selectedSubcategory = nil
+            manager.selectedInventoryCategory = nil
+            manager.isSubcategoryDrillDown = false
+            manager.isDrilledDown = false
         }
     }
 

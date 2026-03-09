@@ -311,10 +311,8 @@ struct CategoryGrowthListView: View {
                     VStack(spacing: 0) {
                         ForEach(groups) { group in
                             SubcategoryRow(group: group) {
-                                withAnimation(.easeInOut(duration: 0.25)) {
-                                    manager.selectedSubcategory = group
-                                    manager.isSubcategoryDrillDown = true
-                                }
+                                manager.selectedSubcategory = group
+                                manager.isSubcategoryDrillDown = true
                             }
                         }
                     }
@@ -573,23 +571,6 @@ struct CategoryGrowthListView: View {
         .padding(.vertical, 20)
     }
 
-    // MARK: - Helper Methods
-
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let kb = Double(bytes) / 1_000
-        let mb = kb / 1_000
-        let gb = mb / 1_000
-
-        if abs(gb) >= 1 {
-            return "\(String(format: "%.1f", gb)) GB"
-        } else if abs(mb) >= 1 {
-            return "\(String(format: "%.0f", mb)) MB"
-        } else if abs(kb) >= 1 {
-            return "\(String(format: "%.0f", kb)) KB"
-        } else {
-            return "\(bytes) B"
-        }
-    }
 }
 
 // MARK: - Category Inventory Row
@@ -626,9 +607,9 @@ private struct CategoryInventoryRow: View, Equatable {
     private var rowContent: some View {
         HStack(spacing: 10) {
             Image(systemName: item.category.icon)
-                .font(.system(size: 16))
+                .font(.system(size: 15))
                 .foregroundStyle(item.category.color)
-                .frame(width: 20, height: 20)
+                .frame(width: 18, height: 18)
 
             Text(item.category.displayName)
                 .font(.system(size: 13, weight: .semibold))
@@ -663,7 +644,7 @@ private struct CategoryInventoryRow: View, Equatable {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .frame(minHeight: 36)
+        .frame(minHeight: 34)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill((hoverState || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
@@ -672,21 +653,6 @@ private struct CategoryInventoryRow: View, Equatable {
         .contentShape(Rectangle())
     }
 
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let kb = Double(bytes) / 1_000
-        let mb = kb / 1_000
-        let gb = mb / 1_000
-
-        if abs(gb) >= 1 {
-            return "\(String(format: "%.1f", gb)) GB"
-        } else if abs(mb) >= 1 {
-            return "\(String(format: "%.0f", mb)) MB"
-        } else if abs(kb) >= 1 {
-            return "\(String(format: "%.0f", kb)) KB"
-        } else {
-            return "\(bytes) B"
-        }
-    }
 }
 
 private struct SupplementalInventoryRow: View {
@@ -733,21 +699,6 @@ private struct SupplementalInventoryRow: View {
         }
     }
 
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let kb = Double(bytes) / 1_000
-        let mb = kb / 1_000
-        let gb = mb / 1_000
-
-        if abs(gb) >= 1 {
-            return "\(String(format: "%.1f", gb)) GB"
-        } else if abs(mb) >= 1 {
-            return "\(String(format: "%.0f", mb)) MB"
-        } else if abs(kb) >= 1 {
-            return "\(String(format: "%.0f", kb)) KB"
-        } else {
-            return "\(bytes) B"
-        }
-    }
 }
 
 private struct DrilldownFileRow: View {
@@ -813,21 +764,6 @@ private struct DrilldownFileRow: View {
         }
     }
 
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let kb = Double(bytes) / 1_000
-        let mb = kb / 1_000
-        let gb = mb / 1_000
-
-        if abs(gb) >= 1 {
-            return "\(String(format: "%.1f", gb)) GB"
-        } else if abs(mb) >= 1 {
-            return "\(String(format: "%.0f", mb)) MB"
-        } else if abs(kb) >= 1 {
-            return "\(String(format: "%.0f", kb)) KB"
-        } else {
-            return "\(bytes) B"
-        }
-    }
 }
 
 private struct DrilldownGrowthRow: View {
@@ -903,21 +839,6 @@ private struct DrilldownGrowthRow: View {
         }
     }
 
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let kb = Double(bytes) / 1_000
-        let mb = kb / 1_000
-        let gb = mb / 1_000
-
-        if abs(gb) >= 1 {
-            return "\(String(format: "%.1f", gb)) GB"
-        } else if abs(mb) >= 1 {
-            return "\(String(format: "%.0f", mb)) MB"
-        } else if abs(kb) >= 1 {
-            return "\(String(format: "%.0f", kb)) KB"
-        } else {
-            return "\(bytes) B"
-        }
-    }
 }
 
 private struct SubcategoryRow: View {
@@ -967,21 +888,6 @@ private struct SubcategoryRow: View {
         }
     }
 
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let kb = Double(bytes) / 1_000
-        let mb = kb / 1_000
-        let gb = mb / 1_000
-
-        if abs(gb) >= 1 {
-            return "\(String(format: "%.1f", gb)) GB"
-        } else if abs(mb) >= 1 {
-            return "\(String(format: "%.0f", mb)) MB"
-        } else if abs(kb) >= 1 {
-            return "\(String(format: "%.0f", kb)) KB"
-        } else {
-            return "\(bytes) B"
-        }
-    }
 }
 
 #Preview {
