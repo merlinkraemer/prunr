@@ -338,6 +338,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Configure panel for native dropdown look (no arrow)
         let panelContent = NSHostingView(rootView: MenuBarView(manager: self))
         panelContent.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
+
         panel = DropdownPanel(contentView: panelContent) { [weak self] in
             self?.isPopoverShown = false
             // Reset auto-close suspension state when panel closes via focus loss
@@ -877,7 +878,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 return []
             }
 
-            subcategoryGroupsByCategory[category] = hydratedGroups
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) {
+                subcategoryGroupsByCategory[category] = hydratedGroups
+            }
             return hydratedGroups
         } catch {
             print("[MenuBarManager] Failed loading subcategory breakdown for \(category.rawValue): \(error)")

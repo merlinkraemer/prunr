@@ -41,6 +41,7 @@ struct CategoryGrowthListView: View {
     @State private var pendingTransition: PendingNavigationTransition? = nil
     @State private var hasInitializedDisplay = false
     @State private var loadedContributorTaskID: String? = nil
+    @State private var isDataReady = false
 
     private enum DrilldownLevel: Int {
         case main
@@ -169,7 +170,11 @@ struct CategoryGrowthListView: View {
             }
         }
         .frame(maxHeight: maxHeight)
-        .onChange(of: growingCategories.map(\.id) + stableCategories.map(\.id)) { _, _ in
+        .onChange(of: growingCategories.map(\.id) + stableCategories.map(\.id)) { _, categories in
+            // Mark data as ready once we have content
+            if !categories.isEmpty {
+                isDataReady = true
+            }
             if manager.isDrilledDown, manager.selectedInventoryCategory == nil {
                 manager.isDrilledDown = false
                 manager.isSubcategoryDrillDown = false
@@ -374,6 +379,7 @@ struct CategoryGrowthListView: View {
                 .frame(maxHeight: maxHeight, alignment: .bottom)
             }
         }
+        .transaction { $0.disablesAnimations = true }
     }
 
     // MARK: - Subcategory List View
@@ -417,6 +423,7 @@ struct CategoryGrowthListView: View {
                 .frame(maxHeight: maxHeight)
             }
         }
+        .transaction { $0.disablesAnimations = true }
     }
 
     @State private var growthContributors: [GrowthContributor] = []
@@ -435,6 +442,7 @@ struct CategoryGrowthListView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: maxHeight)
+                .transaction { $0.disablesAnimations = true }
             )
         }
 
@@ -551,6 +559,7 @@ struct CategoryGrowthListView: View {
                 loadedContributorTaskID = contributorTaskID
                 isLoadingContributors = false
             }
+            .transaction { $0.disablesAnimations = true }
         )
     }
 
@@ -618,6 +627,7 @@ struct CategoryGrowthListView: View {
     // MARK: - Actions
 
     private func selectCategory(_ item: CategoryInventoryItem) {
+        guard isDataReady else { return }
         subcategoryLoadTask?.cancel()
         let token = UUID()
         subcategoryLoadToken = token
@@ -644,23 +654,35 @@ struct CategoryGrowthListView: View {
             }
 
             if Task.isCancelled {
-                isLoadingSubcategories = false
-                subcategoryLoadTask = nil
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    isLoadingSubcategories = false
+                    subcategoryLoadTask = nil
+                }
                 return
             }
 
             guard manager.selectedInventoryCategory?.category == selectedCategory else {
-                isLoadingSubcategories = false
-                subcategoryLoadTask = nil
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    isLoadingSubcategories = false
+                    subcategoryLoadTask = nil
+                }
                 return
             }
 
-            isLoadingSubcategories = false
-            subcategoryLoadTask = nil
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) {
+                isLoadingSubcategories = false
+                subcategoryLoadTask = nil
 
-            if !selectedCategory.supportsSubcategories {
-                manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
-                manager.isSubcategoryDrillDown = true
+                if !selectedCategory.supportsSubcategories {
+                    manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
+                    manager.isSubcategoryDrillDown = true
+                }
             }
         }
         subcategoryLoadTask = loadTask
