@@ -23,6 +23,7 @@ struct MenuBarView: View {
     @State private var headerOffset: CGFloat = 0
     @State private var headerWidth: CGFloat = 0
     @State private var pendingHeaderTransition: PendingHeaderTransition? = nil
+    @State private var hasPreWarmedHeaderViews = false
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
     @State private var selectedOnboardingPage = OnboardingPage.permissions
@@ -418,6 +419,20 @@ struct MenuBarView: View {
         }
     }
 
+    private var leftOnboardingPage: OnboardingPage {
+        if let outgoingOnboardingPage {
+            return onboardingTransitionDirection == .forward ? outgoingOnboardingPage : displayedOnboardingPage
+        }
+        return displayedOnboardingPage
+    }
+
+    private var rightOnboardingPage: OnboardingPage {
+        if let outgoingOnboardingPage {
+            return onboardingTransitionDirection == .forward ? displayedOnboardingPage : outgoingOnboardingPage
+        }
+        return displayedOnboardingPage
+    }
+
     private var setupOnboardingView: some View {
         VStack(spacing: 0) {
             onboardingProgressHeader
@@ -429,13 +444,12 @@ struct MenuBarView: View {
                 }
 
             GeometryReader { geometry in
-                Group {
-                    if let outgoingOnboardingPage {
-                        onboardingSlidingPages(size: geometry.size, outgoingPage: outgoingOnboardingPage)
-                    } else {
-                        onboardingPage(for: displayedOnboardingPage, size: geometry.size)
-                    }
+                HStack(spacing: 0) {
+                    onboardingPage(for: leftOnboardingPage, size: geometry.size)
+                    onboardingPage(for: rightOnboardingPage, size: geometry.size)
                 }
+                .offset(x: onboardingOffset)
+                .frame(width: geometry.size.width, alignment: .leading)
                 .clipped()
                 .onAppear {
                     onboardingWidth = geometry.size.width
@@ -578,34 +592,21 @@ struct MenuBarView: View {
         .opacity(isUnlocked ? 1.0 : 0.72)
     }
 
-    @ViewBuilder
     private func onboardingPage(for page: OnboardingPage, size: CGSize) -> some View {
-        ScrollView(.vertical) {
-            VStack(spacing: 10) {
-                onboardingPageCard(for: page)
+        AnyView(
+            ScrollView(.vertical) {
+                VStack(spacing: 10) {
+                    onboardingPageCard(for: page)
+                }
+                .frame(maxWidth: 284)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: size.height, alignment: .center)
+                .padding(.vertical, 6)
             }
-            .frame(maxWidth: 284)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: size.height, alignment: .center)
-            .padding(.vertical, 6)
-        }
-        .hiddenScrollIndicators()
-        .frame(width: size.width, height: size.height)
-        .id(page.rawValue)
-    }
-
-    @ViewBuilder
-    private func onboardingSlidingPages(size: CGSize, outgoingPage: OnboardingPage) -> some View {
-        HStack(spacing: 0) {
-            if onboardingTransitionDirection == .forward {
-                onboardingPage(for: outgoingPage, size: size)
-                onboardingPage(for: displayedOnboardingPage, size: size)
-            } else {
-                onboardingPage(for: displayedOnboardingPage, size: size)
-                onboardingPage(for: outgoingPage, size: size)
-            }
-        }
-        .offset(x: onboardingOffset)
+            .hiddenScrollIndicators()
+            .frame(width: size.width, height: size.height)
+            .transition(.identity)
+        )
     }
 
     @ViewBuilder
@@ -1040,25 +1041,39 @@ struct MenuBarView: View {
         }
     }
 
+    private var leftHeaderScreen: HeaderScreen {
+        if let activeHeaderTransition {
+            return activeHeaderTransition.direction == .forward ? activeHeaderTransition.outgoing : activeHeaderTransition.incoming
+        }
+        return displayedHeader
+    }
+
+    private var rightHeaderScreen: HeaderScreen {
+        if let activeHeaderTransition {
+            return activeHeaderTransition.direction == .forward ? activeHeaderTransition.incoming : activeHeaderTransition.outgoing
+        }
+        return displayedHeader
+    }
+
     private var headerNavigationView: some View {
         GeometryReader { geometry in
-            Group {
-                if let activeHeaderTransition {
-                    HStack(spacing: 0) {
-                        if activeHeaderTransition.direction == .forward {
-                            headerPage(for: activeHeaderTransition.outgoing, width: geometry.size.width)
-                            headerPage(for: activeHeaderTransition.incoming, width: geometry.size.width)
-                        } else {
-                            headerPage(for: activeHeaderTransition.incoming, width: geometry.size.width)
-                            headerPage(for: activeHeaderTransition.outgoing, width: geometry.size.width)
-                        }
-                    }
-                    .offset(x: headerOffset)
-                } else {
-                    headerPage(for: displayedHeader, width: geometry.size.width)
+            HStack(spacing: 0) {
+                headerPage(for: leftHeaderScreen, width: geometry.size.width)
+                headerPage(for: rightHeaderScreen, width: geometry.size.width)
+            }
+            .offset(x: headerOffset)
+            .frame(width: geometry.size.width, alignment: .leading)
+            .clipped()
+            .background {
+                if !hasPreWarmedHeaderViews {
+                    headerView(for: HeaderScreen(level: .category, category: nil, subcategory: nil))
+                        .frame(width: 0, height: 0)
+                        .opacity(0)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .onAppear { hasPreWarmedHeaderViews = true }
                 }
             }
-            .clipped()
             .onAppear {
                 headerWidth = geometry.size.width
                 if pendingHeaderTransition == nil && activeHeaderTransition == nil {
@@ -1092,16 +1107,15 @@ struct MenuBarView: View {
         .frame(height: 44)
     }
 
-    @ViewBuilder
-    private func headerView(for screen: HeaderScreen) -> some View {
+    private func headerView(for screen: HeaderScreen) -> AnyView {
         switch screen.level {
         case .overview:
-            overviewHeader
+            return AnyView(overviewHeader.transition(.identity))
         case .category, .files:
             if let category = resolvedHeaderCategory(for: screen) {
-                drillDownHeader(category: category, subcategory: resolvedHeaderSubcategory(for: screen))
+                return AnyView(drillDownHeader(category: category, subcategory: resolvedHeaderSubcategory(for: screen)).transition(.identity))
             } else {
-                Color.clear
+                return AnyView(Color.clear)
             }
         }
     }
@@ -1156,11 +1170,11 @@ struct MenuBarView: View {
             headerOffset = initialOffset
         }
 
-        withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-            headerOffset = targetOffset
-        }
-
         headerTransitionTask = Task { @MainActor in
+            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
+                headerOffset = targetOffset
+            }
+
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
 
@@ -1173,7 +1187,6 @@ struct MenuBarView: View {
     private func headerPage(for screen: HeaderScreen, width: CGFloat) -> some View {
         headerView(for: screen)
             .frame(width: width)
-            .id(screen.id)
     }
 
     private var overviewHeader: some View {

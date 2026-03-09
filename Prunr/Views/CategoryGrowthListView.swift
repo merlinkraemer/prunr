@@ -40,6 +40,7 @@ struct CategoryGrowthListView: View {
     @State private var pageWidth: CGFloat = 0
     @State private var pendingTransition: PendingNavigationTransition? = nil
     @State private var hasInitializedDisplay = false
+    @State private var hasPreWarmedViews = false
     @State private var loadedContributorTaskID: String? = nil
 
     private enum DrilldownLevel: Int {
@@ -108,27 +109,34 @@ struct CategoryGrowthListView: View {
         )
     }
 
+    private var leftScreen: DrilldownScreen {
+        if let activeTransition {
+            return activeTransition.direction == .forward ? activeTransition.outgoing : activeTransition.incoming
+        }
+        return displayedScreen ?? currentScreen
+    }
+
+    private var rightScreen: DrilldownScreen {
+        if let activeTransition {
+            return activeTransition.direction == .forward ? activeTransition.incoming : activeTransition.outgoing
+        }
+        return displayedScreen ?? currentScreen
+    }
+
     var body: some View {
         GeometryReader { geometry in
-            Group {
-                if let activeTransition {
-                    HStack(spacing: 0) {
-                        if activeTransition.direction == .forward {
-                            screenPage(for: activeTransition.outgoing, width: geometry.size.width)
-                            screenPage(for: activeTransition.incoming, width: geometry.size.width)
-                        } else {
-                            screenPage(for: activeTransition.incoming, width: geometry.size.width)
-                            screenPage(for: activeTransition.outgoing, width: geometry.size.width)
-                        }
-                    }
-                    .offset(x: pageOffset)
-                    .transition(.identity)
-                } else {
-                    screenPage(for: displayedScreen ?? currentScreen, width: geometry.size.width)
-                        .transition(.identity)
+            HStack(spacing: 0) {
+                screenPage(for: leftScreen, width: geometry.size.width)
+                screenPage(for: rightScreen, width: geometry.size.width)
+            }
+            .offset(x: pageOffset)
+            .frame(width: geometry.size.width, alignment: .leading)
+            .clipped()
+            .background {
+                if !hasPreWarmedViews {
+                    preWarmViews
                 }
             }
-            .clipped()
             .onAppear {
                 pageWidth = geometry.size.width
                 // Initialize displayedScreen on first appear without animation
@@ -183,21 +191,18 @@ struct CategoryGrowthListView: View {
         }
     }
 
-    @ViewBuilder
-    private func screenView(for screen: DrilldownScreen) -> some View {
+    private func screenView(for screen: DrilldownScreen) -> AnyView {
         switch screen.level {
         case .main:
-            categoryListView
-
+            return AnyView(categoryListView.transition(.identity))
         case .subcategories:
             if let category = screen.category {
-                subcategoryListView(for: category)
+                return AnyView(subcategoryListView(for: category).transition(.identity))
             } else {
-                Color.clear
+                return AnyView(Color.clear)
             }
-
         case .files:
-            fileListView(for: resolvedSubcategory(for: screen))
+            return AnyView(fileListView(for: resolvedSubcategory(for: screen)).transition(.identity))
         }
     }
 
@@ -218,7 +223,24 @@ struct CategoryGrowthListView: View {
     private func screenPage(for screen: DrilldownScreen, width: CGFloat) -> some View {
         screenView(for: screen)
             .frame(width: width)
-            .id(screen.id)
+    }
+
+    /// Renders all screen view types once (invisible) so SwiftUI materializes them.
+    /// Prevents the first-time insertion opacity fade on initial navigation.
+    private var preWarmViews: some View {
+        let dummySubcatScreen = DrilldownScreen(level: .subcategories, category: growingCategories.first ?? stableCategories.first, subcategory: nil)
+        let dummyFilesScreen = DrilldownScreen(level: .files, category: nil, subcategory: nil)
+        return VStack {
+            screenView(for: dummySubcatScreen)
+            screenView(for: dummyFilesScreen)
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear {
+            hasPreWarmedViews = true
+        }
     }
 
     private func startNavigationTransition(from previousScreen: DrilldownScreen, to newScreen: DrilldownScreen, direction: NavigationDirection, width: CGFloat) {
@@ -234,6 +256,7 @@ struct CategoryGrowthListView: View {
         let initialOffset = direction == .forward ? 0 : -width
         let targetOffset = direction == .forward ? -width : 0
 
+        // Phase 1: Set up pages with no animation (committed this frame)
         var setupTransaction = Transaction()
         setupTransaction.disablesAnimations = true
         withTransaction(setupTransaction) {
@@ -245,11 +268,13 @@ struct CategoryGrowthListView: View {
             pageOffset = initialOffset
         }
 
-        withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-            pageOffset = targetOffset
-        }
-
+        // Phase 2: Animate offset on the NEXT frame so .snappy doesn't
+        // contaminate the structural content changes above
         navigationTask = Task { @MainActor in
+            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
+                pageOffset = targetOffset
+            }
+
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
 
