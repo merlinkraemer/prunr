@@ -15,7 +15,19 @@ RED = \033[0;31m
 YELLOW = \033[0;33m
 NC = \033[0m # No Color
 
-.PHONY: all build run dev launch clean clean-build reset-dev-state help test open logs
+STRESS_ROOT ?= $(PWD)/tmp/stress-tree
+STRESS_DATASET ?= $(STRESS_ROOT)/dataset
+STRESS_RESULTS_ROOT ?= $(PWD)/tmp/stress-results
+STRESS_DB_PATH ?= $(STRESS_RESULTS_ROOT)/state/prunr-stress.db
+STRESS_RUNNER = $(DERIVED_DATA)/Build/Products/$(CONFIG)/$(SCHEME).app/Contents/MacOS/$(SCHEME)
+STRESS_EXPECT_UNCHANGED ?= 1
+STRESS_FILES ?= 100000
+STRESS_FILE_SIZE ?= 4096
+STRESS_FANOUT ?= 250
+STRESS_MUTATE_COUNT ?= 1000
+STRESS_MUTATE_BYTES ?= 1048576
+
+.PHONY: all build run dev launch clean clean-build reset-dev-state help test open logs stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean
 
 all: help
 
@@ -27,6 +39,13 @@ help:
 	@echo "$(GREEN)make dev$(NC)      - Kill, reset app state, clean local build artifacts, rebuild, and run"
 	@echo "$(GREEN)make clean$(NC)    - Clean build directory"
 	@echo "$(GREEN)make test$(NC)     - Run tests (if any)"
+	@echo "$(GREEN)make stress-create$(NC) - Generate a synthetic scan tree"
+	@echo "$(GREEN)make stress-stats$(NC)  - Inspect the synthetic scan tree"
+	@echo "$(GREEN)make stress-scan$(NC)   - Run a baseline/full scan on the synthetic dataset"
+	@echo "$(GREEN)make stress-repeat$(NC) - Run a repeat scan and compare against the previous snapshot"
+	@echo "$(GREEN)make stress-report$(NC) - Summarize machine-readable stress scan results"
+	@echo "$(GREEN)make stress-mutate$(NC) - Apply deterministic file mutations"
+	@echo "$(GREEN)make stress-clean$(NC)  - Remove the synthetic scan tree"
 	@echo "$(GREEN)make open$(NC)     - Open in Xcode"
 	@echo "$(GREEN)make logs$(NC)     - Show recent app logs"
 	@echo ""
@@ -81,21 +100,78 @@ reset-dev-state:
 
 test:
 	@echo "$(BLUE)Running tests...$(NC)"
-	@if exec xcodebuild test \
+	@output_file="$$(mktemp)"; \
+	status=0; \
+	if ! xcodebuild test \
 		-project $(SCHEME).xcodeproj \
 		-scheme $(SCHEME) \
 		-configuration $(CONFIG) \
 		-derivedDataPath $(DERIVED_DATA) \
-		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES) 2>&1 | grep -q "No test bundles"; then \
-		echo "$(YELLOW)No tests found in the project$(NC)"; \
-	else \
-		exec xcodebuild test \
-			-project $(SCHEME).xcodeproj \
-			-scheme $(SCHEME) \
-			-configuration $(CONFIG) \
-			-derivedDataPath $(DERIVED_DATA) \
-			-clonedSourcePackagesDirPath $(SOURCE_PACKAGES); \
-	fi
+		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES) \
+		> "$$output_file" 2>&1; then \
+		status=$$?; \
+	fi; \
+	cat "$$output_file"; \
+	if grep -Eq "There are no test bundles available to test|No test bundles" "$$output_file"; then \
+		echo "$(YELLOW)No app-owned XCTest bundles are configured yet$(NC)"; \
+	elif [ $$status -ne 0 ]; then \
+		rm -f "$$output_file"; \
+		exit $$status; \
+	fi; \
+	rm -f "$$output_file"
+
+stress-create:
+	@echo "$(BLUE)Generating synthetic stress tree at $(STRESS_ROOT)...$(NC)"
+	exec swift scripts/stress_tree.swift create \
+		--root "$(STRESS_ROOT)" \
+		--files $(STRESS_FILES) \
+		--file-size $(STRESS_FILE_SIZE) \
+		--fanout $(STRESS_FANOUT)
+
+stress-stats:
+	@echo "$(BLUE)Inspecting synthetic stress tree at $(STRESS_ROOT)...$(NC)"
+	exec swift scripts/stress_tree.swift stats \
+		--root "$(STRESS_ROOT)"
+
+stress-scan:
+	@echo "$(BLUE)Running baseline/full stress scan for $(STRESS_DATASET)...$(NC)"
+	@label="$${STRESS_RUN_LABEL:-baseline}"; \
+	exec "$(STRESS_RUNNER)" stress-scan \
+		--mode baseline \
+		--dataset "$(STRESS_DATASET)" \
+		--results-dir "$(STRESS_RESULTS_ROOT)" \
+		--db-path "$(STRESS_DB_PATH)" \
+		--label "$$label" \
+		--expect-unchanged false
+
+stress-repeat:
+	@echo "$(BLUE)Running repeat stress scan for $(STRESS_DATASET)...$(NC)"
+	@label="$${STRESS_RUN_LABEL:-repeat}"; \
+	exec "$(STRESS_RUNNER)" stress-scan \
+		--mode repeat \
+		--dataset "$(STRESS_DATASET)" \
+		--results-dir "$(STRESS_RESULTS_ROOT)" \
+		--db-path "$(STRESS_DB_PATH)" \
+		--label "$$label" \
+		--expect-unchanged "$(STRESS_EXPECT_UNCHANGED)"
+
+stress-report:
+	@echo "$(BLUE)Summarizing stress scan results under $(STRESS_RESULTS_ROOT)...$(NC)"
+	exec "$(STRESS_RUNNER)" stress-report \
+		--results-dir "$(STRESS_RESULTS_ROOT)" \
+		--output "$(STRESS_RESULTS_ROOT)/report.json"
+
+stress-mutate:
+	@echo "$(BLUE)Applying deterministic mutations under $(STRESS_ROOT)...$(NC)"
+	exec swift scripts/stress_tree.swift mutate \
+		--root "$(STRESS_ROOT)" \
+		--count $(STRESS_MUTATE_COUNT) \
+		--bytes $(STRESS_MUTATE_BYTES)
+
+stress-clean:
+	@echo "$(YELLOW)Removing synthetic stress tree at $(STRESS_ROOT)...$(NC)"
+	exec swift scripts/stress_tree.swift clean \
+		--root "$(STRESS_ROOT)"
 
 open:
 	@echo "$(BLUE)Opening in Xcode...$(NC)"

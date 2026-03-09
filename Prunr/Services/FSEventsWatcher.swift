@@ -76,9 +76,12 @@ actor FSEventsWatcher {
         )
         callbackContext = context
 
-        // Directory-level events are enough to trigger a rescan and cost far less CPU
-        // than per-file notifications on broad developer trees.
-        let flags = FSEventStreamCreateFlags(0)
+        // File-level events give us more reliable roots for incremental rescans.
+        let flags = FSEventStreamCreateFlags(
+            kFSEventStreamCreateFlagFileEvents |
+            kFSEventStreamCreateFlagNoDefer |
+            kFSEventStreamCreateFlagWatchRoot
+        )
 
         // Create the event stream
         guard let newStream = FSEventStreamCreate(
@@ -94,19 +97,31 @@ actor FSEventsWatcher {
                 let pathsArray = eventPaths.assumingMemoryBound(to: UnsafeMutableRawPointer.self)
                 var changedPaths = Set<URL>()
 
+                var requiresFullRescan = false
+
                 for i in 0..<numEvents {
                     let pathPtr = pathsArray[i]
                     // Treat as C string pointer (char*)
                     let cString = pathPtr.assumingMemoryBound(to: CChar.self)
                     if let pathStr = String(validatingUTF8: cString) {
-                        let url = URL(fileURLWithPath: pathStr)
+                        let url = URL(fileURLWithPath: pathStr).standardizedFileURL
                         changedPaths.insert(url)
+                    }
+
+                    let flags = eventFlags[i]
+                    let droppedFlags =
+                        FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs)
+                        | FSEventStreamEventFlags(kFSEventStreamEventFlagKernelDropped)
+                        | FSEventStreamEventFlags(kFSEventStreamEventFlagUserDropped)
+                        | FSEventStreamEventFlags(kFSEventStreamEventFlagRootChanged)
+                    if flags & droppedFlags != 0 {
+                        requiresFullRescan = true
                     }
                 }
 
                 // Trigger debounced handling
                 Task {
-                    await watcher.handleEventPaths(changedPaths)
+                    await watcher.handleEventPaths(changedPaths, requiresFullRescan: requiresFullRescan)
                 }
             },
             &context,
@@ -174,11 +189,15 @@ actor FSEventsWatcher {
     /// Cancels any existing debounce task and creates a new one that will
     /// invoke the onChange callback after the debounce interval.
     ///
-    /// - Parameter paths: Set of URLs that changed
-    private func handleEventPaths(_ paths: Set<URL>) {
+    /// - Parameters:
+    ///   - paths: Set of URLs that changed
+    ///   - requiresFullRescan: Whether the stream reported dropped/root-change events
+    private func handleEventPaths(_ paths: Set<URL>, requiresFullRescan: Bool = false) {
         pendingPaths.formUnion(paths)
-
-        guard debounceTask == nil else { return }
+        if requiresFullRescan {
+            pendingPaths.formUnion(pathsToWatch.map(\.standardizedFileURL))
+        }
+        debounceTask?.cancel()
 
         debounceTask = Task {
             try? await Task.sleep(nanoseconds: UInt64(debounceInterval * 1_000_000_000))

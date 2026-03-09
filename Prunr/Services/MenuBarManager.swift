@@ -819,7 +819,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         do {
             let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
-            guard let latestSnapshotId = snapshots.first?.id else {
+            guard let latestSnapshot = snapshots.first,
+                  let latestSnapshotId = latestSnapshot.id else {
                 return []
             }
 
@@ -827,8 +828,30 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             if Task.isCancelled {
                 return []
             }
-            subcategoryGroupsByCategory[category] = groups
-            return groups
+
+            let growthTotals = await baselineService.getSubcategoryGrowthTotals(
+                trackedPathId: trackedPath.id,
+                snapshotId: latestSnapshotId,
+                category: category
+            )
+
+            let hydratedGroups = groups.map { group in
+                SubcategoryGroup(
+                    subcategory: group.subcategory,
+                    displayName: group.displayName,
+                    totalBytes: group.totalBytes,
+                    fileCount: group.fileCount,
+                    growthBytes: growthTotals[group.subcategory],
+                    topFiles: group.topFiles
+                )
+            }
+
+            if Task.isCancelled {
+                return []
+            }
+
+            subcategoryGroupsByCategory[category] = hydratedGroups
+            return hydratedGroups
         } catch {
             print("[MenuBarManager] Failed loading subcategory breakdown for \(category.rawValue): \(error)")
             return []
@@ -875,8 +898,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             // Update the cached group with new files
             var updatedGroup = group
-            updatedGroup.topFiles.append(contentsOf: additionalFiles)
-            updatedGroup.topFiles.sort { $0.currentSizeBytes > $1.currentSizeBytes }
+            var seenPaths = Set(updatedGroup.topFiles.map(\.path))
+            for file in additionalFiles where seenPaths.insert(file.path).inserted {
+                updatedGroup.topFiles.append(file)
+            }
+            updatedGroup.topFiles.sort {
+                if $0.currentSizeBytes == $1.currentSizeBytes {
+                    return $0.path.localizedStandardCompare($1.path) == .orderedAscending
+                }
+                return $0.currentSizeBytes > $1.currentSizeBytes
+            }
 
             // Update the cache
             if var groups = subcategoryGroupsByCategory[requestedCategory] {
@@ -1634,7 +1665,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func configureFileWatcherIfNeeded() {
         let urls: [URL]
-        if let trackedPath = preferredTrackedPath(), shouldAutoWatchTrackedPath(trackedPath) {
+        if let trackedPath = primaryTrackedPath(), shouldAutoWatchTrackedPath(trackedPath) {
             urls = [trackedPath.url.standardizedFileURL]
         } else {
             urls = []

@@ -341,7 +341,8 @@ actor DatabaseCleanupService {
 
         var backfilled = 0
         for snapshotId in snapshotIds {
-            if try await aggregateCategoryTotalsIfMissing(for: snapshotId) {
+            let result = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
+            if result.categoryWritten {
                 backfilled += 1
             }
         }
@@ -354,7 +355,8 @@ actor DatabaseCleanupService {
 
         var backfilled = 0
         for snapshotId in snapshotIds {
-            if try await aggregateSubcategoryTotalsIfMissing(for: snapshotId) {
+            let result = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
+            if result.subcategoryWritten {
                 backfilled += 1
             }
         }
@@ -410,12 +412,14 @@ actor DatabaseCleanupService {
     private func aggregateCategoryTotalsForOldSnapshots() async throws {
         guard let dbPool = db.dbPool else { return }
 
-        try await dbPool.write { db in
+        let snapshotIdsToAggregate = try await dbPool.read { db -> [Int64] in
             // Get all tracked path IDs that have snapshots
             let pathIds = try String.fetchAll(
                 db,
                 sql: "SELECT DISTINCT trackedPathId FROM snapshot WHERE trackedPathId != '' ORDER BY trackedPathId"
             )
+
+            var snapshotIdsToAggregate: [Int64] = []
 
             for pathId in pathIds {
                 // Get snapshots for this path, ordered by newest first
@@ -431,43 +435,34 @@ actor DatabaseCleanupService {
 
                 // Find snapshots beyond the retention limit that still have entries
                 let toAggregate = snapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
-                var snapshotIdsToAggregate: [Int64] = []
                 for snapshot in toAggregate {
                     if let snapshotId = snapshot.id {
                         snapshotIdsToAggregate.append(snapshotId)
                     }
                 }
+            }
 
-                // Also handle orphaned snapshots
-                let orphanedSnapshots = try Snapshot.fetchAll(
-                    db,
-                    sql: """
-                    SELECT * FROM snapshot
-                    WHERE trackedPathId = '' OR trackedPathId IS NULL
-                    ORDER BY createdAt DESC
-                    """
-                )
-                let orphanedToAggregate = orphanedSnapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
-                for snapshot in orphanedToAggregate {
-                    if let snapshotId = snapshot.id {
-                        snapshotIdsToAggregate.append(snapshotId)
-                    }
-                }
-
-                // Aggregate category totals for all identified snapshots
-                for snapshotId in snapshotIdsToAggregate {
-                    // Check if already aggregated
-                    let existingCount = try Int.fetchOne(
-                        db,
-                        sql: "SELECT COUNT(*) FROM categorySnapshot WHERE snapshotId = ?",
-                        arguments: [snapshotId]
-                    ) ?? 0
-                    guard existingCount == 0 else { continue }
-
-                    // Use SQL-based aggregation for speed
-                    try self.aggregateCategoriesInSQL(for: snapshotId, db: db)
+            // Also handle orphaned snapshots
+            let orphanedSnapshots = try Snapshot.fetchAll(
+                db,
+                sql: """
+                SELECT * FROM snapshot
+                WHERE trackedPathId = '' OR trackedPathId IS NULL
+                ORDER BY createdAt DESC
+                """
+            )
+            let orphanedToAggregate = orphanedSnapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
+            for snapshot in orphanedToAggregate {
+                if let snapshotId = snapshot.id {
+                    snapshotIdsToAggregate.append(snapshotId)
                 }
             }
+
+            return Array(Set(snapshotIdsToAggregate)).sorted()
+        }
+
+        for snapshotId in snapshotIdsToAggregate {
+            _ = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
         }
     }
 
@@ -480,282 +475,64 @@ actor DatabaseCleanupService {
 
     @discardableResult
     private func aggregateCategoryTotalsIfMissing(for snapshotId: Int64) async throws -> Bool {
-        guard let dbPool = db.dbPool else { return false }
-
-        return try await dbPool.write { db in
-            // Check if already aggregated (idempotency guard)
-            let existingCount = try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) FROM categorySnapshot WHERE snapshotId = ?",
-                arguments: [snapshotId]
-            ) ?? 0
-
-            guard existingCount == 0 else { return false }
-
-            // Use SQL-based aggregation for speed (handles most categories)
-            // This is 100x faster than row-by-row Swift processing
-            let startTime = Date()
-            try self.aggregateCategoriesInSQL(for: snapshotId, db: db)
-            let elapsed = Date().timeIntervalSince(startTime)
-
-            print("[DatabaseCleanupService] SQL aggregation for snapshot \(snapshotId) completed in \(String(format: "%.2f", elapsed))s")
-
-            return true
-        }
-    }
-
-    /// Fast SQL-based category aggregation using LIKE patterns
-    /// Handles the major categories directly in SQL for 100x speedup
-    private nonisolated func aggregateCategoriesInSQL(for snapshotId: Int64, db: Database) throws {
-        // SQL-based categorization using lowercased paths
-        // Categories match GrowthCategory.categorize() raw values
-        let home = FileManager.default.homeDirectoryForCurrentUser.path.lowercased()
-        let homeTrash = home + "/.trash"
-        let homeDownloads = home + "/downloads"
-        let homeDocuments = home + "/documents"
-        let homeLibrary = home + "/library"
-        let homeLibraryCaches = homeLibrary + "/caches"
-
-        func addLike(_ pattern: String, conditions: inout [String], args: inout [String]) {
-            conditions.append("path LIKE ?")
-            args.append(pattern)
-        }
-
-        func addCondition(_ condition: String, args newArgs: [String], conditions: inout [String], args: inout [String]) {
-            conditions.append(condition)
-            args.append(contentsOf: newArgs)
-        }
-
-        var trashConditions: [String] = []
-        var trashArgs: [String] = []
-        addLike(homeTrash, conditions: &trashConditions, args: &trashArgs)
-        addLike(homeTrash + "/%", conditions: &trashConditions, args: &trashArgs)
-
-        var downloadConditions: [String] = []
-        var downloadArgs: [String] = []
-        addLike(homeDownloads, conditions: &downloadConditions, args: &downloadArgs)
-        addLike(homeDownloads + "/%", conditions: &downloadConditions, args: &downloadArgs)
-
-        var developerConditions: [String] = []
-        var developerArgs: [String] = []
-        addLike("%/docker.raw%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/docker/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%com.docker%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/library/containers/com.docker%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/node_modules/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.git/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.git", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/deriveddata/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/target/release%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/target/debug%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.build/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.build", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/dist/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/build/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/var/lib/postgresql%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/postgres%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%postgresql%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%.sqlite", conditions: &developerConditions, args: &developerArgs)
-        addLike("%.sqlite3", conditions: &developerConditions, args: &developerArgs)
-        addLike("%.sqlite-wal", conditions: &developerConditions, args: &developerArgs)
-        addLike("%.sqlite-shm", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.venv/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.venv", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/venv/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.virtualenvs/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.virtualenvs", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.pyenv/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/.pyenv", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/xcode/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/android/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/workspace/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/dev/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/projects/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/code/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/repos/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%/src/%", conditions: &developerConditions, args: &developerArgs)
-        addLike("%.dsym", conditions: &developerConditions, args: &developerArgs)
-        addLike("%.ipa", conditions: &developerConditions, args: &developerArgs)
-
-        var audioConditions: [String] = []
-        var audioArgs: [String] = []
-        addLike("%/ableton/%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%ableton project info%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.als", conditions: &audioConditions, args: &audioArgs)
-        addLike("%/splice/%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%/native instruments/%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%/kontakt/%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%library/application support/native instruments%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%/samples/%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%/music/samples%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%/audio/plug-ins/%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%library/audio/%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%/components/%", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.vst", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.vst3", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.component", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.wav", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.aif", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.aiff", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.mp3", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.flac", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.ogg", conditions: &audioConditions, args: &audioArgs)
-        addLike("%.m4a", conditions: &audioConditions, args: &audioArgs)
-
-        var applicationsConditions: [String] = []
-        var applicationsArgs: [String] = []
-        addLike("%/applications/%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("%.app", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("%.app/%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("/opt/homebrew%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("/usr/local/cellar%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("/usr/local/caskroom%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("%library/caches/homebrew%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("%/.npm-global/%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("%/.npm-global", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("%/.bun/%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("%/.bun", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("/usr/local/lib/node_modules%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("%/.yarn/%", conditions: &applicationsConditions, args: &applicationsArgs)
-        addLike("%/.yarn", conditions: &applicationsConditions, args: &applicationsArgs)
-
-        var mediaConditions: [String] = []
-        var mediaArgs: [String] = []
-        addLike("%photos library.photoslibrary%", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%/movies/%", conditions: &mediaConditions, args: &mediaArgs)
-        addLike(homeDocuments, conditions: &mediaConditions, args: &mediaArgs)
-        addLike(homeDocuments + "/%", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.jpg", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.jpeg", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.png", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.heic", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.raw", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.mov", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.mp4", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.mkv", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.avi", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.m4v", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.psd", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.sketch", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.fig", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.ai", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.xd", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.pdf", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.doc", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.docx", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.xls", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.xlsx", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.ppt", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.pptx", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.pages", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.numbers", conditions: &mediaConditions, args: &mediaArgs)
-        addLike("%.key", conditions: &mediaConditions, args: &mediaArgs)
-
-        var cacheConditions: [String] = []
-        var cacheArgs: [String] = []
-        addLike(homeLibraryCaches, conditions: &cacheConditions, args: &cacheArgs)
-        addLike(homeLibraryCaches + "/%", conditions: &cacheConditions, args: &cacheArgs)
-        addLike("%/library/caches/%", conditions: &cacheConditions, args: &cacheArgs)
-        addLike("%/.cache/%", conditions: &cacheConditions, args: &cacheArgs)
-        addCondition("(path LIKE ? AND (path LIKE ? OR path LIKE ? OR path LIKE ?))", args: ["%cache%", "%chrome%", "%safari%", "%firefox%"], conditions: &cacheConditions, args: &cacheArgs)
-        addLike("%com.spotify%", conditions: &cacheConditions, args: &cacheArgs)
-        addLike("%/spotify/%", conditions: &cacheConditions, args: &cacheArgs)
-        addLike("%/mail/%", conditions: &cacheConditions, args: &cacheArgs)
-        addLike("%com.apple.mail%", conditions: &cacheConditions, args: &cacheArgs)
-        addLike("%mail download%", conditions: &cacheConditions, args: &cacheArgs)
-        addLike("%attachments%", conditions: &cacheConditions, args: &cacheArgs)
-        addCondition("(path LIKE ? AND path NOT LIKE ? AND path NOT LIKE ? AND path NOT LIKE ? AND path NOT LIKE ?)", args: [homeLibrary + "/%", homeLibraryCaches + "/%", "/opt/homebrew%", "/usr/local/cellar%", "/usr/local/caskroom%"], conditions: &cacheConditions, args: &cacheArgs)
-
-        let trashClause = trashConditions.joined(separator: " OR ")
-        let downloadsClause = downloadConditions.joined(separator: " OR ")
-        let developerClause = developerConditions.joined(separator: " OR ")
-        let audioClause = audioConditions.joined(separator: " OR ")
-        let applicationsClause = applicationsConditions.joined(separator: " OR ")
-        let mediaClause = mediaConditions.joined(separator: " OR ")
-        let cacheClause = cacheConditions.joined(separator: " OR ")
-
-        var args: [String] = []
-        args.append(contentsOf: trashArgs)
-        args.append(contentsOf: downloadArgs)
-        args.append(contentsOf: developerArgs)
-        args.append(contentsOf: audioArgs)
-        args.append(contentsOf: applicationsArgs)
-        args.append(contentsOf: mediaArgs)
-        args.append(contentsOf: cacheArgs)
-
-        let sql = """
-            WITH entries AS (
-                SELECT lower(p.path) AS path, se.sizeBytes AS sizeBytes
-                FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
-                WHERE se.snapshotId = ?
-            )
-            INSERT INTO categorySnapshot (snapshotId, category, totalBytes)
-            SELECT
-                ? AS snapshotId,
-                CASE
-                    WHEN \(trashClause) THEN '\(GrowthCategory.trash.rawValue)'
-                    WHEN \(downloadsClause) THEN '\(GrowthCategory.downloads.rawValue)'
-                    WHEN \(developerClause) THEN '\(GrowthCategory.developer.rawValue)'
-                    WHEN \(audioClause) THEN '\(GrowthCategory.audioProduction.rawValue)'
-                    WHEN \(applicationsClause) THEN '\(GrowthCategory.applications.rawValue)'
-                    WHEN \(mediaClause) THEN '\(GrowthCategory.mediaAndDocuments.rawValue)'
-                    WHEN \(cacheClause) THEN '\(GrowthCategory.cachesAndSystem.rawValue)'
-                    ELSE '\(GrowthCategory.other.rawValue)'
-                END AS category,
-                SUM(sizeBytes) AS totalBytes
-            FROM entries
-            GROUP BY category
-            """
-
-        var statementArgs: [DatabaseValueConvertible] = [snapshotId, snapshotId]
-        statementArgs.append(contentsOf: args)
-
-        try db.execute(sql: sql, arguments: StatementArguments(statementArgs))
+        let result = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
+        return result.categoryWritten
     }
 
     @discardableResult
     private func aggregateSubcategoryTotalsIfMissing(for snapshotId: Int64) async throws -> Bool {
-        guard let dbPool = db.dbPool else { return false }
+        let result = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
+        return result.subcategoryWritten
+    }
+
+    @discardableResult
+    private func aggregateSnapshotSummariesIfMissing(
+        for snapshotId: Int64
+    ) async throws -> (categoryWritten: Bool, subcategoryWritten: Bool) {
+        guard let dbPool = db.dbPool else {
+            return (false, false)
+        }
 
         let existing = try await dbPool.read { db in
-            try Int.fetchOne(
+            let categoryCount = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM categorySnapshot WHERE snapshotId = ?",
+                arguments: [snapshotId]
+            ) ?? 0
+            let subcategoryCount = try Int.fetchOne(
                 db,
                 sql: "SELECT COUNT(*) FROM subcategorySnapshot WHERE snapshotId = ?",
                 arguments: [snapshotId]
             ) ?? 0
+
+            return (categoryCount: categoryCount, subcategoryCount: subcategoryCount)
         }
 
-        guard existing == 0 else { return false }
-
-        struct Accumulator {
-            var totalBytes: Int64 = 0
-            var fileCount = 0
-            var topItems: [GrowthItem] = []
-
-            mutating func add(path: String, sizeBytes: Int64, subcategory: GrowthSubcategory?) {
-                totalBytes += sizeBytes
-                fileCount += 1
-
-                let item = GrowthItem(
-                    path: path,
-                    growthBytes: sizeBytes,
-                    currentSizeBytes: sizeBytes,
-                    percentOfParent: 0,
-                    subcategory: subcategory
-                )
-
-                if topItems.count < SubcategoryGroup.initialLoadLimit {
-                    topItems.append(item)
-                } else if let smallestIndex = topItems.indices.min(by: {
-                    topItems[$0].currentSizeBytes < topItems[$1].currentSizeBytes
-                }), sizeBytes > topItems[smallestIndex].currentSizeBytes {
-                    topItems[smallestIndex] = item
-                }
-            }
+        let needsCategories = existing.categoryCount == 0
+        let needsSubcategories = existing.subcategoryCount == 0
+        guard needsCategories || needsSubcategories else {
+            return (false, false)
         }
 
-        var grouped: [String: (category: GrowthCategory, subcategory: GrowthSubcategory?, accumulator: Accumulator)] = [:]
+        let summary = try await buildSnapshotSummary(for: snapshotId)
+
+        if needsCategories {
+            try await db.replaceCategorySnapshots(snapshotId: snapshotId, totals: summary.categoryTotals)
+        }
+
+        if needsSubcategories {
+            try await db.replaceSubcategorySnapshots(snapshotId: snapshotId, rows: summary.subcategoryRows)
+        }
+
+        return (
+            categoryWritten: needsCategories && !summary.categoryTotals.isEmpty,
+            subcategoryWritten: needsSubcategories && !summary.subcategoryRows.isEmpty
+        )
+    }
+
+    private func buildSnapshotSummary(for snapshotId: Int64) async throws -> SnapshotSummary {
+        var categoryTotals: [GrowthCategory: Int64] = [:]
+        var grouped: [DatabaseManager.JournalDeltaKey: SubcategoryAccumulator] = [:]
         let pageSize = 5_000
         var offset = 0
 
@@ -766,42 +543,48 @@ actor DatabaseCleanupService {
             for entry in entries {
                 let category = GrowthCategory.categorize(path: entry.path)
                 let subcategory = GrowthCategory.subcategorize(path: entry.path)
-                let key = "\(category.rawValue)::\(subcategory?.rawValue ?? "")"
+                categoryTotals[category, default: 0] += entry.sizeBytes
 
-                var value = grouped[key] ?? (category, subcategory, Accumulator())
-                value.accumulator.add(path: entry.path, sizeBytes: entry.sizeBytes, subcategory: subcategory)
+                let key = DatabaseManager.JournalDeltaKey(category: category, subcategory: subcategory)
+                var value = grouped[key] ?? SubcategoryAccumulator()
+                value.add(path: entry.path, sizeBytes: entry.sizeBytes, subcategory: subcategory)
                 grouped[key] = value
             }
 
             offset += entries.count
         }
 
-        guard !grouped.isEmpty else { return false }
-
-        let rows = grouped.values.map { value in
-            let finalized = value.accumulator.topItems.sorted { $0.currentSizeBytes > $1.currentSizeBytes }.map { item in
+        let rows = grouped.map { key, accumulator in
+            let finalized = accumulator.topItems.sorted { lhs, rhs in
+                if lhs.currentSizeBytes == rhs.currentSizeBytes {
+                    return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+                }
+                return lhs.currentSizeBytes > rhs.currentSizeBytes
+            }.map { item in
                 GrowthItem(
                     path: item.path,
                     growthBytes: item.currentSizeBytes,
                     currentSizeBytes: item.currentSizeBytes,
-                    percentOfParent: value.accumulator.totalBytes > 0
-                        ? Double(item.currentSizeBytes) / Double(value.accumulator.totalBytes)
+                    percentOfParent: accumulator.totalBytes > 0
+                        ? Double(item.currentSizeBytes) / Double(accumulator.totalBytes)
                         : 0,
-                    subcategory: value.subcategory
+                    subcategory: key.subcategory
                 )
             }
 
             return DatabaseManager.StoredSubcategorySnapshot(
-                category: value.category,
-                subcategory: value.subcategory,
-                totalBytes: value.accumulator.totalBytes,
-                fileCount: value.accumulator.fileCount,
+                category: key.category,
+                subcategory: key.subcategory,
+                totalBytes: accumulator.totalBytes,
+                fileCount: accumulator.fileCount,
                 topItems: finalized
             )
         }
 
-        try await db.replaceSubcategorySnapshots(snapshotId: snapshotId, rows: rows)
-        return true
+        return SnapshotSummary(
+            categoryTotals: categoryTotals,
+            subcategoryRows: rows
+        )
     }
 
     /// Deletes snapshotEntry rows for old snapshots, keeping only the latest full payload per tracked path
@@ -933,5 +716,42 @@ actor DatabaseCleanupService {
         print("[DatabaseCleanupService] Running VACUUM...")
         try await dbPool.vacuum()
         print("[DatabaseCleanupService] VACUUM complete")
+    }
+
+    private struct SnapshotSummary {
+        let categoryTotals: [GrowthCategory: Int64]
+        let subcategoryRows: [DatabaseManager.StoredSubcategorySnapshot]
+    }
+
+    private struct SubcategoryAccumulator {
+        var totalBytes: Int64 = 0
+        var fileCount = 0
+        var topItems: [GrowthItem] = []
+
+        mutating func add(path: String, sizeBytes: Int64, subcategory: GrowthSubcategory?) {
+            totalBytes += sizeBytes
+            fileCount += 1
+
+            let item = GrowthItem(
+                path: path,
+                growthBytes: sizeBytes,
+                currentSizeBytes: sizeBytes,
+                percentOfParent: 0,
+                subcategory: subcategory
+            )
+
+            if topItems.count < SubcategoryGroup.initialLoadLimit {
+                topItems.append(item)
+                return
+            }
+
+            guard let smallestIndex = topItems.indices.min(by: {
+                topItems[$0].currentSizeBytes < topItems[$1].currentSizeBytes
+            }) else {
+                return
+            }
+            guard sizeBytes > topItems[smallestIndex].currentSizeBytes else { return }
+            topItems[smallestIndex] = item
+        }
     }
 }

@@ -43,6 +43,8 @@ fastlane/test_output
 
 # Test data and temporary files
 test_data/
+tmp/stress-tree/
+tmp/stress-results/
 *.tmp
 *.log
 .DS_Store

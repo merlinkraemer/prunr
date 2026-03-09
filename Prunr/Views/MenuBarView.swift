@@ -1150,8 +1150,7 @@ struct MenuBarView: View {
         // Get growth info for the header (subcategory takes precedence, else category)
         let growthBytes: Int64? = {
             if let subcategory = subcategory {
-                // Sum growth from top files in subcategory
-                return subcategory.topFiles.reduce(Int64(0)) { $0 + $1.growthBytes }
+                return subcategory.growthBytes
             }
             return category.recentGrowthStory?.deltaBytes ?? category.growthTrend?.growthBytes
         }()

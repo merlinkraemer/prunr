@@ -14,12 +14,10 @@ final class DatabaseManager {
 
     private init() {}
 
-    /// Initialize the database at the standard Application Support location
-    /// Creates the directory and database file if they don't exist
+    /// Initialize the database at the standard Application Support location.
     func initialize() throws {
         let fileManager = FileManager.default
 
-        // Get Application Support directory
         guard let appSupportURL = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -27,21 +25,32 @@ final class DatabaseManager {
             throw DatabaseError.directoryNotFound
         }
 
-        // Create Prunr subdirectory
-        let prunrDirectory = appSupportURL.appendingPathComponent("Prunr", isDirectory: true)
-        try fileManager.createDirectory(at: prunrDirectory, withIntermediateDirectories: true)
+        let dbPath = appSupportURL
+            .appendingPathComponent("Prunr", isDirectory: true)
+            .appendingPathComponent("prunr.db")
+            .path
 
-        // Database file path
-        let dbPath = prunrDirectory.appendingPathComponent("prunr.db").path
-        self.databasePath = dbPath
+        try initialize(at: dbPath)
+    }
+
+    /// Initialize the database at an explicit SQLite file path.
+    func initialize(at dbPath: String) throws {
+        let fileManager = FileManager.default
+        let dbURL = URL(fileURLWithPath: dbPath)
+
+        try fileManager.createDirectory(
+            at: dbURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        databasePath = dbURL.path
 
         var config = Configuration()
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
         }
 
-        dbPool = try DatabasePool(path: dbPath, configuration: config)
-
+        dbPool = try DatabasePool(path: dbURL.path, configuration: config)
         try runMigrations()
     }
 
@@ -541,7 +550,7 @@ extension DatabaseManager {
                 FROM snapshotEntry se
                 JOIN paths p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
-                ORDER BY se.sizeBytes DESC
+                ORDER BY se.sizeBytes DESC, p.path ASC
                 LIMIT ?
                 """, arguments: [snapshotId, limit])
         }
@@ -564,7 +573,7 @@ extension DatabaseManager {
                 FROM snapshotEntry se
                 JOIN paths p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
-                ORDER BY se.sizeBytes DESC
+                ORDER BY se.sizeBytes DESC, p.path ASC
                 LIMIT ? OFFSET ?
                 """, arguments: [snapshotId, limit, offset])
         }
@@ -781,6 +790,7 @@ extension DatabaseManager {
                     displayName: displayName,
                     totalBytes: totalBytes,
                     fileCount: fileCount,
+                    growthBytes: nil,
                     topFiles: topItems
                 )
             }
@@ -1240,6 +1250,50 @@ extension DatabaseManager {
             }
 
             return results
+        }
+    }
+
+    func fetchGrowthTotalsBySubcategory(
+        trackedPathId: UUID,
+        snapshotId: Int64,
+        category: GrowthCategory
+    ) async throws -> [GrowthSubcategory?: Int64] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT
+                        p.path AS path,
+                        wse.sizeBytes - COALESCE(se.sizeBytes, 0) AS growthBytes
+                    FROM workingSetEntry wse
+                    JOIN paths p ON p.id = wse.pathId
+                    LEFT JOIN snapshotEntry se
+                        ON se.pathId = wse.pathId
+                        AND se.snapshotId = ?
+                    WHERE wse.trackedPathId = ?
+                        AND wse.sizeBytes > COALESCE(se.sizeBytes, 0)
+                    """,
+                arguments: [snapshotId, trackedPathIdString]
+            )
+
+            var totals: [GrowthSubcategory?: Int64] = [:]
+            for row in rows {
+                let path: String = row["path"] ?? ""
+                let growthBytes: Int64 = row["growthBytes"] ?? 0
+                guard growthBytes > 0 else { continue }
+                guard GrowthCategory.categorize(path: path) == category else { continue }
+
+                let subcategory = GrowthCategory.subcategorize(path: path)
+                totals[subcategory, default: 0] += growthBytes
+            }
+
+            return totals
         }
     }
 }

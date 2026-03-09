@@ -42,8 +42,6 @@ actor BaselineService {
     private let maxCategoryBigItems = 500
     // Initial files loaded per subcategory (user can load more)
     private let initialSubcategoryFileLimit = SubcategoryGroup.initialLoadLimit
-    // Maximum files per subcategory to prevent memory issues
-    private let maxSubcategoryFiles = SubcategoryGroup.maxLoadableFiles
 
     /// MainActor-isolated property for UI state
     @MainActor var isCreatingBaseline = false
@@ -61,6 +59,7 @@ actor BaselineService {
     /// - Throws: ScanError if scanning fails
     func createBaseline(
         trackedPath: TrackedPath,
+        ignoredNames: Set<String>? = nil,
         progress: ((ScanService.ScanProgress) -> Void)? = nil
     ) async throws -> Snapshot {
         print("[BaselineService] Starting scan for path: \(trackedPath.url.path)")
@@ -85,6 +84,7 @@ actor BaselineService {
         let snapshot = try await scanService.scan(
             path: trackedPath.url.path,
             trackedPathId: trackedPath.id,
+            ignoredNames: ignoredNames,
             progress: progress
         )
 
@@ -112,7 +112,7 @@ actor BaselineService {
                 var deltasByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
                 for delta in deltas {
                     let category = GrowthCategory.categorize(path: delta.path)
-                    let subcategory = GrowthSubcategory.subcategorize(path: delta.path)
+                    let subcategory = GrowthCategory.subcategorize(path: delta.path)
                     let key = DatabaseManager.JournalDeltaKey(category: category, subcategory: subcategory)
                     deltasByKey[key, default: 0] += delta.changeBytes
                 }
@@ -589,7 +589,7 @@ actor BaselineService {
                     }
 
                     guard GrowthCategory.categorize(path: entry.path) == category else { continue }
-                    let subcategory = GrowthSubcategory.subcategorize(path: entry.path)
+                    let subcategory = GrowthCategory.subcategorize(path: entry.path)
 
                     grouped[subcategory, default: SubcategoryAccumulator(limit: initialSubcategoryFileLimit)].add(entry)
                 }
@@ -606,7 +606,12 @@ actor BaselineService {
                 }
 
                 let totalBytes = accumulator.totalBytes
-                let sortedTopEntries = accumulator.topEntries.sorted { $0.sizeBytes > $1.sizeBytes }
+                let sortedTopEntries = accumulator.topEntries.sorted {
+                    if $0.sizeBytes == $1.sizeBytes {
+                        return $0.path.localizedStandardCompare($1.path) == .orderedAscending
+                    }
+                    return $0.sizeBytes > $1.sizeBytes
+                }
                 let topFiles = sortedTopEntries.map { entry in
                     let percent = totalBytes > 0
                         ? Double(entry.sizeBytes) / Double(totalBytes)
@@ -626,6 +631,7 @@ actor BaselineService {
                     displayName: displayName,
                     totalBytes: totalBytes,
                     fileCount: accumulator.fileCount,
+                    growthBytes: nil,
                     topFiles: topFiles
                 )
             }
@@ -679,56 +685,57 @@ actor BaselineService {
         limit: Int = SubcategoryGroup.loadMoreBatchSize
     ) async -> [GrowthItem] {
         do {
-            var results: [GrowthItem] = []
-            var skipped = 0
-            var globalOffset = 0
-            let pageSize = 5_000
+            let entries = try await collectSnapshotEntries(
+                for: snapshotId,
+                category: category,
+                subcategory: subcategory
+            )
 
-            while results.count < limit {
-                if Task.isCancelled {
-                    return []
+            guard offset < entries.count else { return [] }
+
+            let page = entries
+                .sorted { lhs, rhs in
+                    if lhs.sizeBytes == rhs.sizeBytes {
+                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+                    }
+                    return lhs.sizeBytes > rhs.sizeBytes
                 }
+                .dropFirst(offset)
+                .prefix(limit)
 
-                let entries = try await db.fetchEntriesPaginated(for: snapshotId, offset: globalOffset, limit: pageSize)
-                guard !entries.isEmpty else { break }
+            return page.map { entry in
+                let percent = totalBytes > 0
+                    ? Double(entry.sizeBytes) / Double(totalBytes)
+                    : 0
 
-                for entry in entries {
-                    if Task.isCancelled {
-                        return []
-                    }
-
-                    guard GrowthCategory.categorize(path: entry.path) == category else { continue }
-                    guard GrowthSubcategory.subcategorize(path: entry.path) == subcategory else { continue }
-
-                    if skipped < offset {
-                        skipped += 1
-                        continue
-                    }
-
-                    let percent = totalBytes > 0
-                        ? Double(entry.sizeBytes) / Double(totalBytes)
-                        : 0
-
-                    results.append(GrowthItem(
-                        path: entry.path,
-                        growthBytes: entry.sizeBytes,
-                        currentSizeBytes: entry.sizeBytes,
-                        percentOfParent: percent,
-                        subcategory: subcategory
-                    ))
-
-                    if results.count >= limit {
-                        break
-                    }
-                }
-
-                globalOffset += entries.count
+                return GrowthItem(
+                    path: entry.path,
+                    growthBytes: entry.sizeBytes,
+                    currentSizeBytes: entry.sizeBytes,
+                    percentOfParent: percent,
+                    subcategory: subcategory
+                )
             }
-
-            return results
         } catch {
             print("[BaselineService] Error loading more files for subcategory: \(error)")
             return []
+        }
+    }
+
+    func getSubcategoryGrowthTotals(
+        trackedPathId: UUID,
+        snapshotId: Int64,
+        category: GrowthCategory
+    ) async -> [GrowthSubcategory?: Int64] {
+        do {
+            return try await db.fetchGrowthTotalsBySubcategory(
+                trackedPathId: trackedPathId,
+                snapshotId: snapshotId,
+                category: category
+            )
+        } catch {
+            print("[BaselineService] Error fetching subcategory growth totals for \(category.rawValue): \(error)")
+            return [:]
         }
     }
 
@@ -821,6 +828,37 @@ actor BaselineService {
         }
 
         return trends
+    }
+
+    private func collectSnapshotEntries(
+        for snapshotId: Int64,
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?
+    ) async throws -> [SnapshotEntryWithPath] {
+        let pageSize = 5_000
+        var offset = 0
+        var matches: [SnapshotEntryWithPath] = []
+
+        while true {
+            try Task.checkCancellation()
+
+            let entries = try await db.fetchEntriesPaginatedUnordered(
+                for: snapshotId,
+                offset: offset,
+                limit: pageSize
+            )
+            guard !entries.isEmpty else { break }
+
+            for entry in entries {
+                guard GrowthCategory.categorize(path: entry.path) == category else { continue }
+                guard GrowthCategory.subcategorize(path: entry.path) == subcategory else { continue }
+                matches.append(entry)
+            }
+
+            offset += entries.count
+        }
+
+        return matches
     }
 
     /// Gets inventory with growth trends merged

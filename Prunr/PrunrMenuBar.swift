@@ -1,12 +1,20 @@
 import SwiftUI
 import AppKit
+import Darwin
 
 @main
 struct PrunrMenuBar: App {
     @MainActor
-    private let menuBarManager = MenuBarManager()
+    private let menuBarManager: MenuBarManager
 
+    @MainActor
     init() {
+        if let exitCode = HeadlessCommandRouter.runIfNeeded(arguments: Array(CommandLine.arguments.dropFirst())) {
+            Darwin.exit(exitCode)
+        }
+
+        menuBarManager = MenuBarManager()
+
         // Ensure app doesn't appear in Dock (menu bar-only app)
         NSApp.setActivationPolicy(.accessory)
 

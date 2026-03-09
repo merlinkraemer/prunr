@@ -101,10 +101,16 @@ actor ScanService {
     /// - Parameters:
     ///   - path: The file system path to scan
     ///   - trackedPathId: The ID of the TrackedPath this snapshot belongs to
+    ///   - ignoredNames: Optional explicit ignore-name set for headless or test runs
     ///   - progress: Optional callback for progress updates
     /// - Returns: The completed Snapshot with all entries stored
     /// - Throws: ScanError if the path is invalid or scanning fails
-    func scan(path: String, trackedPathId: UUID, progress: ((ScanProgress) -> Void)?) async throws -> Snapshot {
+    func scan(
+        path: String,
+        trackedPathId: UUID,
+        ignoredNames: Set<String>? = nil,
+        progress: ((ScanProgress) -> Void)?
+    ) async throws -> Snapshot {
         // Actor-local atomic gate (avoids race via MainActor hop)
         guard !scanInProgress else {
             logger.error("Scan requested while already scanning")
@@ -213,7 +219,12 @@ actor ScanService {
             }
 
             func finalized(subcategory: GrowthSubcategory?) -> [GrowthItem] {
-                let sorted = topItems.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+                let sorted = topItems.sorted {
+                    if $0.currentSizeBytes == $1.currentSizeBytes {
+                        return $0.path.localizedStandardCompare($1.path) == .orderedAscending
+                    }
+                    return $0.currentSizeBytes > $1.currentSizeBytes
+                }
                 guard totalBytes > 0 else { return sorted }
 
                 return sorted.map { item in
@@ -249,8 +260,12 @@ actor ScanService {
         do {
             // Stream scan results and accumulate into batches
             logger.debug("Starting file enumeration stream")
-            let ignoredNames = await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
-            let stream = await scanner.scan(url, ignoredNames: ignoredNames)
+            let resolvedIgnoredNames = if let ignoredNames {
+                ignoredNames
+            } else {
+                await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
+            }
+            let stream = await scanner.scan(url, ignoredNames: resolvedIgnoredNames)
 
             for try await result in stream {
                 // Check for cancellation (more frequent check)

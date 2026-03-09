@@ -69,6 +69,7 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
     let displayName: String
     let totalBytes: Int64
     let fileCount: Int
+    var growthBytes: Int64?
     var topFiles: [GrowthItem]
 
     init(
@@ -76,6 +77,7 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
         displayName: String,
         totalBytes: Int64,
         fileCount: Int,
+        growthBytes: Int64? = nil,
         topFiles: [GrowthItem]
     ) {
         self.id = subcategory?.rawValue ?? "__uncategorized__:\(displayName)"
@@ -83,6 +85,7 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
         self.displayName = displayName
         self.totalBytes = totalBytes
         self.fileCount = fileCount
+        self.growthBytes = growthBytes
         self.topFiles = topFiles
     }
     

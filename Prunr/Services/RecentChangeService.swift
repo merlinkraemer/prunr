@@ -93,6 +93,27 @@ actor RecentChangeService {
         let fileManager = FileManager.default
         var candidates: [URL] = []
 
+        func nearestExistingAncestor(for url: URL) -> URL {
+            var candidate = url.standardizedFileURL
+
+            while candidate.path != trackedRoot.deletingLastPathComponent().path {
+                var isDirectory: ObjCBool = false
+                if fileManager.fileExists(atPath: candidate.path, isDirectory: &isDirectory) {
+                    return isDirectory.boolValue
+                        ? candidate
+                        : candidate.deletingLastPathComponent().standardizedFileURL
+                }
+
+                let parent = candidate.deletingLastPathComponent().standardizedFileURL
+                if parent.path == candidate.path {
+                    break
+                }
+                candidate = parent
+            }
+
+            return trackedRoot
+        }
+
         for url in changedPaths {
             let standardized = url.standardizedFileURL
             guard standardized.path.hasPrefix(trackedRoot.path) else { continue }
@@ -103,8 +124,10 @@ actor RecentChangeService {
             let candidate: URL
             if exists, !isDirectory.boolValue {
                 candidate = standardized.deletingLastPathComponent().standardizedFileURL
-            } else {
+            } else if exists {
                 candidate = standardized
+            } else {
+                candidate = nearestExistingAncestor(for: standardized)
             }
 
             guard candidate.path.hasPrefix(trackedRoot.path) else { continue }
