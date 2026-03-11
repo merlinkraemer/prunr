@@ -23,7 +23,6 @@ struct MenuBarView: View {
     @State private var headerOffset: CGFloat = 0
     @State private var headerWidth: CGFloat = 0
     @State private var pendingHeaderTransition: PendingHeaderTransition? = nil
-    @State private var hasPreWarmedHeaderViews = false
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
     @State private var selectedOnboardingPage = OnboardingPage.permissions
@@ -485,6 +484,17 @@ struct MenuBarView: View {
                     startOnboardingTransition(from: oldValue, to: newValue, width: resolvedWidth)
                 }
             }
+            .background {
+                ZStack {
+                    ForEach(OnboardingPage.allCases, id: \.rawValue) { page in
+                        onboardingPage(for: page, size: .zero)
+                    }
+                }
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
             .padding(.top, 18)
         }
         .padding(.horizontal, 16)
@@ -593,20 +603,18 @@ struct MenuBarView: View {
     }
 
     private func onboardingPage(for page: OnboardingPage, size: CGSize) -> some View {
-        AnyView(
-            ScrollView(.vertical) {
-                VStack(spacing: 10) {
-                    onboardingPageCard(for: page)
-                }
-                .frame(maxWidth: 284)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: size.height, alignment: .center)
-                .padding(.vertical, 6)
+        ScrollView(.vertical) {
+            VStack(spacing: 10) {
+                onboardingPageCard(for: page)
             }
-            .hiddenScrollIndicators()
-            .frame(width: size.width, height: size.height)
-            .transition(.identity)
-        )
+            .frame(maxWidth: 284)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: size.height, alignment: .center)
+            .padding(.vertical, 6)
+        }
+        .hiddenScrollIndicators()
+        .frame(width: size.width, height: size.height)
+        .transition(.identity)
     }
 
     @ViewBuilder
@@ -823,26 +831,47 @@ struct MenuBarView: View {
         onboardingTransitionTask?.cancel()
 
         guard width > 0 else {
-            outgoingOnboardingPage = nil
-            displayedOnboardingPage = newPage
-            onboardingOffset = 0
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                outgoingOnboardingPage = nil
+                displayedOnboardingPage = newPage
+                onboardingOffset = 0
+            }
             return
         }
 
-        displayedOnboardingPage = newPage
-        outgoingOnboardingPage = previousPage
-        onboardingOffset = onboardingTransitionDirection == .forward ? 0 : -width
+        let initialOffset = onboardingTransitionDirection == .forward ? 0 : -width
+        let targetOffset = onboardingTransitionDirection == .forward ? -width : 0
+
+        var setupTransaction = Transaction()
+        setupTransaction.disablesAnimations = true
+        withTransaction(setupTransaction) {
+            displayedOnboardingPage = newPage
+            outgoingOnboardingPage = previousPage
+            onboardingOffset = initialOffset
+        }
 
         onboardingTransitionTask = Task { @MainActor in
+            await withCheckedContinuation { continuation in
+                RunLoop.main.perform { continuation.resume() }
+            }
+            guard !Task.isCancelled else { return }
+
             withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-                onboardingOffset = onboardingTransitionDirection == .forward ? -width : 0
+                onboardingOffset = targetOffset
             }
 
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
 
-            outgoingOnboardingPage = nil
-            onboardingOffset = 0
+            var cleanupTransaction = Transaction()
+            cleanupTransaction.disablesAnimations = true
+            withTransaction(cleanupTransaction) {
+                displayedOnboardingPage = newPage
+                outgoingOnboardingPage = nil
+                onboardingOffset = 0
+            }
         }
     }
 
@@ -1064,16 +1093,6 @@ struct MenuBarView: View {
             .offset(x: headerOffset)
             .frame(width: geometry.size.width, alignment: .leading)
             .clipped()
-            .background {
-                if !hasPreWarmedHeaderViews {
-                    headerView(for: HeaderScreen(level: .category, category: nil, subcategory: nil))
-                        .frame(width: 0, height: 0)
-                        .opacity(0)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                        .onAppear { hasPreWarmedHeaderViews = true }
-                }
-            }
             .onAppear {
                 headerWidth = geometry.size.width
                 if pendingHeaderTransition == nil && activeHeaderTransition == nil {
@@ -1104,18 +1123,42 @@ struct MenuBarView: View {
                 startHeaderTransition(from: oldValue, to: newValue, width: resolvedWidth)
             }
         }
+        .background {
+            ZStack {
+                headerView(for: .overview)
+                if let firstCategory = GrowthCategory.allCases.first {
+                    headerView(for: HeaderScreen(
+                        level: .category,
+                        category: CategoryInventoryItem(category: firstCategory, currentSizeBytes: 0),
+                        subcategory: nil
+                    ))
+                    headerView(for: HeaderScreen(
+                        level: .files,
+                        category: CategoryInventoryItem(category: firstCategory, currentSizeBytes: 0),
+                        subcategory: nil
+                    ))
+                }
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
         .frame(height: 44)
     }
 
-    private func headerView(for screen: HeaderScreen) -> AnyView {
+    @ViewBuilder
+    private func headerView(for screen: HeaderScreen) -> some View {
         switch screen.level {
         case .overview:
-            return AnyView(overviewHeader.transition(.identity))
+            overviewHeader
+                .transition(.identity)
         case .category, .files:
             if let category = resolvedHeaderCategory(for: screen) {
-                return AnyView(drillDownHeader(category: category, subcategory: resolvedHeaderSubcategory(for: screen)).transition(.identity))
+                drillDownHeader(category: category, subcategory: resolvedHeaderSubcategory(for: screen))
+                    .transition(.identity)
             } else {
-                return AnyView(Color.clear)
+                Color.clear
             }
         }
     }
@@ -1150,9 +1193,13 @@ struct MenuBarView: View {
         headerTransitionTask?.cancel()
 
         guard width > 0 else {
-            activeHeaderTransition = nil
-            displayedHeader = newHeader
-            headerOffset = 0
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                activeHeaderTransition = nil
+                displayedHeader = newHeader
+                headerOffset = 0
+            }
             return
         }
 
@@ -1171,6 +1218,11 @@ struct MenuBarView: View {
         }
 
         headerTransitionTask = Task { @MainActor in
+            await withCheckedContinuation { continuation in
+                RunLoop.main.perform { continuation.resume() }
+            }
+            guard !Task.isCancelled else { return }
+
             withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
                 headerOffset = targetOffset
             }
@@ -1178,9 +1230,13 @@ struct MenuBarView: View {
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
 
-            displayedHeader = newHeader
-            activeHeaderTransition = nil
-            headerOffset = 0
+            var cleanupTransaction = Transaction()
+            cleanupTransaction.disablesAnimations = true
+            withTransaction(cleanupTransaction) {
+                displayedHeader = newHeader
+                activeHeaderTransition = nil
+                headerOffset = 0
+            }
         }
     }
 

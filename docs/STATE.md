@@ -70,6 +70,17 @@ This document describes **what is implemented today**, at a high level, without 
 - **View-only**  
   - Prunr focuses on **diagnostics and insight**. It does not perform bulk deletion; instead, it reveals paths in Finder so users can decide what to delete.
 
+### Intentional heavier paths
+
+- **Headless stress commands**
+  - `stress-scan` and `stress-report` are intentionally compiled into the app binary for synthetic dataset benchmarking and regression checks. They only run when invoked via CLI arguments and are not part of the normal menu bar flow.
+
+- **Background maintenance**
+  - Startup cleanup (`DatabaseCleanupService`) and SQLite maintenance are intentionally retained to keep long-lived installs healthy, even though they can do bursty work after launch or after scans.
+
+- **File watching and automatic scans**
+  - FSEvents watching plus throttled automatic scans remain an intentional tradeoff: Prunr spends some background work to keep disk growth state current without requiring manual refreshes.
+
 ### Planning going forward
 
 The previous, detailed phase-based planning system (`.planning/phases/...`) is now considered **archival**.  
@@ -79,4 +90,3 @@ Going forward:
 - High-level intent and future work should be captured in **`docs/OVERVIEW.md`** (vision + bird’s-eye roadmap).  
 - Concrete status and constraints should be kept up to date in **this file** (`docs/STATE.md`).  
 - If deeper design documents are needed in the future, they should be added under `docs/` as focused, self-contained topics (e.g., `architecture.md`, `ux-principles.md`), not as many fine-grained phases.
-

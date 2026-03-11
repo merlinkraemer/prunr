@@ -445,10 +445,10 @@ actor ScanService {
 
     private func historicalEntryEstimate(for trackedPathId: UUID) async -> Int? {
         do {
-            let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPathId)
+            let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 2)
             var candidateCounts: [Int] = []
 
-            for snapshot in snapshots.prefix(2) {
+            for snapshot in snapshots {
                 guard let snapshotId = snapshot.id else { continue }
                 let count = try await db.fetchEntryCount(for: snapshotId)
                 if count > 0 {

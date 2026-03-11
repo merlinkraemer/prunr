@@ -65,7 +65,7 @@ actor BaselineService {
         print("[BaselineService] Starting scan for path: \(trackedPath.url.path)")
 
         // Get previous snapshot for delta calculation
-        let previousSnapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        let previousSnapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
         let previousSnapshotId = previousSnapshots.first?.id
 
         // Set UI state
@@ -163,7 +163,7 @@ actor BaselineService {
     /// - Returns: Array of GrowthItem sorted by growthBytes descending
     /// - Throws: BaselineError if insufficient snapshots exist
     func getGrowthList(trackedPath: TrackedPath) async throws -> [GrowthItem] {
-        let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
 
         guard snapshots.count >= 2 else {
             throw BaselineError.insufficientSnapshots
@@ -192,7 +192,7 @@ actor BaselineService {
     /// - Returns: Array of GrowthItem sorted by growthBytes descending
     /// - Throws: BaselineError if insufficient snapshots exist
     func drillDown(path: String, trackedPath: TrackedPath) async throws -> [GrowthItem] {
-        let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
 
         guard snapshots.count >= 2 else {
             throw BaselineError.insufficientSnapshots
@@ -289,7 +289,7 @@ actor BaselineService {
     /// - Throws: BaselineError if insufficient snapshots exist
     func getCategoryGrowthList(trackedPath: TrackedPath) async throws -> [CategoryGrowthItem] {
         let start = Date()
-        let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
 
         guard snapshots.count >= 2 else {
             throw BaselineError.insufficientSnapshots
@@ -483,7 +483,7 @@ actor BaselineService {
     func getCategoryInventory(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
         do {
             // Get the latest snapshot for this trackedPath
-            let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
             guard let latestSnapshot = snapshots.first,
                   let snapshotId = latestSnapshot.id else {
                 return []

@@ -99,12 +99,21 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var selectedSubcategory: SubcategoryGroup? = nil
     var isSubcategoryDrillDown: Bool = false
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
+    private var subcategoryBreakdownCacheGenerationByCategory: [GrowthCategory: UInt64] = [:]
+    var subcategoryBreakdownLoadingCategories: Set<GrowthCategory> = []
     var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
     var growthContributorCacheGeneration: UInt64 = 0
     private var currentInventorySnapshotID: Int64?
+    @ObservationIgnored
+    private var subcategoryBreakdownLoadTasks: [GrowthCategory: Task<SubcategoryBreakdownLoadResult, Never>] = [:]
     var monitoredPathName: String = ""
     var enabledPathCount: Int {
         SettingsStore.shared.enabledTrackedPaths.count
+    }
+
+    private enum SubcategoryBreakdownLoadResult {
+        case loaded([SubcategoryGroup])
+        case skipped
     }
 
     /// Extract folder name from path for tag display
@@ -734,7 +743,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         do {
-            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
             guard !snapshots.isEmpty else {
                 noBaseline = true
                 clearInventoryState()
@@ -818,76 +827,106 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
+    func isSubcategoryBreakdownReady(for category: GrowthCategory) -> Bool {
+        guard subcategoryGroupsByCategory[category] != nil else { return false }
+        return subcategoryBreakdownCacheGenerationByCategory[category] == growthContributorCacheGeneration
+    }
+
+    func isSubcategoryBreakdownLoading(for category: GrowthCategory) -> Bool {
+        subcategoryBreakdownLoadingCategories.contains(category)
+    }
+
+    func preloadSubcategoryBreakdowns(for categories: [GrowthCategory]) {
+        var seenCategories = Set<GrowthCategory>()
+
+        for category in categories where seenCategories.insert(category).inserted {
+            guard !isSubcategoryBreakdownReady(for: category) else { continue }
+            guard subcategoryBreakdownLoadTasks[category] == nil else { continue }
+            setSubcategoryBreakdownLoading(true, for: category)
+
+            Task { @MainActor in
+                _ = await loadSubcategoryBreakdown(for: category)
+            }
+        }
+    }
+
     func loadSubcategoryBreakdown(for category: GrowthCategory) async -> [SubcategoryGroup] {
-        if let cached = subcategoryGroupsByCategory[category] {
+        if isSubcategoryBreakdownReady(for: category), let cached = subcategoryGroupsByCategory[category] {
+            setSubcategoryBreakdownLoading(false, for: category)
             return cached
         }
 
-        if Task.isCancelled {
-            return []
+        if let existingTask = subcategoryBreakdownLoadTasks[category] {
+            return await resolveSubcategoryBreakdownLoad(existingTask, for: category)
         }
 
-        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
-        guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
-            return []
-        }
+        setSubcategoryBreakdownLoading(true, for: category)
 
-        do {
-            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
-            guard let latestSnapshot = snapshots.first,
-                  let latestSnapshotId = latestSnapshot.id else {
-                return []
-            }
-
-            let groups = await baselineService.getSubcategoryBreakdown(for: category, snapshotId: latestSnapshotId)
+        let loadTask = Task { @MainActor in
             if Task.isCancelled {
-                return []
+                return SubcategoryBreakdownLoadResult.skipped
             }
 
-            // Try working-set-based growth first, then fall back to journal data
-            var growthTotals = await baselineService.getSubcategoryGrowthTotals(
-                trackedPathId: trackedPath.id,
-                snapshotId: latestSnapshotId,
-                category: category
-            )
+            let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+            guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
+                return .skipped
+            }
 
-            // If working set comparison found no growth, use journal data
-            if growthTotals.isEmpty {
-                let journalTotals = await growthJournalService.subcategoryGrowthTotals(
-                    trackedPath: trackedPath,
-                    category: category,
-                    retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
-                )
-                if !journalTotals.isEmpty {
-                    growthTotals = journalTotals
+            do {
+                let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
+                guard let latestSnapshot = snapshots.first,
+                      let latestSnapshotId = latestSnapshot.id else {
+                    return .skipped
                 }
-            }
 
-            let hydratedGroups = groups.map { group in
-                SubcategoryGroup(
-                    subcategory: group.subcategory,
-                    displayName: group.displayName,
-                    totalBytes: group.totalBytes,
-                    fileCount: group.fileCount,
-                    growthBytes: growthTotals[group.subcategory],
-                    topFiles: group.topFiles
+                let groups = await baselineService.getSubcategoryBreakdown(for: category, snapshotId: latestSnapshotId)
+                if Task.isCancelled {
+                    return .skipped
+                }
+
+                // Try working-set-based growth first, then fall back to journal data
+                var growthTotals = await baselineService.getSubcategoryGrowthTotals(
+                    trackedPathId: trackedPath.id,
+                    snapshotId: latestSnapshotId,
+                    category: category
                 )
-            }
 
-            if Task.isCancelled {
-                return []
-            }
+                // If working set comparison found no growth, use journal data
+                if growthTotals.isEmpty {
+                    let journalTotals = await growthJournalService.subcategoryGrowthTotals(
+                        trackedPath: trackedPath,
+                        category: category,
+                        retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+                    )
+                    if !journalTotals.isEmpty {
+                        growthTotals = journalTotals
+                    }
+                }
 
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) {
-                subcategoryGroupsByCategory[category] = hydratedGroups
+                let hydratedGroups = groups.map { group in
+                    SubcategoryGroup(
+                        subcategory: group.subcategory,
+                        displayName: group.displayName,
+                        totalBytes: group.totalBytes,
+                        fileCount: group.fileCount,
+                        growthBytes: growthTotals[group.subcategory],
+                        topFiles: group.topFiles
+                    )
+                }
+
+                if Task.isCancelled {
+                    return .skipped
+                }
+
+                return .loaded(hydratedGroups)
+            } catch {
+                print("[MenuBarManager] Failed loading subcategory breakdown for \(category.rawValue): \(error)")
+                return .skipped
             }
-            return hydratedGroups
-        } catch {
-            print("[MenuBarManager] Failed loading subcategory breakdown for \(category.rawValue): \(error)")
-            return []
         }
+
+        subcategoryBreakdownLoadTasks[category] = loadTask
+        return await resolveSubcategoryBreakdownLoad(loadTask, for: category)
     }
 
     /// Loads more files for a specific subcategory (pagination support).
@@ -913,7 +952,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else { return nil }
 
         do {
-            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
             guard let latestSnapshotId = snapshots.first?.id else { return nil }
 
             let additionalFiles = await baselineService.loadMoreSubcategoryFiles(
@@ -971,7 +1010,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else { return [] }
 
         do {
-            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
             guard let latestSnapshotId = snapshots.first?.id else { return [] }
             let cacheKey = growthContributorCacheKey(
                 snapshotId: latestSnapshotId,
@@ -1170,7 +1209,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         do {
-            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
             noBaseline = snapshots.isEmpty
             lastAutomaticScanAt = snapshots.first?.createdAt
         } catch {
@@ -1204,10 +1243,23 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         currentInventorySnapshotID = snapshotID
 
         if invalidateSubcategoryCache {
+            cancelSubcategoryBreakdownLoads()
             subcategoryGroupsByCategory = [:]
+            subcategoryBreakdownCacheGenerationByCategory = [:]
+            subcategoryBreakdownLoadingCategories = []
         } else {
             let validCategories = Set((growingCategories + stableCategories).map(\.category))
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
+            subcategoryBreakdownCacheGenerationByCategory = subcategoryBreakdownCacheGenerationByCategory.filter {
+                validCategories.contains($0.key)
+            }
+            subcategoryBreakdownLoadingCategories = Set(
+                subcategoryBreakdownLoadingCategories.filter { validCategories.contains($0) }
+            )
+            for category in subcategoryBreakdownLoadTasks.keys where !validCategories.contains(category) {
+                subcategoryBreakdownLoadTasks[category]?.cancel()
+                subcategoryBreakdownLoadTasks[category] = nil
+            }
         }
         invalidateGrowthContributorCache()
 
@@ -1219,7 +1271,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         stableCategories = []
         stableTotalBytes = 0
         categoryItems = []
+        cancelSubcategoryBreakdownLoads()
         subcategoryGroupsByCategory = [:]
+        subcategoryBreakdownCacheGenerationByCategory = [:]
+        subcategoryBreakdownLoadingCategories = []
         invalidateGrowthContributorCache()
         selectedInventoryCategory = nil
         selectedSubcategory = nil
@@ -1227,6 +1282,51 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isSubcategoryDrillDown = false
         reconciliationResult = nil
         currentInventorySnapshotID = nil
+    }
+
+    private func resolveSubcategoryBreakdownLoad(
+        _ task: Task<SubcategoryBreakdownLoadResult, Never>,
+        for category: GrowthCategory
+    ) async -> [SubcategoryGroup] {
+        let result = await task.value
+
+        if subcategoryBreakdownLoadTasks[category] != nil {
+            subcategoryBreakdownLoadTasks[category] = nil
+        }
+
+        switch result {
+        case .loaded(let groups):
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) {
+                subcategoryGroupsByCategory[category] = groups
+                subcategoryBreakdownCacheGenerationByCategory[category] = growthContributorCacheGeneration
+                subcategoryBreakdownLoadingCategories.remove(category)
+            }
+            return groups
+        case .skipped:
+            setSubcategoryBreakdownLoading(false, for: category)
+            return subcategoryGroupsByCategory[category] ?? []
+        }
+    }
+
+    private func setSubcategoryBreakdownLoading(_ isLoading: Bool, for category: GrowthCategory) {
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) {
+            if isLoading {
+                subcategoryBreakdownLoadingCategories.insert(category)
+            } else {
+                subcategoryBreakdownLoadingCategories.remove(category)
+            }
+        }
+    }
+
+    private func cancelSubcategoryBreakdownLoads() {
+        for task in subcategoryBreakdownLoadTasks.values {
+            task.cancel()
+        }
+        subcategoryBreakdownLoadTasks = [:]
     }
 
     private func invalidateGrowthContributorCache() {
@@ -1586,7 +1686,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         for trackedPath in trackedPaths {
             do {
-                let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+                let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
                 guard let latestId = snapshots.first?.id else {
                     sizesByID[trackedPath.id] = 0
                     continue

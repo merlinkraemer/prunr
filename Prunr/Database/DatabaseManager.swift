@@ -509,19 +509,39 @@ extension DatabaseManager {
             // Also exclude snapshots with empty trackedPathId (old snapshots before migration)
             if let trackedPathId = trackedPathId {
                 let pathIdString = trackedPathId.uuidString
-                print("[DEBUG] Filtering snapshots by trackedPathId: \(pathIdString)")
                 request = request.filter(Snapshot.Columns.trackedPathId == pathIdString)
             } else {
                 // When not filtering by path, still exclude empty trackedPathId entries
                 request = request.filter(Snapshot.Columns.trackedPathId != "")
             }
 
-            let snapshots = try request.fetchAll(db)
-            print("[DEBUG] Fetched \(snapshots.count) snapshots")
-            for snap in snapshots {
-                print("[DEBUG]   - id: \(snap.id ?? 0), trackedPathId: \(snap.trackedPathId), createdAt: \(snap.createdAt)")
+            return try request.fetchAll(db)
+        }
+    }
+
+    /// Fetches the most recent snapshots ordered by creation date (newest first).
+    /// - Parameters:
+    ///   - trackedPathId: Optional filter to only fetch snapshots for a specific path
+    ///   - limit: Maximum number of snapshots to return
+    /// - Returns: Array of recent snapshots
+    func fetchRecentSnapshots(trackedPathId: UUID? = nil, limit: Int) async throws -> [Snapshot] {
+        guard limit > 0 else { return [] }
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            var request = Snapshot.all()
+                .order(Snapshot.Columns.createdAt.desc)
+                .limit(limit)
+
+            if let trackedPathId = trackedPathId {
+                request = request.filter(Snapshot.Columns.trackedPathId == trackedPathId.uuidString)
+            } else {
+                request = request.filter(Snapshot.Columns.trackedPathId != "")
             }
-            return snapshots
+
+            return try request.fetchAll(db)
         }
     }
 

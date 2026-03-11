@@ -45,8 +45,13 @@ fastlane/test_output
 test_data/
 tmp/stress-tree/
 tmp/stress-results/
+tmp/task*-check/
+tmp/task*-results/
+tmp/classifier-results/
 *.tmp
 *.log
+default.profraw
+Prunr/cache_*.dat
 .DS_Store
 .DS_Store?
 ._*
@@ -71,6 +76,7 @@ xcuserdata/
 build/
 *.o
 *.o.*
+default.profraw
 
 # Dependency directories
 node_modules/

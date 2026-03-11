@@ -29,10 +29,7 @@ struct CategoryGrowthListView: View {
     /// Maximum height for the scrollable list
     var maxHeight: CGFloat = 360
 
-    @State private var isLoadingSubcategories = false
     @State private var isLoadingMoreFiles = false
-    @State private var subcategoryLoadTask: Task<Void, Never>? = nil
-    @State private var subcategoryLoadToken = UUID()
     @State private var navigationTask: Task<Void, Never>? = nil
     @State private var displayedScreen: DrilldownScreen? = nil // nil until first appear
     @State private var activeTransition: ActiveTransition? = nil
@@ -139,6 +136,10 @@ struct CategoryGrowthListView: View {
                     hasInitializedDisplay = true
                     displayedScreen = currentScreen
                 }
+                if !growingCategories.isEmpty || !stableCategories.isEmpty {
+                    isDataReady = true
+                }
+                preloadVisibleCategoriesIfNeeded()
             }
             .onChange(of: geometry.size.width) { _, newWidth in
                 guard newWidth > 0 else { return }
@@ -175,11 +176,20 @@ struct CategoryGrowthListView: View {
             if !categories.isEmpty {
                 isDataReady = true
             }
+            preloadVisibleCategoriesIfNeeded()
             if manager.isDrilledDown, manager.selectedInventoryCategory == nil {
                 manager.isDrilledDown = false
                 manager.isSubcategoryDrillDown = false
                 manager.selectedSubcategory = nil
             }
+        }
+        .onChange(of: manager.isPopoverShown) { _, isShown in
+            guard isShown else { return }
+            preloadVisibleCategoriesIfNeeded()
+        }
+        .onChange(of: manager.isAnalyzingChanges) { _, isAnalyzing in
+            guard !isAnalyzing else { return }
+            preloadVisibleCategoriesIfNeeded()
         }
         .onDisappear {
             navigationTask?.cancel()
@@ -337,8 +347,12 @@ struct CategoryGrowthListView: View {
                     ScrollView {
                         VStack(spacing: 0) {
                             ForEach(growingCategories) { item in
+                                let isReady = manager.isSubcategoryBreakdownReady(for: item.category)
+                                let isPreparing = manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
+                                    isNavigationReady: isReady,
+                                    isPreparing: isPreparing,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     highlightedSegmentID: $highlightedSegmentID,
                                     onTap: { selectCategory(item) }
@@ -347,8 +361,12 @@ struct CategoryGrowthListView: View {
                             }
 
                             ForEach(stableCategories) { item in
+                                let isReady = manager.isSubcategoryBreakdownReady(for: item.category)
+                                let isPreparing = manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
+                                    isNavigationReady: isReady,
+                                    isPreparing: isPreparing,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     highlightedSegmentID: $highlightedSegmentID,
                                     onTap: { selectCategory(item) }
@@ -386,9 +404,10 @@ struct CategoryGrowthListView: View {
 
     private func subcategoryListView(for category: CategoryInventoryItem) -> some View {
         let groups = manager.subcategoryGroupsByCategory[category.category] ?? []
+        let isLoading = manager.isSubcategoryBreakdownLoading(for: category.category) && groups.isEmpty
 
         return Group {
-            if isLoadingSubcategories {
+            if isLoading {
                 VStack(spacing: 10) {
                     ProgressView()
                     Text("Loading \(category.category.displayName.lowercased()) breakdown…")
@@ -628,64 +647,44 @@ struct CategoryGrowthListView: View {
 
     private func selectCategory(_ item: CategoryInventoryItem) {
         guard isDataReady else { return }
-        subcategoryLoadTask?.cancel()
-        let token = UUID()
-        subcategoryLoadToken = token
-        let needsSubcategoryLoad = manager.subcategoryGroupsByCategory[item.category] == nil
+        guard manager.isSubcategoryBreakdownReady(for: item.category) else {
+            manager.preloadSubcategoryBreakdowns(for: [item.category])
+            return
+        }
+
+        let groups = manager.subcategoryGroupsByCategory[item.category] ?? []
+        let selectedSubcategory: SubcategoryGroup?
+        let isSubcategoryDrillDown: Bool
+
+        if item.category.supportsSubcategories {
+            selectedSubcategory = nil
+            isSubcategoryDrillDown = false
+        } else {
+            selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
+            isSubcategoryDrillDown = selectedSubcategory != nil
+        }
 
         // Suppress implicit animations from state mutations so only the
         // explicit slide animation in startNavigationTransition runs.
         var t = Transaction()
         t.disablesAnimations = true
         withTransaction(t) {
-            isLoadingSubcategories = needsSubcategoryLoad
             manager.selectedInventoryCategory = item
-            manager.selectedSubcategory = nil
+            manager.selectedSubcategory = selectedSubcategory
             manager.isDrilledDown = true
-            manager.isSubcategoryDrillDown = false
+            manager.isSubcategoryDrillDown = isSubcategoryDrillDown
         }
+    }
 
-        let selectedCategory = item.category
-        let loadTask = Task { @MainActor in
-            let groups = await manager.loadSubcategoryBreakdown(for: selectedCategory)
+    private var visibleCategories: [CategoryInventoryItem] {
+        growingCategories + stableCategories
+    }
 
-            guard subcategoryLoadToken == token else {
-                return
-            }
-
-            if Task.isCancelled {
-                var t = Transaction()
-                t.disablesAnimations = true
-                withTransaction(t) {
-                    isLoadingSubcategories = false
-                    subcategoryLoadTask = nil
-                }
-                return
-            }
-
-            guard manager.selectedInventoryCategory?.category == selectedCategory else {
-                var t = Transaction()
-                t.disablesAnimations = true
-                withTransaction(t) {
-                    isLoadingSubcategories = false
-                    subcategoryLoadTask = nil
-                }
-                return
-            }
-
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) {
-                isLoadingSubcategories = false
-                subcategoryLoadTask = nil
-
-                if !selectedCategory.supportsSubcategories {
-                    manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
-                    manager.isSubcategoryDrillDown = true
-                }
-            }
-        }
-        subcategoryLoadTask = loadTask
+    private func preloadVisibleCategoriesIfNeeded() {
+        guard !manager.isAnalyzingChanges else { return }
+        let categories = visibleCategories.map(\.category)
+        guard !categories.isEmpty else { return }
+        manager.preloadSubcategoryBreakdowns(for: categories)
     }
 
     // MARK: - Empty State
@@ -726,10 +725,14 @@ private struct CategoryInventoryRow: View, Equatable {
         lhs.item.currentSizeBytes == rhs.item.currentSizeBytes &&
         lhs.item.recentGrowthStory == rhs.item.recentGrowthStory &&
         lhs.item.growthTrend == rhs.item.growthTrend &&
+        lhs.isNavigationReady == rhs.isNavigationReady &&
+        lhs.isPreparing == rhs.isPreparing &&
         lhs.isHighlightedFromBar == rhs.isHighlightedFromBar
     }
 
     let item: CategoryInventoryItem
+    let isNavigationReady: Bool
+    let isPreparing: Bool
     let isHighlightedFromBar: Bool
     @Binding var highlightedSegmentID: String?
     let onTap: () -> Void
@@ -739,7 +742,13 @@ private struct CategoryInventoryRow: View, Equatable {
             rowContent
         }
         .buttonStyle(.plain)
+        .disabled(!isNavigationReady)
+        .opacity(isNavigationReady ? 1 : 0.78)
         .onHover { hovering in
+            guard isNavigationReady else {
+                hoverState = false
+                return
+            }
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoverState = hovering
                 highlightedSegmentID = hovering ? item.category.rawValue : nil
@@ -786,13 +795,22 @@ private struct CategoryInventoryRow: View, Equatable {
                     .foregroundStyle(.orange)
                 }
             }
+            .opacity(isPreparing ? 0.55 : 1)
+
+            if isPreparing {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                    .frame(width: 12, height: 12)
+                    .tint(.secondary)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .frame(minHeight: 34)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill((hoverState || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
+                .fill(((isNavigationReady && hoverState) || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
         )
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
