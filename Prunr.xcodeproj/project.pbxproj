@@ -37,6 +37,7 @@
 		7350BAB08F46A3435CB6A374 /* CategoryInventoryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9710F15700CB12CB50CDC585 /* CategoryInventoryItem.swift */; };
 		7389AF844788619A1DF413F8 /* DriveBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43903A2B7D47CDB2B20369FB /* DriveBarView.swift */; };
 		757C9A064BD647AB176EA1E6 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = E2B22E46386C6B33EB942744 /* GRDB */; };
+		A1B2C3D4E5F60718293A4B69 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = E2B22E46386C6B33EB942744 /* GRDB */; };
 		2C3D4E5F6789AABBCCDDEE03 /* RecentChangeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D4E5F6789AABBCCDDEEFF04 /* RecentChangeService.swift */; };
 		7C5339B7F5B27A4AC2298FCD /* ScanService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */; };
 		7E70A2EDCB2DC6D1F60C07AE /* DeltaRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CD1BD242A8EF0103002F1BD /* DeltaRowView.swift */; };
@@ -145,6 +146,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1B2C3D4E5F60718293A4B69 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -359,6 +361,7 @@
 			);
 			name = PrunrTests;
 			packageProductDependencies = (
+				E2B22E46386C6B33EB942744 /* GRDB */,
 			);
 			productName = PrunrTests;
 			productReference = A1B2C3D4E5F60718293A4B5E /* PrunrTests.xctest */;
@@ -679,6 +682,7 @@
 		A1B2C3D4E5F60718293A4B66 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -688,12 +692,14 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Prunr.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Prunr";
 			};
 			name = Debug;
 		};
 		A1B2C3D4E5F60718293A4B67 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -703,6 +709,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Prunr.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Prunr";
 			};
 			name = Release;
 		};
