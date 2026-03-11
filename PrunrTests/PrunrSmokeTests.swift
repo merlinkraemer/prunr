@@ -171,4 +171,115 @@ final class PrunrSmokeTests: XCTestCase {
         await fulfillment(of: [expectation], timeout: 5.0)
         await watcher.stop()
     }
+
+    func testCleanupCapsSnapshotHistoryByCount() async throws {
+        let previousRetention = await MainActor.run { () -> Int in
+            let current = SettingsStore.shared.categoryHistoryRetentionDays
+            SettingsStore.shared.categoryHistoryRetentionDays = 3650
+            return current
+        }
+        defer {
+            Task { @MainActor in
+                SettingsStore.shared.categoryHistoryRetentionDays = previousRetention
+            }
+        }
+
+        try await withTemporaryDatabase { trackedPathId, _ in
+            let retentionCap = 500
+            let totalSnapshots = retentionCap + 5
+            var createdSnapshotIDs: [Int64] = []
+
+            for index in 0..<totalSnapshots {
+                let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+                let snapshotId = try XCTUnwrap(snapshot.id)
+                createdSnapshotIDs.append(snapshotId)
+
+                try await DatabaseManager.shared.replaceCategorySnapshots(
+                    snapshotId: snapshotId,
+                    totals: [.developer: Int64(index + 1)]
+                )
+                try await DatabaseManager.shared.replaceSubcategorySnapshots(
+                    snapshotId: snapshotId,
+                    rows: [
+                        DatabaseManager.StoredSubcategorySnapshot(
+                            category: .developer,
+                            subcategory: .nodeModules,
+                            totalBytes: Int64(index + 1),
+                            fileCount: 1,
+                            topItems: []
+                        )
+                    ]
+                )
+            }
+
+            let deletedCount = try await DatabaseCleanupService.shared.cleanupOldCategoryHistory()
+            let remainingSnapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
+            let remainingSnapshotIDs = remainingSnapshots.compactMap(\.id)
+
+            XCTAssertEqual(deletedCount, 6)
+            XCTAssertEqual(remainingSnapshots.count, retentionCap)
+            XCTAssertEqual(Set(remainingSnapshotIDs), Set(createdSnapshotIDs.suffix(retentionCap)))
+
+            let categoryRows = DatabaseManager.shared.fetchCategorySnapshots(
+                trackedPathId: trackedPathId.uuidString,
+                limit: totalSnapshots + 10
+            )
+            XCTAssertEqual(Set(categoryRows.map(\.snapshotId)), Set(remainingSnapshotIDs))
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let subcategorySnapshotCount = try await dbPool.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM subcategorySnapshot") ?? 0
+            }
+            XCTAssertEqual(subcategorySnapshotCount, retentionCap)
+        }
+    }
+
+    func testCompactionPreservesWorkingSetOnlyPaths() async throws {
+        try await withTemporaryDatabase { trackedPathId, snapshotId in
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [
+                    ScanResult(path: "/tmp/root/original.txt", sizeBytes: 1)
+                ]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId
+            )
+
+            _ = try await DatabaseManager.shared.replaceWorkingSetSubtree(
+                trackedPathId: trackedPathId,
+                rootPath: "/tmp/root/new-folder",
+                entries: [
+                    ScanResult(path: "/tmp/root/new-folder/new.txt", sizeBytes: 2)
+                ]
+            )
+
+            UserDefaults.standard.set(
+                Date().timeIntervalSince1970,
+                forKey: "databaseLastCheckpointAt"
+            )
+            UserDefaults.standard.set(
+                Date().timeIntervalSince1970,
+                forKey: "databaseLastVacuumAt"
+            )
+
+            await DatabaseCleanupService.shared.performAutoCleanup()
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let workingSetPaths = try await dbPool.read { db in
+                try String.fetchAll(
+                    db,
+                    sql: """
+                        SELECT p.path
+                        FROM workingSetEntry wse
+                        JOIN paths p ON p.id = wse.pathId
+                        ORDER BY p.path ASC
+                        """
+                )
+            }
+
+            XCTAssertTrue(workingSetPaths.contains("/tmp/root/new-folder/new.txt"))
+        }
+    }
 }

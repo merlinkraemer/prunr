@@ -3,8 +3,9 @@
 SCHEME = Prunr
 CONFIG = Debug
 BUILD_DIR = $(PWD)/build
-DERIVED_DATA = $(PWD)/.build/derivedData
-SOURCE_PACKAGES = $(PWD)/.build/sourcePackages
+LOCAL_BUILD_ROOT = $(PWD)/.build
+DERIVED_DATA = $(LOCAL_BUILD_ROOT)/derivedData
+SOURCE_PACKAGES = $(LOCAL_BUILD_ROOT)/sourcePackages
 APP_SUPPORT_DIR = $(HOME)/Library/Application Support/Prunr
 BUNDLE_ID = com.prunr.app
 
@@ -82,14 +83,13 @@ clean:
 		-derivedDataPath $(DERIVED_DATA) \
 		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES)
 	rm -rf $(BUILD_DIR)
-	rm -rf $(DERIVED_DATA)
-	rm -rf $(SOURCE_PACKAGES)
+	rm -rf $(LOCAL_BUILD_ROOT)
 	@echo "$(GREEN)Clean complete!$(NC)"
 
 clean-build:
 	@echo "$(YELLOW)Removing local build artifacts...$(NC)"
 	rm -rf $(BUILD_DIR)
-	rm -rf $(DERIVED_DATA)
+	rm -rf $(LOCAL_BUILD_ROOT)
 	@echo "$(GREEN)Local build artifacts removed!$(NC)"
 
 reset-dev-state:

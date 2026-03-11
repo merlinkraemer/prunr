@@ -99,6 +99,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var selectedSubcategory: SubcategoryGroup? = nil
     var isSubcategoryDrillDown: Bool = false
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
+    var hasCompletedInitialSubcategoryWarmup = false
     private var subcategoryBreakdownCacheGenerationByCategory: [GrowthCategory: UInt64] = [:]
     var subcategoryBreakdownLoadingCategories: Set<GrowthCategory> = []
     var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
@@ -795,34 +796,36 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func reconcileDrillDownSelection() {
         guard isDrilledDown else { return }
 
-        guard let currentSelection = selectedInventoryCategory else {
-            isDrilledDown = false
-            isSubcategoryDrillDown = false
-            selectedSubcategory = nil
-            return
-        }
-
-        if let refreshed = (growingCategories + stableCategories).first(where: { $0.category == currentSelection.category }) {
-            selectedInventoryCategory = refreshed
-        } else {
-            selectedInventoryCategory = nil
-            selectedSubcategory = nil
-            isSubcategoryDrillDown = false
-            isDrilledDown = false
-        }
-
-        if isSubcategoryDrillDown {
-            guard let selectedSubcategory else {
+        withAnimationsDisabled {
+            guard let currentSelection = selectedInventoryCategory else {
+                isDrilledDown = false
                 isSubcategoryDrillDown = false
+                selectedSubcategory = nil
                 return
             }
 
-            let groups = subcategoryGroupsByCategory[currentSelection.category] ?? []
-            if let refreshedSubcategory = groups.first(where: { $0.displayName == selectedSubcategory.displayName }) {
-                self.selectedSubcategory = refreshedSubcategory
+            if let refreshed = (growingCategories + stableCategories).first(where: { $0.category == currentSelection.category }) {
+                selectedInventoryCategory = refreshed
             } else {
-                self.selectedSubcategory = nil
+                selectedInventoryCategory = nil
+                selectedSubcategory = nil
                 isSubcategoryDrillDown = false
+                isDrilledDown = false
+            }
+
+            if isSubcategoryDrillDown {
+                guard let selectedSubcategory else {
+                    isSubcategoryDrillDown = false
+                    return
+                }
+
+                let groups = subcategoryGroupsByCategory[currentSelection.category] ?? []
+                if let refreshedSubcategory = groups.first(where: { $0.displayName == selectedSubcategory.displayName }) {
+                    self.selectedSubcategory = refreshedSubcategory
+                } else {
+                    self.selectedSubcategory = nil
+                    isSubcategoryDrillDown = false
+                }
             }
         }
     }
@@ -834,6 +837,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     func isSubcategoryBreakdownLoading(for category: GrowthCategory) -> Bool {
         subcategoryBreakdownLoadingCategories.contains(category)
+    }
+
+    func completeInitialSubcategoryWarmup() {
+        guard !hasCompletedInitialSubcategoryWarmup else { return }
+
+        withAnimationsDisabled {
+            hasCompletedInitialSubcategoryWarmup = true
+        }
     }
 
     func preloadSubcategoryBreakdowns(for categories: [GrowthCategory]) {
@@ -1086,6 +1097,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
+    func cachedGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) -> [GrowthContributor]? {
+        guard let snapshotId = currentInventorySnapshotID else { return nil }
+        let cacheKey = growthContributorCacheKey(
+            snapshotId: snapshotId,
+            category: category,
+            group: group
+        )
+        return growthContributorsBySubcategory[cacheKey]
+    }
+
     /// Takes the initial snapshot for enabled paths
     func takeInitialSnapshot() async {
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
@@ -1247,6 +1268,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             subcategoryGroupsByCategory = [:]
             subcategoryBreakdownCacheGenerationByCategory = [:]
             subcategoryBreakdownLoadingCategories = []
+            hasCompletedInitialSubcategoryWarmup = false
         } else {
             let validCategories = Set((growingCategories + stableCategories).map(\.category))
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
@@ -1267,21 +1289,23 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func clearInventoryState() {
-        growingCategories = []
-        stableCategories = []
-        stableTotalBytes = 0
-        categoryItems = []
-        cancelSubcategoryBreakdownLoads()
-        subcategoryGroupsByCategory = [:]
-        subcategoryBreakdownCacheGenerationByCategory = [:]
-        subcategoryBreakdownLoadingCategories = []
-        invalidateGrowthContributorCache()
-        selectedInventoryCategory = nil
-        selectedSubcategory = nil
-        isDrilledDown = false
-        isSubcategoryDrillDown = false
-        reconciliationResult = nil
-        currentInventorySnapshotID = nil
+        withAnimationsDisabled {
+            growingCategories = []
+            stableCategories = []
+            stableTotalBytes = 0
+            categoryItems = []
+            cancelSubcategoryBreakdownLoads()
+            subcategoryGroupsByCategory = [:]
+            subcategoryBreakdownCacheGenerationByCategory = [:]
+            subcategoryBreakdownLoadingCategories = []
+            invalidateGrowthContributorCache()
+            selectedInventoryCategory = nil
+            selectedSubcategory = nil
+            isDrilledDown = false
+            isSubcategoryDrillDown = false
+            reconciliationResult = nil
+            currentInventorySnapshotID = nil
+        }
     }
 
     private func resolveSubcategoryBreakdownLoad(
@@ -1311,9 +1335,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func setSubcategoryBreakdownLoading(_ isLoading: Bool, for category: GrowthCategory) {
-        var t = Transaction()
-        t.disablesAnimations = true
-        withTransaction(t) {
+        withAnimationsDisabled {
             if isLoading {
                 subcategoryBreakdownLoadingCategories.insert(category)
             } else {
@@ -1332,6 +1354,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func invalidateGrowthContributorCache() {
         growthContributorsBySubcategory = [:]
         growthContributorCacheGeneration &+= 1
+    }
+
+    private func withAnimationsDisabled(_ updates: () -> Void) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction, updates)
     }
 
     private func growthContributorCacheKey(

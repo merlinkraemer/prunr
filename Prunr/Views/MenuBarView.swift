@@ -8,7 +8,8 @@ struct MenuBarView: View {
     @State private var settingsStore = SettingsStore.shared
     @State private var scanHover = false
     @State private var settingsHover = false
-    @State private var hasFullDiskAccess = false
+    @State private var hasFullDiskAccess: Bool? = nil
+    @State private var isBootstrapping = true
     @State private var permissionsService = PermissionsService.shared
     @State private var highlightedStorageSegmentID: String? = nil
     @State private var shouldShowOnboardingSuccess = false
@@ -139,15 +140,15 @@ struct MenuBarView: View {
     }
 
     private var onboardingFolderStepComplete: Bool {
-        hasFullDiskAccess && hasEnabledScanPath && hasValidScanFolder && hasExplicitOnboardingFolderChoice
+        hasFullDiskAccess == true && hasEnabledScanPath && hasValidScanFolder && hasExplicitOnboardingFolderChoice
     }
 
     private var onboardingCanRunFirstScan: Bool {
-        hasFullDiskAccess && onboardingFolderStepComplete && !manager.isLoading && !manager.isAutoScanning
+        hasFullDiskAccess == true && onboardingFolderStepComplete && !manager.isLoading && !manager.isAutoScanning
     }
 
     private var maxUnlockedOnboardingPage: OnboardingPage {
-        if !hasFullDiskAccess {
+        if hasFullDiskAccess != true {
             return .permissions
         }
 
@@ -288,13 +289,15 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !hasFullDiskAccess {
+            if hasFullDiskAccess == false {
                 fullDiskAccessBanner
             }
 
             Group {
                 if manager.isLoading && !manager.isAutoScanning {
                     manualScanLoadingView
+                } else if isBootstrapping {
+                    initialLoadView
                 } else if shouldShowOnboardingSuccess {
                     onboardingSuccessView
                 } else if manager.noBaseline {
@@ -315,11 +318,17 @@ struct MenuBarView: View {
         .onDisappear {
             onboardingSuccessTask?.cancel()
             onboardingTransitionTask?.cancel()
+            headerTransitionTask?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshFullDiskAccess()
         }
+        .onChange(of: manager.isPopoverShown) { _, isShown in
+            guard isShown else { return }
+            synchronizeVisibleHeaderToCurrent()
+        }
         .task {
+            isBootstrapping = true
             // Fast: Check if baseline exists (UserDefaults lookup)
             await manager.checkBaseline()
 
@@ -332,6 +341,8 @@ struct MenuBarView: View {
             if !manager.noBaseline {
                 await manager.loadInventoryFromLatestSnapshot()
             }
+
+            isBootstrapping = false
         }
         .onChange(of: manager.noBaseline) { oldValue, newValue in
             guard oldValue, !newValue, startedOnboardingScan else { return }
@@ -339,7 +350,7 @@ struct MenuBarView: View {
             presentOnboardingSuccessState()
         }
         .onChange(of: hasFullDiskAccess) { _, newValue in
-            if !newValue {
+            if newValue != true {
                 shouldShowOnboardingSuccess = false
                 onboardingSuccessTask?.cancel()
             }
@@ -354,6 +365,37 @@ struct MenuBarView: View {
                 selectedOnboardingPage = newValue
             }
         }
+    }
+
+    private var initialLoadView: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            VStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.small)
+
+                Text("Loading latest inventory…")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 22)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.92))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
+            .padding(.horizontal, 16)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 18)
     }
 
     private var manualScanLoadingView: some View {
@@ -443,15 +485,20 @@ struct MenuBarView: View {
                 }
 
             GeometryReader { geometry in
+                let resolvedWidth = max(geometry.size.width, onboardingWidth)
+                let pageSize = CGSize(width: resolvedWidth, height: geometry.size.height)
+
                 HStack(spacing: 0) {
-                    onboardingPage(for: leftOnboardingPage, size: geometry.size)
-                    onboardingPage(for: rightOnboardingPage, size: geometry.size)
+                    onboardingPage(for: leftOnboardingPage, size: pageSize)
+                    onboardingPage(for: rightOnboardingPage, size: pageSize)
                 }
                 .offset(x: onboardingOffset)
-                .frame(width: geometry.size.width, alignment: .leading)
+                .frame(width: resolvedWidth, alignment: .leading)
                 .clipped()
                 .onAppear {
-                    onboardingWidth = geometry.size.width
+                    if geometry.size.width > 0 {
+                        onboardingWidth = geometry.size.width
+                    }
                     if pendingOnboardingTransition == nil && outgoingOnboardingPage == nil {
                         displayedOnboardingPage = currentOnboardingPage
                     }
@@ -520,6 +567,9 @@ struct MenuBarView: View {
                             .foregroundStyle(.blue)
                     }
                     .buttonStyle(.plain)
+                    .frame(width: 12, height: 12)
+                } else {
+                    Color.clear.frame(width: 12, height: 12)
                 }
 
                 Spacer()
@@ -530,10 +580,7 @@ struct MenuBarView: View {
 
                 Spacer()
 
-                // Balance the back button width
-                if currentOnboardingPage != .permissions {
-                    Color.clear.frame(width: 12, height: 12)
-                }
+                Color.clear.frame(width: 12, height: 12)
             }
 
             HStack(spacing: 10) {
@@ -630,7 +677,7 @@ struct MenuBarView: View {
                 )
 
                 VStack(spacing: 14) {
-                    if hasFullDiskAccess {
+                    if hasFullDiskAccess == true {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 12, weight: .medium))
@@ -670,7 +717,7 @@ struct MenuBarView: View {
                             let isSelected = onboardingChosenFolderPath?.standardizedFileURL == option.url.standardizedFileURL
 
                             Button {
-                                guard hasFullDiskAccess else { return }
+                                guard hasFullDiskAccess == true else { return }
                                 applyOnboardingScanFolder(option.url)
                             } label: {
                                 HStack(spacing: 10) {
@@ -706,7 +753,7 @@ struct MenuBarView: View {
                             .padding(.vertical, 4)
 
                         Button {
-                            guard hasFullDiskAccess else { return }
+                            guard hasFullDiskAccess == true else { return }
                             manager.showOnboardingFolderPicker { url in
                                 if let url = url {
                                     customOnboardingFolderPath = url
@@ -1086,15 +1133,19 @@ struct MenuBarView: View {
 
     private var headerNavigationView: some View {
         GeometryReader { geometry in
+            let resolvedWidth = max(geometry.size.width, headerWidth)
+
             HStack(spacing: 0) {
-                headerPage(for: leftHeaderScreen, width: geometry.size.width)
-                headerPage(for: rightHeaderScreen, width: geometry.size.width)
+                headerPage(for: leftHeaderScreen, width: resolvedWidth)
+                headerPage(for: rightHeaderScreen, width: resolvedWidth)
             }
             .offset(x: headerOffset)
-            .frame(width: geometry.size.width, alignment: .leading)
+            .frame(width: resolvedWidth, alignment: .leading)
             .clipped()
             .onAppear {
-                headerWidth = geometry.size.width
+                if geometry.size.width > 0 {
+                    headerWidth = geometry.size.width
+                }
                 if pendingHeaderTransition == nil && activeHeaderTransition == nil {
                     displayedHeader = currentHeaderScreen
                 }
@@ -1144,7 +1195,7 @@ struct MenuBarView: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
-        .frame(height: 44)
+        .frame(height: 34)
     }
 
     @ViewBuilder
@@ -1237,6 +1288,19 @@ struct MenuBarView: View {
                 activeHeaderTransition = nil
                 headerOffset = 0
             }
+        }
+    }
+
+    private func synchronizeVisibleHeaderToCurrent() {
+        headerTransitionTask?.cancel()
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            pendingHeaderTransition = nil
+            activeHeaderTransition = nil
+            headerOffset = 0
+            displayedHeader = currentHeaderScreen
         }
     }
 
@@ -1493,7 +1557,7 @@ struct MenuBarView: View {
     }
 
     private var stepThreeHintText: String {
-        if !hasFullDiskAccess {
+        if hasFullDiskAccess != true {
             return "Grant Full Disk Access first."
         }
 

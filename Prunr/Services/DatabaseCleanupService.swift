@@ -24,6 +24,8 @@ actor DatabaseCleanupService {
     private static let maxSnapshotEntryPayloadsPerPath = 1
     /// Keep the latest two snapshots available for history/reconciliation lookups.
     private static let recentHistorySnapshotsPerPath = 2
+    /// Bound retained summary snapshots so scan-heavy same-day sessions don't grow history indefinitely.
+    private static let maxCategoryHistorySnapshotsPerPath = 500
     private static let vacuumInterval: TimeInterval = 12 * 60 * 60
     private static let vacuumTimestampKey = "databaseLastVacuumAt"
     private static let checkpointInterval: TimeInterval = 60
@@ -675,14 +677,69 @@ actor DatabaseCleanupService {
         let cutoffDate = Date().addingTimeInterval(TimeInterval(-effectiveRetentionDays * 24 * 60 * 60))
 
         return try await dbPool.write { db in
-            // Delete snapshots older than retention period
-            // This cascades to categorySnapshot rows due to foreign key constraint
-            let deleted = try Snapshot
-                .filter(sql: "createdAt < ?", arguments: [cutoffDate])
-                .deleteAll(db)
+            var snapshotIDsToDelete = Set(try Int64.fetchAll(
+                db,
+                sql: "SELECT id FROM snapshot WHERE createdAt < ?",
+                arguments: [cutoffDate]
+            ))
+
+            let trackedPathIds = try String.fetchAll(
+                db,
+                sql: "SELECT DISTINCT trackedPathId FROM snapshot WHERE trackedPathId != '' ORDER BY trackedPathId"
+            )
+
+            for trackedPathId in trackedPathIds {
+                let overflowIDs = try Int64.fetchAll(
+                    db,
+                    sql: """
+                        SELECT id
+                        FROM snapshot
+                        WHERE trackedPathId = ?
+                        ORDER BY createdAt DESC, id DESC
+                        LIMIT -1 OFFSET ?
+                        """,
+                    arguments: [trackedPathId, Self.maxCategoryHistorySnapshotsPerPath]
+                )
+                snapshotIDsToDelete.formUnion(overflowIDs)
+            }
+
+            let orphanOverflowIDs = try Int64.fetchAll(
+                db,
+                sql: """
+                    SELECT id
+                    FROM snapshot
+                    WHERE trackedPathId = '' OR trackedPathId IS NULL
+                    ORDER BY createdAt DESC, id DESC
+                    LIMIT -1 OFFSET ?
+                    """,
+                arguments: [Self.maxCategoryHistorySnapshotsPerPath]
+            )
+            snapshotIDsToDelete.formUnion(orphanOverflowIDs)
+
+            guard !snapshotIDsToDelete.isEmpty else { return 0 }
+
+            let chunkSize = 500
+            let orderedSnapshotIDs = snapshotIDsToDelete.sorted()
+            var deleted = 0
+
+            for startIndex in stride(from: 0, to: orderedSnapshotIDs.count, by: chunkSize) {
+                let endIndex = min(startIndex + chunkSize, orderedSnapshotIDs.count)
+                let chunk = Array(orderedSnapshotIDs[startIndex..<endIndex])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+
+                // Delete snapshots older than retention or beyond the count cap.
+                // Cascades handle category/subcategory summaries automatically.
+                try db.execute(
+                    sql: "DELETE FROM snapshot WHERE id IN (\(placeholders))",
+                    arguments: StatementArguments(chunk)
+                )
+                deleted += try Int.fetchOne(db, sql: "SELECT changes()") ?? 0
+            }
 
             if deleted > 0 {
-                print("[DatabaseCleanupService] Deleted \(deleted) snapshots older than \(effectiveRetentionDays) days")
+                print(
+                    "[DatabaseCleanupService] Deleted \(deleted) snapshots older than \(effectiveRetentionDays) days or beyond \(Self.maxCategoryHistorySnapshotsPerPath) retained history points per path"
+                )
             }
 
             return deleted
@@ -702,6 +759,11 @@ actor DatabaseCleanupService {
                     SELECT 1
                     FROM snapshotEntry
                     WHERE snapshotEntry.pathId = paths.id
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM workingSetEntry
+                    WHERE workingSetEntry.pathId = paths.id
                 )
                 """
             )

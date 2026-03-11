@@ -29,7 +29,10 @@ struct CategoryGrowthListView: View {
     /// Maximum height for the scrollable list
     var maxHeight: CGFloat = 360
 
+    @State private var isLoadingSubcategories = false
     @State private var isLoadingMoreFiles = false
+    @State private var subcategoryLoadTask: Task<Void, Never>? = nil
+    @State private var subcategoryLoadToken = UUID()
     @State private var navigationTask: Task<Void, Never>? = nil
     @State private var displayedScreen: DrilldownScreen? = nil // nil until first appear
     @State private var activeTransition: ActiveTransition? = nil
@@ -39,6 +42,8 @@ struct CategoryGrowthListView: View {
     @State private var hasInitializedDisplay = false
     @State private var loadedContributorTaskID: String? = nil
     @State private var isDataReady = false
+    @State private var contributorPrefetchTask: Task<Void, Never>? = nil
+    @State private var pendingSubcategoryNavigationID: String? = nil
 
     private enum DrilldownLevel: Int {
         case main
@@ -122,15 +127,19 @@ struct CategoryGrowthListView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let resolvedWidth = max(geometry.size.width, pageWidth)
+
             HStack(spacing: 0) {
-                screenPage(for: leftScreen, width: geometry.size.width)
-                screenPage(for: rightScreen, width: geometry.size.width)
+                screenPage(for: leftScreen, width: resolvedWidth)
+                screenPage(for: rightScreen, width: resolvedWidth)
             }
             .offset(x: pageOffset)
-            .frame(width: geometry.size.width, alignment: .leading)
+            .frame(width: resolvedWidth, alignment: .leading)
             .clipped()
             .onAppear {
-                pageWidth = geometry.size.width
+                if geometry.size.width > 0 {
+                    pageWidth = geometry.size.width
+                }
                 // Initialize displayedScreen on first appear without animation
                 if !hasInitializedDisplay {
                     hasInitializedDisplay = true
@@ -185,13 +194,23 @@ struct CategoryGrowthListView: View {
         }
         .onChange(of: manager.isPopoverShown) { _, isShown in
             guard isShown else { return }
+            synchronizeVisibleScreenToCurrent()
             preloadVisibleCategoriesIfNeeded()
         }
         .onChange(of: manager.isAnalyzingChanges) { _, isAnalyzing in
             guard !isAnalyzing else { return }
             preloadVisibleCategoriesIfNeeded()
         }
+        .onChange(of: startupWarmupSignature) { _, _ in
+            updateStartupWarmupStateIfNeeded()
+        }
         .onDisappear {
+            subcategoryLoadTask?.cancel()
+            subcategoryLoadTask = nil
+            isLoadingSubcategories = false
+            contributorPrefetchTask?.cancel()
+            contributorPrefetchTask = nil
+            pendingSubcategoryNavigationID = nil
             navigationTask?.cancel()
             navigationTask = nil
             activeTransition = nil
@@ -254,6 +273,20 @@ struct CategoryGrowthListView: View {
     private func screenPage(for screen: DrilldownScreen, width: CGFloat) -> some View {
         screenView(for: screen)
             .frame(width: width)
+    }
+
+    private func synchronizeVisibleScreenToCurrent() {
+        navigationTask?.cancel()
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            pendingTransition = nil
+            activeTransition = nil
+            pageOffset = 0
+            displayedScreen = currentScreen
+            hasInitializedDisplay = true
+        }
     }
 
     private func startNavigationTransition(
@@ -348,10 +381,11 @@ struct CategoryGrowthListView: View {
                         VStack(spacing: 0) {
                             ForEach(growingCategories) { item in
                                 let isReady = manager.isSubcategoryBreakdownReady(for: item.category)
-                                let isPreparing = manager.isSubcategoryBreakdownLoading(for: item.category)
+                                let isPreparing = !manager.hasCompletedInitialSubcategoryWarmup &&
+                                    manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
-                                    isNavigationReady: isReady,
+                                    isNavigationReady: manager.hasCompletedInitialSubcategoryWarmup || isReady,
                                     isPreparing: isPreparing,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     highlightedSegmentID: $highlightedSegmentID,
@@ -362,10 +396,11 @@ struct CategoryGrowthListView: View {
 
                             ForEach(stableCategories) { item in
                                 let isReady = manager.isSubcategoryBreakdownReady(for: item.category)
-                                let isPreparing = manager.isSubcategoryBreakdownLoading(for: item.category)
+                                let isPreparing = !manager.hasCompletedInitialSubcategoryWarmup &&
+                                    manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
-                                    isNavigationReady: isReady,
+                                    isNavigationReady: manager.hasCompletedInitialSubcategoryWarmup || isReady,
                                     isPreparing: isPreparing,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     highlightedSegmentID: $highlightedSegmentID,
@@ -404,10 +439,11 @@ struct CategoryGrowthListView: View {
 
     private func subcategoryListView(for category: CategoryInventoryItem) -> some View {
         let groups = manager.subcategoryGroupsByCategory[category.category] ?? []
-        let isLoading = manager.isSubcategoryBreakdownLoading(for: category.category) && groups.isEmpty
+        let isLoading = isLoadingSubcategories ||
+            (manager.isSubcategoryBreakdownLoading(for: category.category) && groups.isEmpty)
 
-        return Group {
-            if isLoading {
+        if isLoading {
+            return AnyView(
                 VStack(spacing: 10) {
                     ProgressView()
                     Text("Loading \(category.category.displayName.lowercased()) breakdown…")
@@ -415,7 +451,12 @@ struct CategoryGrowthListView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: maxHeight)
-            } else if groups.isEmpty {
+                .transaction { $0.disablesAnimations = true }
+            )
+        }
+
+        if groups.isEmpty {
+            return AnyView(
                 VStack(spacing: 8) {
                     Image(systemName: "tray")
                         .foregroundStyle(.secondary)
@@ -424,25 +465,30 @@ struct CategoryGrowthListView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: maxHeight)
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(groups) { group in
-                            SubcategoryRow(group: group) {
-                                manager.selectedSubcategory = group
-                                manager.isSubcategoryDrillDown = true
-                            }
+                .transaction { $0.disablesAnimations = true }
+            )
+        }
+
+        return AnyView(
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(groups) { group in
+                        SubcategoryRow(
+                            group: group,
+                            isLoading: pendingSubcategoryNavigationID == group.id
+                        ) {
+                            selectSubcategory(group, category: category.category)
                         }
                     }
-                    .padding(.top, pageTopInset)
-                    .padding(.bottom, pageTopInset)
                 }
-                .scrollIndicators(.hidden)
-                .hiddenScrollIndicators()
-                .frame(maxHeight: maxHeight)
+                .padding(.top, pageTopInset)
+                .padding(.bottom, pageTopInset)
             }
-        }
-        .transaction { $0.disablesAnimations = true }
+            .scrollIndicators(.hidden)
+            .hiddenScrollIndicators()
+            .frame(maxHeight: maxHeight)
+            .transaction { $0.disablesAnimations = true }
+        )
     }
 
     @State private var growthContributors: [GrowthContributor] = []
@@ -476,6 +522,7 @@ struct CategoryGrowthListView: View {
             contributorTaskKey(for: group, category: $0)
         } ?? "contributors-\(group.id)"
         let visibleGrowthContributors = loadedContributorTaskID == contributorTaskID ? growthContributors : []
+        let showContributorLoadingRow = isLoadingContributors && visibleGrowthContributors.isEmpty
 
         // Filter out growth contributors from the "all files" list to avoid duplicates
         let contributorPaths = Set(visibleGrowthContributors.map(\.path))
@@ -495,6 +542,10 @@ struct CategoryGrowthListView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                         .padding(.top, 12)
                     } else {
+                        if showContributorLoadingRow {
+                            contributorLoadingRow
+                        }
+
                         // Growth contributors section
                         if !visibleGrowthContributors.isEmpty {
                             ForEach(visibleGrowthContributors) { contributor in
@@ -565,12 +616,22 @@ struct CategoryGrowthListView: View {
             .hiddenScrollIndicators()
             .frame(maxHeight: maxHeight)
             .task(id: contributorTaskID) {
-                loadedContributorTaskID = nil
-                growthContributors = []
                 guard let category = selectedCategory else {
+                    loadedContributorTaskID = nil
+                    growthContributors = []
                     isLoadingContributors = false
                     return
                 }
+
+                if let cachedContributors = manager.cachedGrowthContributors(for: group, category: category) {
+                    growthContributors = cachedContributors
+                    loadedContributorTaskID = contributorTaskID
+                    isLoadingContributors = false
+                    return
+                }
+
+                loadedContributorTaskID = nil
+                growthContributors = []
                 isLoadingContributors = true
                 let contributors = await manager.loadGrowthContributors(for: group, category: category)
                 guard !Task.isCancelled else { return }
@@ -580,6 +641,30 @@ struct CategoryGrowthListView: View {
             }
             .transaction { $0.disablesAnimations = true }
         )
+    }
+
+    private var contributorLoadingRow: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Loading growth contributors")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                Text("Calculating recent growth for this folder")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(minHeight: 34)
+        .padding(.horizontal, 6)
     }
 
     private func contributorTaskKey(for group: SubcategoryGroup, category: GrowthCategory) -> String {
@@ -647,32 +732,110 @@ struct CategoryGrowthListView: View {
 
     private func selectCategory(_ item: CategoryInventoryItem) {
         guard isDataReady else { return }
-        guard manager.isSubcategoryBreakdownReady(for: item.category) else {
+        contributorPrefetchTask?.cancel()
+        contributorPrefetchTask = nil
+        pendingSubcategoryNavigationID = nil
+        let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: item.category)
+
+        guard manager.hasCompletedInitialSubcategoryWarmup || !needsSubcategoryLoad else {
             manager.preloadSubcategoryBreakdowns(for: [item.category])
             return
         }
 
-        let groups = manager.subcategoryGroupsByCategory[item.category] ?? []
-        let selectedSubcategory: SubcategoryGroup?
-        let isSubcategoryDrillDown: Bool
+        subcategoryLoadTask?.cancel()
+        let token = UUID()
+        subcategoryLoadToken = token
 
-        if item.category.supportsSubcategories {
-            selectedSubcategory = nil
-            isSubcategoryDrillDown = false
-        } else {
-            selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
-            isSubcategoryDrillDown = selectedSubcategory != nil
-        }
+        let groups = manager.subcategoryGroupsByCategory[item.category] ?? []
+        let selectedSubcategory = needsSubcategoryLoad || item.category.supportsSubcategories
+            ? nil
+            : groups.first(where: { $0.subcategory == nil }) ?? groups.first
+        let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
 
         // Suppress implicit animations from state mutations so only the
         // explicit slide animation in startNavigationTransition runs.
         var t = Transaction()
         t.disablesAnimations = true
         withTransaction(t) {
+            isLoadingSubcategories = needsSubcategoryLoad
             manager.selectedInventoryCategory = item
             manager.selectedSubcategory = selectedSubcategory
             manager.isDrilledDown = true
             manager.isSubcategoryDrillDown = isSubcategoryDrillDown
+        }
+
+        guard needsSubcategoryLoad else {
+            subcategoryLoadTask = nil
+            return
+        }
+
+        let selectedCategory = item.category
+        let loadTask = Task { @MainActor in
+            let groups = await manager.loadSubcategoryBreakdown(for: selectedCategory)
+
+            guard subcategoryLoadToken == token else {
+                return
+            }
+
+            if Task.isCancelled {
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    isLoadingSubcategories = false
+                    subcategoryLoadTask = nil
+                }
+                return
+            }
+
+            guard manager.selectedInventoryCategory?.category == selectedCategory else {
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    isLoadingSubcategories = false
+                    subcategoryLoadTask = nil
+                }
+                return
+            }
+
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) {
+                isLoadingSubcategories = false
+                subcategoryLoadTask = nil
+
+                if !selectedCategory.supportsSubcategories {
+                    manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
+                    manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
+                }
+            }
+        }
+        subcategoryLoadTask = loadTask
+    }
+
+    private func selectSubcategory(_ group: SubcategoryGroup, category: GrowthCategory) {
+        contributorPrefetchTask?.cancel()
+
+        if manager.cachedGrowthContributors(for: group, category: category) != nil {
+            pendingSubcategoryNavigationID = nil
+            manager.selectedSubcategory = group
+            manager.isSubcategoryDrillDown = true
+            return
+        }
+
+        pendingSubcategoryNavigationID = group.id
+        contributorPrefetchTask = Task { @MainActor in
+            _ = await manager.loadGrowthContributors(for: group, category: category)
+            guard !Task.isCancelled else { return }
+            guard manager.selectedInventoryCategory?.category == category else { return }
+            guard pendingSubcategoryNavigationID == group.id else { return }
+
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                pendingSubcategoryNavigationID = nil
+                manager.selectedSubcategory = group
+                manager.isSubcategoryDrillDown = true
+            }
         }
     }
 
@@ -680,11 +843,33 @@ struct CategoryGrowthListView: View {
         growingCategories + stableCategories
     }
 
+    private var startupWarmupSignature: [String] {
+        visibleCategories.map { item in
+            let category = item.category
+            return "\(category.rawValue):\(manager.isSubcategoryBreakdownReady(for: category)):\(manager.isSubcategoryBreakdownLoading(for: category))"
+        }
+    }
+
     private func preloadVisibleCategoriesIfNeeded() {
+        guard !manager.hasCompletedInitialSubcategoryWarmup else { return }
         guard !manager.isAnalyzingChanges else { return }
         let categories = visibleCategories.map(\.category)
         guard !categories.isEmpty else { return }
+
+        guard !categories.allSatisfy({ manager.isSubcategoryBreakdownReady(for: $0) }) else {
+            manager.completeInitialSubcategoryWarmup()
+            return
+        }
+
         manager.preloadSubcategoryBreakdowns(for: categories)
+    }
+
+    private func updateStartupWarmupStateIfNeeded() {
+        guard !manager.hasCompletedInitialSubcategoryWarmup else { return }
+        let categories = visibleCategories.map(\.category)
+        guard !categories.isEmpty else { return }
+        guard categories.allSatisfy({ manager.isSubcategoryBreakdownReady(for: $0) }) else { return }
+        manager.completeInitialSubcategoryWarmup()
     }
 
     // MARK: - Empty State
@@ -797,13 +982,19 @@ private struct CategoryInventoryRow: View, Equatable {
             }
             .opacity(isPreparing ? 0.55 : 1)
 
-            if isPreparing {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.7)
-                    .frame(width: 12, height: 12)
-                    .tint(.secondary)
+            Group {
+                if isPreparing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                        .tint(.secondary)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
             }
+            .frame(width: 12, height: 12)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
@@ -1006,6 +1197,7 @@ private struct DrilldownGrowthRow: View {
 
 private struct SubcategoryRow: View {
     let group: SubcategoryGroup
+    let isLoading: Bool
     let onTap: () -> Void
 
     @State private var hoverState = false
@@ -1049,9 +1241,18 @@ private struct SubcategoryRow: View {
                     }
                 }
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+                Group {
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.7)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(width: 12, height: 12)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
@@ -1064,6 +1265,7 @@ private struct SubcategoryRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(isLoading)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoverState = hovering
