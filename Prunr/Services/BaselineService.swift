@@ -6,6 +6,11 @@ import Foundation
 /// the latest snapshot with the previous snapshot for a given path.
 actor BaselineService {
 
+    struct GrowthComparisonSnapshots: Sendable, Equatable {
+        let currentSnapshotId: Int64
+        let baselineSnapshotId: Int64?
+    }
+
     // MARK: - Types
 
     /// Errors specific to baseline operations
@@ -67,6 +72,10 @@ actor BaselineService {
         // Get previous snapshot for delta calculation
         let previousSnapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
         let previousSnapshotId = previousSnapshots.first?.id
+
+        if previousSnapshotId == nil {
+            try await db.clearRealtimeData(trackedPathId: trackedPath.id)
+        }
 
         // Set UI state
         await MainActor.run {
@@ -184,6 +193,30 @@ actor BaselineService {
         return growthItems.sorted { $0.growthBytes > $1.growthBytes }
     }
 
+    func resolveGrowthComparisonSnapshots(
+        trackedPathId: UUID,
+        limit: Int = 12
+    ) async throws -> GrowthComparisonSnapshots? {
+        let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: limit)
+
+        guard let latestSnapshot = snapshots.first,
+              let latestSnapshotId = latestSnapshot.id else {
+            return nil
+        }
+
+        let latestEntryCount = try await db.fetchEntryCount(for: latestSnapshotId)
+        let baselineSnapshotId = try await comparableBaselineSnapshotId(
+            from: snapshots,
+            latestSnapshotId: latestSnapshotId,
+            latestEntryCount: latestEntryCount
+        )
+
+        return GrowthComparisonSnapshots(
+            currentSnapshotId: latestSnapshotId,
+            baselineSnapshotId: baselineSnapshotId
+        )
+    }
+
     /// Drills down into a specific path to find growth contributors.
     ///
     /// - Parameters:
@@ -277,6 +310,34 @@ actor BaselineService {
         }
 
         return items
+    }
+
+    private func comparableBaselineSnapshotId(
+        from snapshots: [Snapshot],
+        latestSnapshotId: Int64,
+        latestEntryCount: Int
+    ) async throws -> Int64? {
+        guard latestEntryCount > 0 else { return nil }
+
+        let minimumComparableEntryCount = latestEntryCount / 2
+
+        for snapshot in snapshots.dropFirst() {
+            guard let candidateSnapshotId = snapshot.id else { continue }
+            guard candidateSnapshotId != latestSnapshotId else { continue }
+
+            let candidateEntryCount = try await db.fetchEntryCount(for: candidateSnapshotId)
+            if candidateEntryCount <= 100 {
+                continue
+            }
+
+            if candidateEntryCount < minimumComparableEntryCount {
+                continue
+            }
+
+            return candidateSnapshotId
+        }
+
+        return nil
     }
 
     // MARK: - Category Growth List
@@ -920,11 +981,10 @@ actor BaselineService {
         return matches
     }
 
-    /// Gets inventory with growth trends merged
+    /// Gets inventory with recent growth stories merged.
     /// - Parameter trackedPath: The tracked path to analyze
-    /// - Returns: Array of CategoryInventoryItem with growth trends attached where applicable
+    /// - Returns: Array of CategoryInventoryItem with recent growth attached where applicable
     func getInventoryWithTrends(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
-        // 1. Get current inventory
         var inventory = await getCategoryInventory(trackedPath: trackedPath)
         let recentStories = await growthJournalService.recentGrowthStories(
             trackedPath: trackedPath,
@@ -933,43 +993,6 @@ actor BaselineService {
 
         for index in inventory.indices {
             inventory[index].recentGrowthStory = recentStories[inventory[index].category]
-        }
-
-        // 2. Detect growth trends
-        let trackedPathIdString = trackedPath.id.uuidString
-        let history = db.fetchCategorySnapshots(trackedPathId: trackedPathIdString, limit: 90)
-
-        guard history.count >= 2 else {
-            // Not enough history data, return inventory without trends
-            return inventory
-        }
-
-        // Group by category for trend analysis
-        var categoryHistory: [GrowthCategory: [(snapshotId: Int64, createdAt: Date, totalBytes: Int64)]] = [:]
-
-        for row in history {
-            if let category = GrowthCategory(rawValue: row.category) {
-                categoryHistory[category, default: []].append((
-                    snapshotId: row.snapshotId,
-                    createdAt: row.createdAt,
-                    totalBytes: row.totalBytes
-                ))
-            }
-        }
-
-        let significanceThreshold: Int64 = 50 * 1024 * 1024 // 50MB threshold
-
-        // 3. Merge trends into inventory
-        for i in 0..<inventory.count {
-            let category = inventory[i].category
-
-            guard let sorted = categoryHistory[category]?.sorted(by: { $0.createdAt < $1.createdAt }),
-                  sorted.count >= 2 else { continue }
-
-            if inventory[i].recentGrowthStory == nil,
-               let trend = buildInventoryTrend(from: sorted, significanceThreshold: significanceThreshold) {
-                inventory[i].growthTrend = trend
-            }
         }
 
         return inventory

@@ -120,7 +120,7 @@ actor GrowthJournalService {
                 startedAt: bestSegment.startedAt,
                 endedAt: bestSegment.endedAt,
                 duration: duration,
-                displayLabel: formattedRecency(since: bestSegment.endedAt, now: now)
+                displayLabel: formattedDuration(duration)
             )
         }
 
@@ -170,29 +170,19 @@ actor GrowthJournalService {
         return Double(segment.deltaBytes) * recencyWeight
     }
 
-    private func formattedRecency(since endedAt: Date, now: Date) -> String {
-        let elapsed = now.timeIntervalSince(endedAt)
-
-        if elapsed < 5 * 60 {
-            return "just now"
+    private func formattedDuration(_ duration: TimeInterval) -> String {
+        let roundedMinutes = max(1, Int((duration / 60).rounded()))
+        if roundedMinutes < 60 {
+            return "\(roundedMinutes)m"
         }
 
-        let minutes = Int(elapsed / 60)
-        if minutes < 60 {
-            return "\(minutes)m ago"
+        let roundedHours = Int((duration / 3600).rounded())
+        if roundedHours < 24 {
+            return "\(max(1, roundedHours))h"
         }
 
-        let hours = Int((elapsed / 3600).rounded())
-        if hours < 24 {
-            return "\(hours)h ago"
-        }
-
-        if hours < 48 {
-            return "yesterday"
-        }
-
-        let days = Int((elapsed / (24 * 3600)).rounded())
-        return "\(days)d ago"
+        let roundedDays = Int((duration / (24 * 3600)).rounded())
+        return "\(max(1, roundedDays))d"
     }
 
     private func floorToMinute(_ date: Date) -> Date {

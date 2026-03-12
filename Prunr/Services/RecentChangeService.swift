@@ -20,6 +20,16 @@ actor RecentChangeService {
         _ changedPaths: Set<URL>,
         trackedPath: TrackedPath
     ) async -> RefreshResult {
+        do {
+            let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
+            guard !snapshots.isEmpty else {
+                return .noChanges
+            }
+        } catch {
+            print("[RecentChangeService] Failed checking baseline state: \(error)")
+            return .noChanges
+        }
+
         let roots = coalescedRoots(from: changedPaths, trackedPath: trackedPath)
         guard !roots.isEmpty else { return .noChanges }
 

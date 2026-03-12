@@ -970,14 +970,6 @@ private struct CategoryInventoryRow: View, Equatable {
                     }
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.orange)
-                } else if let trend = item.growthTrend {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("+\(formattedBytes(trend.growthBytes)) · \(trend.growthSpanDays)d")
-                    }
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.orange)
                 }
             }
             .opacity(isPreparing ? 0.55 : 1)

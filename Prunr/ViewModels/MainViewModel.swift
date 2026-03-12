@@ -5,6 +5,10 @@ import SwiftUI
 @Observable
 @MainActor
 final class MainViewModel {
+    private struct ComparisonSelection {
+        let historicalSnapshot: Snapshot
+        let skippedSnapshotCount: Int
+    }
 
     // MARK: - Published State
 
@@ -40,7 +44,7 @@ final class MainViewModel {
 
     /// Current-only mode when only one snapshot exists
     var currentOnlyMode: Bool {
-        snapshots.count == 1
+        snapshots.count == 1 || !hasComparableHistoricalSnapshot
     }
 
     /// Current snapshot entries for current-only mode display
@@ -58,6 +62,8 @@ final class MainViewModel {
 
     /// The ID of the historical snapshot being compared against
     private var historicalSnapshotId: Int64?
+    private var hasComparableHistoricalSnapshot = false
+    private let minimumComparableSnapshotEntryCount = 100
 
     // MARK: - Public Methods
 
@@ -69,6 +75,9 @@ final class MainViewModel {
         deltas = []
         errorMessage = nil
         comparisonWarning = nil
+        comparisonSummary = nil
+        currentSnapshotEntries = []
+        hasComparableHistoricalSnapshot = false
 
         // Reload snapshots and comparison for the new path
         await loadSnapshots()
@@ -174,43 +183,60 @@ final class MainViewModel {
         guard selectedPath != nil else {
             deltas = []
             comparisonWarning = nil
+            comparisonSummary = nil
+            currentSnapshotEntries = []
+            hasComparableHistoricalSnapshot = false
             return
         }
 
-        guard snapshots.count >= 2 else {
-            // Current-only mode: load the single snapshot's entries
-            if snapshots.count == 1, let snapshotId = snapshots[0].id {
-                do {
-                    currentSnapshotEntries = try await db.fetchEntries(for: snapshotId)
-                } catch {
-                    currentSnapshotEntries = []
-                }
-            } else {
-                currentSnapshotEntries = []
-            }
-            comparisonWarning = nil
+        guard let currentSnapshot = snapshots.first,
+              let currentId = currentSnapshot.id else {
+            currentSnapshotEntries = []
             deltas = []
             comparisonSummary = nil
+            comparisonWarning = nil
+            hasComparableHistoricalSnapshot = false
             return
         }
 
-        // Use the two most recent snapshots
-        // snapshots[0] = newest (current), snapshots[1] = second newest (previous)
-        guard let currentId = snapshots[0].id,
-              let previousId = snapshots[1].id else {
-            errorMessage = "Invalid snapshot IDs."
+        currentSnapshotId = currentId
+        currentSnapshotDate = currentSnapshot.createdAt
+
+        guard snapshots.count >= 2 else {
+            await enterCurrentOnlyMode(using: currentId, warning: nil)
+            return
+        }
+
+        do {
+            let currentEntryCount = try await db.fetchEntryCount(for: currentId)
+            guard let selection = try await selectHistoricalSnapshot(currentEntryCount: currentEntryCount),
+                  let historicalId = selection.historicalSnapshot.id else {
+                await enterCurrentOnlyMode(
+                    using: currentId,
+                    warning: "Recent history is incomplete. Showing the latest snapshot until another full scan is available."
+                )
+                return
+            }
+
+            hasComparableHistoricalSnapshot = true
+            currentSnapshotEntries = []
+            historicalSnapshotId = historicalId
+            historicalSnapshotDate = selection.historicalSnapshot.createdAt
+            comparisonSummary = formattedComparisonSummary(
+                current: currentSnapshot.createdAt,
+                historical: selection.historicalSnapshot.createdAt
+            )
+            comparisonWarning = selection.skippedSnapshotCount > 0
+                ? "Skipped \(selection.skippedSnapshotCount) incomplete snapshot\(selection.skippedSnapshotCount == 1 ? "" : "s") in the comparison window."
+                : nil
+
+            await performComparison(historicalId: historicalId, currentId: currentId)
+        } catch {
+            errorMessage = "Failed to compare snapshots: \(error.localizedDescription)"
             deltas = []
-            return
+            comparisonSummary = nil
+            hasComparableHistoricalSnapshot = false
         }
-
-        // Store snapshot dates for display
-        currentSnapshotDate = snapshots[0].createdAt
-        historicalSnapshotDate = snapshots[1].createdAt
-
-        // Set comparison summary showing actual time between snapshots
-        comparisonSummary = formattedComparisonSummary(current: snapshots[0].createdAt, historical: snapshots[1].createdAt)
-
-        await performComparison(historicalId: previousId, currentId: currentId)
     }
 
     /// Performs the delta comparison between two snapshots
@@ -221,6 +247,44 @@ final class MainViewModel {
             errorMessage = "Failed to compare snapshots: \(error.localizedDescription)"
             deltas = []
         }
+    }
+
+    private func enterCurrentOnlyMode(using snapshotId: Int64, warning: String?) async {
+        hasComparableHistoricalSnapshot = false
+        historicalSnapshotId = nil
+        historicalSnapshotDate = nil
+        comparisonSummary = nil
+        comparisonWarning = warning
+        deltas = []
+
+        do {
+            currentSnapshotEntries = try await db.fetchEntries(for: snapshotId)
+        } catch {
+            currentSnapshotEntries = []
+        }
+    }
+
+    private func selectHistoricalSnapshot(currentEntryCount: Int) async throws -> ComparisonSelection? {
+        guard snapshots.count >= 2 else { return nil }
+
+        let minimumExpectedEntryCount = max(
+            minimumComparableSnapshotEntryCount,
+            currentEntryCount / 2
+        )
+
+        for (index, snapshot) in snapshots.dropFirst().enumerated() {
+            guard let snapshotId = snapshot.id else { continue }
+
+            let entryCount = try await db.fetchEntryCount(for: snapshotId)
+            guard entryCount >= minimumExpectedEntryCount else { continue }
+
+            return ComparisonSelection(
+                historicalSnapshot: snapshot,
+                skippedSnapshotCount: index
+            )
+        }
+
+        return nil
     }
 
     /// Scans the current state of the selected path
@@ -439,10 +503,10 @@ final class MainViewModel {
     /// - Parameters:
     ///   - current: The current snapshot date
     ///   - historical: The historical snapshot date
-    /// - Returns: Formatted summary like "now vs 2 days ago"
+    /// - Returns: Formatted summary like "2h ago vs 2d ago"
     private func formattedComparisonSummary(current: Date, historical: Date) -> String {
-        let now = "Now"
-        let then = formattedSnapshotDate(historical)
-        return "\(now) vs \(then)"
+        let currentLabel = formattedSnapshotDate(current)
+        let historicalLabel = formattedSnapshotDate(historical)
+        return "\(currentLabel) vs \(historicalLabel)"
     }
 }

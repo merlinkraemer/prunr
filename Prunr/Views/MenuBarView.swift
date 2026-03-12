@@ -1028,11 +1028,7 @@ struct MenuBarView: View {
 
     private var overallGrowthBytes: Int64 {
         manager.growingCategories.reduce(Int64(0)) { partial, item in
-            if let story = item.recentGrowthStory {
-                return partial + story.deltaBytes
-            }
-
-            return partial + (item.growthTrend?.growthBytes ?? 0)
+            partial + (item.recentGrowthStory?.deltaBytes ?? 0)
         }
     }
 

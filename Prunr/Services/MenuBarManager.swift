@@ -105,6 +105,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
     var growthContributorCacheGeneration: UInt64 = 0
     private var currentInventorySnapshotID: Int64?
+    private var currentGrowthBaselineSnapshotID: Int64?
     @ObservationIgnored
     private var subcategoryBreakdownLoadTasks: [GrowthCategory: Task<SubcategoryBreakdownLoadResult, Never>] = [:]
     var monitoredPathName: String = ""
@@ -615,10 +616,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             // Get inventory with growth trends
             let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
+            let comparisonSnapshots = try await baselineService.resolveGrowthComparisonSnapshots(
+                trackedPathId: trackedPath.id
+            )
 
             applyInventory(
                 inventory,
-                snapshotID: completedSnapshot?.id,
+                snapshotID: comparisonSnapshots?.currentSnapshotId ?? completedSnapshot?.id,
+                growthBaselineSnapshotID: comparisonSnapshots?.baselineSnapshotId,
                 invalidateSubcategoryCache: true
             )
 
@@ -661,6 +666,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 subcategoryGroupsByCategory = [:]
                 invalidateGrowthContributorCache()
                 currentInventorySnapshotID = nil
+                currentGrowthBaselineSnapshotID = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let baselineError = error as? BaselineService.BaselineError,
@@ -674,6 +680,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 subcategoryGroupsByCategory = [:]
                 invalidateGrowthContributorCache()
                 currentInventorySnapshotID = nil
+                currentGrowthBaselineSnapshotID = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
@@ -744,8 +751,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         do {
-            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
-            guard !snapshots.isEmpty else {
+            let comparisonSnapshots = try await baselineService.resolveGrowthComparisonSnapshots(
+                trackedPathId: trackedPath.id
+            )
+            guard let comparisonSnapshots else {
                 noBaseline = true
                 clearInventoryState()
                 lastAutomaticScanAt = nil
@@ -754,14 +763,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
 
             let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
-            let latestSnapshotID = snapshots.first?.id
             noBaseline = false
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
             lastAutomaticScanAt = snapshots.first?.createdAt
             errorMessage = nil
             applyInventory(
                 inventory,
-                snapshotID: latestSnapshotID,
-                invalidateSubcategoryCache: latestSnapshotID != currentInventorySnapshotID
+                snapshotID: comparisonSnapshots.currentSnapshotId,
+                growthBaselineSnapshotID: comparisonSnapshots.baselineSnapshotId,
+                invalidateSubcategoryCache: comparisonSnapshots.currentSnapshotId != currentInventorySnapshotID
             )
 
             do {
@@ -883,57 +893,53 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 return .skipped
             }
 
-            do {
-                let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
-                guard let latestSnapshot = snapshots.first,
-                      let latestSnapshotId = latestSnapshot.id else {
-                    return .skipped
-                }
-
-                let groups = await baselineService.getSubcategoryBreakdown(for: category, snapshotId: latestSnapshotId)
-                if Task.isCancelled {
-                    return .skipped
-                }
-
-                // Try working-set-based growth first, then fall back to journal data
-                var growthTotals = await baselineService.getSubcategoryGrowthTotals(
-                    trackedPathId: trackedPath.id,
-                    snapshotId: latestSnapshotId,
-                    category: category
-                )
-
-                // If working set comparison found no growth, use journal data
-                if growthTotals.isEmpty {
-                    let journalTotals = await growthJournalService.subcategoryGrowthTotals(
-                        trackedPath: trackedPath,
-                        category: category,
-                        retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
-                    )
-                    if !journalTotals.isEmpty {
-                        growthTotals = journalTotals
-                    }
-                }
-
-                let hydratedGroups = groups.map { group in
-                    SubcategoryGroup(
-                        subcategory: group.subcategory,
-                        displayName: group.displayName,
-                        totalBytes: group.totalBytes,
-                        fileCount: group.fileCount,
-                        growthBytes: growthTotals[group.subcategory],
-                        topFiles: group.topFiles
-                    )
-                }
-
-                if Task.isCancelled {
-                    return .skipped
-                }
-
-                return .loaded(hydratedGroups)
-            } catch {
-                print("[MenuBarManager] Failed loading subcategory breakdown for \(category.rawValue): \(error)")
+            guard let latestSnapshotId = currentInventorySnapshotID else {
                 return .skipped
             }
+
+            let groups = await baselineService.getSubcategoryBreakdown(for: category, snapshotId: latestSnapshotId)
+            if Task.isCancelled {
+                return .skipped
+            }
+
+            // Try working-set-based growth first, then fall back to journal data
+            var growthTotals: [GrowthSubcategory?: Int64] = [:]
+            if let baselineSnapshotId = currentGrowthBaselineSnapshotID {
+                growthTotals = await baselineService.getSubcategoryGrowthTotals(
+                    trackedPathId: trackedPath.id,
+                    snapshotId: baselineSnapshotId,
+                    category: category
+                )
+            }
+
+            // If working set comparison found no growth, use journal data
+            if growthTotals.isEmpty {
+                let journalTotals = await growthJournalService.subcategoryGrowthTotals(
+                    trackedPath: trackedPath,
+                    category: category,
+                    retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+                )
+                if !journalTotals.isEmpty {
+                    growthTotals = journalTotals
+                }
+            }
+
+            let hydratedGroups = groups.map { group in
+                SubcategoryGroup(
+                    subcategory: group.subcategory,
+                    displayName: group.displayName,
+                    totalBytes: group.totalBytes,
+                    fileCount: group.fileCount,
+                    growthBytes: growthTotals[group.subcategory],
+                    topFiles: group.topFiles
+                )
+            }
+
+            if Task.isCancelled {
+                return .skipped
+            }
+
+            return .loaded(hydratedGroups)
         }
 
         subcategoryBreakdownLoadTasks[category] = loadTask
@@ -1019,88 +1025,45 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     func loadGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) async -> [GrowthContributor] {
         let enabledPaths = SettingsStore.shared.enabledTrackedPaths
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else { return [] }
-
-        do {
-            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
-            guard let latestSnapshotId = snapshots.first?.id else { return [] }
-            let cacheKey = growthContributorCacheKey(
-                snapshotId: latestSnapshotId,
-                category: category,
-                group: group
-            )
-
-            if let cached = growthContributorsBySubcategory[cacheKey] {
-                return cached
-            }
-
-            let latestEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: latestSnapshotId)
-            let journalGrowthLimit = await growthContributorJournalLimit(
-                trackedPath: trackedPath,
-                category: category,
-                subcategory: group.subcategory
-            )
-
-            print("[GrowthDebug] \(snapshots.count) snapshots for tracked path, latest ID=\(latestSnapshotId), entries=\(latestEntryCount)")
-
-            // Try working-set comparison first
-            var contributors = await baselineService.getGrowthContributors(
-                trackedPathId: trackedPath.id,
-                snapshotId: latestSnapshotId,
-                category: category,
-                subcategory: group.subcategory
-            )
-            print("[GrowthDebug] Working-set comparison returned \(contributors.count) contributors for \(category.rawValue)/\(group.subcategory?.rawValue ?? "nil")")
-
-            // Fallback: compare latest snapshot with the most recent comparable snapshot.
-            if contributors.isEmpty,
-               let previousSnapshotId = try await fallbackSnapshotDiffBaseline(
-                from: snapshots,
-                latestSnapshotId: latestSnapshotId,
-                latestEntryCount: latestEntryCount
-               ) {
-                print("[GrowthDebug] Falling back to snapshot diff: latest=\(latestSnapshotId) vs previous=\(previousSnapshotId)")
-                contributors = try await DatabaseManager.shared.fetchSnapshotDiffContributors(
-                    latestSnapshotId: latestSnapshotId,
-                    previousSnapshotId: previousSnapshotId,
-                    category: category,
-                    subcategory: group.subcategory
-                )
-                print("[GrowthDebug] Snapshot diff returned \(contributors.count) contributors")
-                for c in contributors.prefix(5) {
-                    print("[GrowthDebug]   \(URL(fileURLWithPath: c.path).lastPathComponent): current=\(c.currentSizeBytes), growth=\(c.growthBytes)")
-                }
-            } else if contributors.isEmpty,
-                      let previousSnapshotId = snapshots.dropFirst().compactMap(\.id).first,
-                      let journalGrowthLimit,
-                      previousSnapshotId != latestSnapshotId {
-                print("[GrowthDebug] Using bounded snapshot diff against snapshot \(previousSnapshotId) with journal target \(journalGrowthLimit)")
-                contributors = try await DatabaseManager.shared.fetchSnapshotDiffContributors(
-                    latestSnapshotId: latestSnapshotId,
-                    previousSnapshotId: previousSnapshotId,
-                    category: category,
-                    subcategory: group.subcategory
-                )
-                contributors = boundedGrowthContributors(
-                    contributors,
-                    targetGrowthBytes: journalGrowthLimit
-                )
-                print("[GrowthDebug] Bounded snapshot diff returned \(contributors.count) contributors")
-            } else if contributors.isEmpty {
-                print("[GrowthDebug] Skipping snapshot diff fallback: no comparable previous snapshot")
-            }
-
-            growthContributorsBySubcategory[cacheKey] = contributors
-            return contributors
-        } catch {
-            print("[MenuBarManager] Failed loading growth contributors: \(error)")
+        guard let latestSnapshotId = currentInventorySnapshotID,
+              let baselineSnapshotId = currentGrowthBaselineSnapshotID else {
             return []
         }
+
+        let cacheKey = growthContributorCacheKey(
+            snapshotId: latestSnapshotId,
+            baselineSnapshotId: baselineSnapshotId,
+            category: category,
+            group: group
+        )
+
+        if let cached = growthContributorsBySubcategory[cacheKey] {
+            return cached
+        }
+
+        // Only show contributors backed by the live working set. Falling back
+        // to historical snapshot diffs mixes older growth into the current
+        // drill-down and makes pre-baseline files appear newly grown.
+        let contributors = await baselineService.getGrowthContributors(
+            trackedPathId: trackedPath.id,
+            snapshotId: baselineSnapshotId,
+            category: category,
+            subcategory: group.subcategory
+        )
+        print("[GrowthDebug] Working-set comparison returned \(contributors.count) contributors for \(category.rawValue)/\(group.subcategory?.rawValue ?? "nil")")
+
+        growthContributorsBySubcategory[cacheKey] = contributors
+        return contributors
     }
 
     func cachedGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) -> [GrowthContributor]? {
-        guard let snapshotId = currentInventorySnapshotID else { return nil }
+        guard let snapshotId = currentInventorySnapshotID,
+              let baselineSnapshotId = currentGrowthBaselineSnapshotID else {
+            return nil
+        }
         let cacheKey = growthContributorCacheKey(
             snapshotId: snapshotId,
+            baselineSnapshotId: baselineSnapshotId,
             category: category,
             group: group
         )
@@ -1243,6 +1206,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func applyInventory(
         _ inventory: [CategoryInventoryItem],
         snapshotID: Int64?,
+        growthBaselineSnapshotID: Int64?,
         invalidateSubcategoryCache: Bool
     ) {
         var growing: [CategoryInventoryItem] = []
@@ -1250,7 +1214,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         var stableTotal: Int64 = 0
 
         for item in inventory {
-            if item.recentGrowthStory != nil || item.growthTrend != nil {
+            if item.recentGrowthStory != nil {
                 growing.append(item)
             } else {
                 stable.append(item)
@@ -1262,6 +1226,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         stableCategories = stable.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
         stableTotalBytes = stableTotal
         currentInventorySnapshotID = snapshotID
+        currentGrowthBaselineSnapshotID = growthBaselineSnapshotID
 
         if invalidateSubcategoryCache {
             cancelSubcategoryBreakdownLoads()
@@ -1305,6 +1270,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             isSubcategoryDrillDown = false
             reconciliationResult = nil
             currentInventorySnapshotID = nil
+            currentGrowthBaselineSnapshotID = nil
         }
     }
 
@@ -1364,82 +1330,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func growthContributorCacheKey(
         snapshotId: Int64,
+        baselineSnapshotId: Int64,
         category: GrowthCategory,
         group: SubcategoryGroup
     ) -> String {
-        "\(snapshotId):\(category.rawValue):\(group.id)"
-    }
-
-    private func growthContributorJournalLimit(
-        trackedPath: TrackedPath,
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?
-    ) async -> Int64? {
-        let totals = await growthJournalService.subcategoryGrowthTotals(
-            trackedPath: trackedPath,
-            category: category,
-            retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
-        )
-
-        guard let total = totals[subcategory], total > 0 else {
-            return nil
-        }
-
-        return total
-    }
-
-    private func boundedGrowthContributors(
-        _ contributors: [GrowthContributor],
-        targetGrowthBytes: Int64
-    ) -> [GrowthContributor] {
-        guard targetGrowthBytes > 0 else { return contributors }
-
-        var bounded: [GrowthContributor] = []
-        var accumulatedGrowth: Int64 = 0
-
-        for contributor in contributors {
-            bounded.append(contributor)
-            accumulatedGrowth += max(0, contributor.growthBytes)
-
-            if accumulatedGrowth >= targetGrowthBytes {
-                break
-            }
-        }
-
-        return bounded
-    }
-
-    private func fallbackSnapshotDiffBaseline(
-        from snapshots: [Snapshot],
-        latestSnapshotId: Int64,
-        latestEntryCount: Int
-    ) async throws -> Int64? {
-        guard latestEntryCount > 0 else { return nil }
-
-        let minimumComparableEntryCount = latestEntryCount / 2
-
-        for snapshot in snapshots.dropFirst() {
-            guard let candidateSnapshotId = snapshot.id else { continue }
-
-            let candidateEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: candidateSnapshotId)
-            if candidateEntryCount <= 100 {
-                print("[GrowthDebug] Skipping snapshot \(candidateSnapshotId): only \(candidateEntryCount) entries")
-                continue
-            }
-
-            if candidateEntryCount < minimumComparableEntryCount {
-                print("[GrowthDebug] Skipping snapshot \(candidateSnapshotId): \(candidateEntryCount) entries vs latest \(latestEntryCount)")
-                continue
-            }
-
-            if candidateSnapshotId == latestSnapshotId {
-                continue
-            }
-
-            return candidateSnapshotId
-        }
-
-        return nil
+        "\(snapshotId):\(baselineSnapshotId):\(category.rawValue):\(group.id)"
     }
 
     private func updateMonitoredPathName() {
