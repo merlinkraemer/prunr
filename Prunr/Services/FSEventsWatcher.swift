@@ -10,6 +10,11 @@ actor FSEventsWatcher {
 
     // MARK: - Types
 
+    struct ChangeBatch: Sendable {
+        let changedPaths: Set<URL>
+        let requiresFullRescan: Bool
+    }
+
     /// Opaque pointer to FSEventStream from CoreServices.
     private typealias FSEventStreamRef = OpaquePointer
 
@@ -24,11 +29,14 @@ actor FSEventsWatcher {
     /// Paths accumulated since the debounce window started.
     private var pendingPaths = Set<URL>()
 
+    /// Whether the accumulated batch includes a dropped/root-changed event.
+    private var pendingRequiresFullRescan = false
+
     /// Debounce interval in seconds (default: 3.0)
     private let debounceInterval: TimeInterval
 
     /// Callback invoked when debounced changes are detected.
-    private var onChange: ((Set<URL>) -> Void)?
+    private var onChange: ((ChangeBatch) -> Void)?
 
     /// Paths being watched by this watcher.
     private(set) var pathsToWatch: [URL]
@@ -165,6 +173,7 @@ actor FSEventsWatcher {
         debounceTask?.cancel()
         debounceTask = nil
         pendingPaths.removeAll()
+        pendingRequiresFullRescan = false
 
         guard let eventStream = stream else {
             isRunning = false
@@ -189,10 +198,11 @@ actor FSEventsWatcher {
     /// Sets the callback to be invoked when changes are detected.
     ///
     /// The callback is invoked after the debounce interval elapses without
-    /// additional events, providing a set of changed paths.
+    /// additional events, providing the coalesced changed paths and whether
+    /// the stream reported a dropped/root-changed condition.
     ///
-    /// - Parameter callback: Closure taking a Set<URL> of changed paths
-    func setOnChange(_ callback: @escaping (Set<URL>) -> Void) {
+    /// - Parameter callback: Closure taking a debounced change batch
+    func setOnChange(_ callback: @escaping (ChangeBatch) -> Void) {
         onChange = callback
     }
 
@@ -211,7 +221,7 @@ actor FSEventsWatcher {
 
         pendingPaths.formUnion(paths)
         if requiresFullRescan {
-            pendingPaths.formUnion(pathsToWatch.map(\.standardizedFileURL))
+            pendingRequiresFullRescan = true
         }
         debounceTask?.cancel()
 
@@ -222,10 +232,14 @@ actor FSEventsWatcher {
             guard !Task.isCancelled else { return }
             guard isRunning else { return }
 
-            let pathsToDeliver = pendingPaths
+            let batch = ChangeBatch(
+                changedPaths: pendingPaths,
+                requiresFullRescan: pendingRequiresFullRescan
+            )
             pendingPaths.removeAll()
+            pendingRequiresFullRescan = false
             debounceTask = nil
-            onChange?(pathsToDeliver)
+            onChange?(batch)
         }
     }
 

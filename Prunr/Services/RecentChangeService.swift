@@ -6,7 +6,6 @@ actor RecentChangeService {
     private let scanner = FileScanner()
     private let db = DatabaseManager.shared
     private let growthJournalService = GrowthJournalService.shared
-    private let maxRootsPerBatch = 24
 
     private init() {}
 
@@ -14,6 +13,23 @@ actor RecentChangeService {
         case noChanges
         case updated
         case needsFullScan
+    }
+
+    private enum RefreshTarget {
+        case file(ScanResult)
+        case subtree(URL)
+        case removal(String)
+
+        var rootPath: String {
+            switch self {
+            case .file(let result):
+                result.path
+            case .subtree(let url):
+                url.path
+            case .removal(let path):
+                path
+            }
+        }
     }
 
     func refreshChangedPaths(
@@ -30,34 +46,36 @@ actor RecentChangeService {
             return .noChanges
         }
 
-        let roots = coalescedRoots(from: changedPaths, trackedPath: trackedPath)
-        guard !roots.isEmpty else { return .noChanges }
-
-        let trackedRoot = trackedPath.url.standardizedFileURL.path
-        if roots.contains(where: { $0.path == trackedRoot }) || roots.count > maxRootsPerBatch {
-            print("[RecentChangeService] Too many roots (\(roots.count)) or tracked root changed — needs full scan")
-            return .needsFullScan
-        }
+        let targets = refreshTargets(from: changedPaths, trackedPath: trackedPath)
+        guard !targets.isEmpty else { return .noChanges }
 
         let ignoredNames = await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
         let scanTimestamp = Date()
         var mergedDeltas: [DatabaseManager.JournalDeltaKey: Int64] = [:]
 
-        for root in roots {
-            let scanResults = await scanResults(for: root, ignoredNames: ignoredNames)
+        for target in targets {
+            let entries: [ScanResult]
+            switch target {
+            case .file(let result):
+                entries = [result]
+            case .subtree(let root):
+                entries = await scanResults(for: root, ignoredNames: ignoredNames)
+            case .removal:
+                entries = []
+            }
 
             do {
                 let deltas = try await db.replaceWorkingSetSubtree(
                     trackedPathId: trackedPath.id,
-                    rootPath: root.path,
-                    entries: scanResults,
+                    rootPath: target.rootPath,
+                    entries: entries,
                     updatedAt: scanTimestamp
                 )
                 for (key, delta) in deltas where delta != 0 {
                     mergedDeltas[key, default: 0] += delta
                 }
             } catch {
-                print("[RecentChangeService] Failed refreshing subtree \(root.path): \(error)")
+                print("[RecentChangeService] Failed refreshing target \(target.rootPath): \(error)")
             }
         }
 
@@ -98,62 +116,113 @@ actor RecentChangeService {
         return results
     }
 
-    private func coalescedRoots(from changedPaths: Set<URL>, trackedPath: TrackedPath) -> [URL] {
+    private func refreshTargets(from changedPaths: Set<URL>, trackedPath: TrackedPath) -> [RefreshTarget] {
         let trackedRoot = trackedPath.url.standardizedFileURL
         let fileManager = FileManager.default
-        var candidates: [URL] = []
-
-        func nearestExistingAncestor(for url: URL) -> URL {
-            var candidate = url.standardizedFileURL
-
-            while candidate.path != trackedRoot.deletingLastPathComponent().path {
-                var isDirectory: ObjCBool = false
-                if fileManager.fileExists(atPath: candidate.path, isDirectory: &isDirectory) {
-                    return isDirectory.boolValue
-                        ? candidate
-                        : candidate.deletingLastPathComponent().standardizedFileURL
-                }
-
-                let parent = candidate.deletingLastPathComponent().standardizedFileURL
-                if parent.path == candidate.path {
-                    break
-                }
-                candidate = parent
-            }
-
-            return trackedRoot
-        }
+        var filesByPath: [String: ScanResult] = [:]
+        var subtreeRoots = Set<String>()
+        var removals = Set<String>()
 
         for url in changedPaths {
             let standardized = url.standardizedFileURL
-            guard standardized.path.hasPrefix(trackedRoot.path) else { continue }
+            guard isWithinTrackedRoot(standardized.path, trackedRoot: trackedRoot.path) else { continue }
 
             var isDirectory: ObjCBool = false
             let exists = fileManager.fileExists(atPath: standardized.path, isDirectory: &isDirectory)
 
-            let candidate: URL
             if exists, !isDirectory.boolValue {
-                candidate = standardized.deletingLastPathComponent().standardizedFileURL
+                if let fileResult = scanResult(forFileAt: standardized) {
+                    filesByPath[fileResult.path] = fileResult
+                }
             } else if exists {
-                candidate = standardized
+                subtreeRoots.insert(standardized.path)
             } else {
-                candidate = nearestExistingAncestor(for: standardized)
+                removals.insert(standardized.path)
             }
-
-            guard candidate.path.hasPrefix(trackedRoot.path) else { continue }
-            candidates.append(candidate)
         }
 
-        let unique = Array(Set(candidates.map(\.path))).sorted { $0.count < $1.count }
-        var roots: [URL] = []
+        let subtreeRootsWithDescendantsRemoved = subtreeRoots.filter { rootPath in
+            !hasMoreSpecificChange(under: rootPath, subtreeRoots: subtreeRoots, filePaths: Set(filesByPath.keys), removals: removals)
+        }
+        let coalescedSubtreeRoots = coalescedPaths(subtreeRootsWithDescendantsRemoved)
+        let coalescedRemovals = coalescedPaths(removals).filter { removalPath in
+            !coalescedSubtreeRoots.contains(where: { isDescendantOrSame(removalPath, ancestorPath: $0) })
+        }
+        let filteredFiles = filesByPath.values.filter { result in
+            !coalescedSubtreeRoots.contains(where: { isDescendantOrSame(result.path, ancestorPath: $0) })
+                && !coalescedRemovals.contains(where: { isDescendantOrSame(result.path, ancestorPath: $0) })
+        }
 
+        return coalescedSubtreeRoots.map {
+            .subtree(URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL)
+        } + coalescedRemovals.map {
+            .removal($0)
+        } + filteredFiles.sorted {
+            $0.path < $1.path
+        }.map {
+            .file($0)
+        }
+    }
+
+    private func hasMoreSpecificChange(
+        under rootPath: String,
+        subtreeRoots: Set<String>,
+        filePaths: Set<String>,
+        removals: Set<String>
+    ) -> Bool {
+        let hasDescendantSubtree = subtreeRoots.contains { candidate in
+            candidate != rootPath && isDescendantOrSame(candidate, ancestorPath: rootPath)
+        }
+        if hasDescendantSubtree {
+            return true
+        }
+
+        let hasDescendantFile = filePaths.contains { candidate in
+            candidate != rootPath && isDescendantOrSame(candidate, ancestorPath: rootPath)
+        }
+        if hasDescendantFile {
+            return true
+        }
+
+        return removals.contains { candidate in
+            candidate != rootPath && isDescendantOrSame(candidate, ancestorPath: rootPath)
+        }
+    }
+
+    private func scanResult(forFileAt url: URL) -> ScanResult? {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let sizeBytes = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+            return ScanResult(path: url.path, sizeBytes: sizeBytes)
+        } catch {
+            print("[RecentChangeService] Failed reading file size for \(url.path): \(error)")
+            return nil
+        }
+    }
+
+    private func coalescedPaths(_ paths: Set<String>) -> [String] {
+        let unique = Array(paths).sorted { lhs, rhs in
+            if lhs.count == rhs.count {
+                return lhs < rhs
+            }
+            return lhs.count < rhs.count
+        }
+
+        var roots: [String] = []
         for path in unique {
-            if roots.contains(where: { path == $0.path || path.hasPrefix($0.path + "/") }) {
+            if roots.contains(where: { isDescendantOrSame(path, ancestorPath: $0) }) {
                 continue
             }
-            roots.append(URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL)
+            roots.append(path)
         }
-
         return roots
+    }
+
+    private func isWithinTrackedRoot(_ path: String, trackedRoot: String) -> Bool {
+        path == trackedRoot || path.hasPrefix(trackedRoot + "/")
+    }
+
+    private func isDescendantOrSame(_ path: String, ancestorPath: String) -> Bool {
+        path == ancestorPath || path.hasPrefix(ancestorPath + "/")
     }
 }

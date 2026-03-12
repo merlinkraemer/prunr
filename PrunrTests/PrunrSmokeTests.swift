@@ -44,6 +44,39 @@ final class PrunrSmokeTests: XCTestCase {
         try await body(trackedPathId, snapshotId)
     }
 
+    private func workingSetMetadataByPath() async throws -> [String: (sizeBytes: Int64, updatedAt: Date)] {
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT p.path AS path, wse.sizeBytes AS sizeBytes, wse.updatedAt AS updatedAt
+                    FROM workingSetEntry wse
+                    JOIN paths p ON p.id = wse.pathId
+                    """
+            )
+
+            var result: [String: (sizeBytes: Int64, updatedAt: Date)] = [:]
+            result.reserveCapacity(rows.count)
+            for row in rows {
+                let path: String = row["path"] ?? ""
+                let sizeBytes: Int64 = row["sizeBytes"] ?? 0
+                let updatedAt: Date = row["updatedAt"] ?? .distantPast
+                result[path] = (sizeBytes, updatedAt)
+            }
+            return result
+        }
+    }
+
+    private func createTrackedPathDirectory(
+        named prefix: String
+    ) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
     func testDownloadsPathsCategorizeAsDownloads() {
         let downloadsPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads/archive.zip")
@@ -371,8 +404,9 @@ final class PrunrSmokeTests: XCTestCase {
         let watcher = FSEventsWatcher(pathsToWatch: [tempDirectory], debounceInterval: 0.1)
         let expectation = expectation(description: "watcher emits changed path")
 
-        await watcher.setOnChange { changedPaths in
-            if changedPaths.contains(where: { $0.path.hasPrefix(tempDirectory.path) }) {
+        await watcher.setOnChange { changeBatch in
+            if changeBatch.changedPaths.contains(where: { $0.path.hasPrefix(tempDirectory.path) }) {
+                XCTAssertFalse(changeBatch.requiresFullRescan)
                 expectation.fulfill()
             }
         }
@@ -583,6 +617,152 @@ final class PrunrSmokeTests: XCTestCase {
             }
 
             XCTAssertTrue(workingSetPaths.contains("/tmp/root/new-folder/new.txt"))
+        }
+    }
+
+    func testRecentChangeRefreshPrefersFileOverTrackedRootDirectoryEvent() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeRoot")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let changedFileURL = tempDirectory.appendingPathComponent("changed.txt")
+            let untouchedFileURL = tempDirectory.appendingPathComponent("untouched.txt")
+            try Data(repeating: 0x01, count: 128).write(to: changedFileURL)
+            try Data(repeating: 0x02, count: 256).write(to: untouchedFileURL)
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [
+                    ScanResult(path: changedFileURL.path, sizeBytes: 128),
+                    ScanResult(path: untouchedFileURL.path, sizeBytes: 256)
+                ]
+            )
+            let initialUpdatedAt = Date(timeIntervalSinceReferenceDate: 1_000)
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: initialUpdatedAt
+            )
+
+            try Data(repeating: 0x03, count: 512).write(to: changedFileURL)
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths(
+                Set([tempDirectory, changedFileURL]),
+                trackedPath: trackedPath
+            )
+
+            guard case .updated = result else {
+                XCTFail("recent change refresh should stay incremental when a tracked-root directory event accompanies a file change")
+                return
+            }
+
+            let metadata = try await self.workingSetMetadataByPath()
+            let changed = try XCTUnwrap(metadata[changedFileURL.path])
+            let untouched = try XCTUnwrap(metadata[untouchedFileURL.path])
+
+            XCTAssertEqual(changed.sizeBytes, 512)
+            XCTAssertGreaterThan(changed.updatedAt, initialUpdatedAt)
+            XCTAssertEqual(untouched.sizeBytes, 256)
+            XCTAssertEqual(untouched.updatedAt, initialUpdatedAt)
+        }
+    }
+
+    func testRecentChangeRefreshPrefersFileOverAncestorDirectoryEvent() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeAncestor")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let directoryURL = tempDirectory.appendingPathComponent("Library", isDirectory: true)
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+            let changedFileURL = directoryURL.appendingPathComponent("changed.dat")
+            let untouchedFileURL = directoryURL.appendingPathComponent("untouched.dat")
+            try Data(repeating: 0x04, count: 64).write(to: changedFileURL)
+            try Data(repeating: 0x05, count: 96).write(to: untouchedFileURL)
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [
+                    ScanResult(path: changedFileURL.path, sizeBytes: 64),
+                    ScanResult(path: untouchedFileURL.path, sizeBytes: 96)
+                ]
+            )
+            let initialUpdatedAt = Date(timeIntervalSinceReferenceDate: 2_000)
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: initialUpdatedAt
+            )
+
+            try Data(repeating: 0x06, count: 160).write(to: changedFileURL)
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths(
+                Set([directoryURL, changedFileURL]),
+                trackedPath: trackedPath
+            )
+
+            guard case .updated = result else {
+                XCTFail("recent change refresh should keep the file-level target when an ancestor directory event is also present")
+                return
+            }
+
+            let metadata = try await self.workingSetMetadataByPath()
+            let changed = try XCTUnwrap(metadata[changedFileURL.path])
+            let untouched = try XCTUnwrap(metadata[untouchedFileURL.path])
+
+            XCTAssertEqual(changed.sizeBytes, 160)
+            XCTAssertGreaterThan(changed.updatedAt, initialUpdatedAt)
+            XCTAssertEqual(untouched.sizeBytes, 96)
+            XCTAssertEqual(untouched.updatedAt, initialUpdatedAt)
+        }
+    }
+
+    func testRecentChangeRefreshProcessesMoreThanTwentyFourFileTargets() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeBatch")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let fileURLs = (0..<30).map { index in
+                tempDirectory.appendingPathComponent("file-\(index).bin")
+            }
+
+            for fileURL in fileURLs {
+                try Data(repeating: 0x07, count: 32).write(to: fileURL)
+            }
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: fileURLs.map { ScanResult(path: $0.path, sizeBytes: 32) }
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 3_000)
+            )
+
+            for (index, fileURL) in fileURLs.enumerated() {
+                try Data(repeating: UInt8(index), count: 64).write(to: fileURL)
+            }
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths(Set(fileURLs), trackedPath: trackedPath)
+
+            guard case .updated = result else {
+                XCTFail("recent change refresh should stay incremental for larger file batches")
+                return
+            }
+
+            let metadata = try await self.workingSetMetadataByPath()
+            XCTAssertEqual(metadata.count, 30)
+            XCTAssertEqual(metadata.values.reduce(0) { $0 + $1.sizeBytes }, 30 * 64)
         }
     }
 

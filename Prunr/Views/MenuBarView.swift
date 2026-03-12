@@ -745,6 +745,7 @@ struct MenuBarView: View {
                                             .frame(width: 14, height: 14)
                                     }
                                 }
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                         }
@@ -768,6 +769,7 @@ struct MenuBarView: View {
                                     .font(.system(size: 12, weight: .medium))
                             }
                             .foregroundStyle(.primary)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }

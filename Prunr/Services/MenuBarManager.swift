@@ -257,10 +257,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var fileEventsWatcher: FSEventsWatcher?
     private var watchedPaths: [String] = []
     private var autoScanTask: Task<Void, Never>?
-    private enum AutoScanTrigger {
-        case fileEvent
-        case fallbackTimer
-    }
     private var pendingFallbackAutoScanTick = false
     private var recentChangeTask: Task<Void, Never>?
     private var isInventoryRefreshInProgress = false
@@ -737,7 +733,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         await updatePathSize()
     }
 
-    func loadInventoryFromLatestSnapshot() async {
+    func loadInventoryFromLatestSnapshot(refreshedAt: Date? = nil) async {
         guard beginInventoryRefresh() else { return }
         defer { endInventoryRefresh() }
 
@@ -765,7 +761,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
             noBaseline = false
             let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
-            lastAutomaticScanAt = snapshots.first?.createdAt
+            lastAutomaticScanAt = refreshedAt ?? snapshots.first?.createdAt
             errorMessage = nil
             applyInventory(
                 inventory,
@@ -1583,7 +1579,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 self?.updateFreeSpace()
                 self?.configureFileWatcherIfNeeded()
                 if self?.useFallbackAutoScan == true {
-                    self?.scheduleAutomaticScan(resetDebounce: false, trigger: .fallbackTimer)
+                    self?.scheduleAutomaticScan(resetDebounce: false)
                 }
             }
         }
@@ -1897,14 +1893,18 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         let watcher = FSEventsWatcher(pathsToWatch: urls, debounceInterval: 2.0)
-        await watcher.setOnChange { [weak self] changedPaths in
+        await watcher.setOnChange { [weak self] changeBatch in
             Task { @MainActor in
                 guard let self else { return }
+                let changedPaths = changeBatch.changedPaths
                 guard !self.shouldIgnoreAutoScanChanges(changedPaths) else { return }
                 self.lastFileEventAt = Date()
+                if changeBatch.requiresFullRescan {
+                    await self.requestOverflowFullScan()
+                    return
+                }
                 self.hasPendingRecentChanges = true
                 self.scheduleRecentChangeRefresh(changedPaths)
-                self.scheduleAutomaticScan(resetDebounce: false, trigger: .fileEvent)
             }
         }
         fileEventsWatcher = watcher
@@ -1950,8 +1950,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let result = await recentChangeService.refreshChangedPaths(changedPaths, trackedPath: trackedPath)
         switch result {
         case .updated:
-            lastDetectedChangeAt = Date()
-            await loadInventoryFromLatestSnapshot()
+            let refreshTimestamp = Date()
+            lastDetectedChangeAt = refreshTimestamp
+            await loadInventoryFromLatestSnapshot(refreshedAt: refreshTimestamp)
         case .needsFullScan:
             print("[MenuBarManager] Refresh scan overflowed — triggering full scan")
             await requestOverflowFullScan()
@@ -1960,7 +1961,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
-    private func scheduleAutomaticScan(resetDebounce: Bool = true, trigger: AutoScanTrigger = .fileEvent) {
+    private func scheduleAutomaticScan(resetDebounce: Bool = true) {
         guard !watchedPaths.isEmpty || useFallbackAutoScan else { return }
         if Date().timeIntervalSince(appLaunchAt) < startupAutoScanGracePeriod {
             return
@@ -1969,9 +1970,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         if resetDebounce {
             autoScanTask?.cancel()
         } else if autoScanTask != nil {
-            if trigger == .fallbackTimer {
-                pendingFallbackAutoScanTick = true
-            }
+            pendingFallbackAutoScanTick = true
             return
         }
 
@@ -1981,7 +1980,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 autoScanTask = nil
                 if pendingFallbackAutoScanTick {
                     pendingFallbackAutoScanTick = false
-                    scheduleAutomaticScan(resetDebounce: false, trigger: .fallbackTimer)
+                    scheduleAutomaticScan(resetDebounce: false)
                 }
             }
             try? await Task.sleep(for: .milliseconds(Int(debounce * 1000)))
@@ -2037,6 +2036,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func requestOverflowFullScan() async {
+        recentChangeTask?.cancel()
+        recentChangeTask = nil
+        pendingRecentChangePaths.removeAll()
+        hasPendingRecentChanges = false
         pendingOverflowFullScan = true
         await runAutomaticFullScanIfPossible()
     }
