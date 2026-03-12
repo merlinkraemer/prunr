@@ -14,6 +14,7 @@ actor FileScanner {
     private let resourceKeys: Set<URLResourceKey> = [
         .isRegularFileKey,
         .totalFileAllocatedSizeKey,
+        .fileSizeKey,
         .isSymbolicLinkKey,
         .isDirectoryKey,
         .nameKey,
@@ -50,7 +51,7 @@ actor FileScanner {
     /// - Returns: An AsyncThrowingStream that yields ScanResult values
     func scan(_ rootURL: URL, ignoredNames: Set<String>) -> AsyncThrowingStream<ScanResult, Error> {
         return AsyncThrowingStream<ScanResult, Error> { continuation in
-            Task { [weak self] in
+            let producerTask = Task { [weak self] in
                 guard let self else {
                     continuation.finish()
                     return
@@ -92,6 +93,12 @@ actor FileScanner {
                 let normalizedIgnoredNames = Set(ignoredNames.map { $0.lowercased() })
 
                 for case let url as URL in enumerator {
+                    // Stop the filesystem walk when the stream consumer cancels
+                    if Task.isCancelled {
+                        Self.logger.info("Producer task cancelled after \(count) files")
+                        break
+                    }
+
                     let path = url.path
 
                     // Skip iCloud paths before accessing resourceValues (can hang)
@@ -120,6 +127,11 @@ actor FileScanner {
                 Self.logger.debug("Scan complete: \(count) files total")
 
                 continuation.finish()
+            }
+
+            // Cancel the producer when the stream is terminated (consumer cancelled or dropped)
+            continuation.onTermination = { @Sendable _ in
+                producerTask.cancel()
             }
         }
     }
@@ -172,8 +184,10 @@ actor FileScanner {
             let sizeBytes: Int64
             if let totalSize = resourceValues.totalFileAllocatedSize {
                 sizeBytes = Int64(totalSize)
+            } else if let fileSize = resourceValues.fileSize {
+                sizeBytes = Int64(fileSize)
             } else {
-                Self.logger.debug("Skipped file with nil allocated size: \(url.lastPathComponent, privacy: .public)")
+                Self.logger.debug("Skipped file with nil size: \(url.lastPathComponent, privacy: .public)")
                 return nil
             }
 

@@ -19,9 +19,9 @@ actor DatabaseCleanupService {
 
     // MARK: - Constants
 
-    /// Keep only the latest full snapshot payload for each path.
-    /// Current UI/state is driven from category + subcategory aggregates, not old raw entry sets.
-    private static let maxSnapshotEntryPayloadsPerPath = 1
+    /// Keep the latest two full snapshot payloads for each path so that historical
+    /// comparison in the main window can still compute deltas after auto-cleanup.
+    private static let maxSnapshotEntryPayloadsPerPath = 2
     /// Keep the latest two snapshots available for history/reconciliation lookups.
     private static let recentHistorySnapshotsPerPath = 2
     /// Bound retained summary snapshots so scan-heavy same-day sessions don't grow history indefinitely.

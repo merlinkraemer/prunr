@@ -160,6 +160,27 @@ actor ScanService {
             throw ScanError.invalidPath
         }
 
+        return try await withTaskCancellationHandler {
+            try await self.scanBody(
+                path: path,
+                url: url,
+                trackedPathId: trackedPathId,
+                ignoredNames: ignoredNames,
+                progress: progress
+            )
+        } onCancel: {
+            Task { await self.cancelScan() }
+        }
+    }
+
+    /// Inner scan body extracted so it can be wrapped with withTaskCancellationHandler
+    private func scanBody(
+        path: String,
+        url: URL,
+        trackedPathId: UUID,
+        ignoredNames: Set<String>?,
+        progress: ((ScanProgress) -> Void)?
+    ) async throws -> Snapshot {
         // Capture volume free space before creating snapshot
         let freeBytes = Self.captureVolumeFreeSpace()
         if let bytes = freeBytes {

@@ -557,6 +557,7 @@ actor BaselineService {
             )
 
             if !precomputedTotals.isEmpty {
+                let existingCategories = Set(precomputedTotals.map(\.category))
                 for index in precomputedTotals.indices {
                     let category = precomputedTotals[index].category
                     let liveDelta = liveDeltas[category] ?? 0
@@ -567,6 +568,15 @@ actor BaselineService {
                         growthTrend: precomputedTotals[index].growthTrend,
                         recentGrowthStory: precomputedTotals[index].recentGrowthStory
                     )
+                }
+                // Add categories that only appear in live deltas (new since last snapshot)
+                for (category, deltaBytes) in liveDeltas where !existingCategories.contains(category) && deltaBytes > 0 {
+                    precomputedTotals.append(CategoryInventoryItem(
+                        category: category,
+                        currentSizeBytes: deltaBytes,
+                        growthTrend: nil,
+                        recentGrowthStory: nil
+                    ))
                 }
                 return precomputedTotals
             }
