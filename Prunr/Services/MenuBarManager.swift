@@ -314,8 +314,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private let normalAutoScanDebounce: TimeInterval = 20
     private let pressureAutoScanDebounce: TimeInterval = 8
-    private let normalRecentChangeDebounce: TimeInterval = 75
-    private let pressureRecentChangeDebounce: TimeInterval = 45
+    private let normalRecentChangeDebounce: TimeInterval = 1.5
+    private let pressureRecentChangeDebounce: TimeInterval = 0.75
     private let normalAutoScanAttemptInterval: TimeInterval = 45
     private let pressureAutoScanAttemptInterval: TimeInterval = 15
     private let startupAutoScanGracePeriod: TimeInterval = 20
@@ -783,7 +783,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         await updatePathSize()
     }
 
-    func loadInventoryFromLatestSnapshot(refreshedAt: Date? = nil) async {
+    func loadInventoryFromLatestSnapshot(
+        refreshedAt: Date? = nil,
+        invalidateSubcategoryCache: Bool = false
+    ) async {
         guard beginInventoryRefresh() else { return }
         defer { endInventoryRefresh() }
 
@@ -813,8 +816,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 aggregation.inventory,
                 snapshotIDsByPath: aggregation.latestSnapshotIdsByPath,
                 growthBaselineSnapshotIDsByPath: aggregation.baselineSnapshotIdsByPath,
-                invalidateSubcategoryCache: snapshotIDsSignature(aggregation.latestSnapshotIdsByPath)
-                    != snapshotIDsSignature(currentInventorySnapshotIDsByPath)
+                invalidateSubcategoryCache: invalidateSubcategoryCache
+                    || snapshotIDsSignature(aggregation.latestSnapshotIdsByPath)
+                        != snapshotIDsSignature(currentInventorySnapshotIDsByPath)
             )
 
             reconciliationResult = await baselineService.getDiskAccounting(
@@ -1901,7 +1905,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             return
         }
 
-        let watcher = FSEventsWatcher(pathsToWatch: urls, debounceInterval: 2.0)
+        let watcher = FSEventsWatcher(pathsToWatch: urls, debounceInterval: 1.0)
         await watcher.setOnChange { [weak self] changeBatch in
             Task { @MainActor in
                 guard let self else { return }
@@ -1939,7 +1943,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             return
         }
         guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning else {
-            scheduleRecentChangeRefreshTask(after: 5)
+            scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
             return
         }
         guard let trackedPath = primaryTrackedPath() else {
@@ -1961,7 +1965,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         case .updated:
             let refreshTimestamp = Date()
             lastDetectedChangeAt = refreshTimestamp
-            await loadInventoryFromLatestSnapshot(refreshedAt: refreshTimestamp)
+            await loadInventoryFromLatestSnapshot(
+                refreshedAt: refreshTimestamp,
+                invalidateSubcategoryCache: true
+            )
         case .needsFullScan:
             print("[MenuBarManager] Refresh scan overflowed — triggering full scan")
             await requestOverflowFullScan()

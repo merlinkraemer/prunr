@@ -12,9 +12,6 @@ struct MenuBarView: View {
     @State private var isBootstrapping = true
     @State private var permissionsService = PermissionsService.shared
     @State private var highlightedStorageSegmentID: String? = nil
-    @State private var shouldShowOnboardingSuccess = false
-    @State private var startedOnboardingScan = false
-    @State private var onboardingSuccessTask: Task<Void, Never>? = nil
     @State private var customOnboardingFolderPath: URL? = nil
     @State private var onboardingChosenFolderPath: URL? = nil
     @State private var headerTransitionTask: Task<Void, Never>? = nil
@@ -32,7 +29,6 @@ struct MenuBarView: View {
     @State private var onboardingOffset: CGFloat = 0
     @State private var onboardingWidth: CGFloat = 0
     @State private var pendingOnboardingTransition: PendingOnboardingTransition? = nil
-    @State private var onboardingExtrasConfirmed = false
 
     private let outsideScopeSegmentID = "outside-scan-scope"
 
@@ -61,8 +57,6 @@ struct MenuBarView: View {
     private enum OnboardingPage: Int, CaseIterable {
         case permissions
         case folder
-        case extras
-        case scan
 
         var number: Int {
             rawValue + 1
@@ -74,10 +68,6 @@ struct MenuBarView: View {
                 return "Access"
             case .folder:
                 return "Folder"
-            case .extras:
-                return "Extras"
-            case .scan:
-                return "Scan"
             }
         }
     }
@@ -144,16 +134,7 @@ struct MenuBarView: View {
     }
 
     private var onboardingFolderStepComplete: Bool {
-        hasFullDiskAccess == true && hasEnabledScanPath && hasValidScanFolder && hasExplicitOnboardingFolderChoice
-    }
-
-    private var onboardingExtrasStepComplete: Bool {
-        guard onboardingFolderStepComplete else { return false }
-        return onboardingExtrasConfirmed
-    }
-
-    private var onboardingCanRunFirstScan: Bool {
-        hasFullDiskAccess == true && onboardingExtrasStepComplete && !manager.isLoading && !manager.isAutoScanning
+        hasEnabledScanPath && hasValidScanFolder && hasExplicitOnboardingFolderChoice
     }
 
     private var maxUnlockedOnboardingPage: OnboardingPage {
@@ -161,15 +142,7 @@ struct MenuBarView: View {
             return .permissions
         }
 
-        if !onboardingFolderStepComplete {
-            return .folder
-        }
-
-        if !onboardingExtrasStepComplete {
-            return .extras
-        }
-
-        return .scan
+        return .folder
     }
 
     private var currentOnboardingPage: OnboardingPage {
@@ -201,14 +174,6 @@ struct MenuBarView: View {
 
     private var selectedScanFolderLabel: String {
         shortDisplayPath(for: selectedScanFolderURL)
-    }
-
-    private var onboardingRecommendedExtras: [TrackedPath] {
-        settingsStore.recommendedCommonPaths.filter { path in
-            let basePath = selectedScanFolderURL.standardizedFileURL.path
-            let candidate = path.url.standardizedFileURL.path
-            return !(candidate == basePath || candidate.hasPrefix(basePath == "/" ? "/" : basePath + "/"))
-        }
     }
 
     private var scanFolderOptions: [OnboardingFolderOption] {
@@ -320,8 +285,6 @@ struct MenuBarView: View {
                     manualScanLoadingView
                 } else if isBootstrapping {
                     initialLoadView
-                } else if shouldShowOnboardingSuccess {
-                    onboardingSuccessView
                 } else if manager.noBaseline {
                     setupOnboardingView
                 } else {
@@ -338,7 +301,6 @@ struct MenuBarView: View {
             selectedOnboardingPage = maxUnlockedOnboardingPage
         }
         .onDisappear {
-            onboardingSuccessTask?.cancel()
             onboardingTransitionTask?.cancel()
             headerTransitionTask?.cancel()
         }
@@ -366,15 +328,9 @@ struct MenuBarView: View {
 
             isBootstrapping = false
         }
-        .onChange(of: manager.noBaseline) { oldValue, newValue in
-            guard oldValue, !newValue, startedOnboardingScan else { return }
-            startedOnboardingScan = false
-            presentOnboardingSuccessState()
-        }
         .onChange(of: hasFullDiskAccess) { _, newValue in
-            if newValue != true {
-                shouldShowOnboardingSuccess = false
-                onboardingSuccessTask?.cancel()
+            if newValue == true {
+                startOnboardingFirstScan()
             }
         }
         .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
@@ -620,9 +576,6 @@ struct MenuBarView: View {
         let pillFill: Color = isActive
             ? Color.accentColor.opacity(0.14)
             : (isUnlocked ? onboardingControlFillColor : Color.gray.opacity(0.12))
-        let pillStroke: Color = isActive
-            ? Color.accentColor.opacity(0.3)
-            : onboardingStrokeColor.opacity(isUnlocked ? 1.0 : 0.6)
         let titleStyle: AnyShapeStyle = isActive
             ? AnyShapeStyle(.primary)
             : AnyShapeStyle(isUnlocked ? .secondary : .tertiary)
@@ -695,7 +648,7 @@ struct MenuBarView: View {
                     number: 1,
                     icon: "lock.shield",
                     title: "Grant Full Disk Access",
-                    description: "Grant full disk access in order to do full disk scan."
+                    description: "Grant Full Disk Access so Prunr can scan your chosen folder accurately."
                 )
 
                 VStack(spacing: 14) {
@@ -730,7 +683,7 @@ struct MenuBarView: View {
                     number: 2,
                     icon: "folder.badge.gearshape",
                     title: "Setup Path",
-                    description: "Pick the scope for your first scan."
+                    description: "Pick what Prunr should watch. The first scan starts right after you choose."
                 )
 
                 onboardingContentCard {
@@ -775,6 +728,11 @@ struct MenuBarView: View {
                         Divider()
                             .padding(.vertical, 4)
 
+                        Text("Recommended machine-wide extras are now optional and live in Settings > Scan Scope.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
                         Button {
                             guard hasFullDiskAccess == true else { return }
                             manager.showOnboardingFolderPicker { url in
@@ -794,107 +752,6 @@ struct MenuBarView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                    }
-                }
-            }
-
-        case .scan:
-            VStack(spacing: 10) {
-                onboardingTitleSection(
-                    number: 4,
-                    icon: "waveform.path.ecg",
-                    title: "Run First Scan",
-                    description: "Build your first baseline to track growth over time."
-                )
-
-                VStack(spacing: 14) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-
-                        Text(selectedScanFolderLabel)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    if startedOnboardingScan {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                            Text("Starting scan...")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        primaryActionButton(
-                            "Run first scan",
-                            minWidth: 160,
-                            isDisabled: !onboardingCanRunFirstScan
-                        ) {
-                            startedOnboardingScan = true
-                            Task { await manager.loadInventory() }
-                        }
-                    }
-
-                    if !onboardingCanRunFirstScan {
-                        Text(stepThreeHintText)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 22)
-            }
-
-        case .extras:
-            VStack(spacing: 10) {
-                onboardingTitleSection(
-                    number: 3,
-                    icon: "externaldrive.badge.plus",
-                    title: "Add Recommended Extras",
-                    description: "Include common machine-wide paths outside your base folder."
-                )
-
-                onboardingContentCard {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if onboardingRecommendedExtras.isEmpty {
-                            Text("No recommended extras are needed for this base folder.")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(onboardingRecommendedExtras) { path in
-                                Toggle(isOn: Binding(
-                                    get: { settingsStore.isCommonPathSelected(path) },
-                                    set: { selected in
-                                        settingsStore.setCommonPathSelected(path, selected: selected)
-                                    }
-                                )) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(path.displayName)
-                                            .font(.system(size: 12, weight: .medium))
-                                        Text(path.url.path)
-                                            .font(.system(size: 10, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                    }
-                                }
-                                .toggleStyle(.switch)
-                            }
-                        }
-
-                        Divider()
-                            .padding(.vertical, 4)
-
-                        primaryActionButton("Continue", minWidth: 150) {
-                            onboardingExtrasConfirmed = true
-                            selectedOnboardingPage = .scan
-                        }
                     }
                 }
             }
@@ -992,41 +849,6 @@ struct MenuBarView: View {
                 onboardingOffset = 0
             }
         }
-    }
-
-    private var onboardingSuccessView: some View {
-        VStack(spacing: 10) {
-            onboardingTitleSection(
-                number: 0,
-                icon: "checkmark.circle.fill",
-                title: "Baseline Ready",
-                description: "Prunr is now watching \(selectedScanFolderLabel)."
-            )
-
-            onboardingContentCard {
-                VStack(alignment: .leading, spacing: 14) {
-                    expectationRow(
-                        icon: "bolt.horizontal.circle",
-                        text: "Prunr keeps the latest scan cached and updates recent growth in the background."
-                    )
-                    expectationRow(
-                        icon: "externaldrive.badge.timemachine",
-                        text: "Use Scan Now when you want a fresh filesystem pass."
-                    )
-
-                    HStack(spacing: 10) {
-                        secondaryActionButton("Stop") {
-                            dismissOnboardingSuccess()
-                        }
-
-                        primaryActionButton("Open inventory", minWidth: 100) {
-                            dismissOnboardingSuccess()
-                        }
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: 284)
     }
 
     // MARK: - Drive Bar Section (Always Visible)
@@ -1624,34 +1446,17 @@ struct MenuBarView: View {
         .buttonStyle(.plain)
     }
 
-    private var stepThreeHintText: String {
-        if hasFullDiskAccess != true {
-            return "Grant Full Disk Access first."
-        }
-
-        if !onboardingFolderStepComplete {
-            return "Choose a scan folder first."
-        }
-
-        if !onboardingExtrasStepComplete {
-            return "Choose which recommended extras to include."
-        }
-
-        return "Run the first scan to build your baseline."
-    }
-
     private func applyOnboardingScanFolder(_ url: URL) {
         onboardingChosenFolderPath = url
-        onboardingExtrasConfirmed = false
         settingsStore.setMainBasePath(url)
-        settingsStore.applyRecommendedExtras(for: url)
         settingsStore.setPathEnabled(settingsStore.mainTrackedPath, enabled: true)
 
         if manager.noBaseline {
             settingsStore.clearPendingScopeChanges()
         }
 
-        selectedOnboardingPage = .extras
+        selectedOnboardingPage = .folder
+        startOnboardingFirstScan()
     }
 
     private func shortDisplayPath(for url: URL) -> String {
@@ -1673,34 +1478,15 @@ struct MenuBarView: View {
         return standardizedPath
     }
 
-    private func expectationRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 14)
+    private func startOnboardingFirstScan() {
+        guard hasFullDiskAccess == true else { return }
+        guard manager.noBaseline else { return }
+        guard onboardingFolderStepComplete else { return }
+        guard !manager.isLoading, !manager.isAutoScanning else { return }
 
-            Text(text)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 0)
+        Task {
+            await manager.loadInventory()
         }
-    }
-
-    private func presentOnboardingSuccessState() {
-        shouldShowOnboardingSuccess = true
-        onboardingSuccessTask?.cancel()
-        onboardingSuccessTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2.8))
-            dismissOnboardingSuccess()
-        }
-    }
-
-    private func dismissOnboardingSuccess() {
-        onboardingSuccessTask?.cancel()
-        shouldShowOnboardingSuccess = false
     }
 
     private func scanStatusCard(clampedProgress: Double, showStopButton: Bool = false) -> some View {

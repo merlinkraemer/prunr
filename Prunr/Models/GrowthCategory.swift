@@ -114,9 +114,9 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         case .applications: return .indigo
         case .mediaAndDocuments: return .pink
         case .downloads: return .blue
-        case .cachesAndSystem: return .gray
-        case .trash: return .gray
-        case .other: return .gray
+        case .cachesAndSystem: return .teal
+        case .trash: return .red
+        case .other: return .brown
         }
     }
 

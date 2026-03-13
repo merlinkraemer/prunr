@@ -919,6 +919,44 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testRecentChangeRefreshUpdatesVisibleInventoryFromWorkingSet() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeInventory")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let changedFileURL = tempDirectory.appendingPathComponent("changed.txt")
+            try Data(repeating: 0x0A, count: 128).write(to: changedFileURL)
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [ScanResult(path: changedFileURL.path, sizeBytes: 128)]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 6_000)
+            )
+
+            try Data(repeating: 0x0B, count: 512).write(to: changedFileURL)
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths([changedFileURL], trackedPath: trackedPath)
+
+            guard case .updated = result else {
+                XCTFail("recent change refresh should update inventory incrementally")
+                return
+            }
+
+            let inventory = await BaselineService.shared.getInventoryWithTrends(trackedPath: trackedPath)
+            XCTAssertEqual(inventory.first(where: { $0.category == .other })?.currentSizeBytes, 512)
+
+            let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
+            XCTAssertEqual(snapshots.count, 1)
+        }
+    }
+
     func testRecentChangeRefreshPrefersFileOverAncestorDirectoryEvent() async throws {
         try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
             let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeAncestor")
@@ -1116,7 +1154,10 @@ final class PrunrSmokeTests: XCTestCase {
             try Data(repeating: 0xAB, count: 512).write(to: fileURL)
 
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
-            let result = await RecentChangeService.shared.refreshChangedPaths([fileURL], trackedPath: trackedPath)
+            let result = await RecentChangeService.shared.refreshChangedPaths(
+                Set([fileURL]),
+                trackedPath: trackedPath
+            )
             guard case .noChanges = result else {
                 XCTFail("recent change refresh should be ignored before the first snapshot")
                 return
@@ -1132,6 +1173,112 @@ final class PrunrSmokeTests: XCTestCase {
 
             XCTAssertEqual(counts.0, 0)
             XCTAssertEqual(counts.1, 0)
+        }
+    }
+
+    func testRecentChangeRefreshUpdatesInventoryFromWorkingSetWithoutNewSnapshot() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeInventory")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let modulesDirectory = tempDirectory
+                .appendingPathComponent("app/node_modules", isDirectory: true)
+            try FileManager.default.createDirectory(at: modulesDirectory, withIntermediateDirectories: true)
+
+            let fileURL = modulesDirectory.appendingPathComponent("react.js")
+            try Data(repeating: 0xAA, count: 128).write(to: fileURL)
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [ScanResult(path: fileURL.path, sizeBytes: 128)]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 6_000)
+            )
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let initialInventory = await BaselineService.shared.getInventoryWithTrends(trackedPath: trackedPath)
+            XCTAssertEqual(
+                initialInventory.first(where: { $0.category == .developer })?.currentSizeBytes,
+                128
+            )
+
+            try Data(repeating: 0xBB, count: 512).write(to: fileURL)
+
+            let result = await RecentChangeService.shared.refreshChangedPaths([fileURL], trackedPath: trackedPath)
+            guard case .updated = result else {
+                XCTFail("recent change refresh should stay incremental for a single file update")
+                return
+            }
+
+            let refreshedInventory = await BaselineService.shared.getInventoryWithTrends(trackedPath: trackedPath)
+            XCTAssertEqual(
+                refreshedInventory.first(where: { $0.category == .developer })?.currentSizeBytes,
+                512
+            )
+
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 10)
+            XCTAssertEqual(snapshots.count, 1)
+        }
+    }
+
+    func testRecentChangeRefreshAddsNewCategoryToInventoryFromWorkingSet() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeNewCategory")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let existingFileURL = tempDirectory.appendingPathComponent("existing.txt")
+            try Data(repeating: 0xCC, count: 64).write(to: existingFileURL)
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [ScanResult(path: existingFileURL.path, sizeBytes: 64)]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 7_000)
+            )
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let initialInventory = await BaselineService.shared.getInventoryWithTrends(trackedPath: trackedPath)
+            XCTAssertEqual(initialInventory.first(where: { $0.category == .developer })?.currentSizeBytes, nil)
+            XCTAssertEqual(
+                initialInventory.first(where: { $0.category == .other })?.currentSizeBytes,
+                64
+            )
+
+            let modulesDirectory = tempDirectory
+                .appendingPathComponent("app/node_modules", isDirectory: true)
+            try FileManager.default.createDirectory(at: modulesDirectory, withIntermediateDirectories: true)
+
+            let newFileURL = modulesDirectory.appendingPathComponent("pkg.js")
+            try Data(repeating: 0xDD, count: 256).write(to: newFileURL)
+
+            let result = await RecentChangeService.shared.refreshChangedPaths(
+                Set([newFileURL]),
+                trackedPath: trackedPath
+            )
+            guard case .updated = result else {
+                XCTFail("recent change refresh should add a newly created file incrementally")
+                return
+            }
+
+            let refreshedInventory = await BaselineService.shared.getInventoryWithTrends(trackedPath: trackedPath)
+            XCTAssertEqual(
+                refreshedInventory.first(where: { $0.category == .other })?.currentSizeBytes,
+                64
+            )
+            XCTAssertEqual(
+                refreshedInventory.first(where: { $0.category == .developer })?.currentSizeBytes,
+                256
+            )
         }
     }
 

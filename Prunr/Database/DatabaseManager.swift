@@ -406,6 +406,33 @@ final class DatabaseManager {
             }
         }
 
+        // Migration v18: Add working-set category totals for live inventory reads
+        migrator.registerMigration("v18_add_working_set_category_totals") { db in
+            try db.create(table: "workingSetCategoryTotal", ifNotExists: true) { t in
+                t.column("trackedPathId", .text).notNull()
+                t.column("category", .text).notNull()
+                t.column("totalBytes", .integer).notNull()
+                t.column("updatedAt", .datetime).notNull()
+                t.primaryKey(["trackedPathId", "category"])
+            }
+
+            try db.execute(sql: """
+                INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
+                SELECT
+                    wse.trackedPathId,
+                    pc.category,
+                    COALESCE(SUM(wse.sizeBytes), 0) AS totalBytes,
+                    MAX(wse.updatedAt) AS updatedAt
+                FROM workingSetEntry wse
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                GROUP BY wse.trackedPathId, pc.category
+                HAVING totalBytes > 0
+                ON CONFLICT(trackedPathId, category) DO UPDATE SET
+                    totalBytes = excluded.totalBytes,
+                    updatedAt = excluded.updatedAt
+                """)
+        }
+
         try migrator.migrate(dbPool)
     }
 }
@@ -416,6 +443,11 @@ extension DatabaseManager {
     struct JournalDeltaKey: Hashable, Sendable {
         let category: GrowthCategory
         let subcategory: GrowthSubcategory?
+    }
+
+    private struct WorkingSetCategoryRow {
+        let totalBytes: Int64
+        let updatedAt: Date
     }
 
 
@@ -763,6 +795,46 @@ extension DatabaseManager {
         }
     }
 
+    func fetchWorkingSetCategoryTotals(for trackedPathId: UUID) async throws -> [CategoryInventoryItem] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT category, totalBytes
+                    FROM workingSetCategoryTotal
+                    WHERE trackedPathId = ?
+                    ORDER BY totalBytes DESC, category ASC
+                    """,
+                arguments: [trackedPathIdString]
+            )
+
+            return rows.compactMap { row in
+                guard
+                    let categoryRaw: String = row["category"],
+                    let category = GrowthCategory(rawValue: categoryRaw)
+                else {
+                    return nil
+                }
+
+                let totalBytes: Int64 = row["totalBytes"] ?? 0
+                guard totalBytes > 0 else { return nil }
+
+                return CategoryInventoryItem(
+                    category: category,
+                    currentSizeBytes: totalBytes,
+                    growthTrend: nil,
+                    recentGrowthStory: nil
+                )
+            }
+        }
+    }
+
     struct StoredSubcategorySnapshot: Sendable {
         let category: GrowthCategory
         let subcategory: GrowthSubcategory?
@@ -935,6 +1007,28 @@ extension DatabaseManager {
                     """,
                 arguments: [trackedPathIdString, updatedAt, snapshotId]
             )
+
+            try db.execute(
+                sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
+                arguments: [trackedPathIdString]
+            )
+
+            try db.execute(
+                sql: """
+                    INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
+                    SELECT
+                        ?,
+                        pc.category,
+                        COALESCE(SUM(se.sizeBytes), 0),
+                        ?
+                    FROM snapshotEntry se
+                    JOIN pathClassification pc ON pc.pathId = se.pathId
+                    WHERE se.snapshotId = ?
+                    GROUP BY pc.category
+                    HAVING COALESCE(SUM(se.sizeBytes), 0) > 0
+                    """,
+                arguments: [trackedPathIdString, updatedAt, snapshotId]
+            )
         }
     }
 
@@ -1032,6 +1126,13 @@ extension DatabaseManager {
                 }
                 try statement.execute(arguments: [trackedPathIdString, pathId, sizeBytes, updatedAt])
             }
+
+            try applyWorkingSetCategoryDeltas(
+                deltasByCategory,
+                trackedPathId: trackedPathIdString,
+                updatedAt: updatedAt,
+                db: db
+            )
 
             return deltasByCategory
         }
@@ -1212,11 +1313,16 @@ extension DatabaseManager {
                     arguments: [trackedPathIdString]
                 )
                 try db.execute(
+                    sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
+                    arguments: [trackedPathIdString]
+                )
+                try db.execute(
                     sql: "DELETE FROM growthJournalBucket WHERE trackedPathId = ?",
                     arguments: [trackedPathIdString]
                 )
             } else {
                 try db.execute(sql: "DELETE FROM workingSetEntry")
+                try db.execute(sql: "DELETE FROM workingSetCategoryTotal")
                 try db.execute(sql: "DELETE FROM growthJournalBucket")
             }
         }
@@ -1304,6 +1410,76 @@ extension DatabaseManager {
 
         try upsertPathClassifications(pathIdByPath: result, db: db)
         return result
+    }
+
+    private func fetchWorkingSetCategoryRows(
+        trackedPathId: String,
+        db: Database
+    ) throws -> [GrowthCategory: WorkingSetCategoryRow] {
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT category, totalBytes, updatedAt
+                FROM workingSetCategoryTotal
+                WHERE trackedPathId = ?
+                """,
+            arguments: [trackedPathId]
+        )
+
+        var result: [GrowthCategory: WorkingSetCategoryRow] = [:]
+        for row in rows {
+            guard
+                let rawCategory: String = row["category"],
+                let category = GrowthCategory(rawValue: rawCategory)
+            else {
+                continue
+            }
+
+            let totalBytes: Int64 = row["totalBytes"] ?? 0
+            let updatedAt: Date = row["updatedAt"] ?? Date()
+            result[category] = WorkingSetCategoryRow(totalBytes: totalBytes, updatedAt: updatedAt)
+        }
+
+        return result
+    }
+
+    private func applyWorkingSetCategoryDeltas(
+        _ deltasByCategory: [JournalDeltaKey: Int64],
+        trackedPathId: String,
+        updatedAt: Date,
+        db: Database
+    ) throws {
+        guard !deltasByCategory.isEmpty else { return }
+
+        var totalsByCategory = try fetchWorkingSetCategoryRows(trackedPathId: trackedPathId, db: db)
+        let upsert = try db.makeStatement(sql: """
+            INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(trackedPathId, category) DO UPDATE SET
+                totalBytes = excluded.totalBytes,
+                updatedAt = excluded.updatedAt
+            """)
+        let delete = try db.makeStatement(sql: """
+            DELETE FROM workingSetCategoryTotal
+            WHERE trackedPathId = ? AND category = ?
+            """)
+
+        for (key, deltaBytes) in deltasByCategory where deltaBytes != 0 {
+            let existing = totalsByCategory[key.category]?.totalBytes ?? 0
+            let nextTotal = max(0, existing + deltaBytes)
+
+            if nextTotal == 0 {
+                try delete.execute(arguments: [trackedPathId, key.category.rawValue])
+                totalsByCategory[key.category] = nil
+                continue
+            }
+
+            try upsert.execute(arguments: [trackedPathId, key.category.rawValue, nextTotal, updatedAt])
+            totalsByCategory[key.category] = WorkingSetCategoryRow(
+                totalBytes: nextTotal,
+                updatedAt: updatedAt
+            )
+        }
     }
 }
 

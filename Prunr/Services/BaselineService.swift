@@ -550,6 +550,11 @@ actor BaselineService {
     /// - Returns: Array of CategoryInventoryItem sorted by currentSizeBytes descending
     func getCategoryInventory(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
         do {
+            let workingSetTotals = try await db.fetchWorkingSetCategoryTotals(for: trackedPath.id)
+            if !workingSetTotals.isEmpty {
+                return workingSetTotals
+            }
+
             // Get the latest snapshot for this trackedPath
             let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
             guard let latestSnapshot = snapshots.first,
@@ -557,34 +562,9 @@ actor BaselineService {
                 return []
             }
 
-            var precomputedTotals = try await db.fetchCategoryTotals(for: snapshotId)
-            let liveDeltas = await growthJournalService.deltasSinceLastSnapshot(
-                trackedPath: trackedPath,
-                since: latestSnapshot.createdAt
-            )
+            let precomputedTotals = try await db.fetchCategoryTotals(for: snapshotId)
 
             if !precomputedTotals.isEmpty {
-                let existingCategories = Set(precomputedTotals.map(\.category))
-                for index in precomputedTotals.indices {
-                    let category = precomputedTotals[index].category
-                    let liveDelta = liveDeltas[category] ?? 0
-                    let adjustedSize = max(0, precomputedTotals[index].currentSizeBytes + liveDelta)
-                    precomputedTotals[index] = CategoryInventoryItem(
-                        category: category,
-                        currentSizeBytes: adjustedSize,
-                        growthTrend: precomputedTotals[index].growthTrend,
-                        recentGrowthStory: precomputedTotals[index].recentGrowthStory
-                    )
-                }
-                // Add categories that only appear in live deltas (new since last snapshot)
-                for (category, deltaBytes) in liveDeltas where !existingCategories.contains(category) && deltaBytes > 0 {
-                    precomputedTotals.append(CategoryInventoryItem(
-                        category: category,
-                        currentSizeBytes: deltaBytes,
-                        growthTrend: nil,
-                        recentGrowthStory: nil
-                    ))
-                }
                 return precomputedTotals
             }
 
@@ -601,10 +581,9 @@ actor BaselineService {
 
             // Return as [CategoryInventoryItem] sorted by totalBytes descending
             let items = categoryTotals.map { (category, totalBytes) -> CategoryInventoryItem in
-                let liveDelta = liveDeltas[category] ?? 0
                 return CategoryInventoryItem(
                     category: category,
-                    currentSizeBytes: max(0, totalBytes + liveDelta),
+                    currentSizeBytes: totalBytes,
                     growthTrend: nil,
                     recentGrowthStory: nil
                 )
