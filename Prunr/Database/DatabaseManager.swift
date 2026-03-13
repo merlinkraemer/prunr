@@ -511,9 +511,25 @@ extension DatabaseManager {
                 let endIndex = min(startIndex + batchSize, entries.count)
                 let batch = entries[startIndex..<endIndex]
 
-                let normalizedBatch = batch.map { (path: Self.normalizePath($0.path), sizeBytes: $0.sizeBytes) }
+                let normalizedBatch = batch.map {
+                    (
+                        path: Self.normalizePath($0.path),
+                        sizeBytes: $0.sizeBytes,
+                        category: $0.category,
+                        subcategory: $0.subcategory
+                    )
+                }
                 let uniquePaths = Array(Set(normalizedBatch.map(\.path)))
-                let pathIdByPath = try fetchPathIds(for: uniquePaths, db: db)
+                let classificationsByPath = Dictionary(
+                    uniqueKeysWithValues: normalizedBatch.map {
+                        ($0.path, ResolvedPathClassification(category: $0.category, subcategory: $0.subcategory))
+                    }
+                )
+                let pathIdByPath = try fetchPathIds(
+                    for: uniquePaths,
+                    classificationsByPath: classificationsByPath,
+                    db: db
+                )
 
                 for scanResult in normalizedBatch {
                     guard let pathId = pathIdByPath[scanResult.path] else {
@@ -1072,13 +1088,24 @@ extension DatabaseManager {
             }
 
             var newSizes: [String: Int64] = [:]
+            var newClassifications: [String: ResolvedPathClassification] = [:]
             newSizes.reserveCapacity(entries.count)
+            newClassifications.reserveCapacity(entries.count)
             for entry in entries {
-                newSizes[Self.normalizePath(entry.path)] = entry.sizeBytes
+                let normalizedPath = Self.normalizePath(entry.path)
+                newSizes[normalizedPath] = entry.sizeBytes
+                newClassifications[normalizedPath] = ResolvedPathClassification(
+                    category: entry.category,
+                    subcategory: entry.subcategory
+                )
             }
 
             let uniquePaths = Array(Set(newSizes.keys))
-            let pathIdByPath = try fetchPathIds(for: uniquePaths, db: db)
+            let pathIdByPath = try fetchPathIds(
+                for: uniquePaths,
+                classificationsByPath: newClassifications,
+                db: db
+            )
 
             let allPaths = Set(oldSizes.keys).union(newSizes.keys)
             var deltasByCategory: [JournalDeltaKey: Int64] = [:]
@@ -1090,8 +1117,13 @@ extension DatabaseManager {
                 let delta = newSize - oldSize
                 guard delta != 0 else { continue }
 
-                let category = GrowthCategory.categorize(path: path)
-                let subcategory = GrowthCategory.subcategorize(path: path)
+                let classification = newClassifications[path]
+                    ?? ResolvedPathClassification(
+                        category: GrowthCategory.categorize(path: path),
+                        subcategory: GrowthCategory.subcategorize(path: path)
+                    )
+                let category = classification.category
+                let subcategory = classification.subcategory
                 let key = JournalDeltaKey(category: category, subcategory: subcategory)
                 deltasByCategory[key, default: 0] += delta
             }
@@ -1338,7 +1370,16 @@ extension DatabaseManager {
         return path.hasSuffix("/") ? String(path.dropLast()) : path
     }
 
-    private func upsertPathClassifications(pathIdByPath: [String: Int64], db: Database) throws {
+    private struct ResolvedPathClassification {
+        let category: GrowthCategory
+        let subcategory: GrowthSubcategory?
+    }
+
+    private func upsertPathClassifications(
+        pathIdByPath: [String: Int64],
+        classificationsByPath: [String: ResolvedPathClassification]? = nil,
+        db: Database
+    ) throws {
         guard !pathIdByPath.isEmpty else { return }
 
         let statement = try db.makeStatement(sql: """
@@ -1350,9 +1391,16 @@ extension DatabaseManager {
             """)
 
         for (path, pathId) in pathIdByPath {
-            let category = GrowthCategory.categorize(path: path)
-            let subcategory = GrowthCategory.subcategorize(path: path)?.rawValue ?? ""
-            try statement.execute(arguments: [pathId, category.rawValue, subcategory])
+            let resolved = classificationsByPath?[path]
+                ?? ResolvedPathClassification(
+                    category: GrowthCategory.categorize(path: path),
+                    subcategory: GrowthCategory.subcategorize(path: path)
+                )
+            try statement.execute(arguments: [
+                pathId,
+                resolved.category.rawValue,
+                resolved.subcategory?.rawValue ?? ""
+            ])
         }
     }
 
@@ -1368,7 +1416,11 @@ extension DatabaseManager {
         throw DatabaseError.notInitialized
     }
 
-    private func fetchPathIds(for paths: [String], db: Database) throws -> [String: Int64] {
+    private func fetchPathIds(
+        for paths: [String],
+        classificationsByPath: [String: ResolvedPathClassification]? = nil,
+        db: Database
+    ) throws -> [String: Int64] {
         guard !paths.isEmpty else { return [:] }
 
         let normalizedPaths = Array(Set(paths.map { Self.normalizePath($0) }))
@@ -1408,7 +1460,11 @@ extension DatabaseManager {
             }
         }
 
-        try upsertPathClassifications(pathIdByPath: result, db: db)
+        try upsertPathClassifications(
+            pathIdByPath: result,
+            classificationsByPath: classificationsByPath,
+            db: db
+        )
         return result
     }
 

@@ -288,7 +288,7 @@ actor ScanService {
             } else {
                 await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
             }
-            let stream = await scanner.scan(url, ignoredNames: resolvedIgnoredNames)
+            let stream = scanner.scan(url, ignoredNames: resolvedIgnoredNames)
 
             for try await result in stream {
                 // Check for cancellation (more frequent check)
@@ -299,9 +299,9 @@ actor ScanService {
 
                 batch.append(result)
                 count += 1
-                let category = GrowthCategory.categorize(path: result.path)
+                let category = result.category
                 categoryTotals[category, default: 0] += result.sizeBytes
-                let subcategory = GrowthCategory.subcategorize(path: result.path)
+                let subcategory = result.subcategory
                 let subcategoryKey = SubcategoryKey(category: category, subcategory: subcategory)
                 subcategoryTotals[subcategoryKey, default: SubcategoryAccumulator()]
                     .add(path: result.path, sizeBytes: result.sizeBytes, subcategory: subcategory)

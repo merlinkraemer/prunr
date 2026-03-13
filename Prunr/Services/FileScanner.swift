@@ -1,14 +1,14 @@
 import Foundation
 import OSLog
 
-/// Actor that recursively scans directories and streams scan results
+/// Recursively scans directories and streams scan results.
 ///
 /// Optimized for speed: single resourceValues call per file and minimal overhead.
-actor FileScanner {
+final class FileScanner {
 
     // MARK: - Properties
 
-    private nonisolated static let logger = Logger(subsystem: "com.prunr.FileScanner", category: "Scanning")
+    private static let logger = Logger(subsystem: "com.prunr.FileScanner", category: "Scanning")
 
     /// Resource keys to fetch in ONE call per file (optimized)
     private let resourceKeys: Set<URLResourceKey> = [
@@ -92,7 +92,7 @@ actor FileScanner {
                 let logInterval = 5000
                 let normalizedIgnoredNames = Set(ignoredNames.map { $0.lowercased() })
 
-                for case let url as URL in enumerator {
+                while let url = enumerator.nextObject() as? URL {
                     // Stop the filesystem walk when the stream consumer cancels
                     if Task.isCancelled {
                         Self.logger.info("Producer task cancelled after \(count) files")
@@ -108,7 +108,7 @@ actor FileScanner {
                     }
 
                     // Process each file with single resourceValues call
-                    if let result = await self.processFile(url: url, enumerator: enumerator, ignoredNames: normalizedIgnoredNames) {
+                    if let result = self.processFile(url: url, enumerator: enumerator, ignoredNames: normalizedIgnoredNames) {
                         continuation.yield(result)
                         count += 1
 
@@ -191,7 +191,14 @@ actor FileScanner {
                 return nil
             }
 
-            return ScanResult(path: url.path, sizeBytes: sizeBytes)
+            let path = url.path
+            let category = GrowthCategory.categorize(path: path)
+            return ScanResult(
+                path: path,
+                sizeBytes: sizeBytes,
+                category: category,
+                subcategory: GrowthCategory.subcategorize(path: path)
+            )
 
         } catch {
             Self.logger.error("Failed to process path \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")

@@ -111,7 +111,7 @@ actor RecentChangeService {
         }
 
         var results: [ScanResult] = []
-        let stream = await scanner.scan(root, ignoredNames: ignoredNames)
+        let stream = scanner.scan(root, ignoredNames: ignoredNames)
         do {
             for try await result in stream {
                 results.append(result)
@@ -200,7 +200,13 @@ actor RecentChangeService {
         do {
             let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
             let sizeBytes = (attributes[.size] as? NSNumber)?.int64Value ?? 0
-            return ScanResult(path: url.path, sizeBytes: sizeBytes)
+            let path = url.path
+            return ScanResult(
+                path: path,
+                sizeBytes: sizeBytes,
+                category: GrowthCategory.categorize(path: path),
+                subcategory: GrowthCategory.subcategorize(path: path)
+            )
         } catch {
             print("[RecentChangeService] Failed reading file size for \(url.path): \(error)")
             return nil
