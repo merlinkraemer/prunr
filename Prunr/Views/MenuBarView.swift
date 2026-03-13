@@ -57,6 +57,7 @@ struct MenuBarView: View {
     private enum OnboardingPage: Int, CaseIterable {
         case permissions
         case folder
+        case scan
 
         var number: Int {
             rawValue + 1
@@ -68,6 +69,8 @@ struct MenuBarView: View {
                 return "Access"
             case .folder:
                 return "Folder"
+            case .scan:
+                return "Scan"
             }
         }
     }
@@ -142,7 +145,11 @@ struct MenuBarView: View {
             return .permissions
         }
 
-        return .folder
+        if !onboardingFolderStepComplete {
+            return .folder
+        }
+
+        return .scan
     }
 
     private var currentOnboardingPage: OnboardingPage {
@@ -327,11 +334,6 @@ struct MenuBarView: View {
             }
 
             isBootstrapping = false
-        }
-        .onChange(of: hasFullDiskAccess) { _, newValue in
-            if newValue == true {
-                startOnboardingFirstScan()
-            }
         }
         .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
             if selectedOnboardingPage.rawValue > newValue.rawValue || selectedOnboardingPage == oldValue {
@@ -683,7 +685,7 @@ struct MenuBarView: View {
                     number: 2,
                     icon: "folder.badge.gearshape",
                     title: "Setup Path",
-                    description: "Pick what Prunr should watch. The first scan starts right after you choose."
+                    description: "Pick what Prunr should watch. You’ll confirm the first scan in the next step."
                 )
 
                 onboardingContentCard {
@@ -752,6 +754,42 @@ struct MenuBarView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                    }
+                }
+            }
+
+        case .scan:
+            VStack(spacing: 10) {
+                onboardingTitleSection(
+                    number: 3,
+                    icon: "waveform.path.ecg",
+                    title: "Run First Scan",
+                    description: "Start the first scan when you’re ready. Recommended extras stay optional in Settings."
+                )
+
+                onboardingContentCard {
+                    VStack(spacing: 14) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+
+                            Text(selectedScanFolderLabel)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+
+                        Text("Prunr will build the initial inventory for this location and then keep recent changes up to date in the background.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        primaryActionButton("Start first scan", minWidth: 168) {
+                            startOnboardingFirstScan()
+                        }
                     }
                 }
             }
@@ -1455,8 +1493,7 @@ struct MenuBarView: View {
             settingsStore.clearPendingScopeChanges()
         }
 
-        selectedOnboardingPage = .folder
-        startOnboardingFirstScan()
+        selectedOnboardingPage = .scan
     }
 
     private func shortDisplayPath(for url: URL) -> String {
