@@ -95,6 +95,20 @@ final class PrunrSmokeTests: XCTestCase {
         )
     }
 
+    func testColimaPathsCategorizeAsDeveloper() {
+        XCTAssertEqual(
+            GrowthCategory.categorize(path: "/Users/tester/.colima/_lima/_disks/colima/datadisk"),
+            .developer
+        )
+    }
+
+    func testColimaPathsResolveToDockerSubcategory() {
+        XCTAssertEqual(
+            GrowthCategory.subcategorize(path: "/Users/tester/.colima/_lima/_disks/colima/datadisk"),
+            .docker
+        )
+    }
+
     func testGrowthItemFlagsBigFilesAtThreshold() {
         let downloadsPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads/archive.zip")

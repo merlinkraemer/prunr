@@ -300,6 +300,8 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
 
     private static func isDockerPath(_ lowerPath: String) -> Bool {
         lowerPath.contains("/docker.raw")
+            || lowerPath.contains("/.colima/")
+            || lowerPath.hasSuffix("/.colima")
             || containsPathComponent(lowerPath, "docker")
             || lowerPath.contains("com.docker")
             || lowerPath.contains("library/containers/com.docker")
