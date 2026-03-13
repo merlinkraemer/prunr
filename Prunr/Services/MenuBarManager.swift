@@ -265,7 +265,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func shouldAutoWatchTrackedPath(_ path: TrackedPath) -> Bool {
         let standardized = path.url.standardizedFileURL
-        if standardized.path == "/" {
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        if standardized.path == "/" || standardized == homeDirectory {
             return false
         }
 
@@ -642,9 +643,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // and initialized above.
 
     /// Loads inventory data with growth trends for the preferred enabled tracked path
-    func loadInventory(isAutomatic: Bool = false) async {
+    func loadInventory(isAutomatic: Bool = false, trackedPathsOverride: [TrackedPath]? = nil) async {
         // Prefer the most specific enabled tracked path to avoid scanning huge umbrella roots.
-        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        let enabledPaths = effectiveTrackedPaths(from: trackedPathsOverride ?? SettingsStore.shared.enabledTrackedPaths)
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
             print("[MenuBarManager] No enabled tracked paths in settings")
             errorMessage = "No paths enabled in Settings"
@@ -658,6 +659,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         noBaseline = false
         filesScanned = 0
         isAnalyzingChanges = false
+        recentChangeTask?.cancel()
+        recentChangeTask = nil
+        pendingRecentChangePaths.removeAll()
+        hasPendingRecentChanges = false
         scanProgress = "Scanning \(trackedPath.displayName)..."
         scanCurrentPath = trackedPath.url.path
         scanCurrentPathDisplay = "."
@@ -1952,6 +1957,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         await watcher.setOnChange { [weak self] changeBatch in
             Task { @MainActor in
                 guard let self else { return }
+                guard !self.isLoading, !self.isAutoScanning else { return }
                 let changedPaths = changeBatch.changedPaths
                 guard !self.shouldIgnoreAutoScanChanges(changedPaths) else { return }
                 self.lastFileEventAt = Date()

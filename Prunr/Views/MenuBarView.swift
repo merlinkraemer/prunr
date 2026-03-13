@@ -776,12 +776,6 @@ struct MenuBarView: View {
                                 .truncationMode(.middle)
                         }
 
-                        Text("Prunr will build the initial inventory for this location and then keep recent changes up to date in the background.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-
                         primaryActionButton("Run first scan", minWidth: 168) {
                             startOnboardingFirstScan()
                         }
@@ -1517,7 +1511,7 @@ struct MenuBarView: View {
         guard !manager.isLoading, !manager.isAutoScanning else { return }
 
         Task {
-            await manager.loadInventory()
+            await manager.loadInventory(trackedPathsOverride: [settingsStore.mainTrackedPath])
         }
     }
 
