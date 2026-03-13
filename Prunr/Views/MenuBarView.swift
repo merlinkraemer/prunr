@@ -650,7 +650,7 @@ struct MenuBarView: View {
                     number: 1,
                     icon: "lock.shield",
                     title: "Grant Full Disk Access",
-                    description: "Grant Full Disk Access so Prunr can scan your chosen folder accurately."
+                    description: "Grant full disk access in order to do full disk scan."
                 )
 
                 VStack(spacing: 14) {
@@ -685,7 +685,7 @@ struct MenuBarView: View {
                     number: 2,
                     icon: "folder.badge.gearshape",
                     title: "Setup Path",
-                    description: "Pick what Prunr should watch. You’ll confirm the first scan in the next step."
+                    description: "Pick the scope for your first scan."
                 )
 
                 onboardingContentCard {
@@ -730,11 +730,6 @@ struct MenuBarView: View {
                         Divider()
                             .padding(.vertical, 4)
 
-                        Text("Recommended machine-wide extras are now optional and live in Settings > Scan Scope.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-
                         Button {
                             guard hasFullDiskAccess == true else { return }
                             manager.showOnboardingFolderPicker { url in
@@ -764,7 +759,7 @@ struct MenuBarView: View {
                     number: 3,
                     icon: "waveform.path.ecg",
                     title: "Run First Scan",
-                    description: "Start the first scan when you’re ready. Recommended extras stay optional in Settings."
+                    description: "Build your first baseline to track growth over time."
                 )
 
                 onboardingContentCard {
@@ -787,7 +782,7 @@ struct MenuBarView: View {
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        primaryActionButton("Start first scan", minWidth: 168) {
+                        primaryActionButton("Run first scan", minWidth: 168) {
                             startOnboardingFirstScan()
                         }
                     }

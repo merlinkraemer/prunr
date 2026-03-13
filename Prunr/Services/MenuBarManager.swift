@@ -128,6 +128,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var folderNames: [String] {
         SettingsStore.shared.enabledTrackedPaths.map { folderName(from: $0.url) }
     }
+    private var scanTrackedPathOrderByID: [UUID: Int] = [:]
+    private var scanTrackedPathCount = 0
+    private var scanFilesScannedByPathID: [UUID: Int] = [:]
+
     var monitoredPathDisplay: String {
         // Full path for header display with tilde notation (e.g., "~/dev" instead of "/Users/username/dev")
         if let path = primaryTrackedPath() {
@@ -160,6 +164,57 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         return preferredTrackedPath(from: candidates)
+    }
+
+    private func prepareAggregateScanProgress(for trackedPaths: [TrackedPath]) {
+        scanTrackedPathOrderByID = Dictionary(
+            uniqueKeysWithValues: trackedPaths.enumerated().map { index, trackedPath in
+                (trackedPath.id, index)
+            }
+        )
+        scanTrackedPathCount = trackedPaths.count
+        scanFilesScannedByPathID = [:]
+    }
+
+    private func resetAggregateScanProgress() {
+        scanTrackedPathOrderByID = [:]
+        scanTrackedPathCount = 0
+        scanFilesScannedByPathID = [:]
+    }
+
+    private func applyAggregateScanProgress(for trackedPath: TrackedPath, progress: ScanService.ScanProgress) {
+        let clamped = max(0.0, min(1.0, progress.percentage))
+        let pathIndex = scanTrackedPathOrderByID[trackedPath.id] ?? 0
+
+        scanFilesScannedByPathID[trackedPath.id] = progress.foldersScanned
+
+        let completedFileCount = scanFilesScannedByPathID.reduce(into: 0) { total, entry in
+            guard let otherPathIndex = scanTrackedPathOrderByID[entry.key], otherPathIndex < pathIndex else { return }
+            total += entry.value
+        }
+
+        filesScanned = completedFileCount + progress.foldersScanned
+
+        if scanTrackedPathCount > 1 {
+            let aggregateProgress = (Double(pathIndex) + clamped) / Double(scanTrackedPathCount)
+            scanProgressPercentage = aggregateProgress >= 1.0 ? 0.99 : aggregateProgress
+            scanEstimatedTotalFiles = max(
+                filesScanned,
+                completedFileCount + max(progress.totalFiles, progress.foldersScanned)
+            )
+            hasReliableScanProgressEstimate = true
+        } else {
+            scanProgressPercentage = clamped >= 1.0 ? 0.99 : clamped
+            scanEstimatedTotalFiles = max(progress.totalFiles, progress.foldersScanned)
+            hasReliableScanProgressEstimate = progress.hasReliableEstimate
+        }
+
+        scanCurrentPath = progress.currentPath
+
+        let rootPath = trackedPath.url.path
+        let displayPath = displayPath(for: progress.currentPath, rootPath: rootPath)
+        scanCurrentPathDisplay = displayPath
+        scanProgress = "Scanning \(displayPath)"
     }
 
     private func preferredTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
@@ -606,6 +661,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanProgress = "Scanning \(trackedPath.displayName)..."
         scanCurrentPath = trackedPath.url.path
         scanCurrentPathDisplay = "."
+        prepareAggregateScanProgress(for: enabledPaths)
         // Start slightly above zero so the UI never appears stalled before the first callback lands.
         scanProgressPercentage = 0.03
         scanEstimatedTotalFiles = 0
@@ -625,21 +681,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Note: MainActor.run ensures UI updates happen on main thread
         let progressCallback: (TrackedPath, ScanService.ScanProgress) -> Void = { trackedPath, progress in
             Task { @MainActor in
-                // Update files scanned count
-                self.filesScanned = progress.foldersScanned
-
-                // Update percentage for progress bar (ISS-033)
-                let clamped = max(0.0, min(1.0, progress.percentage))
-                // Keep visual progress just under 100% until scan is truly done.
-                self.scanProgressPercentage = clamped >= 1.0 ? 0.99 : clamped
-                self.scanEstimatedTotalFiles = max(progress.totalFiles, progress.foldersScanned)
-                self.hasReliableScanProgressEstimate = progress.hasReliableEstimate
-                self.scanCurrentPath = progress.currentPath
-
-                let rootPath = trackedPath.url.path
-                let displayPath = self.displayPath(for: progress.currentPath, rootPath: rootPath)
-                self.scanCurrentPathDisplay = displayPath
-                self.scanProgress = "Scanning \(displayPath)"
+                self.applyAggregateScanProgress(for: trackedPath, progress: progress)
             }
         }
 
@@ -770,6 +812,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanProgress = ""
         scanCurrentPath = ""
         scanCurrentPathDisplay = ""
+        resetAggregateScanProgress()
         scanProgressPercentage = 0.0
         scanEstimatedTotalFiles = 0
         hasReliableScanProgressEstimate = false
