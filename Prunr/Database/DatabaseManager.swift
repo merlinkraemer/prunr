@@ -503,7 +503,7 @@ extension DatabaseManager {
 
         return try await dbPool.read { db in
             var request = Snapshot.all()
-                .order(Snapshot.Columns.createdAt.desc)
+                .order(Snapshot.Columns.createdAt.desc, Snapshot.Columns.id.desc)
 
             // Filter by trackedPathId if provided
             // Also exclude snapshots with empty trackedPathId (old snapshots before migration)
@@ -532,7 +532,7 @@ extension DatabaseManager {
 
         return try await dbPool.read { db in
             var request = Snapshot.all()
-                .order(Snapshot.Columns.createdAt.desc)
+                .order(Snapshot.Columns.createdAt.desc, Snapshot.Columns.id.desc)
                 .limit(limit)
 
             if let trackedPathId = trackedPathId {

@@ -114,7 +114,28 @@ private struct GeneralSettingsTab: View {
                 }
 
                 Section("Scanning") {
-                    Text("Scan Now in the menu bar runs a fresh background scan. Prunr also tracks recent growth between full rescans.")
+                    Text("Scan Now in the menu bar runs a fresh background scan. Prunr also tracks recent growth between full rescans and performs a periodic full refresh for accuracy.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Text("Periodic full rescan")
+                            .font(.system(size: 13))
+
+                        Spacer()
+
+                        Picker("", selection: $settingsStore.automaticFullScanIntervalHours) {
+                            Text("Daily").tag(24)
+                            Text("Every 2 days").tag(48)
+                            Text("Every 3 days").tag(72)
+                            Text("Weekly").tag(168)
+                            Text("Every 2 weeks").tag(336)
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 140)
+                    }
+
+                    Text("Default is daily. Pick a longer interval if your main path is very large and you want fewer full rescans.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

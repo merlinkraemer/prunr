@@ -218,22 +218,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func automaticFullScanInterval(for trackedPath: TrackedPath?) -> TimeInterval {
-        guard let trackedPath else {
-            return isUnderDiskPressure ? 10 * 60 : 15 * 60
+        guard trackedPath != nil else {
+            return SettingsStore.shared.automaticFullScanInterval
         }
 
-        let standardized = trackedPath.url.standardizedFileURL
-        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
-
-        if standardized.path == "/" {
-            return isUnderDiskPressure ? 10 * 60 : 45 * 60
-        }
-
-        if standardized == home {
-            return isUnderDiskPressure ? 8 * 60 : 15 * 60
-        }
-
-        return isUnderDiskPressure ? 4 * 60 : 7 * 60
+        return SettingsStore.shared.automaticFullScanInterval
     }
     var isLoading = false {
         didSet { updateMenuBarActivityEffect() }

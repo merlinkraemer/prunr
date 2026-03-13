@@ -28,11 +28,14 @@ final class SettingsStore {
         static let selectedCommonPathIDs = "selectedCommonPathIDs"
         static let hasPendingScopeChanges = "hasPendingScopeChanges"
         static let categoryHistoryRetentionDays = "categoryHistoryRetentionDays"
+        static let automaticFullScanIntervalHours = "automaticFullScanIntervalHours"
     }
 
     // MARK: - Constants
 
     static let defaultCategoryHistoryRetentionDays = 30
+    static let defaultAutomaticFullScanIntervalHours = 24
+    static let automaticFullScanIntervalPresetHours = [24, 48, 72, 168, 336]
     
     // MARK: - Properties
     
@@ -87,6 +90,11 @@ final class SettingsStore {
     /// Category history retention period in days (default 30)
     var categoryHistoryRetentionDays: Int {
         didSet { UserDefaults.standard.set(categoryHistoryRetentionDays, forKey: Keys.categoryHistoryRetentionDays) }
+    }
+
+    /// Maximum time between periodic full rescans.
+    var automaticFullScanIntervalHours: Int {
+        didSet { UserDefaults.standard.set(automaticFullScanIntervalHours, forKey: Keys.automaticFullScanIntervalHours) }
     }
 
     // MARK: - Computed Properties
@@ -148,6 +156,10 @@ final class SettingsStore {
     var enabledBoundaries: Set<String> {
         allBoundaries.filter { isBoundaryEnabled($0) }
     }
+
+    var automaticFullScanInterval: TimeInterval {
+        TimeInterval(automaticFullScanIntervalHours * 60 * 60)
+    }
     
     // MARK: - Init
     
@@ -187,6 +199,13 @@ final class SettingsStore {
         // Load category history retention days (default 30)
         let savedRetentionDays = UserDefaults.standard.integer(forKey: Keys.categoryHistoryRetentionDays)
         self.categoryHistoryRetentionDays = savedRetentionDays > 0 ? savedRetentionDays : Self.defaultCategoryHistoryRetentionDays
+
+        let savedAutomaticFullScanHours = UserDefaults.standard.integer(forKey: Keys.automaticFullScanIntervalHours)
+        if Self.automaticFullScanIntervalPresetHours.contains(savedAutomaticFullScanHours) {
+            self.automaticFullScanIntervalHours = savedAutomaticFullScanHours
+        } else {
+            self.automaticFullScanIntervalHours = Self.defaultAutomaticFullScanIntervalHours
+        }
     }
     
     // MARK: - Path Management

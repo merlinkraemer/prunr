@@ -1015,6 +1015,94 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testRecentChangeRefreshPromotesTrackedRootDirectoryEventToFullScan() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeRootOnly")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let fileURL = tempDirectory.appendingPathComponent("existing.bin")
+            try Data(repeating: 0x08, count: 128).write(to: fileURL)
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [ScanResult(path: fileURL.path, sizeBytes: 128)]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 4_000)
+            )
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths([tempDirectory], trackedPath: trackedPath)
+
+            guard case .needsFullScan = result else {
+                XCTFail("tracked-root directory events should promote to a full scan instead of rescanning the entire root incrementally")
+                return
+            }
+
+            let metadata = try await self.workingSetMetadataByPath()
+            XCTAssertEqual(metadata[fileURL.path]?.sizeBytes, 128)
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let journalCount = try await dbPool.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM growthJournalBucket") ?? 0
+            }
+            XCTAssertEqual(journalCount, 0)
+        }
+    }
+
+    func testRecentChangeRefreshPromotesLargeFileBatchToFullScan() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeOverflow")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let fileURLs = (0..<193).map { index in
+                tempDirectory.appendingPathComponent("file-\(index).bin")
+            }
+
+            for fileURL in fileURLs {
+                try Data(repeating: 0x09, count: 32).write(to: fileURL)
+            }
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: fileURLs.map { ScanResult(path: $0.path, sizeBytes: 32) }
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 5_000)
+            )
+
+            for (index, fileURL) in fileURLs.enumerated() {
+                try Data(repeating: UInt8(index % 255), count: 64).write(to: fileURL)
+            }
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths(Set(fileURLs), trackedPath: trackedPath)
+
+            guard case .needsFullScan = result else {
+                XCTFail("oversized incremental file batches should promote to a full scan")
+                return
+            }
+
+            let metadata = try await self.workingSetMetadataByPath()
+            XCTAssertEqual(metadata.count, 193)
+            XCTAssertEqual(metadata.values.reduce(0) { $0 + $1.sizeBytes }, 193 * 32)
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let journalCount = try await dbPool.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM growthJournalBucket") ?? 0
+            }
+            XCTAssertEqual(journalCount, 0)
+        }
+    }
+
     func testRecentChangeRefreshIgnoresChangesBeforeFirstSnapshot() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let tempDirectory = FileManager.default.temporaryDirectory
