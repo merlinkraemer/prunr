@@ -32,6 +32,7 @@ struct MenuBarView: View {
     @State private var onboardingOffset: CGFloat = 0
     @State private var onboardingWidth: CGFloat = 0
     @State private var pendingOnboardingTransition: PendingOnboardingTransition? = nil
+    @State private var onboardingExtrasConfirmed = false
 
     private let outsideScopeSegmentID = "outside-scan-scope"
 
@@ -60,6 +61,7 @@ struct MenuBarView: View {
     private enum OnboardingPage: Int, CaseIterable {
         case permissions
         case folder
+        case extras
         case scan
 
         var number: Int {
@@ -72,6 +74,8 @@ struct MenuBarView: View {
                 return "Access"
             case .folder:
                 return "Folder"
+            case .extras:
+                return "Extras"
             case .scan:
                 return "Scan"
             }
@@ -143,8 +147,13 @@ struct MenuBarView: View {
         hasFullDiskAccess == true && hasEnabledScanPath && hasValidScanFolder && hasExplicitOnboardingFolderChoice
     }
 
+    private var onboardingExtrasStepComplete: Bool {
+        guard onboardingFolderStepComplete else { return false }
+        return onboardingExtrasConfirmed
+    }
+
     private var onboardingCanRunFirstScan: Bool {
-        hasFullDiskAccess == true && onboardingFolderStepComplete && !manager.isLoading && !manager.isAutoScanning
+        hasFullDiskAccess == true && onboardingExtrasStepComplete && !manager.isLoading && !manager.isAutoScanning
     }
 
     private var maxUnlockedOnboardingPage: OnboardingPage {
@@ -154,6 +163,10 @@ struct MenuBarView: View {
 
         if !onboardingFolderStepComplete {
             return .folder
+        }
+
+        if !onboardingExtrasStepComplete {
+            return .extras
         }
 
         return .scan
@@ -190,29 +203,38 @@ struct MenuBarView: View {
         shortDisplayPath(for: selectedScanFolderURL)
     }
 
+    private var onboardingRecommendedExtras: [TrackedPath] {
+        settingsStore.recommendedCommonPaths.filter { path in
+            let basePath = selectedScanFolderURL.standardizedFileURL.path
+            let candidate = path.url.standardizedFileURL.path
+            return !(candidate == basePath || candidate.hasPrefix(basePath == "/" ? "/" : basePath + "/"))
+        }
+    }
+
     private var scanFolderOptions: [OnboardingFolderOption] {
         var options: [OnboardingFolderOption] = []
         
         let home = FileManager.default.homeDirectoryForCurrentUser
         let dev = home.appendingPathComponent("dev", isDirectory: true)
-        let recommendedURL = FileManager.default.fileExists(atPath: dev.path) ? dev : home
 
         options.append(
             OnboardingFolderOption(
                 id: "recommended",
-                title: FileManager.default.fileExists(atPath: dev.path) ? "Recommended" : "Recommended Home",
-                subtitle: shortDisplayPath(for: recommendedURL),
-                url: recommendedURL
-            )
-        )
-        options.append(
-            OnboardingFolderOption(
-                id: "home",
-                title: "Home Directory",
+                title: "Recommended",
                 subtitle: shortDisplayPath(for: home),
                 url: home
             )
         )
+        if FileManager.default.fileExists(atPath: dev.path) {
+            options.append(
+                OnboardingFolderOption(
+                    id: "dev",
+                    title: "Developer Folder",
+                    subtitle: shortDisplayPath(for: dev),
+                    url: dev
+                )
+            )
+        }
         options.append(
             OnboardingFolderOption(
                 id: "full-disk",
@@ -779,7 +801,7 @@ struct MenuBarView: View {
         case .scan:
             VStack(spacing: 10) {
                 onboardingTitleSection(
-                    number: 3,
+                    number: 4,
                     icon: "waveform.path.ecg",
                     title: "Run First Scan",
                     description: "Build your first baseline to track growth over time."
@@ -827,6 +849,54 @@ struct MenuBarView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 22)
+            }
+
+        case .extras:
+            VStack(spacing: 10) {
+                onboardingTitleSection(
+                    number: 3,
+                    icon: "externaldrive.badge.plus",
+                    title: "Add Recommended Extras",
+                    description: "Include common machine-wide paths outside your base folder."
+                )
+
+                onboardingContentCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if onboardingRecommendedExtras.isEmpty {
+                            Text("No recommended extras are needed for this base folder.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(onboardingRecommendedExtras) { path in
+                                Toggle(isOn: Binding(
+                                    get: { settingsStore.isCommonPathSelected(path) },
+                                    set: { selected in
+                                        settingsStore.setCommonPathSelected(path, selected: selected)
+                                    }
+                                )) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(path.displayName)
+                                            .font(.system(size: 12, weight: .medium))
+                                        Text(path.url.path)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                }
+                                .toggleStyle(.switch)
+                            }
+                        }
+
+                        Divider()
+                            .padding(.vertical, 4)
+
+                        primaryActionButton("Continue", minWidth: 150) {
+                            onboardingExtrasConfirmed = true
+                            selectedOnboardingPage = .scan
+                        }
+                    }
+                }
             }
         }
     }
@@ -1563,17 +1633,25 @@ struct MenuBarView: View {
             return "Choose a scan folder first."
         }
 
+        if !onboardingExtrasStepComplete {
+            return "Choose which recommended extras to include."
+        }
+
         return "Run the first scan to build your baseline."
     }
 
     private func applyOnboardingScanFolder(_ url: URL) {
         onboardingChosenFolderPath = url
+        onboardingExtrasConfirmed = false
         settingsStore.setMainBasePath(url)
+        settingsStore.applyRecommendedExtras(for: url)
         settingsStore.setPathEnabled(settingsStore.mainTrackedPath, enabled: true)
 
         if manager.noBaseline {
             settingsStore.clearPendingScopeChanges()
         }
+
+        selectedOnboardingPage = .extras
     }
 
     private func shortDisplayPath(for url: URL) -> String {

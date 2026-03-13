@@ -104,8 +104,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var subcategoryBreakdownLoadingCategories: Set<GrowthCategory> = []
     var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
     var growthContributorCacheGeneration: UInt64 = 0
-    private var currentInventorySnapshotID: Int64?
-    private var currentGrowthBaselineSnapshotID: Int64?
+    private var currentInventorySnapshotIDsByPath: [UUID: Int64] = [:]
+    private var currentGrowthBaselineSnapshotIDsByPath: [UUID: Int64] = [:]
     @ObservationIgnored
     private var subcategoryBreakdownLoadTasks: [GrowthCategory: Task<SubcategoryBreakdownLoadResult, Never>] = [:]
     var monitoredPathName: String = ""
@@ -147,7 +147,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func primaryTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
-        let candidates = paths ?? SettingsStore.shared.enabledTrackedPaths
+        let candidates = effectiveTrackedPaths(from: paths ?? SettingsStore.shared.enabledTrackedPaths)
         guard !candidates.isEmpty else { return nil }
 
         if let mainPath = candidates.first(where: { $0.id == ScanPathPreset.mainBasePathID }) {
@@ -163,7 +163,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func preferredTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
-        let candidates = paths ?? SettingsStore.shared.enabledTrackedPaths
+        let candidates = effectiveTrackedPaths(from: paths ?? SettingsStore.shared.enabledTrackedPaths)
         guard !candidates.isEmpty else { return nil }
 
         return candidates.max { lhs, rhs in
@@ -180,6 +180,32 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         return 10_000 + pathDepth
+    }
+
+    private func effectiveTrackedPaths(from paths: [TrackedPath]) -> [TrackedPath] {
+        let sorted = paths.sorted {
+            let lhs = $0.url.standardizedFileURL.path
+            let rhs = $1.url.standardizedFileURL.path
+            if lhs.count == rhs.count {
+                return lhs.localizedStandardCompare(rhs) == .orderedAscending
+            }
+            return lhs.count < rhs.count
+        }
+
+        var effective: [TrackedPath] = []
+        for path in sorted {
+            let candidate = path.url.standardizedFileURL.path
+            let isCovered = effective.contains { existing in
+                let root = existing.url.standardizedFileURL.path
+                return candidate == root || candidate.hasPrefix(root == "/" ? "/" : root + "/")
+            }
+
+            if !isCovered {
+                effective.append(path)
+            }
+        }
+
+        return effective
     }
 
     private func shouldAutoWatchTrackedPath(_ path: TrackedPath) -> Bool {
@@ -530,6 +556,42 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         return standardizedScannedPath
     }
 
+    private func snapshotIDsSignature(_ snapshotIDsByPath: [UUID: Int64]) -> String? {
+        guard !snapshotIDsByPath.isEmpty else { return nil }
+
+        return snapshotIDsByPath
+            .sorted { $0.key.uuidString < $1.key.uuidString }
+            .map { "\($0.key.uuidString):\($0.value)" }
+            .joined(separator: "|")
+    }
+
+    private func trackedPathsByID(_ trackedPaths: [TrackedPath]) -> [UUID: TrackedPath] {
+        Dictionary(uniqueKeysWithValues: trackedPaths.map { ($0.id, $0) })
+    }
+
+    private func createBaselines(
+        for trackedPaths: [TrackedPath],
+        progressCallback: @escaping (TrackedPath, ScanService.ScanProgress) -> Void
+    ) async throws -> [UUID: Snapshot] {
+        var snapshotsByPath: [UUID: Snapshot] = [:]
+
+        for trackedPath in trackedPaths {
+            scanProgress = "Scanning \(trackedPath.displayName)..."
+            scanCurrentPath = trackedPath.url.path
+            scanCurrentPathDisplay = "."
+
+            let snapshot = try await baselineService.createBaseline(
+                trackedPath: trackedPath,
+                progress: { progress in
+                    progressCallback(trackedPath, progress)
+                }
+            )
+            snapshotsByPath[trackedPath.id] = snapshot
+        }
+
+        return snapshotsByPath
+    }
+
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
 
     // Properties are now synthesized by @Observable macro at class level
@@ -538,7 +600,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Loads inventory data with growth trends for the preferred enabled tracked path
     func loadInventory(isAutomatic: Bool = false) async {
         // Prefer the most specific enabled tracked path to avoid scanning huge umbrella roots.
-        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
             print("[MenuBarManager] No enabled tracked paths in settings")
             errorMessage = "No paths enabled in Settings"
@@ -568,11 +630,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         var wasCancelled = false
         var completedSuccessfully = false
-        var completedSnapshot: Snapshot?
+        var completedSnapshotsByPath: [UUID: Snapshot] = [:]
 
         // Create progress callback for updating UI during scan
         // Note: MainActor.run ensures UI updates happen on main thread
-        let progressCallback: (ScanService.ScanProgress) -> Void = { progress in
+        let progressCallback: (TrackedPath, ScanService.ScanProgress) -> Void = { trackedPath, progress in
             Task { @MainActor in
                 // Update files scanned count
                 self.filesScanned = progress.foldersScanned
@@ -594,7 +656,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         do {
             // First, take a new snapshot
-            completedSnapshot = try await baselineService.createBaseline(trackedPath: trackedPath, progress: progressCallback)
+            completedSnapshotsByPath = try await createBaselines(
+                for: enabledPaths,
+                progressCallback: progressCallback
+            )
 
             // Briefly show real 100% only when scan is actually complete.
             scanProgressPercentage = 1.0
@@ -611,15 +676,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             hasReliableScanProgressEstimate = true
 
             // Get inventory with growth trends
-            let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
-            let comparisonSnapshots = try await baselineService.resolveGrowthComparisonSnapshots(
-                trackedPathId: trackedPath.id
-            )
+            let aggregation = await baselineService.getInventoryWithTrends(trackedPaths: enabledPaths)
 
             applyInventory(
-                inventory,
-                snapshotID: comparisonSnapshots?.currentSnapshotId ?? completedSnapshot?.id,
-                growthBaselineSnapshotID: comparisonSnapshots?.baselineSnapshotId,
+                aggregation.inventory,
+                snapshotIDsByPath: aggregation.latestSnapshotIdsByPath,
+                growthBaselineSnapshotIDsByPath: aggregation.baselineSnapshotIdsByPath,
                 invalidateSubcategoryCache: true
             )
 
@@ -629,11 +691,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             // Also compute disk accounting for free space tracking
             do {
-                let result = try await baselineService.getDiskAccounting(trackedPath: trackedPath)
-                reconciliationResult = result
-            } catch {
-                print("[MenuBarManager] Disk accounting failed: \(error)")
-                reconciliationResult = nil
+                reconciliationResult = await baselineService.getDiskAccounting(
+                    trackedPaths: enabledPaths,
+                    primaryTrackedPath: trackedPath
+                )
             }
 
             reconcileDrillDownSelection()
@@ -642,7 +703,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             scanCurrentPathDisplay = ""
             completedSuccessfully = true
 
-            let snapshotTimestamp = completedSnapshot?.createdAt ?? Date()
+            let snapshotTimestamp = aggregation.latestSnapshotDate ?? Date()
             if !growingCategories.isEmpty {
                 lastDetectedChangeAt = snapshotTimestamp
             }
@@ -661,8 +722,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 categoryItems = []
                 subcategoryGroupsByCategory = [:]
                 invalidateGrowthContributorCache()
-                currentInventorySnapshotID = nil
-                currentGrowthBaselineSnapshotID = nil
+                currentInventorySnapshotIDsByPath = [:]
+                currentGrowthBaselineSnapshotIDsByPath = [:]
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let baselineError = error as? BaselineService.BaselineError,
@@ -675,8 +736,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 categoryItems = []
                 subcategoryGroupsByCategory = [:]
                 invalidateGrowthContributorCache()
-                currentInventorySnapshotID = nil
-                currentGrowthBaselineSnapshotID = nil
+                currentInventorySnapshotIDsByPath = [:]
+                currentGrowthBaselineSnapshotIDsByPath = [:]
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
@@ -704,7 +765,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
         }
 
-        if completedSnapshot != nil && !wasCancelled {
+        if !completedSnapshotsByPath.isEmpty && !wasCancelled {
             isCleaningUp = true
             scanProgress = "Cleaning up..."
             scanCurrentPath = ""
@@ -727,7 +788,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isAnalyzingChanges = false
         scanStartTime = nil
         if completedSuccessfully {
-            lastAutomaticScanAt = completedSnapshot?.createdAt ?? Date()
+            lastAutomaticScanAt = completedSnapshotsByPath.values.map(\.createdAt).max() ?? Date()
         }
 
         await updatePathSize()
@@ -737,7 +798,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         guard beginInventoryRefresh() else { return }
         defer { endInventoryRefresh() }
 
-        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
             noBaseline = true
             clearInventoryState()
@@ -747,10 +808,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         do {
-            let comparisonSnapshots = try await baselineService.resolveGrowthComparisonSnapshots(
-                trackedPathId: trackedPath.id
-            )
-            guard let comparisonSnapshots else {
+            let aggregation = await baselineService.getInventoryWithTrends(trackedPaths: enabledPaths)
+            guard !aggregation.latestSnapshotIdsByPath.isEmpty else {
                 noBaseline = true
                 clearInventoryState()
                 lastAutomaticScanAt = nil
@@ -758,23 +817,21 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 return
             }
 
-            let inventory = await baselineService.getInventoryWithTrends(trackedPath: trackedPath)
             noBaseline = false
-            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
-            lastAutomaticScanAt = refreshedAt ?? snapshots.first?.createdAt
+            lastAutomaticScanAt = refreshedAt ?? aggregation.latestSnapshotDate
             errorMessage = nil
             applyInventory(
-                inventory,
-                snapshotID: comparisonSnapshots.currentSnapshotId,
-                growthBaselineSnapshotID: comparisonSnapshots.baselineSnapshotId,
-                invalidateSubcategoryCache: comparisonSnapshots.currentSnapshotId != currentInventorySnapshotID
+                aggregation.inventory,
+                snapshotIDsByPath: aggregation.latestSnapshotIdsByPath,
+                growthBaselineSnapshotIDsByPath: aggregation.baselineSnapshotIdsByPath,
+                invalidateSubcategoryCache: snapshotIDsSignature(aggregation.latestSnapshotIdsByPath)
+                    != snapshotIDsSignature(currentInventorySnapshotIDsByPath)
             )
 
-            do {
-                reconciliationResult = try await baselineService.getDiskAccounting(trackedPath: trackedPath)
-            } catch {
-                reconciliationResult = nil
-            }
+            reconciliationResult = await baselineService.getDiskAccounting(
+                trackedPaths: enabledPaths,
+                primaryTrackedPath: trackedPath
+            )
 
             updateMonitoredPathName()
         } catch {
@@ -884,58 +941,31 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 return SubcategoryBreakdownLoadResult.skipped
             }
 
-            let enabledPaths = SettingsStore.shared.enabledTrackedPaths
-            guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
+            let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+            let trackedPathsByID = trackedPathsByID(enabledPaths)
+            guard !trackedPathsByID.isEmpty else {
                 return .skipped
             }
 
-            guard let latestSnapshotId = currentInventorySnapshotID else {
+            guard !currentInventorySnapshotIDsByPath.isEmpty else {
                 return .skipped
             }
 
-            let groups = await baselineService.getSubcategoryBreakdown(for: category, snapshotId: latestSnapshotId)
+            let groups = await baselineService.getSubcategoryBreakdown(
+                for: category,
+                trackedPathsById: trackedPathsByID,
+                latestSnapshotIdsByPath: currentInventorySnapshotIDsByPath,
+                baselineSnapshotIdsByPath: currentGrowthBaselineSnapshotIDsByPath
+            )
             if Task.isCancelled {
                 return .skipped
-            }
-
-            // Try working-set-based growth first, then fall back to journal data
-            var growthTotals: [GrowthSubcategory?: Int64] = [:]
-            if let baselineSnapshotId = currentGrowthBaselineSnapshotID {
-                growthTotals = await baselineService.getSubcategoryGrowthTotals(
-                    trackedPathId: trackedPath.id,
-                    snapshotId: baselineSnapshotId,
-                    category: category
-                )
-            }
-
-            // If working set comparison found no growth, use journal data
-            if growthTotals.isEmpty {
-                let journalTotals = await growthJournalService.subcategoryGrowthTotals(
-                    trackedPath: trackedPath,
-                    category: category,
-                    retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
-                )
-                if !journalTotals.isEmpty {
-                    growthTotals = journalTotals
-                }
-            }
-
-            let hydratedGroups = groups.map { group in
-                SubcategoryGroup(
-                    subcategory: group.subcategory,
-                    displayName: group.displayName,
-                    totalBytes: group.totalBytes,
-                    fileCount: group.fileCount,
-                    growthBytes: growthTotals[group.subcategory],
-                    topFiles: group.topFiles
-                )
             }
 
             if Task.isCancelled {
                 return .skipped
             }
 
-            return .loaded(hydratedGroups)
+            return .loaded(groups)
         }
 
         subcategoryBreakdownLoadTasks[category] = loadTask
@@ -961,17 +991,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Check if there are more files to load
         guard group.hasMoreFiles else { return nil }
 
-        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
-        guard let trackedPath = primaryTrackedPath(from: enabledPaths) else { return nil }
+        guard !currentInventorySnapshotIDsByPath.isEmpty else { return nil }
 
         do {
-            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
-            guard let latestSnapshotId = snapshots.first?.id else { return nil }
-
             let additionalFiles = await baselineService.loadMoreSubcategoryFiles(
                 for: category,
                 subcategory: group.subcategory,
-                snapshotId: latestSnapshotId,
+                snapshotIdsByPath: currentInventorySnapshotIDsByPath,
                 totalBytes: group.totalBytes,
                 offset: group.loadedFileCount
             )
@@ -1019,16 +1045,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Loads growth contributors for a specific subcategory group
     func loadGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) async -> [GrowthContributor] {
-        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
-        guard let trackedPath = primaryTrackedPath(from: enabledPaths) else { return [] }
-        guard let latestSnapshotId = currentInventorySnapshotID,
-              let baselineSnapshotId = currentGrowthBaselineSnapshotID else {
+        guard let snapshotSignature = snapshotIDsSignature(currentInventorySnapshotIDsByPath),
+              let baselineSignature = snapshotIDsSignature(currentGrowthBaselineSnapshotIDsByPath) else {
             return []
         }
 
         let cacheKey = growthContributorCacheKey(
-            snapshotId: latestSnapshotId,
-            baselineSnapshotId: baselineSnapshotId,
+            snapshotSignature: snapshotSignature,
+            baselineSnapshotSignature: baselineSignature,
             category: category,
             group: group
         )
@@ -1041,8 +1065,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // to historical snapshot diffs mixes older growth into the current
         // drill-down and makes pre-baseline files appear newly grown.
         let contributors = await baselineService.getGrowthContributors(
-            trackedPathId: trackedPath.id,
-            snapshotId: baselineSnapshotId,
+            baselineSnapshotIdsByPath: currentGrowthBaselineSnapshotIDsByPath,
             category: category,
             subcategory: group.subcategory
         )
@@ -1053,13 +1076,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     func cachedGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) -> [GrowthContributor]? {
-        guard let snapshotId = currentInventorySnapshotID,
-              let baselineSnapshotId = currentGrowthBaselineSnapshotID else {
+        guard let snapshotSignature = snapshotIDsSignature(currentInventorySnapshotIDsByPath),
+              let baselineSignature = snapshotIDsSignature(currentGrowthBaselineSnapshotIDsByPath) else {
             return nil
         }
         let cacheKey = growthContributorCacheKey(
-            snapshotId: snapshotId,
-            baselineSnapshotId: baselineSnapshotId,
+            snapshotSignature: snapshotSignature,
+            baselineSnapshotSignature: baselineSignature,
             category: category,
             group: group
         )
@@ -1068,7 +1091,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Takes the initial snapshot for enabled paths
     func takeInitialSnapshot() async {
-        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
 
         // If no paths are enabled, try to enable the default path
         var pathsToTry = enabledPaths
@@ -1077,7 +1100,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 // Ensure the path exists before enabling it
                 if FileManager.default.fileExists(atPath: defaultPath.url.path) {
                     SettingsStore.shared.setPathEnabled(defaultPath, enabled: true)
-                    pathsToTry = SettingsStore.shared.enabledTrackedPaths
+                    pathsToTry = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
                 } else {
                     errorMessage = "Default path not found. Please configure a valid path in Settings."
                     return
@@ -1104,7 +1127,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         hasReliableScanProgressEstimate = false
 
         do {
-            _ = try await baselineService.createBaseline(trackedPath: trackedPath)
+            _ = try await createBaselines(for: pathsToTry) { _, _ in }
             noBaseline = false
             scanProgress = ""
             scanCurrentPath = ""
@@ -1144,7 +1167,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         // Enable default path if needed
-        let enabledPaths = SettingsStore.shared.enabledTrackedPaths
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         if enabledPaths.isEmpty {
             if let defaultPath = SettingsStore.shared.allTrackedPaths.first(where: { $0.isDefault }) {
                 if FileManager.default.fileExists(atPath: defaultPath.url.path) {
@@ -1153,7 +1176,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
         }
 
-        guard let trackedPath = primaryTrackedPath() else {
+        let pathsToScan = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        guard let _ = primaryTrackedPath(from: pathsToScan) else {
             return
         }
 
@@ -1161,7 +1185,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isAutoScanning = true
 
         do {
-            _ = try await baselineService.createBaseline(trackedPath: trackedPath)
+            _ = try await createBaselines(for: pathsToScan) { _, _ in }
             noBaseline = false
         } catch {
             // Silent failure - auto-init is optional
@@ -1181,28 +1205,24 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Checks if baseline exists without triggering a scan
     func checkBaseline() async {
-        guard let trackedPath = primaryTrackedPath() else {
+        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        guard !trackedPaths.isEmpty else {
             noBaseline = true
             lastAutomaticScanAt = nil
             updateMonitoredPathName()
             return
         }
 
-        do {
-            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
-            noBaseline = snapshots.isEmpty
-            lastAutomaticScanAt = snapshots.first?.createdAt
-        } catch {
-            noBaseline = true
-            lastAutomaticScanAt = nil
-        }
+        let aggregation = await baselineService.getInventoryWithTrends(trackedPaths: trackedPaths)
+        noBaseline = aggregation.latestSnapshotIdsByPath.isEmpty
+        lastAutomaticScanAt = aggregation.latestSnapshotDate
         updateMonitoredPathName()
     }
 
     private func applyInventory(
         _ inventory: [CategoryInventoryItem],
-        snapshotID: Int64?,
-        growthBaselineSnapshotID: Int64?,
+        snapshotIDsByPath: [UUID: Int64],
+        growthBaselineSnapshotIDsByPath: [UUID: Int64],
         invalidateSubcategoryCache: Bool
     ) {
         var growing: [CategoryInventoryItem] = []
@@ -1221,8 +1241,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         growingCategories = growing.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
         stableCategories = stable.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
         stableTotalBytes = stableTotal
-        currentInventorySnapshotID = snapshotID
-        currentGrowthBaselineSnapshotID = growthBaselineSnapshotID
+        currentInventorySnapshotIDsByPath = snapshotIDsByPath
+        currentGrowthBaselineSnapshotIDsByPath = growthBaselineSnapshotIDsByPath
 
         if invalidateSubcategoryCache {
             cancelSubcategoryBreakdownLoads()
@@ -1265,8 +1285,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             isDrilledDown = false
             isSubcategoryDrillDown = false
             reconciliationResult = nil
-            currentInventorySnapshotID = nil
-            currentGrowthBaselineSnapshotID = nil
+            currentInventorySnapshotIDsByPath = [:]
+            currentGrowthBaselineSnapshotIDsByPath = [:]
         }
     }
 
@@ -1325,12 +1345,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func growthContributorCacheKey(
-        snapshotId: Int64,
-        baselineSnapshotId: Int64,
+        snapshotSignature: String,
+        baselineSnapshotSignature: String,
         category: GrowthCategory,
         group: SubcategoryGroup
     ) -> String {
-        "\(snapshotId):\(baselineSnapshotId):\(category.rawValue):\(group.id)"
+        "\(snapshotSignature):\(baselineSnapshotSignature):\(category.rawValue):\(group.id)"
     }
 
     private func updateMonitoredPathName() {
@@ -1587,7 +1607,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Updates the monitored path size from the latest baseline or current state
     func updatePathSize() async {
-        let trackedPaths = SettingsStore.shared.enabledTrackedPaths
+        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         guard let trackedPath = primaryTrackedPath(from: trackedPaths) else {
             self.monitoredPathSizeBytes = 0
             self.pathSizeBytesByID = [:]

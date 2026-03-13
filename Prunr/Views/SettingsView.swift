@@ -313,6 +313,14 @@ private struct ScanScopeSettingsTab: View {
         scanService.isScanning
     }
 
+    private var recommendedCommonPaths: [TrackedPath] {
+        settingsStore.recommendedCommonPaths
+    }
+
+    private var optionalCommonPaths: [TrackedPath] {
+        settingsStore.optionalCommonPaths
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -347,35 +355,30 @@ private struct ScanScopeSettingsTab: View {
                             .padding(.top, 4)
                         }
 
-                        GroupBox("Common Paths") {
+                        GroupBox("Recommended Extras") {
                             VStack(alignment: .leading, spacing: 10) {
-                                if settingsStore.availableCommonPaths.isEmpty {
-                                    Text("No common paths found on this machine.")
+                                if recommendedCommonPaths.isEmpty {
+                                    Text("No recommended extras found on this machine.")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 } else {
-                                    ForEach(settingsStore.availableCommonPaths) { path in
-                                        Toggle(isOn: Binding(
-                                            get: { settingsStore.isCommonPathSelected(path) },
-                                            set: { selected in
-                                                settingsStore.setCommonPathSelected(path, selected: selected)
-                                            }
-                                        )) {
-                                            HStack(spacing: 8) {
-                                                VStack(alignment: .leading, spacing: 2) {
-                                                    Text(path.displayName)
-                                                        .font(.system(size: 13, weight: .medium))
-                                                    Text(path.url.path)
-                                                        .font(.system(size: 11, design: .monospaced))
-                                                        .foregroundStyle(.secondary)
-                                                        .lineLimit(1)
-                                                        .truncationMode(.middle)
-                                                }
-                                                Spacer(minLength: 0)
-                                            }
-                                        }
-                                        .toggleStyle(.switch)
-                                        .disabled(isScanInProgress)
+                                    ForEach(recommendedCommonPaths) { path in
+                                        commonPathToggle(for: path)
+                                    }
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+
+                        GroupBox("Other Common Paths") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                if optionalCommonPaths.isEmpty {
+                                    Text("No other common paths found on this machine.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    ForEach(optionalCommonPaths) { path in
+                                        commonPathToggle(for: path)
                                     }
                                 }
                             }
@@ -535,6 +538,31 @@ private struct ScanScopeSettingsTab: View {
         } message: {
             Text("Changing scan scope can invalidate previous comparisons. Applying will delete existing snapshots.")
         }
+    }
+
+    @ViewBuilder
+    private func commonPathToggle(for path: TrackedPath) -> some View {
+        Toggle(isOn: Binding(
+            get: { settingsStore.isCommonPathSelected(path) },
+            set: { selected in
+                settingsStore.setCommonPathSelected(path, selected: selected)
+            }
+        )) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(path.displayName)
+                        .font(.system(size: 13, weight: .medium))
+                    Text(path.url.path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .toggleStyle(.switch)
+        .disabled(isScanInProgress)
     }
 }
 

@@ -11,6 +11,13 @@ actor BaselineService {
         let baselineSnapshotId: Int64?
     }
 
+    struct InventoryAggregationResult: Sendable, Equatable {
+        let inventory: [CategoryInventoryItem]
+        let latestSnapshotIdsByPath: [UUID: Int64]
+        let baselineSnapshotIdsByPath: [UUID: Int64]
+        let latestSnapshotDate: Date?
+    }
+
     // MARK: - Types
 
     /// Errors specific to baseline operations
@@ -795,6 +802,46 @@ actor BaselineService {
         }
     }
 
+    func getGrowthContributors(
+        baselineSnapshotIdsByPath: [UUID: Int64],
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        limit: Int = 50
+    ) async -> [GrowthContributor] {
+        var contributorsByPath: [String: GrowthContributor] = [:]
+
+        for (trackedPathId, snapshotId) in baselineSnapshotIdsByPath {
+            let contributors = await getGrowthContributors(
+                trackedPathId: trackedPathId,
+                snapshotId: snapshotId,
+                category: category,
+                subcategory: subcategory,
+                limit: limit
+            )
+
+            for contributor in contributors {
+                if let existing = contributorsByPath[contributor.path] {
+                    contributorsByPath[contributor.path] = GrowthContributor(
+                        path: contributor.path,
+                        currentSizeBytes: max(existing.currentSizeBytes, contributor.currentSizeBytes),
+                        growthBytes: existing.growthBytes + contributor.growthBytes
+                    )
+                } else {
+                    contributorsByPath[contributor.path] = contributor
+                }
+            }
+        }
+
+        return contributorsByPath.values.sorted {
+            if $0.growthBytes == $1.growthBytes {
+                return $0.path.localizedStandardCompare($1.path) == .orderedAscending
+            }
+            return $0.growthBytes > $1.growthBytes
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
     /// Loads additional files for a specific subcategory with pagination.
     /// Used for "Load More" functionality to avoid loading all files at once.
     ///
@@ -852,6 +899,52 @@ actor BaselineService {
         }
     }
 
+    func loadMoreSubcategoryFiles(
+        for category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        snapshotIdsByPath: [UUID: Int64],
+        totalBytes: Int64,
+        offset: Int,
+        limit: Int = SubcategoryGroup.loadMoreBatchSize
+    ) async -> [GrowthItem] {
+        do {
+            let entries = try await collectSnapshotEntries(
+                for: Array(snapshotIdsByPath.values),
+                category: category,
+                subcategory: subcategory
+            )
+
+            guard offset < entries.count else { return [] }
+
+            let page = entries
+                .sorted { lhs, rhs in
+                    if lhs.sizeBytes == rhs.sizeBytes {
+                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+                    }
+                    return lhs.sizeBytes > rhs.sizeBytes
+                }
+                .dropFirst(offset)
+                .prefix(limit)
+
+            return page.map { entry in
+                let percent = totalBytes > 0
+                    ? Double(entry.sizeBytes) / Double(totalBytes)
+                    : 0
+
+                return GrowthItem(
+                    path: entry.path,
+                    growthBytes: entry.sizeBytes,
+                    currentSizeBytes: entry.sizeBytes,
+                    percentOfParent: percent,
+                    subcategory: subcategory
+                )
+            }
+        } catch {
+            print("[BaselineService] Error loading aggregated files for subcategory: \(error)")
+            return []
+        }
+    }
+
     func getSubcategoryGrowthTotals(
         trackedPathId: UUID,
         snapshotId: Int64,
@@ -866,6 +959,77 @@ actor BaselineService {
         } catch {
             print("[BaselineService] Error fetching subcategory growth totals for \(category.rawValue): \(error)")
             return [:]
+        }
+    }
+
+    func getSubcategoryBreakdown(
+        for category: GrowthCategory,
+        trackedPathsById: [UUID: TrackedPath],
+        latestSnapshotIdsByPath: [UUID: Int64],
+        baselineSnapshotIdsByPath: [UUID: Int64]
+    ) async -> [SubcategoryGroup] {
+        var aggregated: [GrowthSubcategory?: SubcategoryGroup] = [:]
+
+        for (trackedPathId, snapshotId) in latestSnapshotIdsByPath {
+            let groups = await getSubcategoryBreakdown(for: category, snapshotId: snapshotId)
+
+            var growthTotals: [GrowthSubcategory?: Int64] = [:]
+            if let baselineSnapshotId = baselineSnapshotIdsByPath[trackedPathId] {
+                growthTotals = await getSubcategoryGrowthTotals(
+                    trackedPathId: trackedPathId,
+                    snapshotId: baselineSnapshotId,
+                    category: category
+                )
+            }
+
+            if growthTotals.isEmpty,
+               baselineSnapshotIdsByPath[trackedPathId] != nil,
+               let trackedPath = trackedPathsById[trackedPathId] {
+                let journalTotals = await growthJournalService.subcategoryGrowthTotals(
+                    trackedPath: trackedPath,
+                    category: category,
+                    retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+                )
+                if !journalTotals.isEmpty {
+                    growthTotals = journalTotals
+                }
+            }
+
+            for group in groups {
+                let groupGrowthBytes = growthTotals[group.subcategory]
+
+                if var existing = aggregated[group.subcategory] {
+                    existing = SubcategoryGroup(
+                        subcategory: existing.subcategory,
+                        displayName: existing.displayName,
+                        totalBytes: existing.totalBytes + group.totalBytes,
+                        fileCount: existing.fileCount + group.fileCount,
+                        growthBytes: mergeOptionalBytes(existing.growthBytes, groupGrowthBytes),
+                        topFiles: mergedTopFiles(
+                            existing.topFiles,
+                            group.topFiles,
+                            limit: SubcategoryGroup.initialLoadLimit
+                        )
+                    )
+                    aggregated[group.subcategory] = existing
+                } else {
+                    aggregated[group.subcategory] = SubcategoryGroup(
+                        subcategory: group.subcategory,
+                        displayName: group.displayName,
+                        totalBytes: group.totalBytes,
+                        fileCount: group.fileCount,
+                        growthBytes: groupGrowthBytes,
+                        topFiles: group.topFiles
+                    )
+                }
+            }
+        }
+
+        return aggregated.values.sorted {
+            if $0.totalBytes == $1.totalBytes {
+                return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+            }
+            return $0.totalBytes > $1.totalBytes
         }
     }
 
@@ -991,11 +1155,35 @@ actor BaselineService {
         return matches
     }
 
+    private func collectSnapshotEntries(
+        for snapshotIds: [Int64],
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?
+    ) async throws -> [SnapshotEntryWithPath] {
+        var matches: [SnapshotEntryWithPath] = []
+
+        for snapshotId in snapshotIds {
+            let snapshotMatches = try await collectSnapshotEntries(
+                for: snapshotId,
+                category: category,
+                subcategory: subcategory
+            )
+            matches.append(contentsOf: snapshotMatches)
+        }
+
+        return matches
+    }
+
     /// Gets inventory with recent growth stories merged.
     /// - Parameter trackedPath: The tracked path to analyze
     /// - Returns: Array of CategoryInventoryItem with recent growth attached where applicable
     func getInventoryWithTrends(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
         var inventory = await getCategoryInventory(trackedPath: trackedPath)
+        let comparisonSnapshots = try? await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id)
+        guard comparisonSnapshots?.baselineSnapshotId != nil else {
+            return inventory
+        }
+
         let recentStories = await growthJournalService.recentGrowthStories(
             trackedPath: trackedPath,
             retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
@@ -1006,6 +1194,95 @@ actor BaselineService {
         }
 
         return inventory
+    }
+
+    func getInventoryWithTrends(trackedPaths: [TrackedPath]) async -> InventoryAggregationResult {
+        var itemsByCategory: [GrowthCategory: CategoryInventoryItem] = [:]
+        var latestSnapshotIdsByPath: [UUID: Int64] = [:]
+        var baselineSnapshotIdsByPath: [UUID: Int64] = [:]
+        var latestSnapshotDate: Date?
+
+        for trackedPath in trackedPaths {
+            do {
+                let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
+                if let latestSnapshot = snapshots.first, let latestSnapshotId = latestSnapshot.id {
+                    latestSnapshotIdsByPath[trackedPath.id] = latestSnapshotId
+                    if latestSnapshotDate == nil || latestSnapshot.createdAt > latestSnapshotDate! {
+                        latestSnapshotDate = latestSnapshot.createdAt
+                    }
+                }
+
+                if let comparison = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id) {
+                    latestSnapshotIdsByPath[trackedPath.id] = comparison.currentSnapshotId
+                    if let baselineSnapshotId = comparison.baselineSnapshotId {
+                        baselineSnapshotIdsByPath[trackedPath.id] = baselineSnapshotId
+                    }
+                }
+            } catch {
+                print("[BaselineService] Error resolving snapshots for \(trackedPath.displayName): \(error)")
+            }
+
+            let inventory = await getInventoryWithTrends(trackedPath: trackedPath)
+            for item in inventory {
+                if let existing = itemsByCategory[item.category] {
+                    itemsByCategory[item.category] = mergeInventoryItem(existing, with: item)
+                } else {
+                    itemsByCategory[item.category] = item
+                }
+            }
+        }
+
+        let inventory = itemsByCategory.values.sorted {
+            if $0.currentSizeBytes == $1.currentSizeBytes {
+                return $0.category.displayName.localizedStandardCompare($1.category.displayName) == .orderedAscending
+            }
+            return $0.currentSizeBytes > $1.currentSizeBytes
+        }
+
+        return InventoryAggregationResult(
+            inventory: inventory,
+            latestSnapshotIdsByPath: latestSnapshotIdsByPath,
+            baselineSnapshotIdsByPath: baselineSnapshotIdsByPath,
+            latestSnapshotDate: latestSnapshotDate
+        )
+    }
+
+    func getDiskAccounting(
+        trackedPaths: [TrackedPath],
+        primaryTrackedPath: TrackedPath?
+    ) async -> DiskAccountingResult? {
+        let orderedPaths: [TrackedPath]
+        if let primaryTrackedPath {
+            orderedPaths = [primaryTrackedPath] + trackedPaths.filter { $0.id != primaryTrackedPath.id }
+        } else {
+            orderedPaths = trackedPaths
+        }
+
+        var representativeResult: DiskAccountingResult?
+        var explainedDelta: Int64 = 0
+
+        for trackedPath in orderedPaths {
+            do {
+                let result = try await getDiskAccounting(trackedPath: trackedPath)
+                if representativeResult == nil {
+                    representativeResult = result
+                }
+                explainedDelta += result.explainedDelta
+            } catch {
+                continue
+            }
+        }
+
+        guard let representativeResult else { return nil }
+
+        let unexplainedDelta = representativeResult.freeSpaceDelta.map { abs($0 + explainedDelta) }
+        return DiskAccountingResult(
+            freeSpaceDelta: representativeResult.freeSpaceDelta,
+            previousFreeSpace: representativeResult.previousFreeSpace,
+            currentFreeSpace: representativeResult.currentFreeSpace,
+            explainedDelta: explainedDelta,
+            unexplainedDelta: unexplainedDelta
+        )
     }
 
     private func buildInventoryTrend(
@@ -1063,5 +1340,127 @@ actor BaselineService {
             growthStartedAt: growthStartedAt,
             growthSpanDays: max(1, growthSpanDays)
         )
+    }
+
+    private func mergeInventoryItem(
+        _ existing: CategoryInventoryItem,
+        with incoming: CategoryInventoryItem
+    ) -> CategoryInventoryItem {
+        CategoryInventoryItem(
+            category: existing.category,
+            currentSizeBytes: existing.currentSizeBytes + incoming.currentSizeBytes,
+            growthTrend: mergeGrowthTrend(existing.growthTrend, incoming.growthTrend),
+            recentGrowthStory: mergeRecentGrowthStory(existing.recentGrowthStory, incoming.recentGrowthStory)
+        )
+    }
+
+    private func mergeGrowthTrend(
+        _ lhs: CategoryGrowthTrend?,
+        _ rhs: CategoryGrowthTrend?
+    ) -> CategoryGrowthTrend? {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return nil
+        case let (trend?, nil), let (nil, trend?):
+            return trend
+        case let (lhs?, rhs?):
+            let startedAt = min(lhs.growthStartedAt, rhs.growthStartedAt)
+            let growthBytes = lhs.growthBytes + rhs.growthBytes
+            let growthSpanDays = Calendar.current.dateComponents(
+                [.day],
+                from: startedAt,
+                to: Date()
+            ).day ?? max(lhs.growthSpanDays, rhs.growthSpanDays)
+
+            return CategoryGrowthTrend(
+                growthBytes: growthBytes,
+                growthStartedAt: startedAt,
+                growthSpanDays: max(1, growthSpanDays)
+            )
+        }
+    }
+
+    private func mergeRecentGrowthStory(
+        _ lhs: RecentGrowthStory?,
+        _ rhs: RecentGrowthStory?
+    ) -> RecentGrowthStory? {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return nil
+        case let (story?, nil), let (nil, story?):
+            return story
+        case let (lhs?, rhs?):
+            let startedAt = min(lhs.startedAt, rhs.startedAt)
+            let endedAt = max(lhs.endedAt, rhs.endedAt)
+            let duration = max(60, endedAt.timeIntervalSince(startedAt) + 60)
+
+            return RecentGrowthStory(
+                category: lhs.category,
+                subcategory: lhs.subcategory,
+                deltaBytes: lhs.deltaBytes + rhs.deltaBytes,
+                startedAt: startedAt,
+                endedAt: endedAt,
+                duration: duration,
+                displayLabel: formattedDuration(duration)
+            )
+        }
+    }
+
+    private func formattedDuration(_ duration: TimeInterval) -> String {
+        let minute: TimeInterval = 60
+        let hour: TimeInterval = 60 * minute
+        let day: TimeInterval = 24 * hour
+
+        if duration >= day {
+            return "\(max(1, Int(round(duration / day))))d"
+        }
+
+        if duration >= hour {
+            return "\(max(1, Int(round(duration / hour))))h"
+        }
+
+        return "\(max(1, Int(round(duration / minute))))m"
+    }
+
+    private func mergeOptionalBytes(_ lhs: Int64?, _ rhs: Int64?) -> Int64? {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return nil
+        case let (value?, nil), let (nil, value?):
+            return value
+        case let (lhs?, rhs?):
+            return lhs + rhs
+        }
+    }
+
+    private func mergedTopFiles(
+        _ lhs: [GrowthItem],
+        _ rhs: [GrowthItem],
+        limit: Int
+    ) -> [GrowthItem] {
+        var mergedByPath: [String: GrowthItem] = [:]
+
+        for item in lhs + rhs {
+            if let existing = mergedByPath[item.path] {
+                mergedByPath[item.path] = GrowthItem(
+                    path: item.path,
+                    growthBytes: max(existing.growthBytes, item.growthBytes),
+                    currentSizeBytes: max(existing.currentSizeBytes, item.currentSizeBytes),
+                    percentOfParent: max(existing.percentOfParent, item.percentOfParent),
+                    subcategory: item.subcategory ?? existing.subcategory
+                )
+            } else {
+                mergedByPath[item.path] = item
+            }
+        }
+
+        return mergedByPath.values.sorted {
+            if $0.currentSizeBytes == $1.currentSizeBytes {
+                return $0.path.localizedStandardCompare($1.path) == .orderedAscending
+            }
+            return $0.currentSizeBytes > $1.currentSizeBytes
+        }
+        .prefix(limit)
+        .map { $0 }
     }
 }

@@ -108,6 +108,14 @@ final class SettingsStore {
         availableCommonPaths.filter { selectedCommonPathIDs.contains($0.id.uuidString) }
     }
 
+    var recommendedCommonPaths: [TrackedPath] {
+        availableCommonPaths.filter(\.isRecommendedExtra)
+    }
+
+    var optionalCommonPaths: [TrackedPath] {
+        availableCommonPaths.filter { !$0.isRecommendedExtra }
+    }
+
     private var availableCommonPathIDStrings: Set<String> {
         Set(availableCommonPaths.map { $0.id.uuidString })
     }
@@ -145,7 +153,7 @@ final class SettingsStore {
     
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let defaultBasePath = home.appendingPathComponent("dev", isDirectory: true).path
+        let defaultBasePath = home.path
 
         // Load tracked paths
         if let data = UserDefaults.standard.data(forKey: Keys.trackedPaths),
@@ -239,6 +247,28 @@ final class SettingsStore {
             disabledPathIDs.remove(path.id.uuidString)
         }
 
+        markScopeChanged()
+    }
+
+    func applyRecommendedExtras(for baseURL: URL) {
+        let standardizedBase = baseURL.standardizedFileURL.path
+        var updatedSelection = selectedCommonPathIDs
+
+        for path in recommendedCommonPaths {
+            let candidate = path.url.standardizedFileURL.path
+            let isCovered = candidate == standardizedBase
+                || candidate.hasPrefix(standardizedBase == "/" ? "/" : standardizedBase + "/")
+
+            if isCovered {
+                updatedSelection.remove(path.id.uuidString)
+                disabledPathIDs.remove(path.id.uuidString)
+            } else {
+                updatedSelection.insert(path.id.uuidString)
+            }
+        }
+
+        guard updatedSelection != selectedCommonPathIDs else { return }
+        selectedCommonPathIDs = updatedSelection
         markScopeChanged()
     }
 

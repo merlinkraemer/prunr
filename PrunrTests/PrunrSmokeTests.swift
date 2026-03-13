@@ -211,6 +211,97 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testAggregatedInventoryMergesTotalsAcrossTrackedPaths() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let secondTrackedPathId = UUID()
+
+            let firstSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let firstSnapshotId = try XCTUnwrap(firstSnapshot.id)
+            try await DatabaseManager.shared.replaceCategorySnapshots(
+                snapshotId: firstSnapshotId,
+                totals: [
+                    .applications: 100 * 1024 * 1024,
+                    .developer: 40 * 1024 * 1024
+                ]
+            )
+
+            let secondSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: secondTrackedPathId)
+            let secondSnapshotId = try XCTUnwrap(secondSnapshot.id)
+            try await DatabaseManager.shared.replaceCategorySnapshots(
+                snapshotId: secondSnapshotId,
+                totals: [
+                    .applications: 25 * 1024 * 1024,
+                    .downloads: 10 * 1024 * 1024
+                ]
+            )
+
+            let aggregation = await BaselineService.shared.getInventoryWithTrends(
+                trackedPaths: [
+                    TrackedPath(id: trackedPathId, url: URL(fileURLWithPath: "/Users/tester"), displayName: "tester"),
+                    TrackedPath(id: secondTrackedPathId, url: URL(fileURLWithPath: "/Applications"), displayName: "Applications")
+                ]
+            )
+
+            XCTAssertEqual(
+                aggregation.inventory.first(where: { $0.category == .applications })?.currentSizeBytes,
+                125 * 1024 * 1024
+            )
+            XCTAssertEqual(
+                aggregation.inventory.first(where: { $0.category == .developer })?.currentSizeBytes,
+                40 * 1024 * 1024
+            )
+            XCTAssertEqual(
+                aggregation.inventory.first(where: { $0.category == .downloads })?.currentSizeBytes,
+                10 * 1024 * 1024
+            )
+            XCTAssertEqual(aggregation.latestSnapshotIdsByPath.count, 2)
+        }
+    }
+
+    func testAggregatedSubcategoryBreakdownMergesTrackedPaths() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let secondTrackedPathId = UUID()
+
+            let firstSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let firstSnapshotId = try XCTUnwrap(firstSnapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: firstSnapshotId,
+                entries: [
+                    ScanResult(path: "/Users/tester/dev/app/node_modules/react/index.js", sizeBytes: 4_096),
+                    ScanResult(path: "/Users/tester/dev/app/node_modules/vue/index.js", sizeBytes: 2_048)
+                ]
+            )
+
+            let secondSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: secondTrackedPathId)
+            let secondSnapshotId = try XCTUnwrap(secondSnapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: secondSnapshotId,
+                entries: [
+                    ScanResult(path: "/Applications/MyApp.app/Contents/Resources/node_modules/pkg-a.js", sizeBytes: 1_024),
+                    ScanResult(path: "/Applications/MyApp.app/Contents/Resources/node_modules/pkg-b.js", sizeBytes: 512)
+                ]
+            )
+
+            let groups = await BaselineService.shared.getSubcategoryBreakdown(
+                for: .developer,
+                trackedPathsById: [
+                    trackedPathId: TrackedPath(id: trackedPathId, url: URL(fileURLWithPath: "/Users/tester"), displayName: "tester"),
+                    secondTrackedPathId: TrackedPath(id: secondTrackedPathId, url: URL(fileURLWithPath: "/Applications"), displayName: "Applications")
+                ],
+                latestSnapshotIdsByPath: [
+                    trackedPathId: firstSnapshotId,
+                    secondTrackedPathId: secondSnapshotId
+                ],
+                baselineSnapshotIdsByPath: [:]
+            )
+
+            let nodeModules = try XCTUnwrap(groups.first(where: { $0.subcategory == .nodeModules }))
+            XCTAssertEqual(nodeModules.fileCount, 4)
+            XCTAssertEqual(nodeModules.totalBytes, 7_680)
+            XCTAssertEqual(nodeModules.topFiles.count, 4)
+        }
+    }
+
     func testInventoryIgnoresHistoricalTrendFallbackWithoutRecentGrowthStory() async throws {
         try await withTemporaryDatabase { trackedPathId, initialSnapshotId in
             try await DatabaseManager.shared.replaceCategorySnapshots(
@@ -236,6 +327,150 @@ final class PrunrSmokeTests: XCTestCase {
 
             XCTAssertNil(developer.recentGrowthStory)
             XCTAssertNil(developer.growthTrend)
+        }
+    }
+
+    func testAggregatedInventoryCombinesMultipleTrackedPaths() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let downloadsPath = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Downloads/archive.zip")
+                .path
+
+            let pathAId = UUID()
+            let snapshotA = try await DatabaseManager.shared.createSnapshot(trackedPathId: pathAId)
+            let snapshotAId = try XCTUnwrap(snapshotA.id)
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotAId,
+                entries: [
+                    ScanResult(path: "/Applications/Safari.app", sizeBytes: 200),
+                    ScanResult(path: downloadsPath, sizeBytes: 50)
+                ]
+            )
+
+            let pathBId = UUID()
+            let snapshotB = try await DatabaseManager.shared.createSnapshot(trackedPathId: pathBId)
+            let snapshotBId = try XCTUnwrap(snapshotB.id)
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotBId,
+                entries: [
+                    ScanResult(path: "/Applications/Xcode.app", sizeBytes: 25),
+                    ScanResult(path: "/Users/tester/dev/app/node_modules/react/index.js", sizeBytes: 75)
+                ]
+            )
+
+            let result = await BaselineService.shared.getInventoryWithTrends(
+                trackedPaths: [
+                    TrackedPath(id: pathAId, url: URL(fileURLWithPath: "/"), displayName: "A"),
+                    TrackedPath(id: pathBId, url: URL(fileURLWithPath: "/opt"), displayName: "B")
+                ]
+            )
+
+            XCTAssertEqual(result.latestSnapshotIdsByPath.count, 2)
+            XCTAssertEqual(
+                result.inventory.first(where: { $0.category == .applications })?.currentSizeBytes,
+                225
+            )
+            XCTAssertEqual(
+                result.inventory.first(where: { $0.category == .downloads })?.currentSizeBytes,
+                50
+            )
+            XCTAssertEqual(
+                result.inventory.first(where: { $0.category == .developer })?.currentSizeBytes,
+                75
+            )
+        }
+    }
+
+    func testAggregatedSubcategoryBreakdownCombinesMultipleTrackedPaths() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let pathAId = UUID()
+            let snapshotA = try await DatabaseManager.shared.createSnapshot(trackedPathId: pathAId)
+            let snapshotAId = try XCTUnwrap(snapshotA.id)
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotAId,
+                entries: [
+                    ScanResult(path: "/Users/tester/dev/app-a/node_modules/react/index.js", sizeBytes: 100),
+                    ScanResult(path: "/Users/tester/dev/app-a/node_modules/vue/index.js", sizeBytes: 200)
+                ]
+            )
+
+            let pathBId = UUID()
+            let snapshotB = try await DatabaseManager.shared.createSnapshot(trackedPathId: pathBId)
+            let snapshotBId = try XCTUnwrap(snapshotB.id)
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotBId,
+                entries: [
+                    ScanResult(path: "/Users/tester/dev/app-b/node_modules/svelte/index.js", sizeBytes: 300)
+                ]
+            )
+
+            let groups = await BaselineService.shared.getSubcategoryBreakdown(
+                for: .developer,
+                trackedPathsById: [
+                    pathAId: TrackedPath(id: pathAId, url: URL(fileURLWithPath: "/Users/tester/dev/app-a"), displayName: "A"),
+                    pathBId: TrackedPath(id: pathBId, url: URL(fileURLWithPath: "/Users/tester/dev/app-b"), displayName: "B")
+                ],
+                latestSnapshotIdsByPath: [
+                    pathAId: snapshotAId,
+                    pathBId: snapshotBId
+                ],
+                baselineSnapshotIdsByPath: [:]
+            )
+
+            let nodeModules = try XCTUnwrap(groups.first(where: { $0.subcategory == .nodeModules }))
+            XCTAssertEqual(nodeModules.totalBytes, 600)
+            XCTAssertEqual(nodeModules.fileCount, 3)
+            XCTAssertEqual(nodeModules.topFiles.first?.path, "/Users/tester/dev/app-b/node_modules/svelte/index.js")
+        }
+    }
+
+    func testInventoryWithTrendsSkipsJournalFallbackWithoutComparableBaseline() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let oldSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let oldSnapshotId = try XCTUnwrap(oldSnapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: oldSnapshotId,
+                entries: (0..<20).map { index in
+                    ScanResult(
+                        path: "/tmp/project/node_modules/old-\(index).js",
+                        sizeBytes: Int64(index + 1) * 1_024
+                    )
+                }
+            )
+
+            let currentSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let currentSnapshotId = try XCTUnwrap(currentSnapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: currentSnapshotId,
+                entries: (0..<200).map { index in
+                    ScanResult(
+                        path: "/tmp/project/node_modules/current-\(index).js",
+                        sizeBytes: Int64(index + 1) * 2_048
+                    )
+                }
+            )
+
+            let trackedPath = TrackedPath(
+                id: trackedPathId,
+                url: URL(fileURLWithPath: "/Users/tester", isDirectory: true),
+                displayName: "tester"
+            )
+
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [
+                    DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules): 300 * 1024 * 1024
+                ]
+            )
+
+            let comparison = try await BaselineService.shared.resolveGrowthComparisonSnapshots(
+                trackedPathId: trackedPathId
+            )
+            XCTAssertNil(comparison?.baselineSnapshotId)
+
+            let inventory = await BaselineService.shared.getInventoryWithTrends(trackedPath: trackedPath)
+            let developer = try XCTUnwrap(inventory.first(where: { $0.category == .developer }))
+            XCTAssertNil(developer.recentGrowthStory)
         }
     }
 
