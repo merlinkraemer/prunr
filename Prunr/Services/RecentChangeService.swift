@@ -116,6 +116,10 @@ actor RecentChangeService {
         return results
     }
 
+    /// Maximum number of individual refresh targets before coalescing to a single tracked-root rescan.
+    /// Prevents unbounded incremental work from bulk operations (e.g., unpacking archives, npm install).
+    private static let maxRefreshTargets = 500
+
     private func refreshTargets(from changedPaths: Set<URL>, trackedPath: TrackedPath) -> [RefreshTarget] {
         let trackedRoot = trackedPath.url.standardizedFileURL
         let fileManager = FileManager.default
@@ -153,15 +157,23 @@ actor RecentChangeService {
                 && !coalescedRemovals.contains(where: { isDescendantOrSame(result.path, ancestorPath: $0) })
         }
 
-        return coalescedSubtreeRoots.map {
-            .subtree(URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL)
+        let targets = coalescedSubtreeRoots.map {
+            RefreshTarget.subtree(URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL)
         } + coalescedRemovals.map {
-            .removal($0)
+            RefreshTarget.removal($0)
         } + filteredFiles.sorted {
             $0.path < $1.path
         }.map {
-            .file($0)
+            RefreshTarget.file($0)
         }
+
+        // If too many targets, coalesce to a single tracked-root rescan to avoid saturating I/O
+        if targets.count > Self.maxRefreshTargets {
+            print("[RecentChangeService] \(targets.count) targets exceed cap (\(Self.maxRefreshTargets)) — coalescing to tracked root rescan")
+            return [.subtree(trackedRoot)]
+        }
+
+        return targets
     }
 
     private func hasMoreSpecificChange(

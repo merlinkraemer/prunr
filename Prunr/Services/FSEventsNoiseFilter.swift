@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Filters out known-noisy FSEvents paths that don't represent meaningful user-visible storage changes.
 /// This runs on every FSEvent so all checks use fast prefix/suffix matching.
@@ -56,8 +57,8 @@ enum FSEventsNoiseFilter {
             }
         }
 
-        // Check user-configured scan ignores
-        let customIgnores = _cachedCustomIgnores
+        // Check user-configured scan ignores (thread-safe access via lock)
+        let customIgnores = _cachedCustomIgnoresLock.withLock { $0 }
         if !customIgnores.isEmpty && customIgnores.contains(lastComponent) {
             return true
         }
@@ -65,17 +66,16 @@ enum FSEventsNoiseFilter {
         return false
     }
 
-    // MARK: - Cached custom ignores (refreshed lazily)
+    // MARK: - Cached custom ignores (thread-safe)
 
-    /// Cached copy of user-configured ignore names, refreshed on main actor access.
+    /// Lock-protected copy of user-configured ignore names.
     /// This avoids hitting MainActor-isolated SettingsStore on every event.
-    private static var _cachedCustomIgnores: Set<String> = []
-    private static var _lastCacheRefresh: Date = .distantPast
+    private static let _cachedCustomIgnoresLock = OSAllocatedUnfairLock(initialState: Set<String>())
 
     /// Call from the main actor periodically to refresh the cached custom ignores.
     @MainActor
     static func refreshCustomIgnoresCache() {
-        _cachedCustomIgnores = SettingsStore.shared.allScanIgnoreNames
-        _lastCacheRefresh = Date()
+        let newValue = SettingsStore.shared.allScanIgnoreNames
+        _cachedCustomIgnoresLock.withLock { $0 = newValue }
     }
 }

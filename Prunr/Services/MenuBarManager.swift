@@ -2189,7 +2189,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func scheduleRecentChangeRefresh(_ changedPaths: Set<URL>) {
         guard !changedPaths.isEmpty else { return }
-        guard primaryTrackedPath() != nil else { return }
+        guard !SettingsStore.shared.enabledTrackedPaths.isEmpty else { return }
 
         pendingRecentChangePaths.formUnion(changedPaths.map(\.standardizedFileURL))
         hasPendingRecentChanges = true
@@ -2205,7 +2205,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
             return
         }
-        guard let trackedPath = primaryTrackedPath() else {
+
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        guard !enabledPaths.isEmpty else {
             pendingRecentChangePaths.removeAll()
             hasPendingRecentChanges = false
             return
@@ -2219,20 +2221,51 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             hasPendingRecentChanges = !pendingRecentChangePaths.isEmpty
         }
 
-        let result = await recentChangeService.refreshChangedPaths(changedPaths, trackedPath: trackedPath)
-        switch result {
-        case .updated(let deltas):
+        // Route each changed path to the tracked path it falls under
+        var pathsByTrackedPath: [UUID: (trackedPath: TrackedPath, urls: Set<URL>)] = [:]
+        for url in changedPaths {
+            let urlPath = url.standardizedFileURL.path
+            // Find the most specific (longest) tracked root that contains this path
+            var bestMatch: TrackedPath?
+            var bestLength = 0
+            for tp in enabledPaths {
+                let root = tp.url.standardizedFileURL.path
+                let rootWithSlash = root == "/" ? "/" : root + "/"
+                if urlPath == root || urlPath.hasPrefix(rootWithSlash) {
+                    if root.count > bestLength {
+                        bestLength = root.count
+                        bestMatch = tp
+                    }
+                }
+            }
+            if let match = bestMatch {
+                pathsByTrackedPath[match.id, default: (trackedPath: match, urls: [])].urls.insert(url)
+            }
+        }
+
+        var allDeltas: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+        var hadUpdate = false
+
+        for (_, entry) in pathsByTrackedPath {
+            let result = await recentChangeService.refreshChangedPaths(entry.urls, trackedPath: entry.trackedPath)
+            switch result {
+            case .updated(let deltas):
+                hadUpdate = true
+                for (key, delta) in deltas where delta != 0 {
+                    allDeltas[key, default: 0] += delta
+                }
+            case .needsFullScan:
+                hadUpdate = true
+            case .noChanges:
+                break
+            }
+        }
+
+        if hadUpdate {
             lastDetectedChangeAt = Date()
-            applyIncrementalDeltas(deltas)
-        case .needsFullScan:
-            // Shouldn't happen (overflow guard removed), but fall back to full reload
-            lastDetectedChangeAt = Date()
-            await loadInventoryFromLatestSnapshot(
-                refreshedAt: Date(),
-                invalidateSubcategoryCache: true
-            )
-        case .noChanges:
-            break
+            if !allDeltas.isEmpty {
+                applyIncrementalDeltas(allDeltas)
+            }
         }
     }
 
@@ -2247,18 +2280,18 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             categoryDeltas[key.category, default: 0] += delta
         }
 
-        // Apply to growing categories
+        // Apply to growing categories (clamp to zero — deltas-only mode can overshoot)
         for i in growingCategories.indices {
             if let delta = categoryDeltas[growingCategories[i].category] {
-                growingCategories[i].currentSizeBytes += delta
+                growingCategories[i].currentSizeBytes = max(0, growingCategories[i].currentSizeBytes + delta)
             }
         }
 
-        // Apply to stable categories
+        // Apply to stable categories (clamp to zero)
         var newStableTotal: Int64 = 0
         for i in stableCategories.indices {
             if let delta = categoryDeltas[stableCategories[i].category] {
-                stableCategories[i].currentSizeBytes += delta
+                stableCategories[i].currentSizeBytes = max(0, stableCategories[i].currentSizeBytes + delta)
             }
             newStableTotal += stableCategories[i].currentSizeBytes
         }
