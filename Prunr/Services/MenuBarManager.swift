@@ -215,6 +215,53 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let displayPath = displayPath(for: progress.currentPath, rootPath: rootPath)
         scanCurrentPathDisplay = displayPath
         scanProgress = "Scanning \(displayPath)"
+
+        // Live category fill-in: merge partial totals from this path into the aggregate.
+        // Only applies when the progress update includes a category snapshot (~every 2s).
+        if let partialTotals = progress.categoryTotals, !partialTotals.isEmpty {
+            applyPartialCategoryTotals(from: trackedPath, totals: partialTotals)
+        }
+    }
+
+    /// Merges partial category totals arriving from an in-progress scan into `stableCategories`
+    /// so the user sees categories appearing and growing live during the scan.
+    ///
+    /// - Parameters:
+    ///   - trackedPath: The path whose scan produced these partial totals.
+    ///   - totals: Partial `[GrowthCategory: Int64]` accumulated so far by ScanService.
+    private func applyPartialCategoryTotals(from trackedPath: TrackedPath, totals: [GrowthCategory: Int64]) {
+        // Merge the new totals into the aggregate (replace any existing entry from this path
+        // since these totals are cumulative within the scan, not incremental per callback).
+        // For multi-path parallel scans we keep a running merge across all paths;
+        // the simplest correct approach is to just overwrite the values for each received key
+        // since the totals from a single path are always monotonically increasing.
+        for (category, bytes) in totals {
+            partialScanCategoryTotals[category, default: 0] = max(
+                partialScanCategoryTotals[category, default: 0],
+                bytes
+            )
+        }
+
+        // Convert partial totals to CategoryInventoryItem (no growth trend during scan)
+        // and push to stableCategories so views see them live.
+        let liveCategories = partialScanCategoryTotals
+            .filter { $0.value > 0 }
+            .map { category, bytes in
+                CategoryInventoryItem(
+                    category: category,
+                    currentSizeBytes: bytes,
+                    growthTrend: nil,
+                    recentGrowthStory: nil
+                )
+            }
+            .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+
+        // Only update if there's actual data — avoids a flash of empty categories.
+        guard !liveCategories.isEmpty else { return }
+
+        // During scan, show partial data in stableCategories (growing categories are unknown yet)
+        stableCategories = liveCategories
+        stableTotalBytes = liveCategories.reduce(0) { $0 + $1.currentSizeBytes }
     }
 
     private func preferredTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
@@ -286,6 +333,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var filesScanned: Int = 0
     var scanEstimatedTotalFiles: Int = 0
     var hasReliableScanProgressEstimate = false
+
+    /// Partial category totals accumulated across all currently-scanning paths.
+    /// Updated live every ~2 seconds during scan so the UI can show categories filling in.
+    /// Reset to empty when a scan starts or finishes.
+    private var partialScanCategoryTotals: [GrowthCategory: Int64] = [:]
+
     var isAnalyzingChanges: Bool = false {
         didSet { updateMenuBarActivityEffect() }
     }
@@ -604,23 +657,48 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         for trackedPaths: [TrackedPath],
         progressCallback: @escaping (TrackedPath, ScanService.ScanProgress) -> Void
     ) async throws -> [UUID: Snapshot] {
-        var snapshotsByPath: [UUID: Snapshot] = [:]
+        // Reset any leftover cancellation state from a previous scan before starting.
+        await ScanService.shared.resetCancellationForNewBatch()
 
-        for trackedPath in trackedPaths {
-            scanProgress = "Scanning \(trackedPath.displayName)..."
-            scanCurrentPath = trackedPath.url.path
-            scanCurrentPathDisplay = "."
-
-            let snapshot = try await baselineService.createBaseline(
-                trackedPath: trackedPath,
-                progress: { progress in
-                    progressCallback(trackedPath, progress)
-                }
-            )
-            snapshotsByPath[trackedPath.id] = snapshot
+        // `effectiveTrackedPaths` already deduplicates nested paths, so all paths in
+        // `trackedPaths` are independent (no path is a subpath of another). Each gets
+        // its own snapshot, so there are no DB write conflicts — safe to scan in parallel.
+        guard trackedPaths.count > 1 else {
+            // Single path: run inline (no task group overhead)
+            var snapshotsByPath: [UUID: Snapshot] = [:]
+            if let trackedPath = trackedPaths.first {
+                scanProgress = "Scanning \(trackedPath.displayName)..."
+                scanCurrentPath = trackedPath.url.path
+                scanCurrentPathDisplay = "."
+                let snapshot = try await baselineService.createBaseline(
+                    trackedPath: trackedPath,
+                    progress: { progress in progressCallback(trackedPath, progress) }
+                )
+                snapshotsByPath[trackedPath.id] = snapshot
+            }
+            return snapshotsByPath
         }
 
-        return snapshotsByPath
+        // Multiple independent paths: scan concurrently via TaskGroup.
+        // Any thrown error cancels the group (and all remaining scans) immediately.
+        return try await withThrowingTaskGroup(of: (UUID, Snapshot).self) { group in
+            for trackedPath in trackedPaths {
+                let capturedPath = trackedPath
+                group.addTask {
+                    let snapshot = try await self.baselineService.createBaseline(
+                        trackedPath: capturedPath,
+                        progress: { progress in progressCallback(capturedPath, progress) }
+                    )
+                    return (capturedPath.id, snapshot)
+                }
+            }
+
+            var snapshotsByPath: [UUID: Snapshot] = [:]
+            for try await (pathId, snapshot) in group {
+                snapshotsByPath[pathId] = snapshot
+            }
+            return snapshotsByPath
+        }
     }
 
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
@@ -657,6 +735,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanProgressPercentage = 0.03
         scanEstimatedTotalFiles = 0
         hasReliableScanProgressEstimate = false
+        partialScanCategoryTotals = [:] // Reset live-fill data for this scan session
 
         // Record scan start time for minimum display duration
         let startTime = Date()
@@ -810,6 +889,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         filesScanned = 0
         isAnalyzingChanges = false
         scanStartTime = nil
+        partialScanCategoryTotals = [:] // Clear live-fill data after scan completes
         if completedSuccessfully {
             lastAutomaticScanAt = completedSnapshotsByPath.values.map(\.createdAt).max() ?? Date()
         }
