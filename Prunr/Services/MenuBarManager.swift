@@ -327,6 +327,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
     var errorMessage: String?
     var noBaseline = false
+
+    /// True when FSEvents is active and tracking changes but no full baseline snapshot exists yet.
+    /// In this mode, category sizes represent accumulated deltas since tracking started,
+    /// not absolute disk usage.
+    var isDeltasOnlyMode: Bool {
+        guard noBaseline else { return false }
+        let settings = SettingsStore.shared
+        return !settings.enabledTrackedPaths.isEmpty && settings.trackingStartedAt != nil
+    }
+
     var scanProgress: String = ""
     var scanCurrentPath: String = ""
     var scanCurrentPathDisplay: String = ""
@@ -804,6 +814,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             scanCurrentPathDisplay = ""
             completedSuccessfully = true
 
+            // If this scan completes while in deltas-only mode, clear the marker — we now have
+            // a full baseline so isDeltasOnlyMode becomes false automatically.
+            if SettingsStore.shared.trackingStartedAt != nil {
+                SettingsStore.shared.endDeltasOnlyMode()
+            }
+
             let snapshotTimestamp = aggregation.latestSnapshotDate ?? Date()
             if !growingCategories.isEmpty {
                 lastDetectedChangeAt = snapshotTimestamp
@@ -958,6 +974,89 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isAutoScanning = true
         await loadInventory(isAutomatic: true)
         isAutoScanning = false
+        lastReconciliationAt = Date()
+    }
+
+    /// Starts deltas-only tracking mode: enables FSEvents immediately without running a full scan.
+    /// Categories will appear as file changes are detected. A background reconciliation scan
+    /// fills in absolute sizes automatically after a delay.
+    ///
+    /// Call this from the onboarding "Start tracking" flow after the user has selected a folder.
+    func startDeltasOnlyTracking() {
+        let settings = SettingsStore.shared
+        settings.beginDeltasOnlyMode()
+
+        // noBaseline stays true — FSEvents feeds incremental data without a snapshot baseline.
+        noBaseline = true
+
+        // Ensure the file watcher is running immediately so we capture changes right away.
+        configureFileWatcherIfNeeded()
+
+        // Schedule a background reconciliation scan after 10 minutes to build the full picture.
+        scheduleDeltasOnlyUpgrade()
+    }
+
+    /// Schedules a background full scan to upgrade from deltas-only to full inventory mode.
+    /// Fires 10 minutes after initial tracking starts (or immediately on next app launch
+    /// if 10 minutes have already elapsed since `trackingStartedAt`).
+    func scheduleDeltasOnlyUpgrade() {
+        let settings = SettingsStore.shared
+        guard let startedAt = settings.trackingStartedAt else { return }
+
+        let upgradeDelay: TimeInterval = 10 * 60 // 10 minutes
+        let elapsed = Date().timeIntervalSince(startedAt)
+        let remaining = max(0, upgradeDelay - elapsed)
+
+        reconciliationTask?.cancel()
+        reconciliationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            if remaining > 0 {
+                try? await Task.sleep(for: .seconds(remaining))
+            }
+            guard !Task.isCancelled else { return }
+            guard self.isDeltasOnlyMode else { return }
+            await self.upgradeDeltasOnlyToFullInventory()
+        }
+    }
+
+    /// Runs a silent full scan to upgrade from deltas-only mode to full inventory.
+    /// When complete, clears the trackingStartedAt marker so isDeltasOnlyMode becomes false
+    /// and the UI seamlessly switches to showing absolute category sizes.
+    private func upgradeDeltasOnlyToFullInventory() async {
+        guard isDeltasOnlyMode else { return }
+        guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else {
+            // Retry after a short delay
+            reconciliationTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled else { return }
+                await self?.upgradeDeltasOnlyToFullInventory()
+            }
+            return
+        }
+
+        isReconciling = true
+        defer {
+            isReconciling = false
+            reconciliationTask = nil
+        }
+
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        guard !enabledPaths.isEmpty else { return }
+
+        do {
+            _ = try await createBaselines(for: enabledPaths) { _, _ in }
+        } catch {
+            return
+        }
+
+        guard !Task.isCancelled else { return }
+
+        // Clear deltas-only mode — full baseline now exists
+        SettingsStore.shared.endDeltasOnlyMode()
+        noBaseline = false
+
+        // Reload inventory from the new snapshot (no user-visible loading state)
+        await loadInventoryFromLatestSnapshot(refreshedAt: Date())
         lastReconciliationAt = Date()
     }
 
@@ -1368,6 +1467,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         noBaseline = aggregation.latestSnapshotIdsByPath.isEmpty
         lastAutomaticScanAt = aggregation.latestSnapshotDate
         updateMonitoredPathName()
+
+        // If we're in deltas-only mode (trackingStartedAt set but no snapshot yet),
+        // resume the background upgrade schedule so it fires at the right time.
+        if isDeltasOnlyMode {
+            configureFileWatcherIfNeeded()
+            scheduleDeltasOnlyUpgrade()
+        }
     }
 
     private func applyInventory(
