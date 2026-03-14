@@ -123,7 +123,10 @@ actor BaselineService {
 
         print("[BaselineService] Created snapshot ID: \(snapshotId)")
 
-        // Record deltas to growth journal if we have a previous snapshot
+        // Record deltas to growth journal only when a previous snapshot exists.
+        // On first scan (previousSnapshotId == nil) this block is skipped entirely —
+        // no calculateDeltas call and no journal recording, so first-scan cost is
+        // scan + insert only, with no expensive diff computation.
         if let previousSnapshotId {
             let deltas = try await db.calculateDeltas(beforeId: previousSnapshotId, afterId: snapshotId)
             if !deltas.isEmpty {
