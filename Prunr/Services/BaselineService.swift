@@ -82,6 +82,10 @@ actor BaselineService {
 
         if previousSnapshotId == nil {
             try await db.clearRealtimeData(trackedPathId: trackedPath.id)
+        } else {
+            // Pre-clear working-set entries so the inline upserts during the scan
+            // don't accumulate stale rows from the previous scan's working set.
+            try await db.clearWorkingSetEntries(trackedPathId: trackedPath.id)
         }
 
         // Set UI state
@@ -95,12 +99,16 @@ actor BaselineService {
             }
         }
 
-        // Run full scan
+        // Run full scan.
+        // Pass alsoWriteWorkingSet=true so working-set rows are written inline during
+        // the scan transaction — this eliminates the separate rebuildWorkingSet pass
+        // that previously copied 2.2M rows after the scan completed.
         print("[BaselineService] Starting scan...")
         let snapshot = try await scanService.scan(
             path: trackedPath.url.path,
             trackedPathId: trackedPath.id,
             ignoredNames: ignoredNames,
+            alsoWriteWorkingSet: true,
             progress: progress
         )
 
@@ -114,12 +122,6 @@ actor BaselineService {
         }
 
         print("[BaselineService] Created snapshot ID: \(snapshotId)")
-
-        try await db.rebuildWorkingSet(
-            from: snapshotId,
-            trackedPathId: trackedPath.id,
-            updatedAt: snapshot.createdAt
-        )
 
         // Record deltas to growth journal if we have a previous snapshot
         if let previousSnapshotId {

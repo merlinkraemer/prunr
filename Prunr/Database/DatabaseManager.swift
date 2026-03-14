@@ -486,29 +486,50 @@ extension DatabaseManager {
         }
     }
 
-    /// Adds multiple entries to a snapshot using batch inserts
+    /// Adds multiple entries to a snapshot using multi-row batch inserts
     /// - Parameters:
     ///   - snapshotId: The snapshot ID to add entries to
     ///   - entries: Array of ScanResult values to insert
     ///
-    /// Optimized to use a single transaction for all batches for better performance
-    /// Uses batch size of 5000 (increased from 2000 for better throughput)
+    /// Uses multi-row VALUES inserts in chunks of 500 rows (much fewer SQL round-trips
+    /// than per-row prepared statement execution).
     func addEntries(to snapshotId: Int64, entries: [ScanResult]) async throws {
+        try await addEntriesCore(to: snapshotId, entries: entries, trackedPathId: nil, updatedAt: nil)
+    }
+
+    /// Internal implementation that optionally also writes to workingSetEntry in the same transaction.
+    /// When trackedPathId + updatedAt are provided the caller must NOT call rebuildWorkingSet separately.
+    func addEntriesWithWorkingSet(
+        to snapshotId: Int64,
+        entries: [ScanResult],
+        trackedPathId: UUID,
+        updatedAt: Date
+    ) async throws {
+        try await addEntriesCore(to: snapshotId, entries: entries, trackedPathId: trackedPathId, updatedAt: updatedAt)
+    }
+
+    private func addEntriesCore(
+        to snapshotId: Int64,
+        entries: [ScanResult],
+        trackedPathId: UUID?,
+        updatedAt: Date?
+    ) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
-        let batchSize = 5000 // Increased from 2000 for better throughput
+        // Inner SQL chunk: 500 rows per multi-row VALUES statement.
+        // Each snapshotEntry row has 3 params (500×3=1500) and workingSetEntry has 4 (500×4=2000),
+        // both well within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER default of 32766 on macOS.
+        let sqlChunkSize = 500
+
+        let trackedPathIdString = trackedPathId?.uuidString
 
         // Use a single transaction for all batches (much faster)
         // Note: We can't call Task.yield() inside the database write block
         try await dbPool.write { db in
-            let statement = try db.makeStatement(
-                sql: "INSERT INTO snapshotEntry (snapshotId, pathId, sizeBytes) VALUES (?, ?, ?)"
-            )
-
-            for startIndex in stride(from: 0, to: entries.count, by: batchSize) {
-                let endIndex = min(startIndex + batchSize, entries.count)
+            for startIndex in stride(from: 0, to: entries.count, by: sqlChunkSize) {
+                let endIndex = min(startIndex + sqlChunkSize, entries.count)
                 let batch = entries[startIndex..<endIndex]
 
                 let normalizedBatch = batch.map {
@@ -531,11 +552,47 @@ extension DatabaseManager {
                     db: db
                 )
 
+                // Build (snapshotId, pathId, sizeBytes) tuples for multi-row INSERT
+                var snapshotRows: [(pathId: Int64, sizeBytes: Int64)] = []
+                snapshotRows.reserveCapacity(normalizedBatch.count)
                 for scanResult in normalizedBatch {
                     guard let pathId = pathIdByPath[scanResult.path] else {
                         throw DatabaseError.pathLookupFailed(scanResult.path)
                     }
-                    try statement.execute(arguments: [snapshotId, pathId, scanResult.sizeBytes])
+                    snapshotRows.append((pathId: pathId, sizeBytes: scanResult.sizeBytes))
+                }
+
+                // Multi-row INSERT into snapshotEntry
+                let valuePlaceholders = Array(repeating: "(?,?,?)", count: snapshotRows.count).joined(separator: ",")
+                let insertSQL = "INSERT INTO snapshotEntry (snapshotId, pathId, sizeBytes) VALUES \(valuePlaceholders)"
+                var args: [DatabaseValueConvertible?] = []
+                args.reserveCapacity(snapshotRows.count * 3)
+                for row in snapshotRows {
+                    args.append(snapshotId)
+                    args.append(row.pathId)
+                    args.append(row.sizeBytes)
+                }
+                try db.execute(sql: insertSQL, arguments: StatementArguments(args))
+
+                // Optionally also write to workingSetEntry in the same transaction
+                if let trackedPathIdString, let updatedAt {
+                    let wsPlaceholders = Array(repeating: "(?,?,?,?)", count: snapshotRows.count).joined(separator: ",")
+                    let wsSQL = """
+                        INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
+                        VALUES \(wsPlaceholders)
+                        ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
+                            sizeBytes = excluded.sizeBytes,
+                            updatedAt = excluded.updatedAt
+                        """
+                    var wsArgs: [DatabaseValueConvertible?] = []
+                    wsArgs.reserveCapacity(snapshotRows.count * 4)
+                    for row in snapshotRows {
+                        wsArgs.append(trackedPathIdString)
+                        wsArgs.append(row.pathId)
+                        wsArgs.append(row.sizeBytes)
+                        wsArgs.append(updatedAt)
+                    }
+                    try db.execute(sql: wsSQL, arguments: StatementArguments(wsArgs))
                 }
             }
         }
@@ -1048,6 +1105,64 @@ extension DatabaseManager {
         }
     }
 
+    /// Clears working-set entries for a tracked path in preparation for an inline rebuild.
+    ///
+    /// Must be called before the first `addEntriesWithWorkingSet` batch so subsequent
+    /// ON CONFLICT upserts don't accumulate stale rows from a previous scan.
+    func clearWorkingSetEntries(trackedPathId: UUID) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+        try await dbPool.write { db in
+            try db.execute(
+                sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
+                arguments: [trackedPathIdString]
+            )
+        }
+    }
+
+    /// Replaces all working-set category totals for a tracked path using the provided in-memory totals.
+    ///
+    /// Used by the inline working-set path (alsoWriteWorkingSet = true) to avoid a separate
+    /// SQL GROUP BY over 2.2M rows after scan completion.
+    func replaceWorkingSetCategoryTotals(
+        trackedPathId: UUID,
+        totals: [GrowthCategory: Int64],
+        updatedAt: Date
+    ) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        try await dbPool.write { db in
+            try db.execute(
+                sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
+                arguments: [trackedPathIdString]
+            )
+
+            guard !totals.isEmpty else { return }
+
+            let nonZeroTotals = totals.filter { $0.value > 0 }
+            guard !nonZeroTotals.isEmpty else { return }
+
+            let valuePlaceholders = Array(repeating: "(?,?,?,?)", count: nonZeroTotals.count).joined(separator: ",")
+            let sql = "INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt) VALUES \(valuePlaceholders)"
+            var args: [DatabaseValueConvertible?] = []
+            args.reserveCapacity(nonZeroTotals.count * 4)
+            for (category, totalBytes) in nonZeroTotals {
+                args.append(trackedPathIdString)
+                args.append(category.rawValue)
+                args.append(totalBytes)
+                args.append(updatedAt)
+            }
+            try db.execute(sql: sql, arguments: StatementArguments(args))
+        }
+    }
+
     func replaceWorkingSetSubtree(
         trackedPathId: UUID,
         rootPath: String,
@@ -1362,7 +1477,8 @@ extension DatabaseManager {
 
     /// Normalizes a file path for consistent storage
     /// - Removes trailing slash (unless it's just "/")
-    /// - Note: Case is preserved as-is; COLLATE NOCASE handles case-insensitive comparison
+    /// - Note: Case is preserved as-is. macOS is case-preserving, and normalizePath
+    ///   is applied on every insert/lookup so exact-match queries are safe.
     private static func normalizePath(_ path: String) -> String {
         if path == "/" {
             return path
@@ -1382,33 +1498,51 @@ extension DatabaseManager {
     ) throws {
         guard !pathIdByPath.isEmpty else { return }
 
-        let statement = try db.makeStatement(sql: """
-            INSERT INTO pathClassification (pathId, category, subcategory)
-            VALUES (?, ?, ?)
-            ON CONFLICT(pathId) DO UPDATE SET
-                category = excluded.category,
-                subcategory = excluded.subcategory
-            """)
-
+        // Build flat array of (pathId, category, subcategory) tuples for chunked multi-row INSERT
+        var rows: [(pathId: Int64, category: String, subcategory: String)] = []
+        rows.reserveCapacity(pathIdByPath.count)
         for (path, pathId) in pathIdByPath {
             let resolved = classificationsByPath?[path]
                 ?? ResolvedPathClassification(
                     category: GrowthCategory.categorize(path: path),
                     subcategory: GrowthCategory.subcategorize(path: path)
                 )
-            try statement.execute(arguments: [
-                pathId,
-                resolved.category.rawValue,
-                resolved.subcategory?.rawValue ?? ""
-            ])
+            rows.append((
+                pathId: pathId,
+                category: resolved.category.rawValue,
+                subcategory: resolved.subcategory?.rawValue ?? ""
+            ))
+        }
+
+        // Insert in chunks of 500 rows using multi-row VALUES — ~500x fewer round-trips
+        let chunkSize = 500
+        for startIndex in stride(from: 0, to: rows.count, by: chunkSize) {
+            let endIndex = min(startIndex + chunkSize, rows.count)
+            let chunk = rows[startIndex..<endIndex]
+            let valuePlaceholders = Array(repeating: "(?,?,?)", count: chunk.count).joined(separator: ",")
+            let sql = """
+                INSERT INTO pathClassification (pathId, category, subcategory)
+                VALUES \(valuePlaceholders)
+                ON CONFLICT(pathId) DO UPDATE SET
+                    category = excluded.category,
+                    subcategory = excluded.subcategory
+                """
+            var args: [DatabaseValueConvertible?] = []
+            args.reserveCapacity(chunk.count * 3)
+            for row in chunk {
+                args.append(row.pathId)
+                args.append(row.category)
+                args.append(row.subcategory)
+            }
+            try db.execute(sql: sql, arguments: StatementArguments(args))
         }
     }
 
     private func getOrCreatePathId(path: String, db: Database) throws -> Int64 {
         let normalizedPath = Self.normalizePath(path)
         try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [normalizedPath])
-        // Use COLLATE NOCASE for lookup to match the table's unique constraint
-        if let row = try Row.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ? COLLATE NOCASE", arguments: [normalizedPath]),
+        // Exact match — paths are normalized on insert so no COLLATE NOCASE needed
+        if let row = try Row.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [normalizedPath]),
            let id: Int64 = row["id"] {
             try upsertPathClassifications(pathIdByPath: [normalizedPath: id], db: db)
             return id
@@ -1423,9 +1557,11 @@ extension DatabaseManager {
     ) throws -> [String: Int64] {
         guard !paths.isEmpty else { return [:] }
 
+        // normalizePath is idempotent; dedup via Set
         let normalizedPaths = Array(Set(paths.map { Self.normalizePath($0) }))
         let pathChunkSize = 500
 
+        // Bulk-insert any new paths (exact match, no COLLATE NOCASE — paths normalized on entry)
         for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
             let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
             let chunk = Array(normalizedPaths[startIndex..<endIndex])
@@ -1436,14 +1572,15 @@ extension DatabaseManager {
             )
         }
 
-        let requestedByLowercasedPath = Dictionary(uniqueKeysWithValues: normalizedPaths.map { ($0.lowercased(), $0) })
         var result: [String: Int64] = [:]
+        result.reserveCapacity(normalizedPaths.count)
 
+        // Fetch IDs with exact match — no COLLATE NOCASE overhead
         for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
             let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
             let chunk = Array(normalizedPaths[startIndex..<endIndex])
             let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
-            let sql = "SELECT id, path FROM paths WHERE path IN (\(placeholders)) COLLATE NOCASE"
+            let sql = "SELECT id, path FROM paths WHERE path IN (\(placeholders))"
             let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(chunk))
 
             for row in rows {
@@ -1453,10 +1590,7 @@ extension DatabaseManager {
                 else {
                     continue
                 }
-
-                if let normalizedPath = requestedByLowercasedPath[storedPath.lowercased()] {
-                    result[normalizedPath] = pathId
-                }
+                result[storedPath] = pathId
             }
         }
 

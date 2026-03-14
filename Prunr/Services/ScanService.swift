@@ -107,6 +107,9 @@ actor ScanService {
     ///   - path: The file system path to scan
     ///   - trackedPathId: The ID of the TrackedPath this snapshot belongs to
     ///   - ignoredNames: Optional explicit ignore-name set for headless or test runs
+    ///   - alsoWriteWorkingSet: When `true`, working-set rows are written inline during
+    ///     the scan transaction (same DB write as snapshotEntry). The caller must NOT call
+    ///     `rebuildWorkingSet` separately. Default is `false`.
     ///   - progress: Optional callback for progress updates
     /// - Returns: The completed Snapshot with all entries stored
     /// - Throws: ScanError if the path is invalid or scanning fails
@@ -114,6 +117,7 @@ actor ScanService {
         path: String,
         trackedPathId: UUID,
         ignoredNames: Set<String>? = nil,
+        alsoWriteWorkingSet: Bool = false,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> Snapshot {
         let didAcquireScanState = await MainActor.run { () -> Bool in
@@ -166,6 +170,7 @@ actor ScanService {
                 url: url,
                 trackedPathId: trackedPathId,
                 ignoredNames: ignoredNames,
+                alsoWriteWorkingSet: alsoWriteWorkingSet,
                 progress: progress
             )
         } onCancel: {
@@ -179,6 +184,7 @@ actor ScanService {
         url: URL,
         trackedPathId: UUID,
         ignoredNames: Set<String>?,
+        alsoWriteWorkingSet: Bool = false,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> Snapshot {
         // Capture volume free space before creating snapshot
@@ -203,7 +209,7 @@ actor ScanService {
         logger.debug("Created snapshot ID: \(snapshotId)")
 
         // Batch insert configuration
-        let batchSize = 5000 // Increased from 2000 for better throughput
+        let batchSize = 15000 // Increased from 5000 — fewer transactions = less overhead
         var batch: [ScanResult] = []
         var count = 0
         var lastProgressUpdate = Date()
@@ -310,14 +316,23 @@ actor ScanService {
                 if batch.count >= batchSize {
                     logger.debug("Inserting batch of \(batch.count) entries (total: \(count))")
                     try throwIfCancelled("batch insert preflight")
-                    try await db.addEntries(to: snapshotId, entries: batch)
+                    if alsoWriteWorkingSet {
+                        try await db.addEntriesWithWorkingSet(
+                            to: snapshotId,
+                            entries: batch,
+                            trackedPathId: trackedPathId,
+                            updatedAt: snapshot.createdAt
+                        )
+                    } else {
+                        try await db.addEntries(to: snapshotId, entries: batch)
+                    }
                     batch.removeAll()
 
                     // Check cancellation after database write
                     try throwIfCancelled("batch insert completion")
 
-                    // Yield every 2 batches (4000 items) to reduce coordination overhead
-                    if count % (batchSize * 2) == 0 {
+                    // Yield every batch (15000 items) to reduce coordination overhead
+                    if count % batchSize == 0 {
                         await Task.yield()
                     }
                 }
@@ -389,7 +404,27 @@ actor ScanService {
             if !batch.isEmpty {
                 logger.debug("Inserting final batch of \(batch.count) entries")
                 try throwIfCancelled("final batch insert preflight")
-                try await db.addEntries(to: snapshotId, entries: batch)
+                if alsoWriteWorkingSet {
+                    try await db.addEntriesWithWorkingSet(
+                        to: snapshotId,
+                        entries: batch,
+                        trackedPathId: trackedPathId,
+                        updatedAt: snapshot.createdAt
+                    )
+                } else {
+                    try await db.addEntries(to: snapshotId, entries: batch)
+                }
+            }
+
+            // If we co-wrote the working set inline, write its category totals from the
+            // in-memory categoryTotals dict (avoids a separate SQL GROUP BY over 2.2M rows).
+            if alsoWriteWorkingSet {
+                try throwIfCancelled("working set category totals preflight")
+                try await db.replaceWorkingSetCategoryTotals(
+                    trackedPathId: trackedPathId,
+                    totals: categoryTotals,
+                    updatedAt: snapshot.createdAt
+                )
             }
 
             // Persist category totals while scan results are still hot in memory.
