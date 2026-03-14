@@ -292,7 +292,7 @@ struct MenuBarView: View {
                     manualScanLoadingView
                 } else if isBootstrapping {
                     initialLoadView
-                } else if manager.noBaseline {
+                } else if manager.noBaseline && !manager.isDeltasOnlyMode {
                     setupOnboardingView
                 } else {
                     VStack(spacing: 0) {
@@ -760,8 +760,8 @@ struct MenuBarView: View {
                 onboardingTitleSection(
                     number: 3,
                     icon: "waveform.path.ecg",
-                    title: "Run First Scan",
-                    description: "Build your first baseline to track growth over time."
+                    title: "Start Tracking",
+                    description: "Scan now for the full picture, or start tracking changes immediately."
                 )
 
                 onboardingContentCard {
@@ -778,8 +778,14 @@ struct MenuBarView: View {
                                 .truncationMode(.middle)
                         }
 
-                        primaryActionButton("Run first scan", minWidth: 168) {
-                            startOnboardingFirstScan()
+                        VStack(spacing: 8) {
+                            primaryActionButton("Scan now", minWidth: 168) {
+                                startOnboardingFirstScan()
+                            }
+
+                            secondaryActionButton("Start tracking (skip scan)") {
+                                startDeltasOnlyTracking()
+                            }
                         }
                     }
                 }
@@ -1509,6 +1515,15 @@ struct MenuBarView: View {
         Task {
             await manager.loadInventory(trackedPathsOverride: [settingsStore.mainTrackedPath])
         }
+    }
+
+    private func startDeltasOnlyTracking() {
+        guard hasFullDiskAccess == true else { return }
+        guard manager.noBaseline else { return }
+        guard onboardingFolderStepComplete else { return }
+        guard !manager.isLoading, !manager.isAutoScanning else { return }
+
+        manager.startDeltasOnlyTracking()
     }
 
     private func scanStatusCard(clampedProgress: Double, showStopButton: Bool = false) -> some View {
