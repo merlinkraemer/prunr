@@ -265,21 +265,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func shouldAutoWatchTrackedPath(_ path: TrackedPath) -> Bool {
         let standardized = path.url.standardizedFileURL
-        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
-        if standardized.path == "/" || standardized == homeDirectory {
+        // Don't watch root — too noisy and not a realistic use case
+        if standardized.path == "/" {
             return false
         }
-
         return true
     }
 
-    private func automaticFullScanInterval(for trackedPath: TrackedPath?) -> TimeInterval {
-        guard trackedPath != nil else {
-            return SettingsStore.shared.automaticFullScanInterval
-        }
-
-        return SettingsStore.shared.automaticFullScanInterval
-    }
     var isLoading = false {
         didSet { updateMenuBarActivityEffect() }
     }
@@ -327,21 +319,22 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // Event-driven lightweight scan automation
     private var fileEventsWatcher: FSEventsWatcher?
     private var watchedPaths: [String] = []
-    private var autoScanTask: Task<Void, Never>?
-    private var pendingFallbackAutoScanTick = false
     private var recentChangeTask: Task<Void, Never>?
     private var isInventoryRefreshInProgress = false
-    private var pendingOverflowFullScan = false
     private var pendingRecentChangePaths: Set<URL> = []
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
-    private var lastAutomaticScanAttemptAt: Date?
     private var isUnderDiskPressure = false
     private var lastFileEventAt: Date?
     var hasPendingRecentChanges = false
     var isProcessingRecentChanges = false {
         didSet { updateMenuBarActivityEffect() }
     }
+
+    // Silent background reconciliation
+    private var lastReconciliationAt: Date?
+    private var isReconciling = false
+    private var reconciliationTask: Task<Void, Never>?
 
     var lastScanStatusText: String {
         let formatter = RelativeDateTimeFormatter()
@@ -368,15 +361,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         return "No changes (scanned \(relative))"
     }
 
-    private let normalAutoScanDebounce: TimeInterval = 20
-    private let pressureAutoScanDebounce: TimeInterval = 8
     private let normalRecentChangeDebounce: TimeInterval = 1.5
     private let pressureRecentChangeDebounce: TimeInterval = 0.75
-    private let normalAutoScanAttemptInterval: TimeInterval = 45
-    private let pressureAutoScanAttemptInterval: TimeInterval = 15
-    private let startupAutoScanGracePeriod: TimeInterval = 20
-    private var useFallbackAutoScan = false
-    private let appLaunchAt = Date()
 
     static var shared: MenuBarManager?
 
@@ -885,10 +871,54 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     func refreshVisibleInventory() async {
         guard !isLoading, !isAutoScanning else { return }
         guard !isInventoryRefreshInProgress else { return }
-        lastAutomaticScanAttemptAt = Date()
+        // Cancel any in-progress reconciliation — manual scan takes priority
+        reconciliationTask?.cancel()
+        reconciliationTask = nil
+        isReconciling = false
         isAutoScanning = true
         await loadInventory(isAutomatic: true)
         isAutoScanning = false
+        lastReconciliationAt = Date()
+    }
+
+    /// Silently reconciles the working set against a fresh full scan.
+    /// No spinners, no status text changes — applies corrections as incremental patches.
+    func performSilentReconciliation() async {
+        guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else { return }
+        isReconciling = true
+        defer {
+            isReconciling = false
+            reconciliationTask = nil
+        }
+
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        guard !enabledPaths.isEmpty else { return }
+
+        do {
+            _ = try await createBaselines(for: enabledPaths) { _, _ in }
+        } catch {
+            return
+        }
+
+        guard !Task.isCancelled else { return }
+
+        // Silently reload inventory from the new snapshot — no invalidation
+        await loadInventoryFromLatestSnapshot(refreshedAt: Date())
+        lastReconciliationAt = Date()
+    }
+
+    /// Kicks off silent reconciliation if the last one was >24 hours ago.
+    func reconcileIfStale() {
+        guard !noBaseline else { return }
+        let staleThreshold: TimeInterval = 24 * 60 * 60 // 24 hours
+        if let lastReconciliation = lastReconciliationAt ?? lastAutomaticScanAt,
+           Date().timeIntervalSince(lastReconciliation) < staleThreshold {
+            return
+        }
+
+        reconciliationTask = Task { @MainActor in
+            await performSilentReconciliation()
+        }
     }
 
     /// Legacy: Loads the category-based growth list (deprecated, use loadInventory)
@@ -1576,7 +1606,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private var shouldPulseActivity: Bool {
-        isLoading || isAutoScanning || isAnalyzingChanges || isCleaningUp || isProcessingRecentChanges
+        isLoading || isAutoScanning
     }
 
     private func updateMenuBarActivityEffect() {
@@ -1629,19 +1659,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Starts continuous 2-second updates to keep menu bar in sync (ISS-042)
+    /// Starts continuous updates to keep menu bar in sync (ISS-042)
     private func startRealtimeUpdates() {
-        // Invalidate any existing timer
         updateTimer?.invalidate()
 
-        // Create timer that fires every 2 seconds
         updateTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateFreeSpace()
                 self?.configureFileWatcherIfNeeded()
-                if self?.useFallbackAutoScan == true {
-                    self?.scheduleAutomaticScan(resetDebounce: false)
-                }
             }
         }
     }
@@ -1917,12 +1942,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func configureFileWatcherIfNeeded() {
-        let urls: [URL]
-        if let trackedPath = primaryTrackedPath(), shouldAutoWatchTrackedPath(trackedPath) {
-            urls = [trackedPath.url.standardizedFileURL]
-        } else {
-            urls = []
-        }
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        let urls = enabledPaths
+            .filter { shouldAutoWatchTrackedPath($0) }
+            .map(\.url.standardizedFileURL)
         let watchedSignature = urls.map(\.path)
 
         if watchedSignature == watchedPaths {
@@ -1949,37 +1972,38 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         fileEventsWatcher = nil
 
         guard !urls.isEmpty else {
-            useFallbackAutoScan = primaryTrackedPath() != nil
             return
         }
+
+        // Refresh custom ignores cache before starting watcher
+        FSEventsNoiseFilter.refreshCustomIgnoresCache()
 
         let watcher = FSEventsWatcher(pathsToWatch: urls, debounceInterval: 1.0)
         await watcher.setOnChange { [weak self] changeBatch in
             Task { @MainActor in
                 guard let self else { return }
                 guard !self.isLoading, !self.isAutoScanning else { return }
-                let changedPaths = changeBatch.changedPaths
-                guard !self.shouldIgnoreAutoScanChanges(changedPaths) else { return }
-                self.lastFileEventAt = Date()
-                if changeBatch.requiresFullRescan {
-                    await self.requestOverflowFullScan()
-                    return
+
+                // Filter out noisy paths before processing
+                let filteredPaths = changeBatch.changedPaths.filter { url in
+                    !FSEventsNoiseFilter.shouldIgnore(url.path)
                 }
+                guard !filteredPaths.isEmpty else { return }
+                guard !self.shouldIgnoreAutoScanChanges(filteredPaths) else { return }
+
+                self.lastFileEventAt = Date()
+                // Process all events incrementally — no promotion to full scan
                 self.hasPendingRecentChanges = true
-                self.scheduleRecentChangeRefresh(changedPaths)
+                self.scheduleRecentChangeRefresh(filteredPaths)
             }
         }
         fileEventsWatcher = watcher
         await watcher.start()
-        useFallbackAutoScan = !(await watcher.isRunning)
     }
 
     private func scheduleRecentChangeRefresh(_ changedPaths: Set<URL>) {
         guard !changedPaths.isEmpty else { return }
-        guard let trackedPath = primaryTrackedPath(),
-              shouldAutoWatchTrackedPath(trackedPath) else {
-            return
-        }
+        guard primaryTrackedPath() != nil else { return }
 
         pendingRecentChangePaths.formUnion(changedPaths.map(\.standardizedFileURL))
         hasPendingRecentChanges = true
@@ -2011,64 +2035,60 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         let result = await recentChangeService.refreshChangedPaths(changedPaths, trackedPath: trackedPath)
         switch result {
-        case .updated:
-            let refreshTimestamp = Date()
-            lastDetectedChangeAt = refreshTimestamp
+        case .updated(let deltas):
+            lastDetectedChangeAt = Date()
+            applyIncrementalDeltas(deltas)
+        case .needsFullScan:
+            // Shouldn't happen (overflow guard removed), but fall back to full reload
+            lastDetectedChangeAt = Date()
             await loadInventoryFromLatestSnapshot(
-                refreshedAt: refreshTimestamp,
+                refreshedAt: Date(),
                 invalidateSubcategoryCache: true
             )
-        case .needsFullScan:
-            print("[MenuBarManager] Refresh scan overflowed — triggering full scan")
-            await requestOverflowFullScan()
         case .noChanges:
             break
         }
     }
 
-    private func scheduleAutomaticScan(resetDebounce: Bool = true) {
-        guard !watchedPaths.isEmpty || useFallbackAutoScan else { return }
-        if Date().timeIntervalSince(appLaunchAt) < startupAutoScanGracePeriod {
-            return
+    /// Patches category totals in-place from incremental deltas.
+    /// No subcategory cache invalidation, no spinners.
+    private func applyIncrementalDeltas(_ deltas: [DatabaseManager.JournalDeltaKey: Int64]) {
+        guard !deltas.isEmpty else { return }
+
+        // Aggregate deltas by category (sum all subcategory deltas)
+        var categoryDeltas: [GrowthCategory: Int64] = [:]
+        for (key, delta) in deltas {
+            categoryDeltas[key.category, default: 0] += delta
         }
 
-        if resetDebounce {
-            autoScanTask?.cancel()
-        } else if autoScanTask != nil {
-            pendingFallbackAutoScanTick = true
-            return
+        // Apply to growing categories
+        for i in growingCategories.indices {
+            if let delta = categoryDeltas[growingCategories[i].category] {
+                growingCategories[i].currentSizeBytes += delta
+            }
         }
 
-        let debounce = isUnderDiskPressure ? pressureAutoScanDebounce : normalAutoScanDebounce
-        autoScanTask = Task { @MainActor in
-            defer {
-                autoScanTask = nil
-                if pendingFallbackAutoScanTick {
-                    pendingFallbackAutoScanTick = false
-                    scheduleAutomaticScan(resetDebounce: false)
-                }
+        // Apply to stable categories
+        var newStableTotal: Int64 = 0
+        for i in stableCategories.indices {
+            if let delta = categoryDeltas[stableCategories[i].category] {
+                stableCategories[i].currentSizeBytes += delta
             }
-            try? await Task.sleep(for: .milliseconds(Int(debounce * 1000)))
-            guard !Task.isCancelled else { return }
-            guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning else {
-                return
-            }
-
-            let minimumInterval = automaticFullScanInterval(for: primaryTrackedPath())
-            if let lastAutomaticScanAt,
-               Date().timeIntervalSince(lastAutomaticScanAt) < minimumInterval {
-                return
-            }
-
-            let minimumAttemptInterval = isUnderDiskPressure ? pressureAutoScanAttemptInterval : normalAutoScanAttemptInterval
-            if let lastAutomaticScanAttemptAt,
-               Date().timeIntervalSince(lastAutomaticScanAttemptAt) < minimumAttemptInterval {
-                return
-            }
-
-            lastAutomaticScanAttemptAt = Date()
-            await runAutomaticFullScan()
+            newStableTotal += stableCategories[i].currentSizeBytes
         }
+        stableTotalBytes = newStableTotal
+
+        // Selectively invalidate subcategory topFiles for affected categories only
+        let affectedCategories = Set(categoryDeltas.keys)
+        for category in affectedCategories {
+            if subcategoryGroupsByCategory[category] != nil {
+                // Invalidate just this category's subcategory cache so it reloads on next drill-down
+                subcategoryGroupsByCategory.removeValue(forKey: category)
+                subcategoryBreakdownCacheGenerationByCategory.removeValue(forKey: category)
+            }
+        }
+
+        reconcileDrillDownSelection()
     }
 
     private var currentRecentChangeDebounce: TimeInterval {
@@ -2093,34 +2113,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func endInventoryRefresh() {
         isInventoryRefreshInProgress = false
-        if pendingOverflowFullScan {
-            Task { @MainActor [weak self] in
-                await self?.runAutomaticFullScanIfPossible()
-            }
-        }
-    }
-
-    private func requestOverflowFullScan() async {
-        recentChangeTask?.cancel()
-        recentChangeTask = nil
-        pendingRecentChangePaths.removeAll()
-        hasPendingRecentChanges = false
-        pendingOverflowFullScan = true
-        await runAutomaticFullScanIfPossible()
-    }
-
-    private func runAutomaticFullScanIfPossible() async {
-        guard pendingOverflowFullScan else { return }
-        guard !isAutoScanning, !isLoading, !isInventoryRefreshInProgress else { return }
-        pendingOverflowFullScan = false
-        await runAutomaticFullScan()
-    }
-
-    private func runAutomaticFullScan() async {
-        guard !isAutoScanning, !isLoading, !isInventoryRefreshInProgress else { return }
-        isAutoScanning = true
-        defer { isAutoScanning = false }
-        await loadInventory(isAutomatic: true)
     }
 
     private func shouldIgnoreAutoScanChanges(_ changedPaths: Set<URL>) -> Bool {
@@ -2162,8 +2154,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         MainActor.assumeIsolated {
             updateTimer?.invalidate()
             activityPulseTimer?.invalidate()
-            autoScanTask?.cancel()
             recentChangeTask?.cancel()
+            reconciliationTask?.cancel()
 
             let watcher = fileEventsWatcher
             if let watcher {

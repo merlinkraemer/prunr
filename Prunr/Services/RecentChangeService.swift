@@ -6,16 +6,12 @@ actor RecentChangeService {
     private let scanner = FileScanner()
     private let db = DatabaseManager.shared
     private let growthJournalService = GrowthJournalService.shared
-    private let maxIncrementalRefreshTargets = 256
-    private let maxIncrementalRefreshSubtreeTargets = 24
-    private let maxIncrementalRefreshFileTargets = 192
-    private let maxIncrementalRefreshRemovalTargets = 96
 
     private init() {}
 
     enum RefreshResult: Sendable {
         case noChanges
-        case updated
+        case updated(deltas: [DatabaseManager.JournalDeltaKey: Int64])
         case needsFullScan
     }
 
@@ -52,9 +48,6 @@ actor RecentChangeService {
 
         let targets = refreshTargets(from: changedPaths, trackedPath: trackedPath)
         guard !targets.isEmpty else { return .noChanges }
-        guard !shouldPromoteToFullScan(targets, trackedPath: trackedPath) else {
-            return .needsFullScan
-        }
 
         let ignoredNames = await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
         let scanTimestamp = Date()
@@ -94,7 +87,7 @@ actor RecentChangeService {
                 deltas: mergedDeltas,
                 at: scanTimestamp
             )
-            return .updated
+            return .updated(deltas: mergedDeltas)
         } catch {
             print("[RecentChangeService] Failed recording journal deltas: \(error)")
             return .noChanges
@@ -239,47 +232,4 @@ actor RecentChangeService {
         path == ancestorPath || path.hasPrefix(ancestorPath + "/")
     }
 
-    private func shouldPromoteToFullScan(
-        _ targets: [RefreshTarget],
-        trackedPath: TrackedPath
-    ) -> Bool {
-        if targets.count > maxIncrementalRefreshTargets {
-            return true
-        }
-
-        let trackedRoot = trackedPath.url.standardizedFileURL.path
-        var subtreeCount = 0
-        var fileCount = 0
-        var removalCount = 0
-
-        for target in targets {
-            switch target {
-            case .file:
-                fileCount += 1
-                if fileCount > maxIncrementalRefreshFileTargets {
-                    return true
-                }
-
-            case .subtree(let url):
-                subtreeCount += 1
-                if subtreeCount > maxIncrementalRefreshSubtreeTargets {
-                    return true
-                }
-                if url.standardizedFileURL.path == trackedRoot {
-                    return true
-                }
-
-            case .removal(let path):
-                removalCount += 1
-                if removalCount > maxIncrementalRefreshRemovalTargets {
-                    return true
-                }
-                if path == trackedRoot {
-                    return true
-                }
-            }
-        }
-
-        return false
-    }
 }

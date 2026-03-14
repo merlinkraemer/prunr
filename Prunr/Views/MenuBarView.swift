@@ -331,6 +331,8 @@ struct MenuBarView: View {
 
             if !manager.noBaseline {
                 await manager.loadInventoryFromLatestSnapshot()
+                // Kick off silent reconciliation if data is stale (>24h)
+                manager.reconcileIfStale()
             }
 
             isBootstrapping = false
@@ -1410,24 +1412,18 @@ struct MenuBarView: View {
             Text("Scanning...")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-        } else if manager.isProcessingRecentChanges {
-            Text("Updating…")
+        } else if let lastChange = manager.lastDetectedChangeAt {
+            Text(relativeTime(from: lastChange))
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        } else if manager.hasPendingRecentChanges {
-            Text("Changes detected")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
         } else if let lastScan = manager.lastAutomaticScanAt {
             Text(relativeTime(from: lastScan))
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
         } else {
-            Text(manager.lastScanStatusText)
+            Text("No changes detected")
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                .foregroundStyle(.tertiary)
         }
     }
 

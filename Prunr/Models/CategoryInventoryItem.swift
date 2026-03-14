@@ -5,7 +5,7 @@ import GRDB
 struct CategoryInventoryItem: Identifiable, Sendable, Equatable {
     var id: GrowthCategory { category }
     let category: GrowthCategory
-    let currentSizeBytes: Int64
+    var currentSizeBytes: Int64
     var growthTrend: CategoryGrowthTrend?
     var recentGrowthStory: RecentGrowthStory?
 }
