@@ -84,21 +84,12 @@ actor DatabaseCleanupService {
 
             // Second pass: delete snapshotEntry rows for old snapshots (keep snapshot metadata)
             let entriesDeleted = try await cleanupOldSnapshotEntries()
-            if entriesDeleted > 0 {
-                print("[DatabaseCleanupService] Auto-cleanup: deleted \(entriesDeleted) old snapshot entries")
-            }
 
             // Remove paths that are no longer referenced by snapshotEntry rows
             let pathsDeleted = try await cleanupOrphanedPaths()
-            if pathsDeleted > 0 {
-                print("[DatabaseCleanupService] Auto-cleanup: deleted \(pathsDeleted) orphaned paths")
-            }
 
             // Third pass: delete old snapshot rows entirely (and cascading categorySnapshot rows)
             let snapshotsDeleted = try await cleanupOldCategoryHistory()
-            if snapshotsDeleted > 0 {
-                print("[DatabaseCleanupService] Auto-cleanup: deleted \(snapshotsDeleted) old snapshots")
-            }
 
             let reclaimedRows = entriesDeleted > 0 || pathsDeleted > 0 || snapshotsDeleted > 0
             let storageAfterCleanup = await databaseStorageStats()
@@ -147,19 +138,11 @@ actor DatabaseCleanupService {
             pollInterval: Self.startupIdlePollInterval
         )
         guard becameIdle else {
-            print("[DatabaseCleanupService] Startup maintenance skipped while app remained busy")
             return
         }
 
-        let backfilled = (try? await backfillRecentCategorySnapshots()) ?? 0
-        let backfilledSubcategories = (try? await backfillRecentSubcategorySnapshots()) ?? 0
-        if backfilled > 0 {
-            print("[DatabaseCleanupService] Startup maintenance: backfilled \(backfilled) recent category snapshots")
-        }
-        if backfilledSubcategories > 0 {
-            print("[DatabaseCleanupService] Startup maintenance: backfilled \(backfilledSubcategories) recent subcategory snapshots")
-        }
-
+        _ = try? await backfillRecentCategorySnapshots()
+        _ = try? await backfillRecentSubcategorySnapshots()
         await performAutoCleanup()
 
         do {
@@ -631,7 +614,6 @@ actor DatabaseCleanupService {
                             // Delete entries only (keep snapshot row and categorySnapshot)
                             try db.execute(sql: "DELETE FROM snapshotEntry WHERE snapshotId = ?", arguments: [snapshotId])
                             totalProcessed += 1
-                            print("[DatabaseCleanupService] Deleted entries for snapshot \(snapshotId) (had \(entryCount) entries)")
                         }
                     }
                 }
@@ -736,12 +718,6 @@ actor DatabaseCleanupService {
                 deleted += try Int.fetchOne(db, sql: "SELECT changes()") ?? 0
             }
 
-            if deleted > 0 {
-                print(
-                    "[DatabaseCleanupService] Deleted \(deleted) snapshots older than \(effectiveRetentionDays) days or beyond \(Self.maxCategoryHistorySnapshotsPerPath) retained history points per path"
-                )
-            }
-
             return deleted
         }
     }
@@ -775,9 +751,7 @@ actor DatabaseCleanupService {
     private func vacuumDatabase() async throws {
         guard let dbPool = db.dbPool else { return }
 
-        print("[DatabaseCleanupService] Running VACUUM...")
         try await dbPool.vacuum()
-        print("[DatabaseCleanupService] VACUUM complete")
     }
 
     private struct SnapshotSummary {

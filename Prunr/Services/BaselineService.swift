@@ -74,8 +74,6 @@ actor BaselineService {
         ignoredNames: Set<String>? = nil,
         progress: ((ScanService.ScanProgress) -> Void)? = nil
     ) async throws -> Snapshot {
-        print("[BaselineService] Starting scan for path: \(trackedPath.url.path)")
-
         // Get previous snapshot for delta calculation
         let previousSnapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
         let previousSnapshotId = previousSnapshots.first?.id
@@ -103,7 +101,6 @@ actor BaselineService {
         // Pass alsoWriteWorkingSet=true so working-set rows are written inline during
         // the scan transaction — this eliminates the separate rebuildWorkingSet pass
         // that previously copied 2.2M rows after the scan completed.
-        print("[BaselineService] Starting scan...")
         let snapshot = try await scanService.scan(
             path: trackedPath.url.path,
             trackedPathId: trackedPath.id,
@@ -120,8 +117,6 @@ actor BaselineService {
                 userInfo: [NSLocalizedDescriptionKey: "Failed to create snapshot with ID"]
             ))
         }
-
-        print("[BaselineService] Created snapshot ID: \(snapshotId)")
 
         // Record deltas to growth journal only when a previous snapshot exists.
         // On first scan (previousSnapshotId == nil) this block is skipped entirely —
@@ -142,7 +137,6 @@ actor BaselineService {
                     deltas: deltasByKey,
                     at: snapshot.createdAt
                 )
-                print("[BaselineService] Recorded \(deltas.count) deltas to growth journal")
             }
         }
 
@@ -172,7 +166,6 @@ actor BaselineService {
             }
         }
         try await db.clearRealtimeData()
-        print("[BaselineService] Reset baseline: deleted all snapshots")
     }
 
     // MARK: - Growth List
@@ -251,7 +244,6 @@ actor BaselineService {
         // Check if this is a boundary folder - stop drill-down
         let url = URL(fileURLWithPath: path)
         if boundaryConfig.shouldStopDrillDown(at: url) {
-            print("[BaselineService] Stopping drill-down at boundary: \(path)")
             return []
         }
 
@@ -361,7 +353,6 @@ actor BaselineService {
     /// - Returns: Array of CategoryGrowthItem sorted by totalGrowthBytes descending
     /// - Throws: BaselineError if insufficient snapshots exist
     func getCategoryGrowthList(trackedPath: TrackedPath) async throws -> [CategoryGrowthItem] {
-        let start = Date()
         let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
 
         guard snapshots.count >= 2 else {
@@ -377,10 +368,7 @@ actor BaselineService {
         let previousEntryCount = try await db.fetchEntryCount(for: previousId)
         let currentEntryCount = try await db.fetchEntryCount(for: currentId)
 
-        print("[BaselineService] Snapshot entry counts: previous=\(previousEntryCount), current=\(currentEntryCount)")
-
         guard previousEntryCount > 100 else {
-            print("[BaselineService] Previous snapshot has only \(previousEntryCount) entries - treating as first scan")
             throw BaselineError.insufficientSnapshots
         }
 
@@ -388,7 +376,6 @@ actor BaselineService {
         // Allow up to 50% growth as reasonable, otherwise treat as first scan
         let minExpectedPrevious = currentEntryCount / 2
         if previousEntryCount < minExpectedPrevious {
-            print("[BaselineService] Previous snapshot (\(previousEntryCount) entries) too small compared to current (\(currentEntryCount)) - treating as first scan")
             throw BaselineError.insufficientSnapshots
         }
 
@@ -396,13 +383,10 @@ actor BaselineService {
         let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
         try Task.checkCancellation()
 
-        print("[BaselineService] Calculated \(deltas.count) deltas")
-
         // Filter to only items that grew
         let growingDeltas = deltas.filter { $0.changeBytes > 0 }
 
         guard !growingDeltas.isEmpty else {
-            print("[BaselineService] No growth detected since previous scan")
             return []
         }
 
@@ -464,12 +448,7 @@ actor BaselineService {
 
             categoryItems.append(categoryItem)
 
-            // Log category totals for debugging
-            print("[BaselineService] Category '\(category.displayName)': \(ByteCountFormatter.string(fromByteCount: categoryGrowth, countStyle: .file)) (\(String(format: "%.1f", percentOfTotal * 100))%)")
         }
-
-        let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
-        print("[BaselineService] getCategoryGrowthList completed in \(elapsedMs)ms")
 
         // Sort by total growth bytes descending
         return categoryItems.sorted { $0.totalGrowthBytes > $1.totalGrowthBytes }
@@ -530,12 +509,10 @@ actor BaselineService {
             // (files growing = free space shrinking)
             // Discrepancy = abs(freeSpaceDelta + netFileChange)
             unexplainedDelta = abs(delta + netFileChange)
-            print("[BaselineService] Reconciliation: prevFree=\(prev), currFree=\(curr), freeSpaceDelta=\(delta), netFileChange=\(netFileChange), unexplained=\(unexplainedDelta ?? 0)")
         } else {
             // Legacy snapshots without freeBytes - graceful degradation
             freeSpaceDelta = nil
             unexplainedDelta = nil
-            print("[BaselineService] Reconciliation: missing freeBytes (prev=\(previousFreeSpace ?? -1), curr=\(currentFreeSpace ?? -1))")
         }
 
         // Note: explainedDelta is now the net file change (can be negative for net shrinkage)

@@ -67,7 +67,7 @@ private struct GeneralSettingsTab: View {
     @State private var hasFullDiskAccess = false
 
     private var appVersionText: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
         return "Version \(short) (\(build))"
     }
@@ -102,7 +102,7 @@ private struct GeneralSettingsTab: View {
                         }
                         .buttonStyle(.borderedProminent)
 
-                        Button("Reveal Current App") {
+                        Button("Show Prunr in Finder") {
                             permissionsService.revealCurrentAppInFinder()
                         }
                         .buttonStyle(.bordered)
@@ -114,7 +114,7 @@ private struct GeneralSettingsTab: View {
                 }
 
                 Section("Scanning") {
-                    Text("Scan Now in the menu bar runs a fresh background scan. Prunr also tracks recent growth between full rescans and performs a periodic full refresh for accuracy.")
+                    Text("Prunr tracks file changes in real time. A periodic full rescan ensures long-term accuracy.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -135,9 +135,22 @@ private struct GeneralSettingsTab: View {
                         .frame(width: 140)
                     }
 
-                    Text("Default is daily. Pick a longer interval if your main path is very large and you want fewer full rescans.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text("Category history")
+                            .font(.system(size: 13))
+
+                        Spacer()
+
+                        Picker("", selection: $settingsStore.categoryHistoryRetentionDays) {
+                            Text("7 days").tag(7)
+                            Text("14 days").tag(14)
+                            Text("30 days").tag(30)
+                            Text("60 days").tag(60)
+                            Text("90 days").tag(90)
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 120)
+                    }
 
                     Button {
                         Task {
@@ -164,11 +177,7 @@ private struct GeneralSettingsTab: View {
                     }
                 }
 
-                Section("Data") {
-                    Text("Delete all snapshots to rebuild history from scratch after major scope or rule changes.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
+                Section("Troubleshooting") {
                     Button(role: .destructive) {
                         showDeleteSnapshotsConfirmation = true
                     } label: {
@@ -195,7 +204,7 @@ private struct GeneralSettingsTab: View {
                                 let reclaimedWalBytes = max(0, report.walBytesBefore - report.walBytesAfter)
                                 let reclaimedTotal = reclaimedDbBytes + reclaimedWalBytes
 
-                                compactedNotice = "Reclaimed \(formattedBytes(reclaimedTotal)). Backfilled \(report.backfilledSnapshots) category snapshots and \(report.backfilledSubcategorySnapshots) subcategory snapshots, removed \(report.orphanedPathsDeleted) orphaned paths."
+                                compactedNotice = "Reclaimed \(formattedBytes(reclaimedTotal))."
                             } catch {
                                 compactedNotice = "Compaction failed: \(error.localizedDescription)"
                             }
@@ -210,7 +219,7 @@ private struct GeneralSettingsTab: View {
                             } else {
                                 Image(systemName: "externaldrive.badge.timemachine")
                             }
-                            Text("Compact Database Now")
+                            Text("Compact Database")
                         }
                     }
                     .disabled(isResetting || isCompactingDatabase)
@@ -226,29 +235,6 @@ private struct GeneralSettingsTab: View {
                             .font(.caption)
                             .foregroundStyle(.green)
                     }
-                }
-
-                Section("History") {
-                    HStack {
-                        Text("Category history retention")
-                            .font(.system(size: 13))
-
-                        Spacer()
-
-                        Picker("", selection: $settingsStore.categoryHistoryRetentionDays) {
-                            Text("7 days").tag(7)
-                            Text("14 days").tag(14)
-                            Text("30 days").tag(30)
-                            Text("60 days").tag(60)
-                            Text("90 days").tag(90)
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 120)
-                    }
-
-                    Text("How long to keep category size history for trend detection. Shorter retention uses less disk space.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)

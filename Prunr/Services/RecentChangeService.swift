@@ -169,7 +169,6 @@ actor RecentChangeService {
 
         // If too many targets, coalesce to a single tracked-root rescan to avoid saturating I/O
         if targets.count > Self.maxRefreshTargets {
-            print("[RecentChangeService] \(targets.count) targets exceed cap (\(Self.maxRefreshTargets)) — coalescing to tracked root rescan")
             return [.subtree(trackedRoot)]
         }
 

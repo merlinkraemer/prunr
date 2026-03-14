@@ -266,7 +266,6 @@ final class DatabaseManager {
 
             if invalidCount > 0 {
                 try db.execute(sql: "DELETE FROM categorySnapshot")
-                print("[DatabaseManager] Cleared legacy categorySnapshot history (\(invalidCount) legacy rows detected)")
             }
         }
 
@@ -287,7 +286,6 @@ final class DatabaseManager {
 
             if invalidCount > 0 {
                 try db.execute(sql: "DELETE FROM categorySnapshot")
-                print("[DatabaseManager] Cleared invalid categorySnapshot rows (\(invalidCount) rows removed)")
             }
         }
 
@@ -464,7 +462,7 @@ extension DatabaseManager {
         return try await dbPool.write { db in
             var snapshot = Snapshot(trackedPathId: trackedPathId, createdAt: Date(), freeBytes: freeBytes)
             try snapshot.insert(db)
-            print("[DEBUG] Created snapshot with id: \(snapshot.id ?? 0), trackedPathId: \(snapshot.trackedPathId), freeBytes: \(freeBytes ?? -1)")
+            // Snapshot created — id, trackedPathId, freeBytes logged via OSLog in callers
             return snapshot
         }
     }
@@ -1888,8 +1886,6 @@ extension DatabaseManager {
         }
 
         return try await dbPool.read { db in
-            let start = Date()
-
             // SQLite doesn't support FULL OUTER JOIN, so we use UNION of LEFT JOINs
             // - First LEFT JOIN: all entries from 'before' snapshot with matching 'after' entries
             // - Second LEFT JOIN: entries only in 'after' snapshot (excluding matches)
@@ -1930,8 +1926,6 @@ extension DatabaseManager {
             """
 
             let deltas = try Delta.fetchAll(db, sql: query, arguments: [afterId, beforeId, beforeId, afterId])
-            let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
-            print("[DatabaseManager] calculateDeltas before=\(beforeId) after=\(afterId) deltas=\(deltas.count) in \(elapsedMs)ms")
 
             return deltas
         }

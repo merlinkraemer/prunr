@@ -249,7 +249,7 @@ struct MenuBarView: View {
         // Ensure Settings window is focused immediately - ISS-024
         // Same improved logic as MenuBarManager.openSettings with faster 50ms delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
 
             if let settingsWindow = NSApp.windows.first(where: {
                 $0.title.contains("Settings")
@@ -268,7 +268,7 @@ struct MenuBarView: View {
             } else {
                 // If window not found yet, try once more with a longer delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.activate()
                     if let settingsWindow = NSApp.windows.first(where: { $0.title.contains("Settings") }) {
                         settingsWindow.hidesOnDeactivate = false
                         settingsWindow.level = .floating

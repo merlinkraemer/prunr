@@ -21,12 +21,20 @@ struct PrunrMenuBar: App {
         // Initialize database on app launch
         do {
             try DatabaseManager.shared.initialize()
-            print("Database initialized at: \(DatabaseManager.shared.databasePath ?? "unknown")")
             Task.detached(priority: .utility) {
                 await DatabaseCleanupService.shared.performStartupMaintenance()
             }
         } catch {
-            print("Failed to initialize database: \(error)")
+            // Surface the error so the user sees it instead of a blank app
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Prunr could not start"
+                alert.informativeText = "The database failed to initialize: \(error.localizedDescription)\n\nTry relaunching the app. If the problem persists, delete ~/Library/Application Support/Prunr and relaunch."
+                alert.alertStyle = .critical
+                alert.addButton(withTitle: "Quit")
+                alert.runModal()
+                NSApp.terminate(nil)
+            }
         }
     }
 

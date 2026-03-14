@@ -477,7 +477,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func setupContextMenu() {
         let menu = NSMenu()
 
-        // Create Test Data (Debug)
+        #if DEBUG
+        // Create Test Data (Debug only)
         let createDataItem = NSMenuItem(
             title: "Create Test Data",
             action: #selector(createTestDataAction),
@@ -487,6 +488,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         menu.addItem(createDataItem)
 
         menu.addItem(NSMenuItem.separator())
+        #endif
 
         // Settings...
         let settingsItem = NSMenuItem(
@@ -721,7 +723,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Prefer the most specific enabled tracked path to avoid scanning huge umbrella roots.
         let enabledPaths = effectiveTrackedPaths(from: trackedPathsOverride ?? SettingsStore.shared.enabledTrackedPaths)
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
-            print("[MenuBarManager] No enabled tracked paths in settings")
             errorMessage = "No paths enabled in Settings"
             return
         }
@@ -750,8 +751,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Record scan start time for minimum display duration
         let startTime = Date()
         scanStartTime = startTime
-
-        print("[MenuBarManager] Starting scan for: \(trackedPath.displayName)")
 
         var wasCancelled = false
         var completedSuccessfully = false
@@ -831,7 +830,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         } catch {
             if let baselineError = error as? BaselineService.BaselineError,
                case .insufficientSnapshots = baselineError {
-                print("[MenuBarManager] Insufficient snapshots for comparison")
                 noBaseline = false
                 growingCategories = []
                 stableCategories = []
@@ -845,7 +843,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 reconcileDrillDownSelection()
             } else if let baselineError = error as? BaselineService.BaselineError,
                case .noBaseline = baselineError {
-                print("[MenuBarManager] No baseline exists")
                 noBaseline = true
                 growingCategories = []
                 stableCategories = []
@@ -858,7 +855,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
-                print("[MenuBarManager] Scan was cancelled")
                 scanProgress = "Cancelled"
                 scanCurrentPath = ""
                 scanCurrentPathDisplay = ""
@@ -1086,10 +1082,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         lastReconciliationAt = Date()
     }
 
-    /// Kicks off silent reconciliation if the last one was >24 hours ago.
+    /// Kicks off silent reconciliation if the last one exceeds the user's configured scan interval.
     func reconcileIfStale() {
         guard !noBaseline else { return }
-        let staleThreshold: TimeInterval = 24 * 60 * 60 // 24 hours
+        let staleThreshold = SettingsStore.shared.automaticFullScanInterval
         if let lastReconciliation = lastReconciliationAt ?? lastAutomaticScanAt,
            Date().timeIntervalSince(lastReconciliation) < staleThreshold {
             return
@@ -1234,7 +1230,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         // Check if we've hit the maximum
         guard group.loadedFileCount < SubcategoryGroup.maxLoadableFiles else {
-            print("[MenuBarManager] Max files limit reached for subcategory: \(group.displayName)")
             return nil
         }
 
@@ -1319,8 +1314,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             category: category,
             subcategory: group.subcategory
         )
-        print("[GrowthDebug] Working-set comparison returned \(contributors.count) contributors for \(category.rawValue)/\(group.subcategory?.rawValue ?? "nil")")
-
         growthContributorsBySubcategory[cacheKey] = contributors
         return contributors
     }
@@ -1362,8 +1355,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             errorMessage = "No valid paths configured. Please add a path in Settings."
             return
         }
-
-        print("[MenuBarManager] Taking initial snapshot for: \(trackedPath.displayName)")
 
         isLoading = true
         errorMessage = nil
@@ -1626,8 +1617,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Also activate Finder to bring it to front
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NSApp.activate()
-            if let finderBundle = Bundle(url: URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")) {
-                let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: finderBundle.bundleIdentifier!).first
+            if let finderBundle = Bundle(url: URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")),
+               let bundleId = finderBundle.bundleIdentifier {
+                let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
                 runningApp?.activate()
             }
         }
@@ -1650,7 +1642,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         openPanel.canChooseFiles = false
         openPanel.canChooseDirectories = true
         openPanel.allowsMultipleSelection = false
-        openPanel.message = "Choose a folder to scan for duplicate files"
+        openPanel.message = "Choose a folder to track disk usage"
         openPanel.level = .floating  // Ensure it's above other windows
 
         // Show the panel
@@ -1661,7 +1653,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 // Restore dropdown panel if it was visible
                 if let dropdownPanel = self?.panel, wasVisible {
                     dropdownPanel.level = originalLevel ?? .statusBar
-                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.activate()
                     dropdownPanel.makeKeyAndOrderFront(nil)
                     self?.isPopoverShown = true
                 }
@@ -1676,7 +1668,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         // Activate the app and bring file picker to front after a brief delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             openPanel.makeKeyAndOrderFront(nil)
         }
     }
@@ -1849,7 +1841,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func startRealtimeUpdates() {
         updateTimer?.invalidate()
 
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateFreeSpace()
                 self?.configureFileWatcherIfNeeded()
@@ -1925,6 +1917,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     // MARK: - Actions
 
+    #if DEBUG
     @objc private func createTestDataAction() {
         // Run in background with low priority to avoid blocking UI
         Task.detached(priority: .utility) {
@@ -1936,7 +1929,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Creates files in paths that match category patterns for testing
     /// Includes comprehensive boundary folders for testing boundary detection
     func generateTestData() async {
-        let testDataPath = "/Users/merlinkramer/dev/projects/prunr/test_data"
+        let testDataPath = NSTemporaryDirectory() + "prunr_test_data"
         let fm = FileManager.default
         let baseURL = URL(fileURLWithPath: testDataPath)
 
@@ -2111,6 +2104,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             print("[MenuBarManager] Failed to create test data: \(error)")
         }
     }
+    #endif
 
     // MARK: - NSPopoverDelegate
 
