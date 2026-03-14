@@ -18,37 +18,39 @@ actor ScanService {
     /// Database manager reference
     private let db = DatabaseManager.shared
 
-    /// Tracks whether a scan is currently in progress.
-    /// This is the single source of truth for scan state.
-    @MainActor var isScanning = false
+    /// Number of scans currently in progress (parallel scans for independent paths).
+    /// Drives the `isScanning` observable property.
+    @MainActor private var activeScanCount = 0
 
-    /// Cancellation token for stopping in-progress scans
+    /// Whether any scan is currently in progress.
+    /// `true` as soon as the first path scan starts; `false` once the last one finishes.
+    @MainActor var isScanning: Bool { activeScanCount > 0 }
+
+    /// Cancellation token for stopping in-progress scans.
+    /// A single shared flag — setting it cancels ALL concurrent scans.
     private var isCancelled = false
-
-    /// Task handle for the current scan (allows immediate cancellation)
-    private var currentScanTask: Task<Void, Never>?
 
     /// Logger for scan operations
     private let logger = Logger(subsystem: "com.prunr.ScanService", category: "Scanning")
 
     private init() {}
 
-    /// Cancels the current scan operation
+    /// Cancels all currently-running scan operations.
+    /// Sets the shared `isCancelled` flag, which stops ALL concurrent scan loops at
+    /// their next cancellation checkpoint. Structured concurrency (TaskGroup) propagates
+    /// the cancellation to any remaining child tasks automatically.
     func cancelScan() {
-        logger.info("Cancellation requested")
+        logger.info("Cancellation requested — stopping all active scans")
         self.isCancelled = true
-
-        // Also cancel the task if we have a handle to it
-        self.currentScanTask?.cancel()
-
-        logger.info("Cancellation signal sent (isCancelled: \(self.isCancelled))")
+        logger.info("Cancellation signal sent")
     }
 
-    /// Resets cancellation state for a new scan
-    private func resetCancellation() {
+    /// Resets cancellation state before starting a new scan batch.
+    /// Must be called once before a group of concurrent `scan()` calls — not inside each
+    /// individual scan — so that a cancellation from a prior session doesn't bleed into the new one.
+    func resetCancellationForNewBatch() {
         isCancelled = false
-        currentScanTask = nil
-        logger.debug("Cancellation state reset")
+        logger.debug("Cancellation state reset for new scan batch")
     }
 
     private func throwIfCancelled(_ stage: String) throws {
@@ -79,6 +81,11 @@ actor ScanService {
 
         /// Whether the percentage is based on a stable estimate.
         var hasReliableEstimate: Bool
+
+        /// Partial category size totals accumulated so far during this scan.
+        /// Populated every ~2 seconds so the UI can show categories filling in live.
+        /// `nil` on progress updates that don't include a category snapshot (most updates).
+        var categoryTotals: [GrowthCategory: Int64]?
     }
 
     // MARK: - Public API
@@ -120,31 +127,19 @@ actor ScanService {
         alsoWriteWorkingSet: Bool = false,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> Snapshot {
-        let didAcquireScanState = await MainActor.run { () -> Bool in
-            guard !isScanning else { return false }
-            isScanning = true
-            return true
-        }
-        guard didAcquireScanState else {
-            logger.error("Scan requested while already scanning")
-            throw ScanError.unknown(NSError(
-                domain: "ScanService",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "A scan is already in progress"]
-            ))
+        // Increment active scan counter (allows parallel scans for independent paths)
+        let currentCount = await MainActor.run { () -> Int in
+            activeScanCount += 1
+            return activeScanCount
         }
 
-        // Reset cancellation state
-        resetCancellation()
+        logger.info("Starting scan for path: \(path) (active: \(currentCount))")
 
-        logger.info("Starting scan for path: \(path)")
-
-        // Ensure scanning state is reset when done
+        // Ensure the counter is decremented when this scan finishes (for any reason)
         defer {
-            logger.info("Scan cleanup complete")
-            currentScanTask = nil
+            logger.info("Scan cleanup complete for \(path)")
             Task { @MainActor in
-                isScanning = false
+                activeScanCount -= 1
             }
         }
 
@@ -213,6 +208,8 @@ actor ScanService {
         var batch: [ScanResult] = []
         var count = 0
         var lastProgressUpdate = Date()
+        var lastCategoryUpdate = Date()
+        let categoryUpdateInterval: TimeInterval = 2.0 // Send partial category totals every ~2s
         var lastReportedPercentage = 0.03
         let progressUpdateInterval: TimeInterval = 0.25
         let historicalEntryEstimate = await historicalEntryEstimate(for: trackedPathId)
@@ -280,7 +277,8 @@ actor ScanService {
                 currentSnapshotId: snapshotId,
                 totalFiles: 100, // Initial estimate
                 percentage: 0.03,
-                hasReliableEstimate: historicalEntryEstimate != nil
+                hasReliableEstimate: historicalEntryEstimate != nil,
+                categoryTotals: nil // No category data yet at scan start
             )
             progress(initialProgress)
             logger.debug("Initial progress update sent")
@@ -337,7 +335,7 @@ actor ScanService {
                     }
                 }
 
-                // Report progress (throttled to every 500ms)
+                // Report progress (throttled to every 250ms)
                 if let progress = progress {
                     let now = Date()
                     if now.timeIntervalSince(lastProgressUpdate) >= progressUpdateInterval {
@@ -381,10 +379,17 @@ actor ScanService {
 
                         percentage = max(lastReportedPercentage, percentage)
                         lastReportedPercentage = percentage
-                        
+
                         // Log progress for debugging hangs
                         if count % 10000 == 0 {
                             logger.debug("Scan progress: \(Int(percentage * 100))% (\(count) files, \(elapsed)s elapsed)")
+                        }
+
+                        // Include a category totals snapshot every ~2 seconds so the UI can
+                        // show categories filling in live during the scan.
+                        let shouldSendCategorySnapshot = now.timeIntervalSince(lastCategoryUpdate) >= categoryUpdateInterval
+                        if shouldSendCategorySnapshot {
+                            lastCategoryUpdate = now
                         }
 
                         let progressUpdate = ScanProgress(
@@ -393,7 +398,8 @@ actor ScanService {
                             currentSnapshotId: snapshotId,
                             totalFiles: estimatedTotal,
                             percentage: percentage,
-                            hasReliableEstimate: hasReliableEstimate
+                            hasReliableEstimate: hasReliableEstimate,
+                            categoryTotals: shouldSendCategorySnapshot ? categoryTotals : nil
                         )
                         progress(progressUpdate)
                     }
@@ -443,6 +449,8 @@ actor ScanService {
             try await db.replaceSubcategorySnapshots(snapshotId: snapshotId, rows: storedSubcategories)
 
             // Send final progress update at 100% completion (UAT-001 fix)
+            // Include complete category totals so the UI can show final categories before
+            // the post-scan inventory load replaces them.
             if let progress = progress {
                 let finalProgress = ScanProgress(
                     currentPath: path,
@@ -450,7 +458,8 @@ actor ScanService {
                     currentSnapshotId: snapshotId,
                     totalFiles: count,
                     percentage: 1.0, // 100% complete
-                    hasReliableEstimate: true
+                    hasReliableEstimate: true,
+                    categoryTotals: categoryTotals.isEmpty ? nil : categoryTotals
                 )
                 progress(finalProgress)
                 logger.debug("Final progress update sent: \(count) files")
