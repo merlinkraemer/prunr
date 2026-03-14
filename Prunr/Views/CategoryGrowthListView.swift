@@ -385,7 +385,7 @@ struct CategoryGrowthListView: View {
                                     manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
-                                    isNavigationReady: manager.hasCompletedInitialSubcategoryWarmup || isReady,
+                                    isNavigationReady: !manager.isDeltasOnlyMode && (manager.hasCompletedInitialSubcategoryWarmup || isReady),
                                     isPreparing: isPreparing,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     isDeltasOnly: manager.isDeltasOnlyMode,
@@ -401,7 +401,7 @@ struct CategoryGrowthListView: View {
                                     manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
-                                    isNavigationReady: manager.hasCompletedInitialSubcategoryWarmup || isReady,
+                                    isNavigationReady: !manager.isDeltasOnlyMode && (manager.hasCompletedInitialSubcategoryWarmup || isReady),
                                     isPreparing: isPreparing,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     isDeltasOnly: manager.isDeltasOnlyMode,
