@@ -812,14 +812,13 @@ actor BaselineService {
             while true {
                 if Task.isCancelled { return [] }
 
-                let entries = try await db.fetchWorkingSetEntriesPaginated(
-                    trackedPathId: trackedPathId, offset: offset, limit: pageSize
+                let entries = try await db.fetchWorkingSetEntriesByCategory(
+                    trackedPathId: trackedPathId, category: category, offset: offset, limit: pageSize
                 )
                 guard !entries.isEmpty else { break }
 
                 for entry in entries {
                     if Task.isCancelled { return [] }
-                    guard GrowthCategory.categorize(path: entry.path) == category else { continue }
                     let subcategory = GrowthCategory.subcategorize(path: entry.path)
                     grouped[subcategory, default: SubcategoryAccumulator(limit: initialSubcategoryFileLimit)].add(entry)
                 }
@@ -1044,12 +1043,11 @@ actor BaselineService {
             let pageSize = 5_000
             var dbOffset = 0
             while true {
-                let entries = try await db.fetchWorkingSetEntriesPaginated(
-                    trackedPathId: trackedPathId, offset: dbOffset, limit: pageSize
+                let entries = try await db.fetchWorkingSetEntriesByCategory(
+                    trackedPathId: trackedPathId, category: category, offset: dbOffset, limit: pageSize
                 )
                 guard !entries.isEmpty else { break }
                 for entry in entries {
-                    guard GrowthCategory.categorize(path: entry.path) == category else { continue }
                     let sub = GrowthCategory.subcategorize(path: entry.path)
                     guard sub == subcategory else { continue }
                     allEntries.append(entry)
@@ -1349,9 +1347,12 @@ actor BaselineService {
 
                 if let comparison = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id) {
                     latestSnapshotIdsByPath[trackedPath.id] = comparison.currentSnapshotId
-                    if let baselineSnapshotId = comparison.baselineSnapshotId {
-                        baselineSnapshotIdsByPath[trackedPath.id] = baselineSnapshotId
-                    }
+                    // Use separate baseline when available, otherwise fall back to
+                    // the current snapshot so that working-set changes (files added
+                    // or grown since the initial scan) are detected as growth even
+                    // before a second snapshot is taken.
+                    baselineSnapshotIdsByPath[trackedPath.id] =
+                        comparison.baselineSnapshotId ?? comparison.currentSnapshotId
                 }
             } catch {
                 print("[BaselineService] Error resolving snapshots for \(trackedPath.displayName): \(error)")

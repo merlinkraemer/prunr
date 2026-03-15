@@ -30,6 +30,10 @@ actor ScanService {
     /// A single shared flag — setting it cancels ALL concurrent scans.
     private var isCancelled = false
 
+    /// Shared token passed to FileScanner so the FTS producer can check cancellation
+    /// directly, without waiting for the stream consumer round-trip.
+    private var cancellationToken = ScanCancellationToken()
+
     /// Logger for scan operations
     private let logger = Logger(subsystem: "com.prunr.ScanService", category: "Scanning")
 
@@ -42,6 +46,7 @@ actor ScanService {
     func cancelScan() {
         logger.info("Cancellation requested — stopping all active scans")
         self.isCancelled = true
+        self.cancellationToken.cancel()
         logger.info("Cancellation signal sent")
     }
 
@@ -50,6 +55,7 @@ actor ScanService {
     /// individual scan — so that a cancellation from a prior session doesn't bleed into the new one.
     func resetCancellationForNewBatch() {
         isCancelled = false
+        cancellationToken = ScanCancellationToken()
         logger.debug("Cancellation state reset for new scan batch")
     }
 
@@ -204,7 +210,7 @@ actor ScanService {
         logger.debug("Created snapshot ID: \(snapshotId)")
 
         // Batch insert configuration
-        let batchSize = 15000 // Increased from 5000 — fewer transactions = less overhead
+        let batchSize = 50000 // Increased from 15000 — fewer transactions = less overhead
         var batch: [ScanResult] = []
         var count = 0
         var lastProgressUpdate = Date()
@@ -292,7 +298,7 @@ actor ScanService {
             } else {
                 await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
             }
-            let stream = scanner.scan(url, ignoredNames: resolvedIgnoredNames)
+            let stream = scanner.scan(url, ignoredNames: resolvedIgnoredNames, cancellationToken: cancellationToken)
 
             for try await result in stream {
                 // Check for cancellation (more frequent check)
@@ -329,7 +335,7 @@ actor ScanService {
                     // Check cancellation after database write
                     try throwIfCancelled("batch insert completion")
 
-                    // Yield every batch (15000 items) to reduce coordination overhead
+                    // Yield every batch (50000 items) to reduce coordination overhead
                     if count % batchSize == 0 {
                         await Task.yield()
                     }

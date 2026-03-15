@@ -526,8 +526,7 @@ actor DatabaseCleanupService {
             guard !entries.isEmpty else { break }
 
             for entry in entries {
-                let category = GrowthCategory.categorize(path: entry.path)
-                let subcategory = GrowthCategory.subcategorize(path: entry.path)
+                let (category, subcategory) = GrowthCategory.classify(path: entry.path)
                 categoryTotals[category, default: 0] += entry.sizeBytes
 
                 let key = DatabaseManager.JournalDeltaKey(category: category, subcategory: subcategory)

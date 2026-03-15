@@ -778,6 +778,30 @@ extension DatabaseManager {
         }
     }
 
+    /// Fetches working-set entries for a specific category using SQL-level filtering
+    /// via pathClassification. Much faster than fetching all entries and classifying in Swift.
+    func fetchWorkingSetEntriesByCategory(
+        trackedPathId: UUID,
+        category: GrowthCategory,
+        offset: Int,
+        limit: Int
+    ) async throws -> [SnapshotEntryWithPath] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
+                FROM workingSetEntry wse
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                JOIN paths p ON p.id = wse.pathId
+                WHERE wse.trackedPathId = ? AND pc.category = ?
+                LIMIT ? OFFSET ?
+                """, arguments: [trackedPathId.uuidString, category.rawValue, limit, offset])
+        }
+    }
+
     /// Returns the total bytes stored in a snapshot without materializing every row.
     func sumEntrySizes(for snapshotId: Int64) async throws -> Int64 {
         guard let dbPool = dbPool else {

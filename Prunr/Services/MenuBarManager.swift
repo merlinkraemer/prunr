@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 // MARK: - Custom Panel for Arrow-less Dropdown
@@ -76,6 +77,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // For debugging menubar click reliability (ISS-013)
     private var lastClickTimestamp: Date?
     private let clickDebounceInterval: TimeInterval = 0.1 // 100ms
+
+    private static let logger = Logger(subsystem: "com.prunr.MenuBarManager", category: "Reconciliation")
+
 
     /// Baseline service for growth tracking
     private let baselineService = BaselineService.shared
@@ -403,6 +407,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var lastReconciliationAt: Date?
     private var isReconciling = false
     private var reconciliationTask: Task<Void, Never>?
+    private var upgradeRetryCount = 0
+    /// Set when background scan fails repeatedly so the UI can surface a retry option.
+    var backgroundScanError: Error? = nil
 
     var lastScanStatusText: String {
         let formatter = RelativeDateTimeFormatter()
@@ -922,9 +929,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     func loadInventoryFromLatestSnapshot(
         refreshedAt: Date? = nil,
-        invalidateSubcategoryCache: Bool = false
+        invalidateSubcategoryCache: Bool = false,
+        force: Bool = false
     ) async {
-        guard beginInventoryRefresh() else { return }
+        if force {
+            isInventoryRefreshInProgress = true
+        } else {
+            guard beginInventoryRefresh() else { return }
+        }
         defer { endInventoryRefresh() }
 
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
@@ -995,12 +1007,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         recentChangeTask = nil
 
         if pendingRecentChangePaths.isEmpty {
-            // No pending FSEvents — just refresh inventory from DB
-            await loadInventoryFromLatestSnapshot(refreshedAt: Date(), invalidateSubcategoryCache: true)
-        } else {
-            // Flush pending FSEvents changes
-            await performRecentChangeRefresh()
+            // Force a root-level refresh instead of just re-reading stale DB data
+            let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+            for tp in enabledPaths {
+                pendingRecentChangePaths.insert(tp.url.standardizedFileURL)
+            }
         }
+        await performRecentChangeRefresh()
     }
 
     /// Starts deltas-only tracking mode: enables FSEvents immediately without running a full scan.
@@ -1072,10 +1085,27 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         do {
             _ = try await createBaselines(for: enabledPaths) { _, _ in }
         } catch {
+            upgradeRetryCount += 1
+            Self.logger.error("Background scan failed (attempt \(self.upgradeRetryCount)): \(error.localizedDescription)")
+
+            if upgradeRetryCount >= 3 {
+                backgroundScanError = error
+            }
+
+            // Exponential backoff: 30s → 60s → 120s, capped at 10 min
+            let delay = min(30.0 * pow(2.0, Double(upgradeRetryCount - 1)), 600.0)
+            reconciliationTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                await self?.upgradeDeltasOnlyToFullInventory()
+            }
             return
         }
 
         guard !Task.isCancelled else { return }
+
+        upgradeRetryCount = 0
+        backgroundScanError = nil
 
         // Clear deltas-only mode — full baseline now exists
         SettingsStore.shared.endDeltasOnlyMode()
@@ -1102,6 +1132,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         do {
             _ = try await createBaselines(for: enabledPaths) { _, _ in }
         } catch {
+            Self.logger.error("Silent reconciliation failed: \(error.localizedDescription)")
             return
         }
 
@@ -1224,8 +1255,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
 
             let groups: [SubcategoryGroup]
-            if currentInventorySnapshotIDsByPath.isEmpty || hasIncrementalDeltasSinceSnapshot {
-                // Deltas-only mode or incremental updates applied: build breakdown from working set
+            if currentInventorySnapshotIDsByPath.isEmpty {
+                // Deltas-only mode (no snapshot at all): must use working set
                 guard let primaryPath = self.primaryTrackedPath(from: enabledPaths) else {
                     return .skipped
                 }
@@ -1234,6 +1265,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                     trackedPathId: primaryPath.id
                 )
             } else {
+                // Always use snapshot-based approach — it queries growth from
+                // the working set via SQL (fast, filtered by category) and
+                // merges growth totals into the precomputed subcategory data.
                 groups = await baselineService.getSubcategoryBreakdown(
                     for: category,
                     trackedPathsById: trackedPathsByID,
@@ -1272,7 +1306,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         do {
             let additionalFiles: [GrowthItem]
-            if currentInventorySnapshotIDsByPath.isEmpty || hasIncrementalDeltasSinceSnapshot {
+            if currentInventorySnapshotIDsByPath.isEmpty {
                 let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
                 guard let primaryPath = primaryTrackedPath(from: enabledPaths) else { return nil }
                 additionalFiles = await baselineService.loadMoreSubcategoryFilesFromWorkingSet(
@@ -2504,28 +2538,20 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         roots.append(bundleURL)
         roots.append(bundleURL.deletingLastPathComponent().standardizedFileURL)
 
-        let repoBuild = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-            .appendingPathComponent("dev/projects/prunr/.build", isDirectory: true)
-            .standardizedFileURL
-        if fileManager.fileExists(atPath: repoBuild.path) {
-            roots.append(repoBuild)
-        }
-
         return roots
     }
 
     deinit {
+        // MainActor.assumeIsolated is safe: this @MainActor class is always
+        // deallocated from MainActor context (singleton dropped on main thread).
         MainActor.assumeIsolated {
             updateTimer?.invalidate()
             activityPulseTimer?.invalidate()
             recentChangeTask?.cancel()
             reconciliationTask?.cancel()
-
             let watcher = fileEventsWatcher
             if let watcher {
-                Task {
-                    await watcher.stop()
-                }
+                Task { await watcher.stop() }
             }
         }
     }

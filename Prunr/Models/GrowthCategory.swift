@@ -28,11 +28,6 @@ struct GrowthItem: Identifiable, Sendable, Equatable, Codable {
         growthBytes >= bigFileThreshold
     }
 
-    /// The category this item belongs to
-    var category: GrowthCategory {
-        GrowthCategory.categorize(path: path)
-    }
-
     /// Extract just the file/folder name
     private var fileName: String {
         URL(fileURLWithPath: path).lastPathComponent
@@ -367,8 +362,8 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
 
     private static func isDatabasePath(_ lowerPath: String) -> Bool {
         if lowerPath.contains("/var/lib/postgresql")
-            || lowerPath.contains("/postgres")
-            || lowerPath.contains("postgresql") {
+            || containsPathComponent(lowerPath, "postgres")
+            || containsPathComponent(lowerPath, "postgresql") {
             return true
         }
 
@@ -422,14 +417,17 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             || lowerPath.contains("/native instruments/")
             || lowerPath.contains("/kontakt/")
             || lowerPath.contains("library/application support/native instruments")
-            || lowerPath.contains("/samples/")
             || lowerPath.contains("/music/samples")
+            || (lowerPath.contains("/samples/") && (
+                lowerPath.contains("/music/")
+                || lowerPath.contains("/audio/")
+                || lowerPath.contains("library/application support/")
+            ))
     }
 
     private static func isAudioPluginPath(_ lowerPath: String) -> Bool {
         lowerPath.contains("/audio/plug-ins/")
             || lowerPath.contains("library/audio/")
-            || lowerPath.contains("/components/")
             || lowerPath.hasSuffix(".vst")
             || lowerPath.hasSuffix(".vst3")
             || lowerPath.hasSuffix(".component")
@@ -530,14 +528,14 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
     }
 
     private static func isSpotifyPath(_ lowerPath: String) -> Bool {
-        lowerPath.contains("com.spotify") || lowerPath.contains("/spotify/")
+        lowerPath.contains("com.spotify")
+            || (lowerPath.contains("/spotify/") && lowerPath.contains("/library/"))
     }
 
     private static func isMailPath(_ lowerPath: String) -> Bool {
         lowerPath.contains("/mail/")
             || lowerPath.contains("com.apple.mail")
             || lowerPath.contains("mail download")
-            || lowerPath.contains("attachments")
     }
 
     private static func isSystemSupportPath(_ lowerPath: String) -> Bool {

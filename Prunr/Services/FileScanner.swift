@@ -2,6 +2,29 @@ import Foundation
 import OSLog
 import Darwin
 
+/// Thread-safe cancellation token that lets the scan caller signal cancellation
+/// directly to the FTS producer, bypassing the stream consumer round-trip.
+final class ScanCancellationToken: @unchecked Sendable {
+    private let _cancelled: UnsafeMutablePointer<Int32> = {
+        let p = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
+        p.initialize(to: 0)
+        return p
+    }()
+
+    var isCancelled: Bool {
+        OSAtomicOr32Barrier(0, _cancelled) != 0
+    }
+
+    func cancel() {
+        OSAtomicOr32Barrier(1, _cancelled)
+    }
+
+    deinit {
+        _cancelled.deinitialize(count: 1)
+        _cancelled.deallocate()
+    }
+}
+
 /// Recursively scans directories and streams scan results.
 ///
 /// Optimized for speed: low-level FTS traversal avoids Foundation URL/resourceValues
@@ -31,7 +54,7 @@ final class FileScanner {
     ///
     /// - Parameter rootURL: The root URL to begin scanning from
     /// - Returns: An AsyncThrowingStream that yields ScanResult values
-    func scan(_ rootURL: URL, ignoredNames: Set<String>) -> AsyncThrowingStream<ScanResult, Error> {
+    func scan(_ rootURL: URL, ignoredNames: Set<String>, cancellationToken: ScanCancellationToken? = nil) -> AsyncThrowingStream<ScanResult, Error> {
         return AsyncThrowingStream<ScanResult, Error> { continuation in
             let producerTask = Task { [weak self] in
                 guard let self else {
@@ -86,7 +109,7 @@ final class FileScanner {
                 }
 
                 while let entry = fts_read(tree) {
-                    if Task.isCancelled {
+                    if Task.isCancelled || cancellationToken?.isCancelled == true {
                         Self.logger.info("Producer task cancelled after \(count) files")
                         break
                     }
@@ -122,7 +145,7 @@ final class FileScanner {
                             lastLogCount = count
                         }
 
-                        if count % 2000 == 0 {
+                        if count % 20000 == 0 {
                             await Task.yield()
                         }
 
