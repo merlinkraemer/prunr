@@ -385,10 +385,9 @@ struct CategoryGrowthListView: View {
                                     manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
-                                    isNavigationReady: !manager.isDeltasOnlyMode && (manager.hasCompletedInitialSubcategoryWarmup || isReady),
+                                    isNavigationReady: manager.hasCompletedInitialSubcategoryWarmup || isReady,
                                     isPreparing: isPreparing,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
-                                    isDeltasOnly: manager.isDeltasOnlyMode,
                                     highlightedSegmentID: $highlightedSegmentID,
                                     onTap: { selectCategory(item) }
                                 )
@@ -401,10 +400,9 @@ struct CategoryGrowthListView: View {
                                     manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
-                                    isNavigationReady: !manager.isDeltasOnlyMode && (manager.hasCompletedInitialSubcategoryWarmup || isReady),
+                                    isNavigationReady: manager.hasCompletedInitialSubcategoryWarmup || isReady,
                                     isPreparing: isPreparing,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
-                                    isDeltasOnly: manager.isDeltasOnlyMode,
                                     highlightedSegmentID: $highlightedSegmentID,
                                     onTap: { selectCategory(item) }
                                 )
@@ -951,15 +949,13 @@ private struct CategoryInventoryRow: View, Equatable {
         lhs.item.growthTrend == rhs.item.growthTrend &&
         lhs.isNavigationReady == rhs.isNavigationReady &&
         lhs.isPreparing == rhs.isPreparing &&
-        lhs.isHighlightedFromBar == rhs.isHighlightedFromBar &&
-        lhs.isDeltasOnly == rhs.isDeltasOnly
+        lhs.isHighlightedFromBar == rhs.isHighlightedFromBar
     }
 
     let item: CategoryInventoryItem
     let isNavigationReady: Bool
     let isPreparing: Bool
     let isHighlightedFromBar: Bool
-    let isDeltasOnly: Bool
     @Binding var highlightedSegmentID: String?
     let onTap: () -> Void
 
@@ -998,36 +994,19 @@ private struct CategoryInventoryRow: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .trailing, spacing: 2) {
-                if isDeltasOnly && item.currentSizeBytes > 0 {
-                    Text("+\(formattedBytes(item.currentSizeBytes))")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .fixedSize()
+                Text(formattedBytes(item.currentSizeBytes))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .fixedSize()
 
-                    Text("since tracking")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
-                } else if isDeltasOnly {
-                    Text("watching...")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .fixedSize()
-                } else {
-                    Text(formattedBytes(item.currentSizeBytes))
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .fixedSize()
-
-                    if let story = item.recentGrowthStory {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text("+\(formattedBytes(story.deltaBytes)) · \(story.displayLabel)")
-                        }
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.orange)
+                if let story = item.recentGrowthStory {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("+\(formattedBytes(story.deltaBytes)) · \(story.displayLabel)")
                     }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
                 }
             }
             .opacity(isPreparing ? 0.55 : 1)

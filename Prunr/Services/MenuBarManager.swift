@@ -390,7 +390,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var isUnderDiskPressure = false
     private var lastFileEventAt: Date?
     var hasPendingRecentChanges = false
-    var isProcessingRecentChanges = false {
+    var isProcessingRecentChanges = false
+    /// True only when the user explicitly tapped the "Check Growth" button.
+    var isCheckingGrowth = false {
         didSet { updateMenuBarActivityEffect() }
     }
 
@@ -403,8 +405,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
 
-        if isProcessingRecentChanges {
-            return "Updating recent changes…"
+        if isCheckingGrowth {
+            return "Checking for changes…"
         }
 
         if hasPendingRecentChanges {
@@ -973,6 +975,25 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         lastReconciliationAt = Date()
     }
 
+    /// Lightweight growth check: flushes any pending FSEvents changes immediately
+    /// without running a full filesystem scan.
+    func checkGrowth() async {
+        guard !isLoading, !isAutoScanning, !isProcessingRecentChanges else { return }
+        isCheckingGrowth = true
+        defer { isCheckingGrowth = false }
+        // Cancel any pending debounced refresh so we can run immediately
+        recentChangeTask?.cancel()
+        recentChangeTask = nil
+        // If there are no pending paths, scan all enabled tracked paths to pick up anything missed
+        if pendingRecentChangePaths.isEmpty {
+            let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+            for tp in enabledPaths {
+                pendingRecentChangePaths.insert(tp.url.standardizedFileURL)
+            }
+        }
+        await performRecentChangeRefresh()
+    }
+
     /// Starts deltas-only tracking mode: enables FSEvents immediately without running a full scan.
     /// Categories will appear as file changes are detected. A background reconciliation scan
     /// fills in absolute sizes automatically after a delay.
@@ -1193,20 +1214,24 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 return .skipped
             }
 
-            guard !currentInventorySnapshotIDsByPath.isEmpty else {
-                return .skipped
+            let groups: [SubcategoryGroup]
+            if currentInventorySnapshotIDsByPath.isEmpty {
+                // Deltas-only mode: build breakdown from working set
+                guard let primaryPath = self.primaryTrackedPath(from: enabledPaths) else {
+                    return .skipped
+                }
+                groups = await baselineService.getSubcategoryBreakdownFromWorkingSet(
+                    for: category,
+                    trackedPathId: primaryPath.id
+                )
+            } else {
+                groups = await baselineService.getSubcategoryBreakdown(
+                    for: category,
+                    trackedPathsById: trackedPathsByID,
+                    latestSnapshotIdsByPath: currentInventorySnapshotIDsByPath,
+                    baselineSnapshotIdsByPath: currentGrowthBaselineSnapshotIDsByPath
+                )
             }
-
-            let groups = await baselineService.getSubcategoryBreakdown(
-                for: category,
-                trackedPathsById: trackedPathsByID,
-                latestSnapshotIdsByPath: currentInventorySnapshotIDsByPath,
-                baselineSnapshotIdsByPath: currentGrowthBaselineSnapshotIDsByPath
-            )
-            if Task.isCancelled {
-                return .skipped
-            }
-
             if Task.isCancelled {
                 return .skipped
             }
@@ -1236,16 +1261,27 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Check if there are more files to load
         guard group.hasMoreFiles else { return nil }
 
-        guard !currentInventorySnapshotIDsByPath.isEmpty else { return nil }
-
         do {
-            let additionalFiles = await baselineService.loadMoreSubcategoryFiles(
-                for: category,
-                subcategory: group.subcategory,
-                snapshotIdsByPath: currentInventorySnapshotIDsByPath,
-                totalBytes: group.totalBytes,
-                offset: group.loadedFileCount
-            )
+            let additionalFiles: [GrowthItem]
+            if currentInventorySnapshotIDsByPath.isEmpty {
+                let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+                guard let primaryPath = primaryTrackedPath(from: enabledPaths) else { return nil }
+                additionalFiles = await baselineService.loadMoreSubcategoryFilesFromWorkingSet(
+                    for: category,
+                    subcategory: group.subcategory,
+                    trackedPathId: primaryPath.id,
+                    totalBytes: group.totalBytes,
+                    offset: group.loadedFileCount
+                )
+            } else {
+                additionalFiles = await baselineService.loadMoreSubcategoryFiles(
+                    for: category,
+                    subcategory: group.subcategory,
+                    snapshotIdsByPath: currentInventorySnapshotIDsByPath,
+                    totalBytes: group.totalBytes,
+                    offset: group.loadedFileCount
+                )
+            }
 
             guard !additionalFiles.isEmpty else { return nil }
             guard !Task.isCancelled else { return nil }
@@ -1675,6 +1711,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
+    }
+
+    /// Opens the menu bar panel if it isn't already visible
+    func showPopover() {
+        if let panel = panel, panel.isVisible { return }
+        togglePopover()
     }
 
     @objc private func togglePopover() {
@@ -2264,6 +2306,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     /// Patches category totals in-place from incremental deltas.
+    /// Creates new category entries when they don't exist yet (e.g. deltas-only mode).
     /// No subcategory cache invalidation, no spinners.
     private func applyIncrementalDeltas(_ deltas: [DatabaseManager.JournalDeltaKey: Int64]) {
         guard !deltas.isEmpty else { return }
@@ -2274,34 +2317,127 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             categoryDeltas[key.category, default: 0] += delta
         }
 
+        // Track which categories were already present so we can add missing ones
+        var matchedCategories = Set<GrowthCategory>()
+
+        let now = Date()
+
         // Apply to growing categories (clamp to zero — deltas-only mode can overshoot)
         for i in growingCategories.indices {
             if let delta = categoryDeltas[growingCategories[i].category] {
                 growingCategories[i].currentSizeBytes = max(0, growingCategories[i].currentSizeBytes + delta)
+                matchedCategories.insert(growingCategories[i].category)
+                if delta > 0 {
+                    growingCategories[i].recentGrowthStory = accumulateGrowthStory(
+                        existing: growingCategories[i].recentGrowthStory,
+                        category: growingCategories[i].category,
+                        delta: delta,
+                        now: now
+                    )
+                }
             }
         }
 
-        // Apply to stable categories (clamp to zero)
-        var newStableTotal: Int64 = 0
+        // Apply to stable categories (clamp to zero) and promote those with growth
+        var promotedIndices = IndexSet()
         for i in stableCategories.indices {
             if let delta = categoryDeltas[stableCategories[i].category] {
                 stableCategories[i].currentSizeBytes = max(0, stableCategories[i].currentSizeBytes + delta)
+                matchedCategories.insert(stableCategories[i].category)
+                if delta > 0 {
+                    stableCategories[i].recentGrowthStory = accumulateGrowthStory(
+                        existing: stableCategories[i].recentGrowthStory,
+                        category: stableCategories[i].category,
+                        delta: delta,
+                        now: now
+                    )
+                    promotedIndices.insert(i)
+                }
             }
+        }
+        // Move categories with new growth from stable → growing so they're visible
+        for i in promotedIndices.reversed() {
+            growingCategories.append(stableCategories.remove(at: i))
+        }
+
+        // Create new entries for categories that don't exist yet (deltas-only mode bootstrap)
+        for (category, delta) in categoryDeltas where !matchedCategories.contains(category) && delta > 0 {
+            let story = RecentGrowthStory(
+                category: category, subcategory: nil,
+                deltaBytes: delta, startedAt: now, endedAt: now,
+                duration: 0, displayLabel: "just now"
+            )
+            let item = CategoryInventoryItem(
+                category: category,
+                currentSizeBytes: delta,
+                growthTrend: nil,
+                recentGrowthStory: story
+            )
+            growingCategories.append(item)
+        }
+
+        // Re-sort growing categories by size descending
+        if !growingCategories.isEmpty {
+            growingCategories.sort { $0.currentSizeBytes > $1.currentSizeBytes }
+        }
+
+        var newStableTotal: Int64 = 0
+        for i in stableCategories.indices {
             newStableTotal += stableCategories[i].currentSizeBytes
         }
         stableTotalBytes = newStableTotal
 
-        // Selectively invalidate subcategory topFiles for affected categories only
-        let affectedCategories = Set(categoryDeltas.keys)
+        // Selectively invalidate subcategory topFiles for categories with non-zero deltas only
+        let affectedCategories = categoryDeltas.filter { $0.value != 0 }.map(\.key)
+        var needsDrillDownReload = false
         for category in affectedCategories {
             if subcategoryGroupsByCategory[category] != nil {
                 // Invalidate just this category's subcategory cache so it reloads on next drill-down
                 subcategoryGroupsByCategory.removeValue(forKey: category)
                 subcategoryBreakdownCacheGenerationByCategory.removeValue(forKey: category)
+                if isDrilledDown, selectedInventoryCategory?.category == category {
+                    needsDrillDownReload = true
+                }
             }
         }
 
         reconcileDrillDownSelection()
+
+        // If the currently drilled-down category was invalidated, reload its subcategory data
+        // in the background so the user doesn't see an empty drilldown.
+        if needsDrillDownReload, let category = selectedInventoryCategory?.category {
+            preloadSubcategoryBreakdowns(for: [category])
+        }
+    }
+
+    /// Creates or accumulates a growth story for incremental deltas.
+    /// If a story already exists, adds the new delta to it; otherwise creates a fresh one.
+    private func accumulateGrowthStory(
+        existing: RecentGrowthStory?,
+        category: GrowthCategory,
+        delta: Int64,
+        now: Date
+    ) -> RecentGrowthStory {
+        if let existing {
+            return RecentGrowthStory(
+                category: category,
+                subcategory: existing.subcategory,
+                deltaBytes: existing.deltaBytes + delta,
+                startedAt: existing.startedAt,
+                endedAt: now,
+                duration: now.timeIntervalSince(existing.startedAt),
+                displayLabel: "recent"
+            )
+        }
+        return RecentGrowthStory(
+            category: category,
+            subcategory: nil,
+            deltaBytes: delta,
+            startedAt: now,
+            endedAt: now,
+            duration: 0,
+            displayLabel: "just now"
+        )
     }
 
     private var currentRecentChangeDebounce: TimeInterval {

@@ -145,7 +145,8 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             return .downloads
         }
 
-        if isDeveloperPath(lowerPath) {
+        // High-confidence developer patterns (docker, node_modules, git, build artifacts, etc.)
+        if isSpecificDeveloperPath(lowerPath) {
             return .developer
         }
 
@@ -163,6 +164,12 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
 
         if isCachesAndSystemPath(lowerPath) {
             return .cachesAndSystem
+        }
+
+        // Fallback: files under dev project roots (~/dev, ~/projects, etc.)
+        // that didn't match any more specific category above.
+        if isDevProjectPath(lowerPath) {
+            return .developer
         }
 
         return .other
@@ -258,14 +265,20 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         return isUnderDirectory(lowerPath, home + "/downloads")
     }
 
-    private static func isDeveloperPath(_ lowerPath: String) -> Bool {
+    /// Matches specific developer artifact patterns (docker, node_modules, git, build output, etc.)
+    /// Does NOT include the broad dev-project-root fallback.
+    private static func isSpecificDeveloperPath(_ lowerPath: String) -> Bool {
         isDockerPath(lowerPath)
             || isNodeModulesPath(lowerPath)
             || isGitPath(lowerPath)
             || isBuildArtifactsPath(lowerPath)
             || isDatabasePath(lowerPath)
             || isPythonVenvPath(lowerPath)
-            || isDevProjectPath(lowerPath)
+    }
+
+    /// Legacy composite check — kept for subcategorization and context helpers.
+    private static func isDeveloperPath(_ lowerPath: String) -> Bool {
+        isSpecificDeveloperPath(lowerPath) || isDevProjectPath(lowerPath)
     }
 
     private static func isAudioProductionPath(_ lowerPath: String) -> Bool {
@@ -458,7 +471,7 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             return false
         }
 
-        return !isLikelyDeveloperContext(lowerPath) && !lowerPath.contains("/library/caches/")
+        return !lowerPath.contains("/library/caches/")
     }
 
     private static func isVideoPath(_ lowerPath: String) -> Bool {
@@ -470,7 +483,7 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             return false
         }
 
-        return !isLikelyDeveloperContext(lowerPath) && !lowerPath.contains("/library/caches/")
+        return !lowerPath.contains("/library/caches/")
     }
 
     private static func isDesignFilePath(_ lowerPath: String) -> Bool {

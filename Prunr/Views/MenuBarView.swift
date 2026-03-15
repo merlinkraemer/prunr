@@ -783,7 +783,7 @@ struct MenuBarView: View {
                                 startOnboardingFirstScan()
                             }
 
-                            secondaryActionButton("Start tracking (skip scan)") {
+                            secondaryActionButton("Track changes only", minWidth: 168) {
                                 startDeltasOnlyTracking()
                             }
                         }
@@ -1346,7 +1346,7 @@ struct MenuBarView: View {
             // Scan button (lower left)
             Button {
                 Task {
-                    await manager.refreshVisibleInventory()
+                    await manager.checkGrowth()
                 }
             } label: {
                 ZStack {
@@ -1354,7 +1354,7 @@ struct MenuBarView: View {
                         .fill(scanHover ? Color.gray.opacity(0.12) : Color.clear)
                         .frame(width: 26, height: 26)
 
-                    if manager.isLoading || manager.isAutoScanning {
+                    if manager.isCheckingGrowth {
                         ProgressView()
                             .controlSize(.small)
                             .scaleEffect(0.75)
@@ -1368,15 +1368,15 @@ struct MenuBarView: View {
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Scan now")
-            .accessibilityHint("Trigger a fresh background scan")
+            .accessibilityLabel("Check growth")
+            .accessibilityHint("Check for recent file changes")
             .onHover { hovering in
                 withAnimation(.easeInOut(duration: 0.15)) {
                     scanHover = hovering
                 }
             }
-            .disabled(manager.isLoading || manager.isAutoScanning)
-            .help(manager.isLoading || manager.isAutoScanning ? "Scanning..." : "Scan Now")
+            .disabled(manager.isLoading || manager.isAutoScanning || manager.isCheckingGrowth)
+            .help(manager.isCheckingGrowth ? "Checking..." : "Check Growth")
 
             Spacer()
 
@@ -1465,12 +1465,21 @@ struct MenuBarView: View {
 
     private func secondaryActionButton(
         _ title: String,
+        minWidth: CGFloat = 140,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .semibold))
+                .frame(minWidth: minWidth)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.blue, lineWidth: 1.25)
+                )
                 .foregroundStyle(.blue)
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
     }

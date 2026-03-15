@@ -741,6 +741,130 @@ actor BaselineService {
         }
     }
 
+    /// Builds subcategory breakdown from working set entries (used in deltas-only mode).
+    func getSubcategoryBreakdownFromWorkingSet(for category: GrowthCategory, trackedPathId: UUID) async -> [SubcategoryGroup] {
+        do {
+            struct SubcategoryAccumulator {
+                struct TopEntryHeap {
+                    private(set) var entries: [SnapshotEntryWithPath] = []
+                    let limit: Int
+
+                    mutating func insert(_ entry: SnapshotEntryWithPath) {
+                        guard limit > 0 else { return }
+                        if entries.count < limit {
+                            entries.append(entry)
+                            siftUp(from: entries.count - 1)
+                            return
+                        }
+                        guard let smallest = entries.first, entry.sizeBytes > smallest.sizeBytes else { return }
+                        entries[0] = entry
+                        siftDown(from: 0)
+                    }
+
+                    private mutating func siftUp(from index: Int) {
+                        var child = index
+                        while child > 0 {
+                            let parent = (child - 1) / 2
+                            guard entries[child].sizeBytes < entries[parent].sizeBytes else { break }
+                            entries.swapAt(child, parent)
+                            child = parent
+                        }
+                    }
+
+                    private mutating func siftDown(from index: Int) {
+                        var parent = index
+                        while true {
+                            let left = parent * 2 + 1
+                            let right = left + 1
+                            var candidate = parent
+                            if left < entries.count && entries[left].sizeBytes < entries[candidate].sizeBytes {
+                                candidate = left
+                            }
+                            if right < entries.count && entries[right].sizeBytes < entries[candidate].sizeBytes {
+                                candidate = right
+                            }
+                            guard candidate != parent else { break }
+                            entries.swapAt(parent, candidate)
+                            parent = candidate
+                        }
+                    }
+                }
+
+                var totalBytes: Int64 = 0
+                var fileCount: Int = 0
+                var topEntries: TopEntryHeap
+
+                init(limit: Int) {
+                    topEntries = TopEntryHeap(limit: limit)
+                }
+
+                mutating func add(_ entry: SnapshotEntryWithPath) {
+                    totalBytes += entry.sizeBytes
+                    fileCount += 1
+                    topEntries.insert(entry)
+                }
+            }
+
+            var grouped: [GrowthSubcategory?: SubcategoryAccumulator] = [:]
+            let pageSize = 5_000
+            var offset = 0
+
+            while true {
+                if Task.isCancelled { return [] }
+
+                let entries = try await db.fetchWorkingSetEntriesPaginated(
+                    trackedPathId: trackedPathId, offset: offset, limit: pageSize
+                )
+                guard !entries.isEmpty else { break }
+
+                for entry in entries {
+                    if Task.isCancelled { return [] }
+                    guard GrowthCategory.categorize(path: entry.path) == category else { continue }
+                    let subcategory = GrowthCategory.subcategorize(path: entry.path)
+                    grouped[subcategory, default: SubcategoryAccumulator(limit: initialSubcategoryFileLimit)].add(entry)
+                }
+
+                offset += entries.count
+            }
+
+            let groups = grouped.map { subcategory, accumulator -> SubcategoryGroup in
+                let displayName: String
+                if let subcategory {
+                    displayName = subcategory.displayName
+                } else {
+                    displayName = category.supportsSubcategories ? "Uncategorized" : "Files"
+                }
+
+                let totalBytes = accumulator.totalBytes
+                let sortedTopEntries = accumulator.topEntries.entries.sorted { $0.sizeBytes > $1.sizeBytes }
+                let topFiles = sortedTopEntries.map { entry in
+                    let percent = totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0
+                    return GrowthItem(
+                        path: entry.path,
+                        growthBytes: entry.sizeBytes,
+                        currentSizeBytes: entry.sizeBytes,
+                        percentOfParent: percent,
+                        subcategory: subcategory
+                    )
+                }
+
+                return SubcategoryGroup(
+                    subcategory: subcategory,
+                    displayName: displayName,
+                    totalBytes: totalBytes,
+                    fileCount: accumulator.fileCount,
+                    growthBytes: nil,
+                    topFiles: topFiles
+                )
+            }
+
+            return groups.sorted { $0.totalBytes > $1.totalBytes }
+        } catch {
+            print("[BaselineService] Error getting working set subcategory breakdown for \(category.rawValue): \(error)")
+            return []
+        }
+    }
+
     /// Finds files that contributed to growth since the last snapshot for a specific category/subcategory.
     func getGrowthContributors(
         trackedPathId: UUID,
@@ -902,6 +1026,56 @@ actor BaselineService {
             }
         } catch {
             print("[BaselineService] Error loading aggregated files for subcategory: \(error)")
+            return []
+        }
+    }
+
+    /// Loads more files from the working set for a category/subcategory (deltas-only mode pagination).
+    func loadMoreSubcategoryFilesFromWorkingSet(
+        for category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        trackedPathId: UUID,
+        totalBytes: Int64,
+        offset: Int,
+        limit: Int = SubcategoryGroup.loadMoreBatchSize
+    ) async -> [GrowthItem] {
+        do {
+            var allEntries: [SnapshotEntryWithPath] = []
+            let pageSize = 5_000
+            var dbOffset = 0
+            while true {
+                let entries = try await db.fetchWorkingSetEntriesPaginated(
+                    trackedPathId: trackedPathId, offset: dbOffset, limit: pageSize
+                )
+                guard !entries.isEmpty else { break }
+                for entry in entries {
+                    guard GrowthCategory.categorize(path: entry.path) == category else { continue }
+                    let sub = GrowthCategory.subcategorize(path: entry.path)
+                    guard sub == subcategory else { continue }
+                    allEntries.append(entry)
+                }
+                dbOffset += entries.count
+            }
+
+            guard offset < allEntries.count else { return [] }
+
+            let page = allEntries
+                .sorted { $0.sizeBytes > $1.sizeBytes }
+                .dropFirst(offset)
+                .prefix(limit)
+
+            return page.map { entry in
+                let percent = totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0
+                return GrowthItem(
+                    path: entry.path,
+                    growthBytes: entry.sizeBytes,
+                    currentSizeBytes: entry.sizeBytes,
+                    percentOfParent: percent,
+                    subcategory: subcategory
+                )
+            }
+        } catch {
+            print("[BaselineService] Error loading working set files for subcategory: \(error)")
             return []
         }
     }

@@ -89,13 +89,15 @@ clean:
 clean-build:
 	@echo "$(YELLOW)Removing local build artifacts...$(NC)"
 	rm -rf $(BUILD_DIR)
+	@lsof +D "$(LOCAL_BUILD_ROOT)" 2>/dev/null | awk 'NR>1{print $$2}' | sort -u | xargs -r kill 2>/dev/null || true
+	@sleep 0.5
 	rm -rf $(LOCAL_BUILD_ROOT)
 	@echo "$(GREEN)Local build artifacts removed!$(NC)"
 
 reset-dev-state:
 	@echo "$(YELLOW)Resetting local app state...$(NC)"
 	rm -rf "$(APP_SUPPORT_DIR)"
-	@defaults delete "$(BUNDLE_ID)" hasCompletedFDAOnboarding 2>/dev/null || true
+	@defaults delete "$(BUNDLE_ID)" 2>/dev/null || true
 	@echo "$(GREEN)Local app state reset!$(NC)"
 
 test:

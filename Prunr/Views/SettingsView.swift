@@ -153,6 +153,7 @@ private struct GeneralSettingsTab: View {
                     }
 
                     Button {
+                        MenuBarManager.shared?.showPopover()
                         Task {
                             await MenuBarManager.shared?.loadInventory()
                         }
@@ -169,6 +170,17 @@ private struct GeneralSettingsTab: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isScanInProgress || !hasEnabledScanPath)
+
+                    if isScanInProgress, let manager = MenuBarManager.shared {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ProgressView(value: max(0.0, min(1.0, manager.scanProgressPercentage)))
+                                .tint(.blue)
+
+                            Text("Scanning — \(Int(manager.scanProgressPercentage * 100))%")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
 
                     if !hasEnabledScanPath {
                         Text("Enable at least one scan path in Scan Scope first.")
