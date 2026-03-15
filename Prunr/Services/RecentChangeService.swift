@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 actor RecentChangeService {
     static let shared = RecentChangeService()
@@ -191,20 +192,18 @@ actor RecentChangeService {
     }
 
     private func scanResult(forFileAt url: URL) -> ScanResult? {
-        do {
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let sizeBytes = (attributes[.size] as? NSNumber)?.int64Value ?? 0
-            let path = url.path
-            return ScanResult(
-                path: path,
-                sizeBytes: sizeBytes,
-                category: GrowthCategory.categorize(path: path),
-                subcategory: GrowthCategory.subcategorize(path: path)
-            )
-        } catch {
-            print("[RecentChangeService] Failed reading file size for \(url.path): \(error)")
-            return nil
-        }
+        var fileStat = stat()
+        guard lstat(url.path, &fileStat) == 0 else { return nil }
+        let allocatedBytes = Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
+        let sizeBytes = allocatedBytes > 0 ? allocatedBytes : Int64(fileStat.st_size)
+        let path = url.path
+        let (category, subcategory) = GrowthCategory.classify(path: path)
+        return ScanResult(
+            path: path,
+            sizeBytes: sizeBytes,
+            category: category,
+            subcategory: subcategory
+        )
     }
 
     private func coalescedPaths(_ paths: Set<String>) -> [String] {

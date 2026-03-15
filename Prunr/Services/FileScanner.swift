@@ -15,8 +15,7 @@ final class FileScanner {
     /// App-internal paths to avoid recursive self-observation.
     private let internalPathFragments: [String] = [
         "/Library/Application Support/Prunr/",
-        "/.build/derivedData/",
-        "/dev/projects/prunr/.build/"
+        "/.build/derivedData/"
     ]
 
     /// iCloud paths that can hang when accessed
@@ -108,12 +107,12 @@ final class FileScanner {
                         let stat = statPointer.pointee
                         let allocatedBytes = Int64(stat.st_blocks) * Int64(DEV_BSIZE)
                         let sizeBytes = allocatedBytes > 0 ? allocatedBytes : Int64(stat.st_size)
-                        let category = GrowthCategory.categorize(path: path)
+                        let (category, subcategory) = GrowthCategory.classify(path: path)
                         let result = ScanResult(
                             path: path,
                             sizeBytes: sizeBytes,
                             category: category,
-                            subcategory: GrowthCategory.subcategorize(path: path)
+                            subcategory: subcategory
                         )
                         continuation.yield(result)
                         count += 1

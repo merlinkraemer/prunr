@@ -134,9 +134,20 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
     /// Categorizes a file system path into a GrowthCategory
     /// - Parameter path: The file system path to classify
     /// - Returns: The matching GrowthCategory, or .other if no match
+    /// Combined classify: single lowercasing pass for both category and subcategory.
+    static func classify(path: String) -> (GrowthCategory, GrowthSubcategory?) {
+        let lowerPath = normalizedLowercasedPath(path)
+        let category = categorizeFromLowered(lowerPath)
+        let subcategory = subcategorizeFromLowered(lowerPath, category: category)
+        return (category, subcategory)
+    }
+
     static func categorize(path: String) -> GrowthCategory {
         let lowerPath = normalizedLowercasedPath(path)
+        return categorizeFromLowered(lowerPath)
+    }
 
+    private static func categorizeFromLowered(_ lowerPath: String) -> GrowthCategory {
         if isTrashPath(lowerPath) {
             return .trash
         }
@@ -177,8 +188,11 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
 
     static func subcategorize(path: String) -> GrowthSubcategory? {
         let lowerPath = normalizedLowercasedPath(path)
-        let category = categorize(path: path)
+        let category = categorizeFromLowered(lowerPath)
+        return subcategorizeFromLowered(lowerPath, category: category)
+    }
 
+    private static func subcategorizeFromLowered(_ lowerPath: String, category: GrowthCategory) -> GrowthSubcategory? {
         switch category {
         case .developer:
             if isDockerPath(lowerPath) { return .docker }
@@ -231,9 +245,8 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
     private static let documentExtensions = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pages", ".numbers", ".key"]
     private static let audioExtensions = [".wav", ".aif", ".aiff", ".mp3", ".flac", ".ogg", ".m4a"]
 
-    private static var homePathLowercased: String {
+    private static let homePathLowercased: String =
         FileManager.default.homeDirectoryForCurrentUser.path.lowercased()
-    }
 
     private static func normalizedLowercasedPath(_ path: String) -> String {
         let expandedPath = (path as NSString).expandingTildeInPath

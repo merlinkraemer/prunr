@@ -1,5 +1,4 @@
 import Foundation
-import Darwin
 
 final class DiskSpaceService {
     static let shared = DiskSpaceService()
@@ -20,19 +19,20 @@ final class DiskSpaceService {
     }
 
     private func fileSystemStats(for url: URL?) -> (freeBytes: Int64, totalBytes: Int64)? {
-        var fs = statfs()
         let targetURL = (url ?? FileManager.default.homeDirectoryForCurrentUser).standardizedFileURL
-        let path = targetURL.path
+        let resourceKeys: Set<URLResourceKey> = [
+            .volumeAvailableCapacityForImportantUsageKey,
+            .volumeTotalCapacityKey
+        ]
 
-        let result = path.withCString { cPath in
-            statfs(cPath, &fs)
+        do {
+            let values = try targetURL.resourceValues(forKeys: resourceKeys)
+            let freeBytes = values.volumeAvailableCapacityForImportantUsage
+                ?? Int64(values.volumeAvailableCapacity ?? 0)
+            let totalBytes = Int64(values.volumeTotalCapacity ?? 0)
+            return (freeBytes: freeBytes, totalBytes: totalBytes)
+        } catch {
+            return nil
         }
-
-        guard result == 0 else { return nil }
-
-        let blockSize = Int64(fs.f_bsize)
-        let freeBytes = Int64(fs.f_bavail) * blockSize
-        let totalBytes = Int64(fs.f_blocks) * blockSize
-        return (freeBytes: freeBytes, totalBytes: totalBytes)
     }
 }

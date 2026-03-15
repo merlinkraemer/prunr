@@ -391,6 +391,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var lastFileEventAt: Date?
     var hasPendingRecentChanges = false
     var isProcessingRecentChanges = false
+    /// True when incremental deltas have been applied since the last full scan snapshot.
+    /// Routes subcategory drill-down reads to the working set instead of the stale snapshot.
+    private var hasIncrementalDeltasSinceSnapshot = false
     /// True only when the user explicitly tapped the "Check Growth" button.
     var isCheckingGrowth = false {
         didSet { updateMenuBarActivityEffect() }
@@ -893,6 +896,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         isLoading = false
+        hasIncrementalDeltasSinceSnapshot = false
         scanProgress = ""
         scanCurrentPath = ""
         scanCurrentPathDisplay = ""
@@ -909,6 +913,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         await updatePathSize()
+
+        // Flush any FSEvents that arrived during the scan
+        if !pendingRecentChangePaths.isEmpty {
+            scheduleRecentChangeRefreshTask(after: 0.5)
+        }
     }
 
     func loadInventoryFromLatestSnapshot(
@@ -984,14 +993,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Cancel any pending debounced refresh so we can run immediately
         recentChangeTask?.cancel()
         recentChangeTask = nil
-        // If there are no pending paths, scan all enabled tracked paths to pick up anything missed
+
         if pendingRecentChangePaths.isEmpty {
-            let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-            for tp in enabledPaths {
-                pendingRecentChangePaths.insert(tp.url.standardizedFileURL)
-            }
+            // No pending FSEvents — just refresh inventory from DB
+            await loadInventoryFromLatestSnapshot(refreshedAt: Date(), invalidateSubcategoryCache: true)
+        } else {
+            // Flush pending FSEvents changes
+            await performRecentChangeRefresh()
         }
-        await performRecentChangeRefresh()
     }
 
     /// Starts deltas-only tracking mode: enables FSEvents immediately without running a full scan.
@@ -1215,8 +1224,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
 
             let groups: [SubcategoryGroup]
-            if currentInventorySnapshotIDsByPath.isEmpty {
-                // Deltas-only mode: build breakdown from working set
+            if currentInventorySnapshotIDsByPath.isEmpty || hasIncrementalDeltasSinceSnapshot {
+                // Deltas-only mode or incremental updates applied: build breakdown from working set
                 guard let primaryPath = self.primaryTrackedPath(from: enabledPaths) else {
                     return .skipped
                 }
@@ -1263,7 +1272,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         do {
             let additionalFiles: [GrowthItem]
-            if currentInventorySnapshotIDsByPath.isEmpty {
+            if currentInventorySnapshotIDsByPath.isEmpty || hasIncrementalDeltasSinceSnapshot {
                 let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
                 guard let primaryPath = primaryTrackedPath(from: enabledPaths) else { return nil }
                 additionalFiles = await baselineService.loadMoreSubcategoryFilesFromWorkingSet(
@@ -2204,7 +2213,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         await watcher.setOnChange { [weak self] changeBatch in
             Task { @MainActor in
                 guard let self else { return }
-                guard !self.isLoading, !self.isAutoScanning else { return }
 
                 // Filter out noisy paths before processing
                 let filteredPaths = changeBatch.changedPaths.filter { url in
@@ -2214,9 +2222,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 guard !self.shouldIgnoreAutoScanChanges(filteredPaths) else { return }
 
                 self.lastFileEventAt = Date()
-                // Process all events incrementally — no promotion to full scan
+                // Always accumulate — never drop events during scan/cleanup
+                self.pendingRecentChangePaths.formUnion(filteredPaths.map(\.standardizedFileURL))
                 self.hasPendingRecentChanges = true
-                self.scheduleRecentChangeRefresh(filteredPaths)
+
+                // Only schedule processing when not scanning — events accumulate
+                // and will be flushed after loadInventory completes
+                if !self.isLoading, !self.isAutoScanning {
+                    self.scheduleRecentChangeRefreshTask(after: self.currentRecentChangeDebounce)
+                }
             }
         }
         fileEventsWatcher = watcher
@@ -2310,6 +2324,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// No subcategory cache invalidation, no spinners.
     private func applyIncrementalDeltas(_ deltas: [DatabaseManager.JournalDeltaKey: Int64]) {
         guard !deltas.isEmpty else { return }
+        hasIncrementalDeltasSinceSnapshot = true
 
         // Aggregate deltas by category (sum all subcategory deltas)
         var categoryDeltas: [GrowthCategory: Int64] = [:]
