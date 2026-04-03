@@ -10,16 +10,12 @@ import SwiftUI
 @Observable
 final class PermissionsService {
     struct FullDiskAccessReport: Sendable {
+        let isGranted: Bool
         let deniedLocations: [String]
 
-        var isGranted: Bool {
-            deniedLocations.isEmpty
-        }
-    }
-
-    private struct AccessProbe {
-        let label: String
-        let url: URL
+        static let granted = FullDiskAccessReport(isGranted: true, deniedLocations: [])
+        static let denied = FullDiskAccessReport(isGranted: false, deniedLocations: [])
+        static let debugDenied = FullDiskAccessReport(isGranted: false, deniedLocations: ["Debug override"])
     }
 
     // MARK: - Singleton
@@ -37,7 +33,9 @@ final class PermissionsService {
 
     /// Whether the app has Full Disk Access.
     ///
-    /// This requires access to the protected locations the scanner actually touches.
+    /// Uses the TCC database as a surrogate probe. Avoid probing user-protected
+    /// folders here because that can itself trigger Desktop/Documents/etc prompts
+    /// during onboarding before the user has chosen to scan.
     var hasFullDiskAccess: Bool {
         fullDiskAccessReport.isGranted
     }
@@ -60,12 +58,6 @@ final class PermissionsService {
         NSWorkspace.shared.open(url)
     }
 
-    /// Opens the current app bundle in Finder so the user can add the exact
-    /// running build to Full Disk Access, including debug builds in DerivedData.
-    func revealCurrentAppInFinder() {
-        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
-    }
-
     // MARK: - Permission Status
 
     /// The current permission status based on Full Disk Access availability.
@@ -78,71 +70,19 @@ final class PermissionsService {
         return .denied
     }
 
-    // MARK: - Helper Methods
-
     private func checkFullDiskAccess() -> FullDiskAccessReport {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "debugForceFDADenied") {
-            return FullDiskAccessReport(deniedLocations: ["Debug override"])
+            return .debugDenied
         }
         #endif
 
-        let denied = accessProbes().compactMap { probe in
-            canReadProbe(probe) ? nil : probe.label
-        }
-
-        return FullDiskAccessReport(deniedLocations: denied)
-    }
-
-    private func accessProbes() -> [AccessProbe] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let paths: [(String, URL)] = [
-            ("TCC", URL(fileURLWithPath: "/Library/Application Support/com.apple.TCC/TCC.db")),
-            ("Desktop", home.appendingPathComponent("Desktop", isDirectory: true)),
-            ("Documents", home.appendingPathComponent("Documents", isDirectory: true)),
-            ("Downloads", home.appendingPathComponent("Downloads", isDirectory: true)),
-            ("Music", home.appendingPathComponent("Music", isDirectory: true)),
-            ("Pictures", home.appendingPathComponent("Pictures", isDirectory: true)),
-            ("Movies", home.appendingPathComponent("Movies", isDirectory: true)),
-            ("Mail", home.appendingPathComponent("Library/Mail", isDirectory: true)),
-            ("Messages", home.appendingPathComponent("Library/Messages", isDirectory: true)),
-            ("Safari", home.appendingPathComponent("Library/Safari", isDirectory: true)),
-            ("iCloud Drive", home.appendingPathComponent("Library/Mobile Documents", isDirectory: true)),
-            ("MobileSync", home.appendingPathComponent("Library/Application Support/MobileSync", isDirectory: true)),
-            ("Music Library", home.appendingPathComponent("Music/Music", isDirectory: true)),
-            ("iTunes", home.appendingPathComponent("Music/iTunes", isDirectory: true)),
-            ("Photos Library", home.appendingPathComponent("Pictures/Photos Library.photoslibrary", isDirectory: true))
-        ]
-
-        return paths.compactMap { label, url in
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
-                return nil
-            }
-            return AccessProbe(label: label, url: url)
-        }
-    }
-
-    private func canReadProbe(_ probe: AccessProbe) -> Bool {
-        let values = try? probe.url.resourceValues(forKeys: [.isDirectoryKey])
-        if values?.isDirectory == true {
-            do {
-                _ = try FileManager.default.contentsOfDirectory(
-                    at: probe.url,
-                    includingPropertiesForKeys: nil,
-                    options: [.skipsHiddenFiles]
-                )
-                return true
-            } catch {
-                return false
-            }
-        }
-
+        let tccDbURL = URL(fileURLWithPath: "/Library/Application Support/com.apple.TCC/TCC.db")
         do {
-            _ = try Data(contentsOf: probe.url, options: [.mappedIfSafe])
-            return true
+            _ = try Data(contentsOf: tccDbURL, options: [.mappedIfSafe])
+            return .granted
         } catch {
-            return false
+            return .denied
         }
     }
 }

@@ -108,11 +108,6 @@ private struct GeneralSettingsTab: View {
                             openFullDiskAccessSettings()
                         }
                         .buttonStyle(.borderedProminent)
-
-                        Button("Show Prunr in Finder") {
-                            permissionsService.revealCurrentAppInFinder()
-                        }
-                        .buttonStyle(.bordered)
                     }
                     
                     Text("Required to scan system and user locations accurately.")
