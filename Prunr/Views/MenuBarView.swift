@@ -113,7 +113,7 @@ struct MenuBarView: View {
     }
 
     private var hasEnabledScanPath: Bool {
-        !SettingsStore.shared.enabledTrackedPaths.isEmpty
+        settingsStore.isPathEnabled(settingsStore.mainTrackedPath)
     }
 
     private var scanFileCountLabel: String? {
@@ -351,6 +351,12 @@ struct MenuBarView: View {
             }
         }
         .task {
+            if hasFullDiskAccess != true {
+                await manager.checkBaseline(trackedPathsOverride: [settingsStore.mainTrackedPath])
+                isBootstrapping = false
+                return
+            }
+
             // Phase 1: Fast — show categories instantly from pre-computed totals
             let hasQuickData = await manager.loadQuickInventory()
             if !hasQuickData {

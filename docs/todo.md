@@ -95,4 +95,12 @@
 - [x] Audit how onboarding decides Full Disk Access is granted
 - [x] Replace the weak TCC-only probe with scan-relevant protected-path probes
 - [x] Update onboarding/settings copy to stop claiming success when key protected locations are still blocked
-- [ ] Re-run `make build` and `make test`
+- [x] Defer file watcher startup until a real baseline exists
+- [x] Re-run `make build` and `make test`
+
+## Permission gating review
+
+- The remaining launch-time prompts were caused by the eager FSEvents watcher, not the explicit permission probe alone.
+- On first launch, the app was still arming a watcher against the default tracked home path before onboarding completed, which was enough for macOS to request Desktop/Documents/iCloud-class access immediately.
+- Fix: do not start the watcher in `MenuBarManager.init()`, stop any existing watcher while `noBaseline` is true, and only configure watching after baseline state is confirmed or a successful scan creates one.
+- Verification: `make build` passed. `make test` is not a strong signal for this bug because the real behavior must be confirmed by relaunching the installed app with a clean TCC state.

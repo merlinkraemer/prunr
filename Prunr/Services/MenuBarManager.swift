@@ -465,7 +465,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         // Start continuous updates (ISS-042)
         startRealtimeUpdates()
-        configureFileWatcherIfNeeded()
     }
 
     private func setupMenuBar() {
@@ -843,6 +842,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             scanCurrentPath = ""
             scanCurrentPathDisplay = ""
             completedSuccessfully = true
+            configureFileWatcherIfNeeded()
 
             let snapshotTimestamp = aggregation.latestSnapshotDate ?? Date()
             if !growingCategories.isEmpty {
@@ -1467,7 +1467,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Checks if baseline exists without triggering a scan.
     /// Lightweight: only checks for snapshot existence, does not load full inventory.
     func checkBaseline() async {
-        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        await checkBaseline(trackedPathsOverride: SettingsStore.shared.enabledTrackedPaths)
+    }
+
+    func checkBaseline(trackedPathsOverride: [TrackedPath]) async {
+        let trackedPaths = effectiveTrackedPaths(from: trackedPathsOverride)
         guard !trackedPaths.isEmpty else {
             noBaseline = true
             lastAutomaticScanAt = nil
@@ -1489,6 +1493,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
         noBaseline = !hasAnySnapshot
         updateMonitoredPathName()
+        configureFileWatcherIfNeeded()
     }
 
     /// Loads just category totals from the pre-computed workingSetCategoryTotal table.
@@ -2242,6 +2247,17 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func configureFileWatcherIfNeeded() {
+        guard !noBaseline else {
+            watchedPaths = []
+            Task { @MainActor in
+                if let watcher = fileEventsWatcher {
+                    await watcher.stop()
+                }
+                fileEventsWatcher = nil
+            }
+            return
+        }
+
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         let urls = enabledPaths
             .filter { shouldAutoWatchTrackedPath($0) }
