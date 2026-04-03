@@ -8,6 +8,9 @@ DERIVED_DATA = $(LOCAL_BUILD_ROOT)/derivedData
 SOURCE_PACKAGES = $(LOCAL_BUILD_ROOT)/sourcePackages
 APP_SUPPORT_DIR = $(HOME)/Library/Application Support/Prunr
 BUNDLE_ID = com.prunr.app
+XCODE_APP ?= /Applications/Xcode.app
+XCODE_DEVELOPER_DIR ?= $(XCODE_APP)/Contents/Developer
+XCODEBUILD = env DEVELOPER_DIR="$(XCODE_DEVELOPER_DIR)" xcodebuild
 
 # Colors for output
 BLUE = \033[0;34m
@@ -28,7 +31,7 @@ STRESS_FANOUT ?= 250
 STRESS_MUTATE_COUNT ?= 1000
 STRESS_MUTATE_BYTES ?= 1048576
 
-.PHONY: all build run dev launch clean clean-build reset-dev-state help test open logs stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean
+.PHONY: all build run dev launch clean clean-build reset-dev-state help doctor test open logs stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean
 
 all: help
 
@@ -39,6 +42,7 @@ help:
 	@echo "$(GREEN)make run$(NC)      - Kill existing instance, build, and run"
 	@echo "$(GREEN)make dev$(NC)      - Kill, reset app state, clean local build artifacts, rebuild, and run"
 	@echo "$(GREEN)make clean$(NC)    - Clean build directory"
+	@echo "$(GREEN)make doctor$(NC)   - Check local macOS/Xcode dev prerequisites"
 	@echo "$(GREEN)make test$(NC)     - Run tests (if any)"
 	@echo "$(GREEN)make stress-create$(NC) - Generate a synthetic scan tree"
 	@echo "$(GREEN)make stress-stats$(NC)  - Inspect the synthetic scan tree"
@@ -53,7 +57,7 @@ help:
 
 build:
 	@echo "$(BLUE)Building $(SCHEME) ($(CONFIG))...$(NC)"
-	exec xcodebuild build \
+	exec $(XCODEBUILD) build \
 		-project $(SCHEME).xcodeproj \
 		-scheme $(SCHEME) \
 		-configuration $(CONFIG) \
@@ -76,7 +80,7 @@ kill:
 
 clean:
 	@echo "$(YELLOW)Cleaning build directory...$(NC)"
-	exec xcodebuild clean \
+	exec $(XCODEBUILD) clean \
 		-project $(SCHEME).xcodeproj \
 		-scheme $(SCHEME) \
 		-configuration $(CONFIG) \
@@ -100,19 +104,44 @@ reset-dev-state:
 	@defaults delete "$(BUNDLE_ID)" 2>/dev/null || true
 	@echo "$(GREEN)Local app state reset!$(NC)"
 
+doctor:
+	@echo "$(BLUE)Checking Prunr macOS dev environment...$(NC)"
+	@if [ ! -d "$(XCODE_APP)" ]; then \
+		echo "$(RED)Missing $(XCODE_APP). Install Xcode from the App Store first.$(NC)"; \
+		exit 1; \
+	fi
+	@echo "Xcode app: $(XCODE_APP)"
+	@echo "Developer dir: $(XCODE_DEVELOPER_DIR)"
+	@active_dir="$$(xcode-select -p 2>/dev/null || true)"; \
+	if [ "$$active_dir" != "$(XCODE_DEVELOPER_DIR)" ]; then \
+		echo "$(YELLOW)xcode-select is not pointing at Xcode.$(NC)"; \
+		echo "  Run: sudo xcode-select -s $(XCODE_DEVELOPER_DIR)"; \
+	else \
+		echo "$(GREEN)xcode-select points at Xcode.$(NC)"; \
+	fi
+	@if ! $(XCODEBUILD) -version >/dev/null 2>&1; then \
+		echo "$(YELLOW)xcodebuild is not ready yet.$(NC)"; \
+		echo "  Likely fix: sudo xcodebuild -license"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)xcodebuild is available.$(NC)"
+	@if ! xcrun simctl list devices >/dev/null 2>&1; then \
+		echo "$(YELLOW)simctl is not ready yet. Open Xcode once to finish first-run setup.$(NC)"; \
+	else \
+		echo "$(GREEN)simctl is available.$(NC)"; \
+	fi
+
 test:
 	@echo "$(BLUE)Running tests...$(NC)"
 	@output_file="$$(mktemp)"; \
-	status=0; \
-	if ! xcodebuild test \
+	$(XCODEBUILD) test \
 		-project $(SCHEME).xcodeproj \
 		-scheme $(SCHEME) \
 		-configuration $(CONFIG) \
 		-derivedDataPath $(DERIVED_DATA) \
 		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES) \
-		> "$$output_file" 2>&1; then \
-		status=$$?; \
-	fi; \
+		> "$$output_file" 2>&1; \
+	status=$$?; \
 	cat "$$output_file"; \
 	if grep -Eq "There are no test bundles available to test|No test bundles" "$$output_file"; then \
 		echo "$(YELLOW)No app-owned XCTest bundles are configured yet$(NC)"; \

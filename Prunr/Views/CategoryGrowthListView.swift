@@ -3,7 +3,7 @@ import AppKit
 
 /// List view showing inventory grouped by category with growth indicators and drill-down navigation
 struct CategoryGrowthListView: View {
-    private let pageTopInset: CGFloat = 6
+    private let pageTopInset: CGFloat = 2
 
     /// Growing categories with active growth trends
     let growingCategories: [CategoryInventoryItem]
@@ -43,7 +43,6 @@ struct CategoryGrowthListView: View {
     @State private var loadedContributorTaskID: String? = nil
     @State private var isDataReady = false
     @State private var contributorPrefetchTask: Task<Void, Never>? = nil
-    @State private var pendingSubcategoryNavigationID: String? = nil
 
     private enum DrilldownLevel: Int {
         case main
@@ -210,7 +209,6 @@ struct CategoryGrowthListView: View {
             isLoadingSubcategories = false
             contributorPrefetchTask?.cancel()
             contributorPrefetchTask = nil
-            pendingSubcategoryNavigationID = nil
             navigationTask?.cancel()
             navigationTask = nil
             activeTransition = nil
@@ -373,7 +371,9 @@ struct CategoryGrowthListView: View {
 
     private var categoryListView: some View {
         Group {
-            if growingCategories.isEmpty && stableCategories.isEmpty {
+            if !isDataReady && growingCategories.isEmpty && stableCategories.isEmpty {
+                categoryListSkeletonView
+            } else if growingCategories.isEmpty && stableCategories.isEmpty {
                 emptyStateView
             } else {
                 VStack(spacing: 0) {
@@ -444,13 +444,7 @@ struct CategoryGrowthListView: View {
 
         if isLoading {
             return AnyView(
-                VStack(spacing: 10) {
-                    ProgressView()
-                    Text("Loading \(category.category.displayName.lowercased()) breakdown…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: maxHeight)
+                subcategorySkeletonView
                 .transaction { $0.disablesAnimations = true }
             )
         }
@@ -473,10 +467,7 @@ struct CategoryGrowthListView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(groups) { group in
-                        SubcategoryRow(
-                            group: group,
-                            isLoading: pendingSubcategoryNavigationID == group.id
-                        ) {
+                        SubcategoryRow(group: group) {
                             selectSubcategory(group, category: category.category)
                         }
                     }
@@ -523,6 +514,7 @@ struct CategoryGrowthListView: View {
         } ?? "contributors-\(group.id)"
         let visibleGrowthContributors = loadedContributorTaskID == contributorTaskID ? growthContributors : []
         let showContributorLoadingRow = isLoadingContributors && visibleGrowthContributors.isEmpty
+        let showFileSkeleton = isLoadingContributors && loadedFiles.isEmpty
 
         // Filter out growth contributors from the "all files" list to avoid duplicates
         let contributorPaths = Set(visibleGrowthContributors.map(\.path))
@@ -531,7 +523,9 @@ struct CategoryGrowthListView: View {
         return AnyView(
             ScrollView {
                 VStack(spacing: 0) {
-                    if loadedFiles.isEmpty && remainingCount == 0 {
+                    if showFileSkeleton {
+                        fileListSkeletonView
+                    } else if loadedFiles.isEmpty && remainingCount == 0 {
                         VStack(spacing: 8) {
                             Image(systemName: "tray")
                                 .foregroundStyle(.secondary)
@@ -645,18 +639,11 @@ struct CategoryGrowthListView: View {
 
     private var contributorLoadingRow: some View {
         HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
-                .frame(width: 18)
+            SkeletonBlock(width: 18, height: 18, cornerRadius: 5)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Loading growth contributors")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                Text("Calculating recent growth for this folder")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                SkeletonBlock(width: 136, height: 11, cornerRadius: 4)
+                SkeletonBlock(width: 164, height: 9, cornerRadius: 4)
             }
 
             Spacer()
@@ -734,7 +721,6 @@ struct CategoryGrowthListView: View {
         guard isDataReady else { return }
         contributorPrefetchTask?.cancel()
         contributorPrefetchTask = nil
-        pendingSubcategoryNavigationID = nil
         let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: item.category)
 
         guard manager.hasCompletedInitialSubcategoryWarmup || !needsSubcategoryLoad else {
@@ -812,30 +798,14 @@ struct CategoryGrowthListView: View {
         subcategoryLoadTask = loadTask
     }
 
-    private func selectSubcategory(_ group: SubcategoryGroup, category: GrowthCategory) {
+    private func selectSubcategory(_ group: SubcategoryGroup, category _: GrowthCategory) {
         contributorPrefetchTask?.cancel()
 
-        if manager.cachedGrowthContributors(for: group, category: category) != nil {
-            pendingSubcategoryNavigationID = nil
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
             manager.selectedSubcategory = group
             manager.isSubcategoryDrillDown = true
-            return
-        }
-
-        pendingSubcategoryNavigationID = group.id
-        contributorPrefetchTask = Task { @MainActor in
-            _ = await manager.loadGrowthContributors(for: group, category: category)
-            guard !Task.isCancelled else { return }
-            guard manager.selectedInventoryCategory?.category == category else { return }
-            guard pendingSubcategoryNavigationID == group.id else { return }
-
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                pendingSubcategoryNavigationID = nil
-                manager.selectedSubcategory = group
-                manager.isSubcategoryDrillDown = true
-            }
         }
     }
 
@@ -873,6 +843,46 @@ struct CategoryGrowthListView: View {
     }
 
     // MARK: - Empty State
+
+    private var categoryListSkeletonView: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(0..<7, id: \.self) { _ in
+                    SkeletonListRow(style: .category)
+                }
+            }
+            .padding(.top, pageTopInset)
+            .padding(.bottom, pageTopInset)
+        }
+        .scrollIndicators(.hidden)
+        .hiddenScrollIndicators()
+        .frame(maxHeight: maxHeight)
+    }
+
+    private var subcategorySkeletonView: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(0..<6, id: \.self) { _ in
+                    SkeletonListRow(style: .subcategory)
+                }
+            }
+            .padding(.top, pageTopInset)
+            .padding(.bottom, pageTopInset)
+        }
+        .scrollIndicators(.hidden)
+        .hiddenScrollIndicators()
+        .frame(maxHeight: maxHeight)
+    }
+
+    private var fileListSkeletonView: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<6, id: \.self) { _ in
+                SkeletonListRow(style: .file)
+            }
+        }
+        .padding(.top, pageTopInset)
+        .padding(.bottom, pageTopInset)
+    }
 
     private var emptyStateView: some View {
         Group {
@@ -1226,7 +1236,6 @@ private struct DrilldownGrowthRow: View {
 
 private struct SubcategoryRow: View {
     let group: SubcategoryGroup
-    let isLoading: Bool
     let onTap: () -> Void
 
     @State private var hoverState = false
@@ -1270,17 +1279,9 @@ private struct SubcategoryRow: View {
                     }
                 }
 
-                Group {
-                    if isLoading {
-                        ProgressView()
-                            .controlSize(.small)
-                            .scaleEffect(0.7)
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.tertiary)
                 .frame(width: 12, height: 12)
             }
             .padding(.horizontal, 12)
@@ -1294,7 +1295,6 @@ private struct SubcategoryRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isLoading)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 hoverState = hovering
@@ -1307,4 +1307,103 @@ private struct SubcategoryRow: View {
 #Preview {
     Text("Preview requires MenuBarManager")
         .frame(width: 320, height: 400)
+}
+
+struct SkeletonBlock: View {
+    var width: CGFloat? = nil
+    var height: CGFloat
+    var cornerRadius: CGFloat = 8
+
+    @State private var isAnimating = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.primary.opacity(0.06),
+                        Color.primary.opacity(0.11),
+                        Color.primary.opacity(0.06)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(width: width, height: height)
+            .opacity(isAnimating ? 0.62 : 0.92)
+            .onAppear {
+                guard !isAnimating else { return }
+                withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: true)) {
+                    isAnimating = true
+                }
+            }
+    }
+}
+
+struct SkeletonListRow: View {
+    enum Style {
+        case category
+        case subcategory
+        case file
+    }
+
+    let style: Style
+
+    var body: some View {
+        HStack(spacing: 10) {
+            SkeletonBlock(width: 18, height: 18, cornerRadius: 5)
+
+            VStack(alignment: .leading, spacing: 5) {
+                SkeletonBlock(width: titleWidth, height: 12, cornerRadius: 4)
+                SkeletonBlock(width: subtitleWidth, height: 9, cornerRadius: 4)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                VStack(alignment: .trailing, spacing: 5) {
+                    SkeletonBlock(width: 56, height: 11, cornerRadius: 4)
+                    if trailingSubtitleWidth > 0 {
+                        SkeletonBlock(width: trailingSubtitleWidth, height: 9, cornerRadius: 4)
+                    }
+                }
+
+                SkeletonBlock(width: 10, height: 10, cornerRadius: 3)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(minHeight: 34)
+        .padding(.horizontal, 6)
+    }
+
+    private var titleWidth: CGFloat {
+        switch style {
+        case .category:
+            return 96
+        case .subcategory:
+            return 112
+        case .file:
+            return 138
+        }
+    }
+
+    private var subtitleWidth: CGFloat {
+        switch style {
+        case .category:
+            return 64
+        case .subcategory:
+            return 74
+        case .file:
+            return 110
+        }
+    }
+
+    private var trailingSubtitleWidth: CGFloat {
+        switch style {
+        case .category, .subcategory:
+            return 48
+        case .file:
+            return 0
+        }
+    }
 }

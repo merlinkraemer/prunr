@@ -47,6 +47,12 @@ final class DropdownPanel: NSPanel {
             name: NSWindow.didResignKeyNotification,
             object: self
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationDidResignActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
     }
 
     deinit {
@@ -59,6 +65,12 @@ final class DropdownPanel: NSPanel {
             orderOut(nil)
             onClose?()
         }
+    }
+
+    @objc private func applicationDidResignActive(_ notification: Notification) {
+        guard closesOnResignKey, isVisible else { return }
+        orderOut(nil)
+        onClose?()
     }
 
     override var canBecomeKey: Bool { true }
@@ -120,6 +132,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private enum SubcategoryBreakdownLoadResult {
         case loaded([SubcategoryGroup])
         case skipped
+    }
+
+    private struct GrowthPresentationState {
+        let growingCategories: [CategoryInventoryItem]
+        let stableCategories: [CategoryInventoryItem]
+        let stableTotalBytes: Int64
+        let subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]]
     }
 
     /// Extract folder name from path for tag display
@@ -378,15 +397,19 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var lastFreeSpaceUpdate: Date?
 
     // Continuous update timer for GB meter (ISS-042)
-    // nonisolated(unsafe) allows deinit to access it from nonisolated context
-    private var updateTimer: Timer?
-    private var activityPulseTimer: Timer?
+    // Cleanup only: these are invalidated/cancelled during deinit without touching UI state.
+    @ObservationIgnored
+    nonisolated(unsafe) private var updateTimer: Timer?
+    @ObservationIgnored
+    nonisolated(unsafe) private var activityPulseTimer: Timer?
     private var pulseAtLowAlpha = false
 
     // Event-driven lightweight scan automation
-    private var fileEventsWatcher: FSEventsWatcher?
+    @ObservationIgnored
+    nonisolated(unsafe) private var fileEventsWatcher: FSEventsWatcher?
     private var watchedPaths: [String] = []
-    private var recentChangeTask: Task<Void, Never>?
+    @ObservationIgnored
+    nonisolated(unsafe) private var recentChangeTask: Task<Void, Never>?
     private var isInventoryRefreshInProgress = false
     private var pendingRecentChangePaths: Set<URL> = []
     private(set) var lastAutomaticScanAt: Date?
@@ -402,11 +425,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var isCheckingGrowth = false {
         didSet { updateMenuBarActivityEffect() }
     }
+    var isAcceptingGrowth = false
+    var lastAcceptedGrowthAt: Date? = nil
+    private var suppressGrowthIndicators = false
 
     // Silent background reconciliation
     private var lastReconciliationAt: Date?
     private var isReconciling = false
-    private var reconciliationTask: Task<Void, Never>?
+    @ObservationIgnored
+    nonisolated(unsafe) private var reconciliationTask: Task<Void, Never>?
     private var upgradeRetryCount = 0
     /// Set when background scan fails repeatedly so the UI can surface a retry option.
     var backgroundScanError: Error? = nil
@@ -613,23 +640,34 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     func performReset() async {
         do {
             try await baselineService.resetBaseline()
-            updateFreeSpace()
-            await checkBaseline() // Update state
-
-            // Also clear categories since baseline is gone/reset
-            growingCategories = []
-            stableCategories = []
-            stableTotalBytes = 0
-            categoryItems = []
-            subcategoryGroupsByCategory = [:]
-            invalidateGrowthContributorCache()
-            selectedInventoryCategory = nil
-            selectedSubcategory = nil
-            isDrilledDown = false
-            isSubcategoryDrillDown = false
+            await refreshAfterBaselineReset()
         } catch {
             print("[MenuBarManager] Failed to reset baseline: \(error)")
         }
+    }
+
+    /// Applies scope changes that require deleting existing snapshots, then refreshes
+    /// all visible menu-bar state so the popover reflects the new scope immediately.
+    func applyScopeChanges() async throws {
+        try await baselineService.resetBaseline()
+        await DatabaseCleanupService.shared.performAutoCleanup()
+        await refreshAfterBaselineReset()
+        configureFileWatcherIfNeeded()
+        await updatePathSize()
+    }
+
+    private func refreshAfterBaselineReset() async {
+        clearInventoryState()
+        backgroundScanError = nil
+        errorMessage = nil
+        hasPendingRecentChanges = false
+        pendingRecentChangePaths.removeAll()
+        lastDetectedChangeAt = nil
+        lastAutomaticScanAt = nil
+        hasIncrementalDeltasSinceSnapshot = false
+        updateMonitoredPathName()
+        updateFreeSpace()
+        await checkBaseline()
     }
 
     private func confirmDeleteAllSnapshots() -> Bool {
@@ -742,6 +780,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         defer { endInventoryRefresh() }
 
         isLoading = true
+        backgroundScanError = nil
         errorMessage = nil
         noBaseline = false
         filesScanned = 0
@@ -991,9 +1030,42 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         reconciliationTask = nil
         isReconciling = false
         isAutoScanning = true
+        defer { isAutoScanning = false }
         await loadInventory(isAutomatic: true)
-        isAutoScanning = false
         lastReconciliationAt = Date()
+    }
+
+    /// Accepts current growth by resetting baselines to the current working set sizes.
+    /// Optimistic: clears visible growth indicators instantly, then commits to DB.
+    func acceptGrowth() async {
+        guard !isLoading, !isAutoScanning, !isCheckingGrowth else { return }
+        let priorPresentationState = captureGrowthPresentationState()
+        isAcceptingGrowth = true
+        defer { isAcceptingGrowth = false }
+
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        guard !enabledPaths.isEmpty else { return }
+
+        suppressGrowthIndicators = true
+        clearVisibleGrowthIndicators()
+
+        do {
+            for trackedPath in enabledPaths {
+                try await baselineService.acceptGrowth(for: trackedPath)
+            }
+
+            suppressGrowthIndicators = false
+            await loadInventoryFromLatestSnapshot(
+                refreshedAt: Date(),
+                invalidateSubcategoryCache: true,
+                force: true
+            )
+            lastAcceptedGrowthAt = Date()
+        } catch {
+            suppressGrowthIndicators = false
+            restoreGrowthPresentationState(priorPresentationState)
+            errorMessage = "Couldn't accept growth: \(error.localizedDescription)"
+        }
     }
 
     /// Lightweight growth check: flushes any pending FSEvents changes immediately
@@ -1256,18 +1328,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             let groups: [SubcategoryGroup]
             if currentInventorySnapshotIDsByPath.isEmpty {
-                // Deltas-only mode (no snapshot at all): must use working set
-                guard let primaryPath = self.primaryTrackedPath(from: enabledPaths) else {
-                    return .skipped
-                }
                 groups = await baselineService.getSubcategoryBreakdownFromWorkingSet(
                     for: category,
-                    trackedPathId: primaryPath.id
+                    trackedPathsById: trackedPathsByID,
+                    baselineSnapshotIdsByPath: currentGrowthBaselineSnapshotIDsByPath
                 )
             } else {
-                // Always use snapshot-based approach — it queries growth from
-                // the working set via SQL (fast, filtered by category) and
-                // merges growth totals into the precomputed subcategory data.
+                // Prefer snapshot-backed structure whenever available.
+                // Recent growth is overlaid from the journal, which keeps
+                // drill-down responsive even when incremental deltas exist.
                 groups = await baselineService.getSubcategoryBreakdown(
                     for: category,
                     trackedPathsById: trackedPathsByID,
@@ -1277,6 +1346,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
             if Task.isCancelled {
                 return .skipped
+            }
+
+            if suppressGrowthIndicators {
+                let hiddenGroups = groups.map { group in
+                    var updatedGroup = group
+                    updatedGroup.growthBytes = nil
+                    return updatedGroup
+                }
+                return .loaded(hiddenGroups)
             }
 
             return .loaded(groups)
@@ -1369,6 +1447,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Loads growth contributors for a specific subcategory group
     func loadGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) async -> [GrowthContributor] {
+        guard !suppressGrowthIndicators else { return [] }
         guard let snapshotSignature = snapshotIDsSignature(currentInventorySnapshotIDsByPath),
               let baselineSignature = snapshotIDsSignature(currentGrowthBaselineSnapshotIDsByPath) else {
             return []
@@ -1398,6 +1477,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     func cachedGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) -> [GrowthContributor]? {
+        guard !suppressGrowthIndicators else { return [] }
         guard let snapshotSignature = snapshotIDsSignature(currentInventorySnapshotIDsByPath),
               let baselineSignature = snapshotIDsSignature(currentGrowthBaselineSnapshotIDsByPath) else {
             return nil
@@ -1523,7 +1603,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanStartTime = nil
     }
 
-    /// Checks if baseline exists without triggering a scan
+    /// Checks if baseline exists without triggering a scan.
+    /// Lightweight: only checks for snapshot existence, does not load full inventory.
     func checkBaseline() async {
         let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         guard !trackedPaths.isEmpty else {
@@ -1533,9 +1614,19 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             return
         }
 
-        let aggregation = await baselineService.getInventoryWithTrends(trackedPaths: trackedPaths)
-        noBaseline = aggregation.latestSnapshotIdsByPath.isEmpty
-        lastAutomaticScanAt = aggregation.latestSnapshotDate
+        lastAutomaticScanAt = nil
+        var hasAnySnapshot = false
+        for trackedPath in trackedPaths {
+            if let snapshots = try? await DatabaseManager.shared
+                .fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1),
+               let snapshot = snapshots.first {
+                hasAnySnapshot = true
+                if lastAutomaticScanAt == nil || snapshot.createdAt > lastAutomaticScanAt! {
+                    lastAutomaticScanAt = snapshot.createdAt
+                }
+            }
+        }
+        noBaseline = !hasAnySnapshot
         updateMonitoredPathName()
 
         // If we're in deltas-only mode (trackingStartedAt set but no snapshot yet),
@@ -1546,22 +1637,62 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
+    /// Loads just category totals from the pre-computed workingSetCategoryTotal table.
+    /// No growth stories, no trends — just sizes. Near-instant.
+    func loadQuickInventory() async -> Bool {
+        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        guard !enabledPaths.isEmpty else { return false }
+
+        var itemsByCategory: [GrowthCategory: Int64] = [:]
+        for trackedPath in enabledPaths {
+            guard let totals = try? await DatabaseManager.shared
+                .fetchWorkingSetCategoryTotals(for: trackedPath.id) else { continue }
+            for item in totals {
+                itemsByCategory[item.category, default: 0] += item.currentSizeBytes
+            }
+        }
+        guard !itemsByCategory.isEmpty else { return false }
+
+        let items = itemsByCategory.map {
+            CategoryInventoryItem(category: $0.key, currentSizeBytes: $0.value,
+                                  growthTrend: nil, recentGrowthStory: nil)
+        }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+
+        // All appear as stable initially (no growth stories loaded yet)
+        growingCategories = []
+        stableCategories = items
+        stableTotalBytes = items.reduce(0) { $0 + $1.currentSizeBytes }
+        noBaseline = false
+        return true
+    }
+
     private func applyInventory(
         _ inventory: [CategoryInventoryItem],
         snapshotIDsByPath: [UUID: Int64],
         growthBaselineSnapshotIDsByPath: [UUID: Int64],
         invalidateSubcategoryCache: Bool
     ) {
+        let previousSnapshotSignature = snapshotIDsSignature(currentInventorySnapshotIDsByPath)
+        let previousBaselineSignature = snapshotIDsSignature(currentGrowthBaselineSnapshotIDsByPath)
+        let newSnapshotSignature = snapshotIDsSignature(snapshotIDsByPath)
+        let newBaselineSignature = snapshotIDsSignature(growthBaselineSnapshotIDsByPath)
+        let shouldInvalidateSubcategoryCache =
+            invalidateSubcategoryCache
+            || previousSnapshotSignature != newSnapshotSignature
+            || previousBaselineSignature != newBaselineSignature
+
         var growing: [CategoryInventoryItem] = []
         var stable: [CategoryInventoryItem] = []
         var stableTotal: Int64 = 0
 
         for item in inventory {
-            if item.recentGrowthStory != nil {
-                growing.append(item)
+            let visibleItem = suppressGrowthIndicators ? suppressedGrowthItem(from: item) : item
+
+            if visibleItem.recentGrowthStory != nil {
+                growing.append(visibleItem)
             } else {
-                stable.append(item)
-                stableTotal += item.currentSizeBytes
+                stable.append(visibleItem)
+                stableTotal += visibleItem.currentSizeBytes
             }
         }
 
@@ -1571,7 +1702,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         currentInventorySnapshotIDsByPath = snapshotIDsByPath
         currentGrowthBaselineSnapshotIDsByPath = growthBaselineSnapshotIDsByPath
 
-        if invalidateSubcategoryCache {
+        if shouldInvalidateSubcategoryCache {
             cancelSubcategoryBreakdownLoads()
             subcategoryGroupsByCategory = [:]
             subcategoryBreakdownCacheGenerationByCategory = [:]
@@ -1594,6 +1725,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         invalidateGrowthContributorCache()
 
         reconcileDrillDownSelection()
+
+        if shouldInvalidateSubcategoryCache, isDrilledDown, let category = selectedInventoryCategory?.category {
+            preloadSubcategoryBreakdowns(for: [category])
+        }
     }
 
     private func clearInventoryState() {
@@ -1663,6 +1798,54 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func invalidateGrowthContributorCache() {
         growthContributorsBySubcategory = [:]
         growthContributorCacheGeneration &+= 1
+    }
+
+    private func suppressedGrowthItem(from item: CategoryInventoryItem) -> CategoryInventoryItem {
+        var updated = item
+        updated.growthTrend = nil
+        updated.recentGrowthStory = nil
+        return updated
+    }
+
+    private func captureGrowthPresentationState() -> GrowthPresentationState {
+        GrowthPresentationState(
+            growingCategories: growingCategories,
+            stableCategories: stableCategories,
+            stableTotalBytes: stableTotalBytes,
+            subcategoryGroupsByCategory: subcategoryGroupsByCategory
+        )
+    }
+
+    private func clearVisibleGrowthIndicators() {
+        withAnimationsDisabled {
+            let allCategories = (growingCategories + stableCategories)
+                .map(suppressedGrowthItem(from:))
+                .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+
+            growingCategories = []
+            stableCategories = allCategories
+            stableTotalBytes = allCategories.reduce(0) { $0 + $1.currentSizeBytes }
+            subcategoryGroupsByCategory = subcategoryGroupsByCategory.mapValues { groups in
+                groups.map { group in
+                    var updatedGroup = group
+                    updatedGroup.growthBytes = nil
+                    return updatedGroup
+                }
+            }
+            invalidateGrowthContributorCache()
+            reconcileDrillDownSelection()
+        }
+    }
+
+    private func restoreGrowthPresentationState(_ state: GrowthPresentationState) {
+        withAnimationsDisabled {
+            growingCategories = state.growingCategories
+            stableCategories = state.stableCategories
+            stableTotalBytes = state.stableTotalBytes
+            subcategoryGroupsByCategory = state.subcategoryGroupsByCategory
+            invalidateGrowthContributorCache()
+            reconcileDrillDownSelection()
+        }
     }
 
     private func withAnimationsDisabled(_ updates: () -> Void) {
@@ -2387,6 +2570,34 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
         }
 
+        // Demote growing categories whose size hit zero or whose growth story
+        // is now fully offset by shrinkage
+        var demotedIndices = IndexSet()
+        for i in growingCategories.indices {
+            if growingCategories[i].currentSizeBytes == 0 {
+                growingCategories[i].recentGrowthStory = nil
+                demotedIndices.insert(i)
+            } else if let delta = categoryDeltas[growingCategories[i].category], delta < 0 {
+                if let story = growingCategories[i].recentGrowthStory {
+                    let newDelta = story.deltaBytes + delta
+                    if newDelta <= 0 {
+                        growingCategories[i].recentGrowthStory = nil
+                        demotedIndices.insert(i)
+                    } else {
+                        growingCategories[i].recentGrowthStory = RecentGrowthStory(
+                            category: story.category, subcategory: story.subcategory,
+                            deltaBytes: newDelta, startedAt: story.startedAt,
+                            endedAt: now, duration: story.duration,
+                            displayLabel: story.displayLabel
+                        )
+                    }
+                }
+            }
+        }
+        for i in demotedIndices.reversed() {
+            stableCategories.append(growingCategories.remove(at: i))
+        }
+
         // Apply to stable categories (clamp to zero) and promote those with growth
         var promotedIndices = IndexSet()
         for i in stableCategories.indices {
@@ -2400,7 +2611,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                         delta: delta,
                         now: now
                     )
-                    promotedIndices.insert(i)
+                    if stableCategories[i].recentGrowthStory != nil {
+                        promotedIndices.insert(i)
+                    }
                 }
             }
         }
@@ -2410,7 +2623,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         // Create new entries for categories that don't exist yet (deltas-only mode bootstrap)
-        for (category, delta) in categoryDeltas where !matchedCategories.contains(category) && delta > 0 {
+        for (category, delta) in categoryDeltas where !matchedCategories.contains(category) && delta >= 1_048_576 {
             let story = RecentGrowthStory(
                 category: category, subcategory: nil,
                 deltaBytes: delta, startedAt: now, endedAt: now,
@@ -2466,12 +2679,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         category: GrowthCategory,
         delta: Int64,
         now: Date
-    ) -> RecentGrowthStory {
+    ) -> RecentGrowthStory? {
+        let totalDelta = (existing?.deltaBytes ?? 0) + delta
+        // Skip if cumulative growth is below 1 MB threshold
+        guard totalDelta >= 1_048_576 else { return existing }
+
         if let existing {
             return RecentGrowthStory(
                 category: category,
                 subcategory: existing.subcategory,
-                deltaBytes: existing.deltaBytes + delta,
+                deltaBytes: totalDelta,
                 startedAt: existing.startedAt,
                 endedAt: now,
                 duration: now.timeIntervalSince(existing.startedAt),
@@ -2528,8 +2745,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private func autoScanIgnoredRoots() -> [URL] {
         var roots: [URL] = []
 
-        let fileManager = FileManager.default
-
         if let dbPath = DatabaseManager.shared.databasePath {
             roots.append(URL(fileURLWithPath: dbPath).deletingLastPathComponent().standardizedFileURL)
         }
@@ -2542,17 +2757,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     deinit {
-        // MainActor.assumeIsolated is safe: this @MainActor class is always
-        // deallocated from MainActor context (singleton dropped on main thread).
-        MainActor.assumeIsolated {
-            updateTimer?.invalidate()
-            activityPulseTimer?.invalidate()
-            recentChangeTask?.cancel()
-            reconciliationTask?.cancel()
-            let watcher = fileEventsWatcher
-            if let watcher {
-                Task { await watcher.stop() }
-            }
+        updateTimer?.invalidate()
+        activityPulseTimer?.invalidate()
+        recentChangeTask?.cancel()
+        reconciliationTask?.cancel()
+        let watcher = fileEventsWatcher
+        if let watcher {
+            Task { await watcher.stop() }
         }
     }
 }

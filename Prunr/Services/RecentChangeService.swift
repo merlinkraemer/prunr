@@ -37,8 +37,29 @@ actor RecentChangeService {
         _ changedPaths: Set<URL>,
         trackedPath: TrackedPath
     ) async -> RefreshResult {
+        do {
+            let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
+            guard !snapshots.isEmpty else { return .noChanges }
+        } catch {
+            print("[RecentChangeService] Failed checking snapshot history: \(error)")
+            return .noChanges
+        }
+
+        if changedPaths.count > Self.maxRefreshTargets {
+            return .needsFullScan
+        }
+
         let targets = refreshTargets(from: changedPaths, trackedPath: trackedPath)
         guard !targets.isEmpty else { return .noChanges }
+
+        if targets.contains(where: {
+            if case .subtree(let url) = $0 {
+                return url.standardizedFileURL == trackedPath.url.standardizedFileURL
+            }
+            return false
+        }) {
+            return .needsFullScan
+        }
 
         let ignoredNames = await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
         let scanTimestamp = Date()
@@ -109,7 +130,7 @@ actor RecentChangeService {
 
     /// Maximum number of individual refresh targets before coalescing to a single tracked-root rescan.
     /// Prevents unbounded incremental work from bulk operations (e.g., unpacking archives, npm install).
-    private static let maxRefreshTargets = 500
+    private static let maxRefreshTargets = 192
 
     private func refreshTargets(from changedPaths: Set<URL>, trackedPath: TrackedPath) -> [RefreshTarget] {
         let trackedRoot = trackedPath.url.standardizedFileURL
@@ -158,11 +179,6 @@ actor RecentChangeService {
             RefreshTarget.file($0)
         }
 
-        // If too many targets, coalesce to a single tracked-root rescan to avoid saturating I/O
-        if targets.count > Self.maxRefreshTargets {
-            return [.subtree(trackedRoot)]
-        }
-
         return targets
     }
 
@@ -194,8 +210,7 @@ actor RecentChangeService {
     private func scanResult(forFileAt url: URL) -> ScanResult? {
         var fileStat = stat()
         guard lstat(url.path, &fileStat) == 0 else { return nil }
-        let allocatedBytes = Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
-        let sizeBytes = allocatedBytes > 0 ? allocatedBytes : Int64(fileStat.st_size)
+        let sizeBytes = Int64(fileStat.st_size)
         let path = url.path
         let (category, subcategory) = GrowthCategory.classify(path: path)
         return ScanResult(

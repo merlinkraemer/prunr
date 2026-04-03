@@ -280,7 +280,11 @@ private struct GeneralSettingsTab: View {
             Button("Delete All Snapshots", role: .destructive) {
                 isResetting = true
                 Task {
-                    try? await baselineService.resetBaseline()
+                    if let manager = MenuBarManager.shared {
+                        await manager.performReset()
+                    } else {
+                        try? await baselineService.resetBaseline()
+                    }
                     isResetting = false
                     showingSavedNotice = true
                     Task {
@@ -536,9 +540,14 @@ private struct ScanScopeSettingsTab: View {
 
                 Task {
                     do {
-                        try await baselineService.resetBaseline()
-                        applyStatusText = "Cleaning up..."
-                        await DatabaseCleanupService.shared.performAutoCleanup()
+                        if let manager = MenuBarManager.shared {
+                            applyStatusText = "Applying new scope..."
+                            try await manager.applyScopeChanges()
+                        } else {
+                            try await baselineService.resetBaseline()
+                            applyStatusText = "Cleaning up..."
+                            await DatabaseCleanupService.shared.performAutoCleanup()
+                        }
 
                         settingsStore.clearPendingScopeChanges()
                         showingAppliedNotice = true

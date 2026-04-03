@@ -60,6 +60,20 @@ actor BaselineService {
 
     private init() {}
 
+    // MARK: - Accept Growth
+
+    /// Resets the baseline to the current working set sizes, clearing all growth indicators.
+    /// Pure DB operation — no filesystem I/O.
+    func acceptGrowth(for trackedPath: TrackedPath) async throws {
+        let freeBytes = ScanService.captureVolumeFreeSpace()
+        let newSnapshotId = try await db.createSnapshotFromWorkingSet(
+            trackedPathId: trackedPath.id,
+            freeBytes: freeBytes
+        )
+        try await DatabaseCleanupService.shared.aggregateCategoryTotals(for: newSnapshotId)
+        try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)
+    }
+
     // MARK: - Snapshot Lifecycle
 
     /// Takes a new snapshot for the given tracked path.
@@ -864,6 +878,72 @@ actor BaselineService {
         }
     }
 
+    func getSubcategoryBreakdownFromWorkingSet(
+        for category: GrowthCategory,
+        trackedPathsById: [UUID: TrackedPath],
+        baselineSnapshotIdsByPath: [UUID: Int64]
+    ) async -> [SubcategoryGroup] {
+        var aggregated: [GrowthSubcategory?: SubcategoryGroup] = [:]
+
+        for (trackedPathId, trackedPath) in trackedPathsById {
+            let groups = await getSubcategoryBreakdownFromWorkingSet(for: category, trackedPathId: trackedPathId)
+
+            var growthTotals: [GrowthSubcategory?: Int64] = [:]
+            if let baselineSnapshotId = baselineSnapshotIdsByPath[trackedPathId] {
+                growthTotals = await getSubcategoryGrowthTotals(
+                    trackedPathId: trackedPathId,
+                    snapshotId: baselineSnapshotId,
+                    category: category
+                )
+            }
+
+            let journalTotals = await growthJournalService.subcategoryGrowthTotals(
+                trackedPath: trackedPath,
+                category: category,
+                retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+            )
+            if !journalTotals.isEmpty {
+                growthTotals = journalTotals
+            }
+
+            for group in groups {
+                let groupGrowthBytes = growthTotals[group.subcategory]
+
+                if var existing = aggregated[group.subcategory] {
+                    existing = SubcategoryGroup(
+                        subcategory: existing.subcategory,
+                        displayName: existing.displayName,
+                        totalBytes: existing.totalBytes + group.totalBytes,
+                        fileCount: existing.fileCount + group.fileCount,
+                        growthBytes: mergeOptionalBytes(existing.growthBytes, groupGrowthBytes),
+                        topFiles: mergedTopFiles(
+                            existing.topFiles,
+                            group.topFiles,
+                            limit: SubcategoryGroup.initialLoadLimit
+                        )
+                    )
+                    aggregated[group.subcategory] = existing
+                } else {
+                    aggregated[group.subcategory] = SubcategoryGroup(
+                        subcategory: group.subcategory,
+                        displayName: group.displayName,
+                        totalBytes: group.totalBytes,
+                        fileCount: group.fileCount,
+                        growthBytes: groupGrowthBytes,
+                        topFiles: group.topFiles
+                    )
+                }
+            }
+        }
+
+        return aggregated.values.sorted {
+            if $0.totalBytes == $1.totalBytes {
+                return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+            }
+            return $0.totalBytes > $1.totalBytes
+        }
+    }
+
     /// Finds files that contributed to growth since the last snapshot for a specific category/subcategory.
     func getGrowthContributors(
         trackedPathId: UUID,
@@ -1115,9 +1195,7 @@ actor BaselineService {
                 )
             }
 
-            if growthTotals.isEmpty,
-               baselineSnapshotIdsByPath[trackedPathId] != nil,
-               let trackedPath = trackedPathsById[trackedPathId] {
+            if let trackedPath = trackedPathsById[trackedPathId] {
                 let journalTotals = await growthJournalService.subcategoryGrowthTotals(
                     trackedPath: trackedPath,
                     category: category,
@@ -1323,7 +1401,9 @@ actor BaselineService {
         )
 
         for index in inventory.indices {
-            inventory[index].recentGrowthStory = recentStories[inventory[index].category]
+            if let story = recentStories[inventory[index].category], story.deltaBytes >= 1_048_576 {
+                inventory[index].recentGrowthStory = story
+            }
         }
 
         return inventory

@@ -122,7 +122,7 @@ final class PrunrSmokeTests: XCTestCase {
         )
 
         XCTAssertTrue(item.isBigFile)
-        XCTAssertEqual(item.category, .downloads)
+        XCTAssertEqual(GrowthCategory.categorize(path: item.path), .downloads)
     }
 
     func testCategoryAggregationMatchesRuntimeClassifier() async throws {

@@ -467,6 +467,58 @@ extension DatabaseManager {
         }
     }
 
+    /// Creates a new snapshot by copying the current working set (pure in-DB copy, no filesystem I/O).
+    /// Deletes all older snapshots for this path so the new one becomes the sole baseline.
+    /// - Parameters:
+    ///   - trackedPathId: The tracked path UUID
+    ///   - freeBytes: Optional volume free space at creation time
+    /// - Returns: The ID of the newly created snapshot
+    func createSnapshotFromWorkingSet(trackedPathId: UUID, freeBytes: Int64?) async throws -> Int64 {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.write { db in
+            // Create new snapshot row
+            var snapshot = Snapshot(trackedPathId: trackedPathId, createdAt: Date(), freeBytes: freeBytes)
+            try snapshot.insert(db)
+            guard let newSnapshotId = snapshot.id else {
+                throw DatabaseError.notInitialized
+            }
+
+            // Copy working set → snapshot entries (pure in-DB copy)
+            try db.execute(
+                sql: """
+                    INSERT INTO snapshotEntry (snapshotId, pathId, sizeBytes)
+                    SELECT ?, pathId, sizeBytes FROM workingSetEntry WHERE trackedPathId = ?
+                    """,
+                arguments: [newSnapshotId, trackedPathId.uuidString]
+            )
+
+            // Delete all older snapshots (FK CASCADE cleans snapshotEntry, categorySnapshot, subcategorySnapshot)
+            try db.execute(
+                sql: "DELETE FROM snapshot WHERE trackedPathId = ? AND id != ?",
+                arguments: [trackedPathId.uuidString, newSnapshotId]
+            )
+
+            return newSnapshotId
+        }
+    }
+
+    /// Deletes all growth journal buckets for a tracked path.
+    func deleteGrowthJournalBuckets(trackedPathId: UUID) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.write { db in
+            try db.execute(
+                sql: "DELETE FROM growthJournalBucket WHERE trackedPathId = ?",
+                arguments: [trackedPathId.uuidString]
+            )
+        }
+    }
+
     /// Adds a single entry to a snapshot (for testing/debugging)
     /// - Parameters:
     ///   - snapshotId: The snapshot ID to add the entry to

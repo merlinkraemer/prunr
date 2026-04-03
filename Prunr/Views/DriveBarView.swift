@@ -36,6 +36,9 @@ struct DriveBarView: View {
     private let barHeight: CGFloat = 12
     private let segmentSpacing: CGFloat = 1
     private let minimumSegmentFraction: CGFloat = 0.03
+    private let minimumUsedPresentationFraction: CGFloat = 0.42
+    private let maximumFreePresentationFraction: CGFloat = 0.58
+    private let maximumFillerPresentationFraction: CGFloat = 0.38
 
     var body: some View {
         HStack(spacing: 8) {
@@ -91,9 +94,9 @@ struct DriveBarView: View {
                                 endPoint: .trailing
                             )
                         )
-                        .frame(width: geometry.size.width * usedFraction)
+                        .frame(width: geometry.size.width * presentedUsedFraction)
                 } else {
-                    let usedWidth = geometry.size.width * usedFraction
+                    let usedWidth = geometry.size.width * presentedUsedFraction
                     let availableSegmentWidth = max(0, usedWidth - (segmentSpacing * CGFloat(max(0, renderedSegments.count - 1))))
                     HStack(spacing: segmentSpacing) {
                         ForEach(renderedSegments) { segment in
@@ -140,6 +143,13 @@ struct DriveBarView: View {
     private var usedFraction: CGFloat {
         guard totalBytes > 0 else { return 0 }
         return CGFloat(Double(usedBytes) / Double(totalBytes))
+    }
+
+    private var presentedUsedFraction: CGFloat {
+        guard totalBytes > 0 else { return 0 }
+        guard usedBytes > 0 else { return 0 }
+        guard !categorySegments.isEmpty else { return usedFraction }
+        return min(1, max(usedFraction, minimumUsedPresentationFraction, 1 - maximumFreePresentationFraction))
     }
 
     private var visibleSegments: [DriveBarSegment] {
@@ -195,8 +205,36 @@ struct DriveBarView: View {
             return [RenderedSegment(id: segment.id, color: segment.color, fraction: 1)]
         }
 
-        let baseFractions = visibleSegments.map { max(CGFloat(Double($0.bytes) / Double(usedBytes)), 0) }
-        let adjustedFractions = baseFractions.map { max($0, minimumSegmentFraction) }
+        let fillerSegments = visibleSegments.filter(isFillerSegment)
+        let trackedSegments = visibleSegments.filter { !isFillerSegment($0) }
+
+        let baseFractions: [CGFloat]
+        if !trackedSegments.isEmpty, !fillerSegments.isEmpty {
+            let fillerBytes = fillerSegments.reduce(Int64(0)) { $0 + $1.bytes }
+            let trackedBytes = trackedSegments.reduce(Int64(0)) { $0 + $1.bytes }
+            let actualFillerFraction = max(CGFloat(Double(fillerBytes) / Double(usedBytes)), 0)
+            let displayedFillerFraction = min(actualFillerFraction, maximumFillerPresentationFraction)
+            let displayedTrackedFraction = max(0, 1 - displayedFillerFraction)
+
+            baseFractions = visibleSegments.map { segment in
+                if isFillerSegment(segment) {
+                    guard fillerBytes > 0 else { return 0 }
+                    return displayedFillerFraction * CGFloat(Double(segment.bytes) / Double(fillerBytes))
+                }
+
+                guard trackedBytes > 0 else { return 0 }
+                return displayedTrackedFraction * CGFloat(Double(segment.bytes) / Double(trackedBytes))
+            }
+        } else {
+            baseFractions = visibleSegments.map { max(CGFloat(Double($0.bytes) / Double(usedBytes)), 0) }
+        }
+
+        let adjustedFractions = zip(visibleSegments, baseFractions).map { segment, fraction in
+            if isFillerSegment(segment) {
+                return fraction
+            }
+            return max(fraction, minimumSegmentFraction)
+        }
         let totalAdjusted = adjustedFractions.reduce(0, +)
         guard totalAdjusted > 0 else {
             return []
@@ -229,6 +267,10 @@ struct DriveBarView: View {
         }
 
         return segment.color.opacity(0.3)
+    }
+
+    private func isFillerSegment(_ segment: DriveBarSegment) -> Bool {
+        segment.id == "outside-scan-scope" || segment.id == "other-used"
     }
 
     /// Converts bytes to GB/TB string (no space)

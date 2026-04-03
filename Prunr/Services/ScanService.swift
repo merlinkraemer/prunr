@@ -99,7 +99,7 @@ actor ScanService {
     /// Captures the current volume free space using Apple's recommended API
     /// Uses volumeAvailableCapacityForImportantUsageKey for accurate available space
     /// - Returns: Volume free space in bytes, or nil if unavailable
-    private static func captureVolumeFreeSpace() -> Int64? {
+    static func captureVolumeFreeSpace() -> Int64? {
         let rootURL = URL(fileURLWithPath: "/")
         let resourceKeys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
         

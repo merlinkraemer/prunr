@@ -6,8 +6,8 @@ struct MenuBarView: View {
 
     @Environment(\.openSettings) private var openSettings
     @State private var settingsStore = SettingsStore.shared
-    @State private var scanHover = false
     @State private var settingsHover = false
+    @State private var refreshHover = false
     @State private var hasFullDiskAccess: Bool? = nil
     @State private var isBootstrapping = true
     @State private var permissionsService = PermissionsService.shared
@@ -22,6 +22,7 @@ struct MenuBarView: View {
     @State private var headerWidth: CGFloat = 0
     @State private var pendingHeaderTransition: PendingHeaderTransition? = nil
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
+    @State private var acceptedGrowthFeedbackTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
     @State private var selectedOnboardingPage = OnboardingPage.permissions
     @State private var displayedOnboardingPage = OnboardingPage.permissions
@@ -176,7 +177,10 @@ struct MenuBarView: View {
     }
 
     private func onboardingStepIsUnlocked(_ page: OnboardingPage) -> Bool {
-        page.rawValue <= maxUnlockedOnboardingPage.rawValue
+        if currentOnboardingPage == .scan {
+            return page == .scan
+        }
+        return page.rawValue <= maxUnlockedOnboardingPage.rawValue
     }
 
     private var selectedScanFolderLabel: String {
@@ -310,6 +314,7 @@ struct MenuBarView: View {
         .onDisappear {
             onboardingTransitionTask?.cancel()
             headerTransitionTask?.cancel()
+            acceptedGrowthFeedbackTask?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshFullDiskAccess()
@@ -318,24 +323,39 @@ struct MenuBarView: View {
             guard isShown else { return }
             synchronizeVisibleHeaderToCurrent()
         }
+        .onChange(of: manager.lastAcceptedGrowthAt) { _, acceptedAt in
+            guard acceptedAt != nil else { return }
+            acceptedGrowthFeedbackTask?.cancel()
+            withAnimation(.snappy(duration: 0.22, extraBounce: 0)) {
+                justAcceptedGrowth = true
+            }
+            acceptedGrowthFeedbackTask = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
+                        justAcceptedGrowth = false
+                    }
+                }
+            }
+        }
         .task {
-            isBootstrapping = true
-            // Fast: Check if baseline exists (UserDefaults lookup)
+            // Phase 1: Fast — show categories instantly from pre-computed totals
+            let hasQuickData = await manager.loadQuickInventory()
+            if !hasQuickData {
+                isBootstrapping = true
+            }
+            defer { isBootstrapping = false }
+
+            // Phase 2: Background — enrich with growth stories, trends, disk accounting
             await manager.checkBaseline()
-
-            // Fast: Update disk space with caching (only if >5s since last update)
             manager.updateFreeSpaceIfNeeded()
-
-            // Update from latest snapshot (no filesystem rescan)
             await manager.updatePathSize()
 
             if !manager.noBaseline {
                 await manager.loadInventoryFromLatestSnapshot()
-                // Kick off silent reconciliation if data is stale (>24h)
                 manager.reconcileIfStale()
             }
-
-            isBootstrapping = false
         }
         .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
             if selectedOnboardingPage.rawValue > newValue.rawValue || selectedOnboardingPage == oldValue {
@@ -353,13 +373,17 @@ struct MenuBarView: View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
-            VStack(spacing: 12) {
-                ProgressView()
-                    .controlSize(.small)
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    SkeletonBlock(width: 132, height: 12, cornerRadius: 4)
+                    SkeletonBlock(width: 176, height: 9, cornerRadius: 4)
+                }
 
-                Text("Loading latest inventory…")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        SkeletonListRow(style: .category)
+                    }
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 18)
@@ -390,36 +414,6 @@ struct MenuBarView: View {
                 .padding(.horizontal, 16)
 
             Spacer(minLength: 0)
-
-            // Footer with settings
-            HStack {
-                Spacer()
-
-                Button {
-                    closePopoverAndOpenSettings()
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 13))
-                        .frame(width: 26, height: 26)
-                        .background(
-                            Circle()
-                                .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
-                        )
-                        .foregroundStyle(.primary)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open settings")
-                .accessibilityHint("Open settings while scan continues")
-                .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        settingsHover = hovering
-                    }
-                }
-                .help("Settings (scan continues)")
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
         }
         .padding(.vertical, 18)
     }
@@ -524,7 +518,6 @@ struct MenuBarView: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
-            .padding(.top, 18)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 18)
@@ -537,7 +530,7 @@ struct MenuBarView: View {
     private var onboardingProgressHeader: some View {
         VStack(spacing: 12) {
             HStack {
-                if currentOnboardingPage != .permissions {
+                if currentOnboardingPage != .permissions && currentOnboardingPage != .scan {
                     Button {
                         let prevIndex = max(0, currentOnboardingPage.rawValue - 1)
                         if let prevPage = OnboardingPage(rawValue: prevIndex) {
@@ -629,16 +622,15 @@ struct MenuBarView: View {
     }
 
     private func onboardingPage(for page: OnboardingPage, size: CGSize) -> some View {
-        ScrollView(.vertical) {
-            VStack(spacing: 10) {
-                onboardingPageCard(for: page)
-            }
-            .frame(maxWidth: 284)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: size.height, alignment: .center)
-            .padding(.vertical, 6)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            onboardingPageCard(for: page)
+                .frame(maxWidth: 284)
+                .frame(maxWidth: .infinity)
+
+            Spacer(minLength: 0)
         }
-        .hiddenScrollIndicators()
         .frame(width: size.width, height: size.height)
         .transition(.identity)
     }
@@ -751,6 +743,7 @@ struct MenuBarView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+
                     }
                 }
             }
@@ -760,8 +753,8 @@ struct MenuBarView: View {
                 onboardingTitleSection(
                     number: 3,
                     icon: "waveform.path.ecg",
-                    title: "Start Tracking",
-                    description: "Scan now for the full picture, or start tracking changes immediately."
+                    title: "Run First Scan",
+                    description: "This can take a while for a full-disk scan or large drives."
                 )
 
                 onboardingContentCard {
@@ -778,14 +771,8 @@ struct MenuBarView: View {
                                 .truncationMode(.middle)
                         }
 
-                        VStack(spacing: 8) {
-                            primaryActionButton("Scan now", minWidth: 168) {
-                                startOnboardingFirstScan()
-                            }
-
-                            secondaryActionButton("Track changes only", minWidth: 168) {
-                                startDeltasOnlyTracking()
-                            }
+                        primaryActionButton("Start Scan", minWidth: 168) {
+                            startOnboardingFirstScan()
                         }
                     }
                 }
@@ -1028,6 +1015,9 @@ struct MenuBarView: View {
     private var pageNavigationContent: some View {
         VStack(spacing: 0) {
             headerNavigationView
+            if let error = manager.backgroundScanError {
+                backgroundScanErrorBanner(error)
+            }
             categoryListView
         }
         .background(
@@ -1040,6 +1030,32 @@ struct MenuBarView: View {
         .onDisappear {
             headerTransitionTask?.cancel()
         }
+    }
+
+    private func backgroundScanErrorBanner(_ error: Error) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+
+            Text("Background scan failed")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 8)
+
+            Button("Scan Now") {
+                Task {
+                    await manager.loadInventory()
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(error.localizedDescription)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
     }
 
     private var leftHeaderScreen: HeaderScreen {
@@ -1120,7 +1136,7 @@ struct MenuBarView: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
-        .frame(height: 34)
+        .frame(height: 40)
     }
 
     @ViewBuilder
@@ -1231,22 +1247,62 @@ struct MenuBarView: View {
 
     private func headerPage(for screen: HeaderScreen, width: CGFloat) -> some View {
         headerView(for: screen)
-            .frame(width: width)
+            .frame(width: width, height: 40, alignment: .center)
     }
 
-    private var overviewHeader: some View {
-        HStack {
-            Spacer()
+    @State private var justAcceptedGrowth = false
 
-            // Centered growth indicator or stable pill
+    private var overviewHeader: some View {
+        ZStack {
             if overallGrowthBytes > 0 {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("+\(formattedBytes(overallGrowthBytes))")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                HStack(spacing: 8) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("+\(formattedBytes(overallGrowthBytes))")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(Capsule().fill(Color.orange.opacity(0.12)))
+
+                    Button {
+                        Task { await manager.acceptGrowth() }
+                    } label: {
+                        HStack(spacing: 0) {
+                            if manager.isAcceptingGrowth {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                    .scaleEffect(0.7)
+                                    .frame(width: 12, height: 12)
+                                    .padding(.trailing, 5)
+                            }
+                            Text(manager.isAcceptingGrowth ? "Setting Baseline" : "Dismiss")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundStyle(manager.isAcceptingGrowth ? .secondary : .secondary)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
+                        .background(
+                            Capsule()
+                                .fill(Color.primary.opacity(manager.isAcceptingGrowth ? 0.08 : 0.05))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(manager.isAcceptingGrowth)
+                    .help("Clear the current growth indicators now and save the current sizes as the new baseline")
                 }
-                .foregroundStyle(.orange)
+                .frame(height: 40, alignment: .center)
+            } else if justAcceptedGrowth {
+                Text("Set as New Baseline!")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(Capsule().fill(Color.green.opacity(0.12)))
+                    .transition(.asymmetric(insertion: .scale(scale: 0.92).combined(with: .opacity),
+                                            removal: .opacity))
             } else {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark")
@@ -1256,17 +1312,19 @@ struct MenuBarView: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.green)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .frame(height: 22, alignment: .center)
                 .background(
                     Capsule()
                         .fill(Color.green.opacity(0.12))
                 )
+                .transition(.asymmetric(insertion: .scale(scale: 0.92).combined(with: .opacity),
+                                        removal: .opacity))
             }
-
-            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .padding(.horizontal, 12)
+        .animation(.snappy(duration: 0.24, extraBounce: 0), value: overallGrowthBytes > 0)
+        .animation(.snappy(duration: 0.28, extraBounce: 0), value: justAcceptedGrowth)
     }
 
     private func drillDownHeader(category: CategoryInventoryItem, subcategory: SubcategoryGroup?) -> some View {
@@ -1296,7 +1354,7 @@ struct MenuBarView: View {
                 .frame(width: 32)
         }
         .padding(.horizontal, 12)
-        .frame(maxHeight: .infinity)
+        .frame(maxHeight: .infinity, alignment: .center)
     }
 
     // MARK: - Category List View
@@ -1342,71 +1400,59 @@ struct MenuBarView: View {
     // MARK: - Footer Buttons (Icon Toolbar)
 
     private var footerButtons: some View {
-        HStack {
-            // Scan button (lower left)
-            Button {
-                Task {
-                    await manager.checkGrowth()
-                }
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(scanHover ? Color.gray.opacity(0.12) : Color.clear)
-                        .frame(width: 26, height: 26)
-
-                    if manager.isCheckingGrowth {
-                        ProgressView()
-                            .controlSize(.small)
-                            .scaleEffect(0.75)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.primary)
-                    }
-                }
-                .frame(width: 26, height: 26)
-                .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Check growth")
-            .accessibilityHint("Check for recent file changes")
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    scanHover = hovering
-                }
-            }
-            .disabled(manager.isLoading || manager.isAutoScanning || manager.isCheckingGrowth)
-            .help(manager.isCheckingGrowth ? "Checking..." : "Check Growth")
-
-            Spacer()
-
+        ZStack {
             footerStatusText
 
-            Spacer()
-
-            // Settings button (lower right)
-            Button {
-                closePopoverAndOpenSettings()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 13))
-                    .frame(width: 26, height: 26)
-                    .background(
-                        Circle()
-                            .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
-                    )
-                    .foregroundStyle(.primary)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open settings")
-            .accessibilityHint("Open Prunr settings")
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    settingsHover = hovering
+            HStack {
+                Button {
+                    Task { await manager.checkGrowth() }
+                } label: {
+                    Image(systemName: manager.isCheckingGrowth ? "arrow.trianglehead.2.clockwise.rotate.90" : "arrow.clockwise")
+                        .font(.system(size: 13))
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(refreshHover ? Color.gray.opacity(0.12) : Color.clear)
+                        )
+                        .foregroundStyle(manager.isCheckingGrowth ? .secondary : .primary)
+                        .contentShape(Circle())
                 }
+                .buttonStyle(.plain)
+                .disabled(manager.isLoading || manager.isAutoScanning || manager.isProcessingRecentChanges || manager.isCheckingGrowth)
+                .accessibilityLabel("Refresh recent changes")
+                .accessibilityHint("Run a lightweight refresh without a full scan")
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        refreshHover = hovering
+                    }
+                }
+                .help("Refresh recent changes")
+
+                Spacer()
+
+                Button {
+                    closePopoverAndOpenSettings()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 13))
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(settingsHover ? Color.gray.opacity(0.12) : Color.clear)
+                        )
+                        .foregroundStyle(.primary)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open settings")
+                .accessibilityHint("Open Prunr settings")
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        settingsHover = hovering
+                    }
+                }
+                .help("Settings")
             }
-            .help("Settings")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
@@ -1524,15 +1570,6 @@ struct MenuBarView: View {
         Task {
             await manager.loadInventory(trackedPathsOverride: [settingsStore.mainTrackedPath])
         }
-    }
-
-    private func startDeltasOnlyTracking() {
-        guard hasFullDiskAccess == true else { return }
-        guard manager.noBaseline else { return }
-        guard onboardingFolderStepComplete else { return }
-        guard !manager.isLoading, !manager.isAutoScanning else { return }
-
-        manager.startDeltasOnlyTracking()
     }
 
     private func scanStatusCard(clampedProgress: Double, showStopButton: Bool = false) -> some View {
