@@ -89,3 +89,10 @@
 - Kept `MainViewModel`, `Delta`, and `DeltaService` because the comparison model/service layer is still exercised by tests and is separate from the deleted windowed UI shell.
 - Removed one dead category-trend snapshot path from `BaselineService` and `DatabaseManager` that was no longer called by the live inventory flow.
 - Verification: `make build` and `make test` both passed after the legacy UI cleanup.
+
+## Permission gating fix
+
+- [x] Audit how onboarding decides Full Disk Access is granted
+- [x] Replace the weak TCC-only probe with scan-relevant protected-path probes
+- [x] Update onboarding/settings copy to stop claiming success when key protected locations are still blocked
+- [ ] Re-run `make build` and `make test`

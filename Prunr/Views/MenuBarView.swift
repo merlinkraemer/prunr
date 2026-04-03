@@ -9,6 +9,7 @@ struct MenuBarView: View {
     @State private var settingsHover = false
     @State private var refreshHover = false
     @State private var hasFullDiskAccess: Bool? = nil
+    @State private var blockedFullDiskAccessLocations: [String] = []
     @State private var isBootstrapping = true
     @State private var permissionsService = PermissionsService.shared
     @State private var highlightedStorageSegmentID: String? = nil
@@ -663,7 +664,7 @@ struct MenuBarView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 12, weight: .medium))
-                            Text("Access granted")
+                            Text("Full Disk Access ready")
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .foregroundStyle(.green)
@@ -675,6 +676,13 @@ struct MenuBarView: View {
 
                             secondaryActionButton("Reveal Current App") {
                                 permissionsService.revealCurrentAppInFinder()
+                            }
+
+                            if !blockedFullDiskAccessLocations.isEmpty {
+                                Text("Still blocked: \(blockedFullDiskAccessLocations.prefix(3).joined(separator: ", "))")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
                             }
                         }
                     }
@@ -1014,7 +1022,9 @@ struct MenuBarView: View {
     }
 
     private func refreshFullDiskAccess() {
-        hasFullDiskAccess = permissionsService.hasFullDiskAccess
+        let report = permissionsService.fullDiskAccessReport
+        hasFullDiskAccess = report.isGranted
+        blockedFullDiskAccessLocations = report.deniedLocations
     }
 
     private func openFullDiskAccessSettings() {

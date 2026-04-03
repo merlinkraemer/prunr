@@ -65,6 +65,7 @@ private struct GeneralSettingsTab: View {
     @State private var showingSavedNotice = false
     @State private var compactedNotice = ""
     @State private var hasFullDiskAccess = false
+    @State private var blockedFullDiskAccessLocations: [String] = []
 
     private var appVersionText: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"
@@ -94,6 +95,12 @@ private struct GeneralSettingsTab: View {
                             .foregroundStyle(hasFullDiskAccess ? .green : .orange)
                         
                         Text(hasFullDiskAccess ? "Full Disk Access granted" : "Full Disk Access required")
+                    }
+
+                    if !hasFullDiskAccess && !blockedFullDiskAccessLocations.isEmpty {
+                        Text("Still blocked: \(blockedFullDiskAccessLocations.prefix(4).joined(separator: ", "))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     
                     if !hasFullDiskAccess {
@@ -306,7 +313,9 @@ private struct GeneralSettingsTab: View {
     }
 
     private func refreshFullDiskAccess() {
-        hasFullDiskAccess = permissionsService.hasFullDiskAccess
+        let report = permissionsService.fullDiskAccessReport
+        hasFullDiskAccess = report.isGranted
+        blockedFullDiskAccessLocations = report.deniedLocations
     }
 
     private func openFullDiskAccessSettings() {
