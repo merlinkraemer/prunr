@@ -1262,7 +1262,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 }
 
                 let groups = subcategoryGroupsByCategory[currentSelection.category] ?? []
-                if let refreshedSubcategory = groups.first(where: { $0.displayName == selectedSubcategory.displayName }) {
+                let isReloadingCurrentCategory =
+                    subcategoryBreakdownLoadTasks[currentSelection.category] != nil
+                    || subcategoryBreakdownLoadingCategories.contains(currentSelection.category)
+                if groups.isEmpty, isReloadingCurrentCategory {
+                    return
+                }
+
+                if let refreshedSubcategory = groups.first(where: { $0.id == selectedSubcategory.id }) {
+                    self.selectedSubcategory = refreshedSubcategory
+                } else if let refreshedSubcategory = groups.first(where: { $0.displayName == selectedSubcategory.displayName }) {
                     self.selectedSubcategory = refreshedSubcategory
                 } else {
                     self.selectedSubcategory = nil

@@ -178,9 +178,18 @@ struct MenuBarView: View {
 
     private func onboardingStepIsUnlocked(_ page: OnboardingPage) -> Bool {
         if currentOnboardingPage == .scan {
-            return page == .scan
+            if manager.isLoading || manager.isAutoScanning {
+                return page == .scan
+            }
+            return page == .folder || page == .scan
         }
         return page.rawValue <= maxUnlockedOnboardingPage.rawValue
+    }
+
+    private var canNavigateBackInOnboarding: Bool {
+        guard currentOnboardingPage != .permissions else { return false }
+        guard let previousPage = OnboardingPage(rawValue: currentOnboardingPage.rawValue - 1) else { return false }
+        return onboardingStepIsUnlocked(previousPage)
     }
 
     private var selectedScanFolderLabel: String {
@@ -322,6 +331,7 @@ struct MenuBarView: View {
         .onChange(of: manager.isPopoverShown) { _, isShown in
             guard isShown else { return }
             synchronizeVisibleHeaderToCurrent()
+            synchronizeVisibleOnboardingToCurrent()
         }
         .onChange(of: manager.lastAcceptedGrowthAt) { _, acceptedAt in
             guard acceptedAt != nil else { return }
@@ -524,13 +534,14 @@ struct MenuBarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDisappear {
             onboardingTransitionTask?.cancel()
+            synchronizeVisibleOnboardingToCurrent()
         }
     }
 
     private var onboardingProgressHeader: some View {
         VStack(spacing: 12) {
             HStack {
-                if currentOnboardingPage != .permissions && currentOnboardingPage != .scan {
+                if canNavigateBackInOnboarding {
                     Button {
                         let prevIndex = max(0, currentOnboardingPage.rawValue - 1)
                         if let prevPage = OnboardingPage(rawValue: prevIndex) {
@@ -827,6 +838,7 @@ struct MenuBarView: View {
 
     private func startOnboardingTransition(from previousPage: OnboardingPage, to newPage: OnboardingPage, width: CGFloat) {
         onboardingTransitionTask?.cancel()
+        stabilizeInFlightOnboardingTransitionIfNeeded()
 
         guard width > 0 else {
             var transaction = Transaction()
@@ -870,6 +882,30 @@ struct MenuBarView: View {
                 outgoingOnboardingPage = nil
                 onboardingOffset = 0
             }
+        }
+    }
+
+    private func synchronizeVisibleOnboardingToCurrent() {
+        onboardingTransitionTask?.cancel()
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            pendingOnboardingTransition = nil
+            outgoingOnboardingPage = nil
+            onboardingOffset = 0
+            displayedOnboardingPage = currentOnboardingPage
+        }
+    }
+
+    private func stabilizeInFlightOnboardingTransitionIfNeeded() {
+        guard outgoingOnboardingPage != nil else { return }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            outgoingOnboardingPage = nil
+            onboardingOffset = 0
         }
     }
 
@@ -1183,6 +1219,7 @@ struct MenuBarView: View {
 
     private func startHeaderTransition(from previousHeader: HeaderScreen, to newHeader: HeaderScreen, width: CGFloat) {
         headerTransitionTask?.cancel()
+        stabilizeInFlightHeaderTransitionIfNeeded()
 
         guard width > 0 else {
             var transaction = Transaction()
@@ -1242,6 +1279,18 @@ struct MenuBarView: View {
             activeHeaderTransition = nil
             headerOffset = 0
             displayedHeader = currentHeaderScreen
+        }
+    }
+
+    private func stabilizeInFlightHeaderTransitionIfNeeded() {
+        guard let activeHeaderTransition else { return }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            displayedHeader = activeHeaderTransition.incoming
+            self.activeHeaderTransition = nil
+            headerOffset = 0
         }
     }
 

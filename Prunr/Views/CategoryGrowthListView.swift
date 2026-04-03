@@ -185,11 +185,6 @@ struct CategoryGrowthListView: View {
                 isDataReady = true
             }
             preloadVisibleCategoriesIfNeeded()
-            if manager.isDrilledDown, manager.selectedInventoryCategory == nil {
-                manager.isDrilledDown = false
-                manager.isSubcategoryDrillDown = false
-                manager.selectedSubcategory = nil
-            }
         }
         .onChange(of: manager.isPopoverShown) { _, isShown in
             guard isShown else { return }
@@ -287,6 +282,18 @@ struct CategoryGrowthListView: View {
         }
     }
 
+    private func stabilizeInFlightNavigationIfNeeded() {
+        guard let activeTransition else { return }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            displayedScreen = activeTransition.incoming
+            self.activeTransition = nil
+            pageOffset = 0
+        }
+    }
+
     private func startNavigationTransition(
         from previousScreen: DrilldownScreen,
         to newScreen: DrilldownScreen,
@@ -294,6 +301,7 @@ struct CategoryGrowthListView: View {
         width: CGFloat
     ) {
         navigationTask?.cancel()
+        stabilizeInFlightNavigationIfNeeded()
 
         guard width > 0 else {
             // Wrap early-return mutations — without disablesAnimations,
