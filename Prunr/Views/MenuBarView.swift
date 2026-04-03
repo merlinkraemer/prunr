@@ -305,7 +305,7 @@ struct MenuBarView: View {
                     manualScanLoadingView
                 } else if isBootstrapping {
                     initialLoadView
-                } else if manager.noBaseline && !manager.isDeltasOnlyMode {
+                } else if manager.noBaseline {
                     setupOnboardingView
                 } else {
                     VStack(spacing: 0) {
@@ -1051,9 +1051,6 @@ struct MenuBarView: View {
     private var pageNavigationContent: some View {
         VStack(spacing: 0) {
             headerNavigationView
-            if let error = manager.backgroundScanError {
-                backgroundScanErrorBanner(error)
-            }
             categoryListView
         }
         .background(
@@ -1066,32 +1063,6 @@ struct MenuBarView: View {
         .onDisappear {
             headerTransitionTask?.cancel()
         }
-    }
-
-    private func backgroundScanErrorBanner(_ error: Error) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(.orange)
-
-            Text("Background scan failed")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.primary)
-
-            Spacer(minLength: 8)
-
-            Button("Scan Now") {
-                Task {
-                    await manager.loadInventory()
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help(error.localizedDescription)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.12))
     }
 
     private var leftHeaderScreen: HeaderScreen {

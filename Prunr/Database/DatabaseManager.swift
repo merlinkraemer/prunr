@@ -813,6 +813,40 @@ extension DatabaseManager {
         }
     }
 
+    /// Fetches entries for a snapshot in primary-key order using cursor pagination.
+    /// Avoids large OFFSET scans when walking very large snapshots end-to-end.
+    func fetchEntriesPaginatedUnordered(
+        for snapshotId: Int64,
+        afterEntryId: Int64?,
+        limit: Int
+    ) async throws -> [SnapshotEntryWithPath] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            if let afterEntryId {
+                return try SnapshotEntryWithPath.fetchAll(db, sql: """
+                    SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
+                    FROM snapshotEntry se
+                    JOIN paths p ON p.id = se.pathId
+                    WHERE se.snapshotId = ? AND se.id > ?
+                    ORDER BY se.id
+                    LIMIT ?
+                    """, arguments: [snapshotId, afterEntryId, limit])
+            }
+
+            return try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
+                FROM snapshotEntry se
+                JOIN paths p ON p.id = se.pathId
+                WHERE se.snapshotId = ?
+                ORDER BY se.id
+                LIMIT ?
+                """, arguments: [snapshotId, limit])
+        }
+    }
+
     /// Fetches working set entries for a tracked path, paginated. Returns the same shape as snapshot entries.
     func fetchWorkingSetEntriesPaginated(trackedPathId: UUID, offset: Int, limit: Int) async throws -> [SnapshotEntryWithPath] {
         guard let dbPool = dbPool else {
@@ -851,6 +885,56 @@ extension DatabaseManager {
                 WHERE wse.trackedPathId = ? AND pc.category = ?
                 LIMIT ? OFFSET ?
                 """, arguments: [trackedPathId.uuidString, category.rawValue, limit, offset])
+        }
+    }
+
+    func fetchSnapshotEntriesByClassification(
+        snapshotId: Int64,
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        offset: Int,
+        limit: Int
+    ) async throws -> [SnapshotEntryWithPath] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let subcategoryValue = subcategory?.rawValue ?? ""
+        return try await dbPool.read { db in
+            try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
+                FROM snapshotEntry se
+                JOIN pathClassification pc ON pc.pathId = se.pathId
+                JOIN paths p ON p.id = se.pathId
+                WHERE se.snapshotId = ? AND pc.category = ? AND pc.subcategory = ?
+                ORDER BY se.sizeBytes DESC, p.path ASC
+                LIMIT ? OFFSET ?
+                """, arguments: [snapshotId, category.rawValue, subcategoryValue, limit, offset])
+        }
+    }
+
+    func fetchWorkingSetEntriesByClassification(
+        trackedPathId: UUID,
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        offset: Int,
+        limit: Int
+    ) async throws -> [SnapshotEntryWithPath] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let subcategoryValue = subcategory?.rawValue ?? ""
+        return try await dbPool.read { db in
+            try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
+                FROM workingSetEntry wse
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                JOIN paths p ON p.id = wse.pathId
+                WHERE wse.trackedPathId = ? AND pc.category = ? AND pc.subcategory = ?
+                ORDER BY wse.sizeBytes DESC, p.path ASC
+                LIMIT ? OFFSET ?
+                """, arguments: [trackedPathId.uuidString, category.rawValue, subcategoryValue, limit, offset])
         }
     }
 
@@ -1086,66 +1170,6 @@ extension DatabaseManager {
                     topFiles: topItems
                 )
             }
-        }
-    }
-
-    /// Fetches category snapshot history for a tracked path
-    /// - Parameters:
-    ///   - trackedPathId: The tracked path ID to filter by
-    ///   - limit: Maximum number of distinct snapshots to fetch (default 90)
-    /// - Returns: Array of (snapshotId, createdAt, category, totalBytes) tuples
-    func fetchCategorySnapshots(trackedPathId: String, limit: Int = 90) -> [(snapshotId: Int64, createdAt: Date, category: String, totalBytes: Int64)] {
-        guard let dbPool = dbPool else {
-            return []
-        }
-
-        do {
-            return try dbPool.read { db in
-                // First, get the distinct snapshot IDs limited by the number of snapshots
-                let snapshotIds = try Int64.fetchAll(
-                    db,
-                    sql: """
-                        SELECT s.id FROM snapshot s
-                        WHERE s.trackedPathId = ?
-                        ORDER BY s.createdAt DESC
-                        LIMIT ?
-                        """,
-                    arguments: [trackedPathId, limit]
-                )
-
-                guard !snapshotIds.isEmpty else {
-                    return []
-                }
-
-                // Create placeholders for IN clause
-                let placeholders = snapshotIds.map { _ in "?" }.joined(separator: ", ")
-
-                // Fetch all category rows for these snapshots
-                let rows = try Row.fetchAll(
-                    db,
-                    sql: """
-                        SELECT cs.snapshotId, s.createdAt, cs.category, cs.totalBytes
-                        FROM categorySnapshot cs
-                        JOIN snapshot s ON s.id = cs.snapshotId
-                        WHERE cs.snapshotId IN (\(placeholders))
-                        ORDER BY s.createdAt DESC, cs.category
-                        """,
-                    arguments: StatementArguments(snapshotIds)
-                )
-
-                var result: [(snapshotId: Int64, createdAt: Date, category: String, totalBytes: Int64)] = []
-                for row in rows {
-                    let snapshotId: Int64 = row["snapshotId"] ?? Int64(0)
-                    let createdAt: Date = row["createdAt"] ?? Date()
-                    let category: String = row["category"] ?? ""
-                    let totalBytes: Int64 = row["totalBytes"] ?? Int64(0)
-                    result.append((snapshotId: snapshotId, createdAt: createdAt, category: category, totalBytes: totalBytes))
-                }
-                return result
-            }
-        } catch {
-            print("[DatabaseManager] Error fetching category snapshots: \(error)")
-            return []
         }
     }
 

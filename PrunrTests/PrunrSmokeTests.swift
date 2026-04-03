@@ -717,16 +717,19 @@ final class PrunrSmokeTests: XCTestCase {
             XCTAssertEqual(remainingSnapshots.count, retentionCap)
             XCTAssertEqual(Set(remainingSnapshotIDs), Set(createdSnapshotIDs.suffix(retentionCap)))
 
-            let categoryRows = DatabaseManager.shared.fetchCategorySnapshots(
-                trackedPathId: trackedPathId.uuidString,
-                limit: totalSnapshots + 10
-            )
-            XCTAssertEqual(Set(categoryRows.map(\.snapshotId)), Set(remainingSnapshotIDs))
-
             let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
-            let subcategorySnapshotCount = try await dbPool.read { db in
-                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM subcategorySnapshot") ?? 0
+            let (categorySnapshotIDs, subcategorySnapshotCount) = try await dbPool.read { db in
+                let categorySnapshotIDs = try Set(
+                    Int64.fetchAll(db, sql: "SELECT DISTINCT snapshotId FROM categorySnapshot")
+                )
+                let subcategorySnapshotCount = try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM subcategorySnapshot"
+                ) ?? 0
+                return (categorySnapshotIDs, subcategorySnapshotCount)
             }
+
+            XCTAssertEqual(categorySnapshotIDs, Set(remainingSnapshotIDs))
             XCTAssertEqual(subcategorySnapshotCount, retentionCap)
         }
     }

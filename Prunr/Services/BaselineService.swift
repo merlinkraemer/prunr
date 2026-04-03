@@ -65,7 +65,7 @@ actor BaselineService {
     /// Resets the baseline to the current working set sizes, clearing all growth indicators.
     /// Pure DB operation — no filesystem I/O.
     func acceptGrowth(for trackedPath: TrackedPath) async throws {
-        let freeBytes = ScanService.captureVolumeFreeSpace()
+        let freeBytes = ScanService.captureVolumeFreeSpace(for: trackedPath.url)
         let newSnapshotId = try await db.createSnapshotFromWorkingSet(
             trackedPathId: trackedPath.id,
             freeBytes: freeBytes
@@ -358,116 +358,6 @@ actor BaselineService {
         return nil
     }
 
-    // MARK: - Category Growth List
-
-    /// Calculates the growth list aggregated by category by comparing the latest two snapshots.
-    ///
-    /// - Parameters:
-    ///   - trackedPath: The TrackedPath to compare
-    /// - Returns: Array of CategoryGrowthItem sorted by totalGrowthBytes descending
-    /// - Throws: BaselineError if insufficient snapshots exist
-    func getCategoryGrowthList(trackedPath: TrackedPath) async throws -> [CategoryGrowthItem] {
-        let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
-
-        guard snapshots.count >= 2 else {
-            throw BaselineError.insufficientSnapshots
-        }
-
-        guard let currentId = snapshots[0].id,
-              let previousId = snapshots[1].id else {
-            throw BaselineError.noBaseline
-        }
-
-        // Validate previous snapshot has entries (avoid comparing to empty/incomplete snapshot)
-        let previousEntryCount = try await db.fetchEntryCount(for: previousId)
-        let currentEntryCount = try await db.fetchEntryCount(for: currentId)
-
-        guard previousEntryCount > 100 else {
-            throw BaselineError.insufficientSnapshots
-        }
-
-        // If current has way more entries than previous, previous was likely incomplete
-        // Allow up to 50% growth as reasonable, otherwise treat as first scan
-        let minExpectedPrevious = currentEntryCount / 2
-        if previousEntryCount < minExpectedPrevious {
-            throw BaselineError.insufficientSnapshots
-        }
-
-        // Calculate deltas
-        let deltas = try await db.calculateDeltas(beforeId: previousId, afterId: currentId)
-        try Task.checkCancellation()
-
-        // Filter to only items that grew
-        let growingDeltas = deltas.filter { $0.changeBytes > 0 }
-
-        guard !growingDeltas.isEmpty else {
-            return []
-        }
-
-        // Convert deltas to GrowthItem format
-        let growthItems = growingDeltas.map { delta in
-            GrowthItem(
-                path: delta.path,
-                growthBytes: delta.changeBytes,
-                currentSizeBytes: delta.newSizeBytes ?? 0,
-                percentOfParent: 0.0 // Will be recalculated per category
-            )
-        }
-
-        // Categorize deltas using CategoryDetectionService
-        let categoryService = CategoryDetectionService.shared
-        let categorizedDeltas = await categoryService.categorizeDeltas(growthItems)
-        try Task.checkCancellation()
-
-        // Calculate total growth across all categories for percentage calculation
-        let totalGrowth = growthItems.reduce(Int64(0)) { $0 + $1.growthBytes }
-
-        // Build CategoryGrowthItem array
-        var categoryItems: [CategoryGrowthItem] = []
-
-        for (category, items) in categorizedDeltas {
-            try Task.checkCancellation()
-
-            // Calculate totals for this category
-            let categoryGrowth = await categoryService.calculateTotalGrowth(items)
-            let categorySize = await categoryService.calculateCurrentSize(items)
-
-            // Separate big and small items
-            let bigItems = await categoryService.filterBigItems(items)
-            let smallItems = await categoryService.filterSmallItems(items)
-
-            // Keep drill-down payload bounded to avoid UI memory blowups on huge categories
-            let sortedByGrowth = items.sorted { $0.growthBytes > $1.growthBytes }
-            let drilldownItems = Array(sortedByGrowth.prefix(maxCategoryDrilldownItems))
-            let cappedBigItems = Array(bigItems.sorted { $0.growthBytes > $1.growthBytes }.prefix(maxCategoryBigItems))
-
-            // Calculate small item metrics
-            let smallItemCount = smallItems.count
-            let smallItemTotalBytes = await categoryService.calculateTotalGrowth(smallItems)
-
-            // Calculate percent of total growth
-            let percentOfTotal = totalGrowth > 0 ? Double(categoryGrowth) / Double(totalGrowth) : 0.0
-
-            // Create CategoryGrowthItem with all items for drill-down
-            let categoryItem = CategoryGrowthItem(
-                category: category,
-                totalGrowthBytes: categoryGrowth,
-                currentSizeBytes: categorySize,
-                allItems: drilldownItems,
-                bigItems: cappedBigItems,
-                smallItemCount: smallItemCount,
-                smallItemTotalBytes: smallItemTotalBytes,
-                percentOfTotal: percentOfTotal
-            )
-
-            categoryItems.append(categoryItem)
-
-        }
-
-        // Sort by total growth bytes descending
-        return categoryItems.sorted { $0.totalGrowthBytes > $1.totalGrowthBytes }
-    }
-
     // MARK: - Reconciliation
 
     /// Calculates disk accounting data that ties together free-space tracking with scan coverage.
@@ -685,14 +575,18 @@ actor BaselineService {
 
             var grouped: [GrowthSubcategory?: SubcategoryAccumulator] = [:]
             let pageSize = 5_000
-            var offset = 0
+            var lastEntryId: Int64?
 
             while true {
                 if Task.isCancelled {
                     return []
                 }
 
-                let entries = try await db.fetchEntriesPaginatedUnordered(for: snapshotId, offset: offset, limit: pageSize)
+                let entries = try await db.fetchEntriesPaginatedUnordered(
+                    for: snapshotId,
+                    afterEntryId: lastEntryId,
+                    limit: pageSize
+                )
                 guard !entries.isEmpty else { break }
 
                 for entry in entries {
@@ -706,7 +600,7 @@ actor BaselineService {
                     grouped[subcategory, default: SubcategoryAccumulator(limit: initialSubcategoryFileLimit)].add(entry)
                 }
 
-                offset += entries.count
+                lastEntryId = entries.last?.id
             }
 
             let groups = grouped.map { subcategory, accumulator -> SubcategoryGroup in
@@ -755,7 +649,8 @@ actor BaselineService {
         }
     }
 
-    /// Builds subcategory breakdown from working set entries (used in deltas-only mode).
+    /// Builds subcategory breakdown from working set entries when incremental deltas
+    /// are newer than the latest full snapshot.
     func getSubcategoryBreakdownFromWorkingSet(for category: GrowthCategory, trackedPathId: UUID) async -> [SubcategoryGroup] {
         do {
             struct SubcategoryAccumulator {
@@ -1026,23 +921,13 @@ actor BaselineService {
         limit: Int = SubcategoryGroup.loadMoreBatchSize
     ) async -> [GrowthItem] {
         do {
-            let entries = try await collectSnapshotEntries(
-                for: snapshotId,
+            let page = try await db.fetchSnapshotEntriesByClassification(
+                snapshotId: snapshotId,
                 category: category,
-                subcategory: subcategory
+                subcategory: subcategory,
+                offset: offset,
+                limit: limit
             )
-
-            guard offset < entries.count else { return [] }
-
-            let page = entries
-                .sorted { lhs, rhs in
-                    if lhs.sizeBytes == rhs.sizeBytes {
-                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
-                    }
-                    return lhs.sizeBytes > rhs.sizeBytes
-                }
-                .dropFirst(offset)
-                .prefix(limit)
 
             return page.map { entry in
                 let percent = totalBytes > 0
@@ -1072,13 +957,18 @@ actor BaselineService {
         limit: Int = SubcategoryGroup.loadMoreBatchSize
     ) async -> [GrowthItem] {
         do {
-            let entries = try await collectSnapshotEntries(
-                for: Array(snapshotIdsByPath.values),
-                category: category,
-                subcategory: subcategory
-            )
-
-            guard offset < entries.count else { return [] }
+            let requestedCount = offset + limit
+            var entries: [SnapshotEntryWithPath] = []
+            for snapshotId in snapshotIdsByPath.values {
+                let rows = try await db.fetchSnapshotEntriesByClassification(
+                    snapshotId: snapshotId,
+                    category: category,
+                    subcategory: subcategory,
+                    offset: 0,
+                    limit: requestedCount
+                )
+                entries.append(contentsOf: rows)
+            }
 
             let page = entries
                 .sorted { lhs, rhs in
@@ -1109,7 +999,8 @@ actor BaselineService {
         }
     }
 
-    /// Loads more files from the working set for a category/subcategory (deltas-only mode pagination).
+    /// Loads more files from the working set for a category/subcategory when incremental
+    /// changes are newer than the latest snapshot.
     func loadMoreSubcategoryFilesFromWorkingSet(
         for category: GrowthCategory,
         subcategory: GrowthSubcategory?,
@@ -1119,28 +1010,13 @@ actor BaselineService {
         limit: Int = SubcategoryGroup.loadMoreBatchSize
     ) async -> [GrowthItem] {
         do {
-            var allEntries: [SnapshotEntryWithPath] = []
-            let pageSize = 5_000
-            var dbOffset = 0
-            while true {
-                let entries = try await db.fetchWorkingSetEntriesByCategory(
-                    trackedPathId: trackedPathId, category: category, offset: dbOffset, limit: pageSize
-                )
-                guard !entries.isEmpty else { break }
-                for entry in entries {
-                    let sub = GrowthCategory.subcategorize(path: entry.path)
-                    guard sub == subcategory else { continue }
-                    allEntries.append(entry)
-                }
-                dbOffset += entries.count
-            }
-
-            guard offset < allEntries.count else { return [] }
-
-            let page = allEntries
-                .sorted { $0.sizeBytes > $1.sizeBytes }
-                .dropFirst(offset)
-                .prefix(limit)
+            let page = try await db.fetchWorkingSetEntriesByClassification(
+                trackedPathId: trackedPathId,
+                category: category,
+                subcategory: subcategory,
+                offset: offset,
+                limit: limit
+            )
 
             return page.map { entry in
                 let percent = totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0
@@ -1244,104 +1120,13 @@ actor BaselineService {
         }
     }
 
-    /// Detects growth trends by comparing current totals with historical data
-    /// - Parameter trackedPath: The tracked path to analyze
-    /// - Returns: Array of CategoryGrowthTrend with growth information
-    func detectGrowthTrends(trackedPath: TrackedPath) async -> [CategoryGrowthTrend: GrowthCategory] {
-        let trackedPathIdString = trackedPath.id.uuidString
-
-        // Fetch categorySnapshot history
-        let history = db.fetchCategorySnapshots(trackedPathId: trackedPathIdString, limit: 90)
-
-        guard history.count >= 2 else {
-            // Not enough data for trend detection
-            return [:]
-        }
-
-        // Group by category
-        var categoryHistory: [GrowthCategory: [(snapshotId: Int64, createdAt: Date, totalBytes: Int64)]] = [:]
-
-        for row in history {
-            if let category = GrowthCategory(rawValue: row.category) {
-                categoryHistory[category, default: []].append((
-                    snapshotId: row.snapshotId,
-                    createdAt: row.createdAt,
-                    totalBytes: row.totalBytes
-                ))
-            }
-        }
-
-        var trends: [CategoryGrowthTrend: GrowthCategory] = [:]
-        let significanceThreshold: Int64 = 50 * 1024 * 1024 // 50MB threshold
-
-        for (category, timeSeries) in categoryHistory {
-            // Sort by date ascending for trend analysis
-            let sorted = timeSeries.sorted { $0.createdAt < $1.createdAt }
-
-            guard sorted.count >= 2 else { continue }
-
-            let mostRecent = sorted.last!
-            let oldest = sorted.first!
-
-            // Calculate growth from oldest to most recent
-            let totalGrowth = mostRecent.totalBytes - oldest.totalBytes
-
-            // Only consider significant growth (> 50MB)
-            guard totalGrowth > significanceThreshold else { continue }
-
-            // Find growth start: walk backwards through the time series
-            // to find when the sustained increase began
-            // Simple heuristic: find the minimum totalBytes in the window,
-            // then find the first snapshot after that minimum
-            let minBytes = sorted.map { $0.totalBytes }.min() ?? oldest.totalBytes
-
-            // Find the first snapshot after the minimum that starts the growth trend
-            var growthStartedAt = oldest.createdAt
-            var foundMin = false
-
-            for point in sorted {
-                if !foundMin {
-                    if point.totalBytes <= minBytes + (significanceThreshold / 10) {
-                        foundMin = true
-                    }
-                } else {
-                    // After finding min, look for first significant increase
-                    if point.totalBytes > minBytes + (significanceThreshold / 10) {
-                        growthStartedAt = point.createdAt
-                        break
-                    }
-                }
-            }
-
-            // Calculate growth span in days
-            let growthSpanDays = Calendar.current.dateComponents(
-                [.day],
-                from: growthStartedAt,
-                to: mostRecent.createdAt
-            ).day ?? 0
-
-            // Create trend
-            let trend = CategoryGrowthTrend(
-                growthBytes: mostRecent.totalBytes - minBytes,
-                growthStartedAt: growthStartedAt,
-                growthSpanDays: max(1, growthSpanDays) // At least 1 day
-            )
-
-            // We need a different structure - let's use a simple approach
-            // Since we can't easily return a dictionary with complex keys,
-            // we'll return this in a different format in getInventoryWithTrends
-        }
-
-        return trends
-    }
-
     private func collectSnapshotEntries(
         for snapshotId: Int64,
         category: GrowthCategory,
         subcategory: GrowthSubcategory?
     ) async throws -> [SnapshotEntryWithPath] {
         let pageSize = 5_000
-        var offset = 0
+        var lastEntryId: Int64?
         var matches: [SnapshotEntryWithPath] = []
 
         while true {
@@ -1349,7 +1134,7 @@ actor BaselineService {
 
             let entries = try await db.fetchEntriesPaginatedUnordered(
                 for: snapshotId,
-                offset: offset,
+                afterEntryId: lastEntryId,
                 limit: pageSize
             )
             guard !entries.isEmpty else { break }
@@ -1360,7 +1145,7 @@ actor BaselineService {
                 matches.append(entry)
             }
 
-            offset += entries.count
+            lastEntryId = entries.last?.id
         }
 
         return matches

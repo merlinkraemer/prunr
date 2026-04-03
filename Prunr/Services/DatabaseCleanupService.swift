@@ -519,10 +519,14 @@ actor DatabaseCleanupService {
         var categoryTotals: [GrowthCategory: Int64] = [:]
         var grouped: [DatabaseManager.JournalDeltaKey: SubcategoryAccumulator] = [:]
         let pageSize = 5_000
-        var offset = 0
+        var lastEntryId: Int64?
 
         while true {
-            let entries = try await db.fetchEntriesPaginatedUnordered(for: snapshotId, offset: offset, limit: pageSize)
+            let entries = try await db.fetchEntriesPaginatedUnordered(
+                for: snapshotId,
+                afterEntryId: lastEntryId,
+                limit: pageSize
+            )
             guard !entries.isEmpty else { break }
 
             for entry in entries {
@@ -535,7 +539,7 @@ actor DatabaseCleanupService {
                 grouped[key] = value
             }
 
-            offset += entries.count
+            lastEntryId = entries.last?.id
         }
 
         let rows = grouped.map { key, accumulator in

@@ -96,15 +96,15 @@ actor ScanService {
 
     // MARK: - Public API
 
-    /// Captures the current volume free space using Apple's recommended API
+    /// Captures free space for the volume containing the target URL using Apple's recommended API.
     /// Uses volumeAvailableCapacityForImportantUsageKey for accurate available space
     /// - Returns: Volume free space in bytes, or nil if unavailable
-    static func captureVolumeFreeSpace() -> Int64? {
-        let rootURL = URL(fileURLWithPath: "/")
+    static func captureVolumeFreeSpace(for url: URL? = nil) -> Int64? {
+        let targetURL = (url ?? URL(fileURLWithPath: "/")).standardizedFileURL
         let resourceKeys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
         
         do {
-            let resourceValues = try rootURL.resourceValues(forKeys: resourceKeys)
+            let resourceValues = try targetURL.resourceValues(forKeys: resourceKeys)
             if let capacity = resourceValues.volumeAvailableCapacityForImportantUsage {
                 return Int64(capacity)
             }
@@ -189,7 +189,7 @@ actor ScanService {
         progress: ((ScanProgress) -> Void)?
     ) async throws -> Snapshot {
         // Capture volume free space before creating snapshot
-        let freeBytes = Self.captureVolumeFreeSpace()
+        let freeBytes = Self.captureVolumeFreeSpace(for: url)
         if let bytes = freeBytes {
             logger.debug("Captured volume free space: \(bytes) bytes")
         } else {

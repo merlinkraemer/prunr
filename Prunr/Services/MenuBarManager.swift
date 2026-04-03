@@ -105,7 +105,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
 
     // Published state for UI
-    var categoryItems: [CategoryGrowthItem] = []  // Kept for legacy drill-down compatibility
     var growingCategories: [CategoryInventoryItem] = []  // Categories with active growth trends
     var stableCategories: [CategoryInventoryItem] = []   // Categories without growth trends
     var stableTotalBytes: Int64 = 0  // Sum of stable category sizes
@@ -351,15 +350,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var errorMessage: String?
     var noBaseline = false
 
-    /// True when FSEvents is active and tracking changes but no full baseline snapshot exists yet.
-    /// In this mode, category sizes represent accumulated deltas since tracking started,
-    /// not absolute disk usage.
-    var isDeltasOnlyMode: Bool {
-        guard noBaseline else { return false }
-        let settings = SettingsStore.shared
-        return !settings.enabledTrackedPaths.isEmpty && settings.trackingStartedAt != nil
-    }
-
     var scanProgress: String = ""
     var scanCurrentPath: String = ""
     var scanCurrentPathDisplay: String = ""
@@ -434,10 +424,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var isReconciling = false
     @ObservationIgnored
     nonisolated(unsafe) private var reconciliationTask: Task<Void, Never>?
-    private var upgradeRetryCount = 0
-    /// Set when background scan fails repeatedly so the UI can surface a retry option.
-    var backgroundScanError: Error? = nil
-
     var lastScanStatusText: String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
@@ -658,7 +644,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func refreshAfterBaselineReset() async {
         clearInventoryState()
-        backgroundScanError = nil
         errorMessage = nil
         hasPendingRecentChanges = false
         pendingRecentChangePaths.removeAll()
@@ -780,7 +765,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         defer { endInventoryRefresh() }
 
         isLoading = true
-        backgroundScanError = nil
         errorMessage = nil
         noBaseline = false
         filesScanned = 0
@@ -846,10 +830,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 invalidateSubcategoryCache: true
             )
 
-            // Keep legacy categoryItems for drill-down compatibility during transition
-            // TODO: Remove once drill-down is migrated to inventory-based
-            categoryItems = []
-
             // Also compute disk accounting for free space tracking
             do {
                 reconciliationResult = await baselineService.getDiskAccounting(
@@ -863,12 +843,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             scanCurrentPath = ""
             scanCurrentPathDisplay = ""
             completedSuccessfully = true
-
-            // If this scan completes while in deltas-only mode, clear the marker — we now have
-            // a full baseline so isDeltasOnlyMode becomes false automatically.
-            if SettingsStore.shared.trackingStartedAt != nil {
-                SettingsStore.shared.endDeltasOnlyMode()
-            }
 
             let snapshotTimestamp = aggregation.latestSnapshotDate ?? Date()
             if !growingCategories.isEmpty {
@@ -885,7 +859,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 growingCategories = []
                 stableCategories = []
                 stableTotalBytes = 0
-                categoryItems = []
                 subcategoryGroupsByCategory = [:]
                 invalidateGrowthContributorCache()
                 currentInventorySnapshotIDsByPath = [:]
@@ -898,7 +871,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 growingCategories = []
                 stableCategories = []
                 stableTotalBytes = 0
-                categoryItems = []
                 subcategoryGroupsByCategory = [:]
                 invalidateGrowthContributorCache()
                 currentInventorySnapshotIDsByPath = [:]
@@ -987,39 +959,33 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             return
         }
 
-        do {
-            let aggregation = await baselineService.getInventoryWithTrends(trackedPaths: enabledPaths)
-            guard !aggregation.latestSnapshotIdsByPath.isEmpty else {
-                noBaseline = true
-                clearInventoryState()
-                lastAutomaticScanAt = nil
-                updateMonitoredPathName()
-                return
-            }
-
-            noBaseline = false
-            lastAutomaticScanAt = refreshedAt ?? aggregation.latestSnapshotDate
-            errorMessage = nil
-            applyInventory(
-                aggregation.inventory,
-                snapshotIDsByPath: aggregation.latestSnapshotIdsByPath,
-                growthBaselineSnapshotIDsByPath: aggregation.baselineSnapshotIdsByPath,
-                invalidateSubcategoryCache: invalidateSubcategoryCache
-                    || snapshotIDsSignature(aggregation.latestSnapshotIdsByPath)
-                        != snapshotIDsSignature(currentInventorySnapshotIDsByPath)
-            )
-
-            reconciliationResult = await baselineService.getDiskAccounting(
-                trackedPaths: enabledPaths,
-                primaryTrackedPath: trackedPath
-            )
-
-            updateMonitoredPathName()
-        } catch {
-            print("[MenuBarManager] Failed to load cached inventory: \(error)")
-            errorMessage = "Couldn't load latest inventory"
+        let aggregation = await baselineService.getInventoryWithTrends(trackedPaths: enabledPaths)
+        guard !aggregation.latestSnapshotIdsByPath.isEmpty else {
+            noBaseline = true
             clearInventoryState()
+            lastAutomaticScanAt = nil
+            updateMonitoredPathName()
+            return
         }
+
+        noBaseline = false
+        lastAutomaticScanAt = refreshedAt ?? aggregation.latestSnapshotDate
+        errorMessage = nil
+        applyInventory(
+            aggregation.inventory,
+            snapshotIDsByPath: aggregation.latestSnapshotIdsByPath,
+            growthBaselineSnapshotIDsByPath: aggregation.baselineSnapshotIdsByPath,
+            invalidateSubcategoryCache: invalidateSubcategoryCache
+                || snapshotIDsSignature(aggregation.latestSnapshotIdsByPath)
+                    != snapshotIDsSignature(currentInventorySnapshotIDsByPath)
+        )
+
+        reconciliationResult = await baselineService.getDiskAccounting(
+            trackedPaths: enabledPaths,
+            primaryTrackedPath: trackedPath
+        )
+
+        updateMonitoredPathName()
     }
 
     func refreshVisibleInventory() async {
@@ -1088,106 +1054,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         await performRecentChangeRefresh()
     }
 
-    /// Starts deltas-only tracking mode: enables FSEvents immediately without running a full scan.
-    /// Categories will appear as file changes are detected. A background reconciliation scan
-    /// fills in absolute sizes automatically after a delay.
-    ///
-    /// Call this from the onboarding "Start tracking" flow after the user has selected a folder.
-    func startDeltasOnlyTracking() {
-        let settings = SettingsStore.shared
-        settings.beginDeltasOnlyMode()
-
-        // noBaseline stays true — FSEvents feeds incremental data without a snapshot baseline.
-        noBaseline = true
-
-        // Ensure the file watcher is running immediately so we capture changes right away.
-        configureFileWatcherIfNeeded()
-
-        // Schedule a background reconciliation scan after 10 minutes to build the full picture.
-        scheduleDeltasOnlyUpgrade()
-    }
-
-    /// Schedules a background full scan to upgrade from deltas-only to full inventory mode.
-    /// Fires 10 minutes after initial tracking starts (or immediately on next app launch
-    /// if 10 minutes have already elapsed since `trackingStartedAt`).
-    func scheduleDeltasOnlyUpgrade() {
-        let settings = SettingsStore.shared
-        guard let startedAt = settings.trackingStartedAt else { return }
-
-        let upgradeDelay: TimeInterval = 10 * 60 // 10 minutes
-        let elapsed = Date().timeIntervalSince(startedAt)
-        let remaining = max(0, upgradeDelay - elapsed)
-
-        reconciliationTask?.cancel()
-        reconciliationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            if remaining > 0 {
-                try? await Task.sleep(for: .seconds(remaining))
-            }
-            guard !Task.isCancelled else { return }
-            guard self.isDeltasOnlyMode else { return }
-            await self.upgradeDeltasOnlyToFullInventory()
-        }
-    }
-
-    /// Runs a silent full scan to upgrade from deltas-only mode to full inventory.
-    /// When complete, clears the trackingStartedAt marker so isDeltasOnlyMode becomes false
-    /// and the UI seamlessly switches to showing absolute category sizes.
-    private func upgradeDeltasOnlyToFullInventory() async {
-        guard isDeltasOnlyMode else { return }
-        guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else {
-            // Retry after a short delay
-            reconciliationTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(30))
-                guard !Task.isCancelled else { return }
-                await self?.upgradeDeltasOnlyToFullInventory()
-            }
-            return
-        }
-
-        isReconciling = true
-        defer {
-            isReconciling = false
-            reconciliationTask = nil
-        }
-
-        let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-        guard !enabledPaths.isEmpty else { return }
-
-        do {
-            _ = try await createBaselines(for: enabledPaths) { _, _ in }
-        } catch {
-            upgradeRetryCount += 1
-            Self.logger.error("Background scan failed (attempt \(self.upgradeRetryCount)): \(error.localizedDescription)")
-
-            if upgradeRetryCount >= 3 {
-                backgroundScanError = error
-            }
-
-            // Exponential backoff: 30s → 60s → 120s, capped at 10 min
-            let delay = min(30.0 * pow(2.0, Double(upgradeRetryCount - 1)), 600.0)
-            reconciliationTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(delay))
-                guard !Task.isCancelled else { return }
-                await self?.upgradeDeltasOnlyToFullInventory()
-            }
-            return
-        }
-
-        guard !Task.isCancelled else { return }
-
-        upgradeRetryCount = 0
-        backgroundScanError = nil
-
-        // Clear deltas-only mode — full baseline now exists
-        SettingsStore.shared.endDeltasOnlyMode()
-        noBaseline = false
-
-        // Reload inventory from the new snapshot (no user-visible loading state)
-        await loadInventoryFromLatestSnapshot(refreshedAt: Date())
-        lastReconciliationAt = Date()
-    }
-
     /// Silently reconciles the working set against a fresh full scan.
     /// No spinners, no status text changes — applies corrections as incremental patches.
     func performSilentReconciliation() async {
@@ -1227,12 +1093,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         reconciliationTask = Task { @MainActor in
             await performSilentReconciliation()
         }
-    }
-
-    /// Legacy: Loads the category-based growth list (deprecated, use loadInventory)
-    @available(*, deprecated, message: "Use loadInventory() instead")
-    func loadCategoryGrowthList(isAutomatic: Bool = false) async {
-        await loadInventory(isAutomatic: isAutomatic)
     }
 
     private func reconcileDrillDownSelection() {
@@ -1391,67 +1251,59 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Check if there are more files to load
         guard group.hasMoreFiles else { return nil }
 
-        do {
-            let additionalFiles: [GrowthItem]
-            if currentInventorySnapshotIDsByPath.isEmpty {
-                let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-                guard let primaryPath = primaryTrackedPath(from: enabledPaths) else { return nil }
-                additionalFiles = await baselineService.loadMoreSubcategoryFilesFromWorkingSet(
-                    for: category,
-                    subcategory: group.subcategory,
-                    trackedPathId: primaryPath.id,
-                    totalBytes: group.totalBytes,
-                    offset: group.loadedFileCount
-                )
-            } else {
-                additionalFiles = await baselineService.loadMoreSubcategoryFiles(
-                    for: category,
-                    subcategory: group.subcategory,
-                    snapshotIdsByPath: currentInventorySnapshotIDsByPath,
-                    totalBytes: group.totalBytes,
-                    offset: group.loadedFileCount
-                )
-            }
+        let additionalFiles: [GrowthItem]
+        if currentInventorySnapshotIDsByPath.isEmpty {
+            let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+            guard let primaryPath = primaryTrackedPath(from: enabledPaths) else { return nil }
+            additionalFiles = await baselineService.loadMoreSubcategoryFilesFromWorkingSet(
+                for: category,
+                subcategory: group.subcategory,
+                trackedPathId: primaryPath.id,
+                totalBytes: group.totalBytes,
+                offset: group.loadedFileCount
+            )
+        } else {
+            additionalFiles = await baselineService.loadMoreSubcategoryFiles(
+                for: category,
+                subcategory: group.subcategory,
+                snapshotIdsByPath: currentInventorySnapshotIDsByPath,
+                totalBytes: group.totalBytes,
+                offset: group.loadedFileCount
+            )
+        }
 
-            guard !additionalFiles.isEmpty else { return nil }
-            guard !Task.isCancelled else { return nil }
-            guard selectedInventoryCategory?.category == requestedCategory else { return nil }
+        guard !additionalFiles.isEmpty else { return nil }
+        guard !Task.isCancelled else { return nil }
+        guard selectedInventoryCategory?.category == requestedCategory else { return nil }
 
-            // Update the cached group with new files
-            var updatedGroup = group
-            var seenPaths = Set(updatedGroup.topFiles.map(\.path))
-            for file in additionalFiles where seenPaths.insert(file.path).inserted {
-                updatedGroup.topFiles.append(file)
+        var updatedGroup = group
+        var seenPaths = Set(updatedGroup.topFiles.map(\.path))
+        for file in additionalFiles where seenPaths.insert(file.path).inserted {
+            updatedGroup.topFiles.append(file)
+        }
+        updatedGroup.topFiles.sort {
+            if $0.currentSizeBytes == $1.currentSizeBytes {
+                return $0.path.localizedStandardCompare($1.path) == .orderedAscending
             }
-            updatedGroup.topFiles.sort {
-                if $0.currentSizeBytes == $1.currentSizeBytes {
-                    return $0.path.localizedStandardCompare($1.path) == .orderedAscending
-                }
-                return $0.currentSizeBytes > $1.currentSizeBytes
-            }
+            return $0.currentSizeBytes > $1.currentSizeBytes
+        }
 
-            // Update the cache
-            if var groups = subcategoryGroupsByCategory[requestedCategory] {
-                if let index = groups.firstIndex(where: { $0.id == requestedGroupId }) {
-                    groups[index] = updatedGroup
-                    subcategoryGroupsByCategory[requestedCategory] = groups
-                } else {
-                    return nil
-                }
+        if var groups = subcategoryGroupsByCategory[requestedCategory] {
+            if let index = groups.firstIndex(where: { $0.id == requestedGroupId }) {
+                groups[index] = updatedGroup
+                subcategoryGroupsByCategory[requestedCategory] = groups
             } else {
                 return nil
             }
-
-            // Update selectedSubcategory if it matches
-            if selectedSubcategory?.id == requestedGroupId {
-                selectedSubcategory = updatedGroup
-            }
-
-            return updatedGroup
-        } catch {
-            print("[MenuBarManager] Failed loading more files: \(error)")
+        } else {
             return nil
         }
+
+        if selectedSubcategory?.id == requestedGroupId {
+            selectedSubcategory = updatedGroup
+        }
+
+        return updatedGroup
     }
 
     /// Loads growth contributors for a specific subcategory group
@@ -1637,13 +1489,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
         noBaseline = !hasAnySnapshot
         updateMonitoredPathName()
-
-        // If we're in deltas-only mode (trackingStartedAt set but no snapshot yet),
-        // resume the background upgrade schedule so it fires at the right time.
-        if isDeltasOnlyMode {
-            configureFileWatcherIfNeeded()
-            scheduleDeltasOnlyUpgrade()
-        }
     }
 
     /// Loads just category totals from the pre-computed workingSetCategoryTotal table.
@@ -1745,7 +1590,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             growingCategories = []
             stableCategories = []
             stableTotalBytes = 0
-            categoryItems = []
             cancelSubcategoryBreakdownLoads()
             subcategoryGroupsByCategory = [:]
             subcategoryBreakdownCacheGenerationByCategory = [:]
@@ -1970,7 +1814,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         } else {
             // Panel is not shown, show it
             guard let buttonWindow = button.window,
-                  let buttonScreen = buttonWindow.screen else {
+                  buttonWindow.screen != nil else {
                 return
             }
 
@@ -1984,7 +1828,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             // Get button frame in screen coordinates
             let buttonFrameInWindow = button.convert(button.bounds, to: nil)
             let buttonFrameInScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
-            let screenFrame = buttonScreen.frame
 
             // Position panel below the button, aligned to right edge
             let panelWidth: CGFloat = 320
@@ -2521,6 +2364,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         var allDeltas: [DatabaseManager.JournalDeltaKey: Int64] = [:]
         var hadUpdate = false
+        var requiresFullRefresh = false
 
         for (_, entry) in pathsByTrackedPath {
             let result = await recentChangeService.refreshChangedPaths(entry.urls, trackedPath: entry.trackedPath)
@@ -2532,9 +2376,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 }
             case .needsFullScan:
                 hadUpdate = true
+                requiresFullRefresh = true
             case .noChanges:
                 break
             }
+        }
+
+        if requiresFullRefresh {
+            lastDetectedChangeAt = Date()
+            await loadInventory(isAutomatic: true)
+            return
         }
 
         if hadUpdate {

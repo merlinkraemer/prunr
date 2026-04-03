@@ -29,7 +29,7 @@ final class SettingsStore {
         static let hasPendingScopeChanges = "hasPendingScopeChanges"
         static let categoryHistoryRetentionDays = "categoryHistoryRetentionDays"
         static let automaticFullScanIntervalHours = "automaticFullScanIntervalHours"
-        static let trackingStartedAt = "trackingStartedAt"
+        static let legacyTrackingStartedAt = "trackingStartedAt"
     }
 
     // MARK: - Constants
@@ -96,18 +96,6 @@ final class SettingsStore {
     /// Maximum time between periodic full rescans.
     var automaticFullScanIntervalHours: Int {
         didSet { UserDefaults.standard.set(automaticFullScanIntervalHours, forKey: Keys.automaticFullScanIntervalHours) }
-    }
-
-    /// Timestamp when deltas-only (skip scan) tracking mode began.
-    /// Nil when not in deltas-only mode or after first full scan completes.
-    var trackingStartedAt: Date? {
-        didSet {
-            if let date = trackingStartedAt {
-                UserDefaults.standard.set(date, forKey: Keys.trackingStartedAt)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Keys.trackingStartedAt)
-            }
-        }
     }
 
     // MARK: - Computed Properties
@@ -220,7 +208,7 @@ final class SettingsStore {
             self.automaticFullScanIntervalHours = Self.defaultAutomaticFullScanIntervalHours
         }
 
-        self.trackingStartedAt = UserDefaults.standard.object(forKey: Keys.trackingStartedAt) as? Date
+        UserDefaults.standard.removeObject(forKey: Keys.legacyTrackingStartedAt)
     }
     
     // MARK: - Path Management
@@ -308,17 +296,6 @@ final class SettingsStore {
 
     func clearPendingScopeChanges() {
         hasPendingScopeChanges = false
-    }
-
-    /// Begin deltas-only tracking mode (skip initial scan).
-    /// Records the current timestamp as the reference point for "since tracking" display.
-    func beginDeltasOnlyMode() {
-        trackingStartedAt = Date()
-    }
-
-    /// Clear deltas-only mode when a full scan completes.
-    func endDeltasOnlyMode() {
-        trackingStartedAt = nil
     }
 
     func isCommonPath(_ path: TrackedPath) -> Bool {

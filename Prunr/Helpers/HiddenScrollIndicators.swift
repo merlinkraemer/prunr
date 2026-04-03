@@ -1,12 +1,6 @@
 import SwiftUI
 import AppKit
 
-struct ContentView: View {
-    var body: some View {
-        MainView()
-    }
-}
-
 private struct HiddenScrollIndicatorsModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -54,8 +48,4 @@ private struct ScrollViewAccessor: NSViewRepresentable {
 
         return nil
     }
-}
-
-#Preview {
-    ContentView()
 }

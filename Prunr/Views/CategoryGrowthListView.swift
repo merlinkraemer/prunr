@@ -893,13 +893,7 @@ struct CategoryGrowthListView: View {
     }
 
     private var emptyStateView: some View {
-        Group {
-            if manager.isDeltasOnlyMode {
-                deltasOnlyWaitingView
-            } else {
-                stableEmptyStateView
-            }
-        }
+        stableEmptyStateView
     }
 
     private var stableEmptyStateView: some View {
@@ -927,34 +921,6 @@ struct CategoryGrowthListView: View {
         .frame(maxWidth: .infinity, maxHeight: maxHeight)
         .padding(.vertical, 20)
     }
-
-    private var deltasOnlyWaitingView: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(Color.blue.opacity(0.1))
-                    .frame(width: 64, height: 64)
-
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(.blue)
-            }
-
-            VStack(spacing: 4) {
-                Text("Tracking changes")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.primary)
-
-                Text("Categories will appear as files change")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: maxHeight)
-        .padding(.vertical, 20)
-    }
-
 }
 
 // MARK: - Category Inventory Row
