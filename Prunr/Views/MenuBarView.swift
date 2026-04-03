@@ -297,7 +297,7 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if hasFullDiskAccess == false {
+            if hasFullDiskAccess == false && !manager.noBaseline {
                 fullDiskAccessBanner
             }
 
@@ -672,10 +672,6 @@ struct MenuBarView: View {
                         VStack(spacing: 10) {
                             primaryActionButton("Open Full Disk Access", minWidth: 188) {
                                 openFullDiskAccessSettings()
-                            }
-
-                            secondaryActionButton("Reveal Current App") {
-                                permissionsService.revealCurrentAppInFinder()
                             }
 
                             if !blockedFullDiskAccessLocations.isEmpty {
