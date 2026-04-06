@@ -124,6 +124,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     @ObservationIgnored
     private var subcategoryBreakdownLoadTasks: [GrowthCategory: Task<SubcategoryBreakdownLoadResult, Never>] = [:]
     var monitoredPathName: String = ""
+    var isBackgroundFullScanRunning: Bool {
+        isReconciling
+    }
     var enabledPathCount: Int {
         SettingsStore.shared.enabledTrackedPaths.count
     }
@@ -284,6 +287,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // During scan, show partial data in stableCategories (growing categories are unknown yet)
         stableCategories = liveCategories
         stableTotalBytes = liveCategories.reduce(0) { $0 + $1.currentSizeBytes }
+        normalizeVisibleInventoryState()
     }
 
     private func preferredTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
@@ -1035,7 +1039,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     /// Lightweight growth check: flushes any pending FSEvents changes immediately
-    /// without running a full filesystem scan.
+    /// without escalating into a full filesystem scan.
     func checkGrowth() async {
         guard !isLoading, !isAutoScanning, !isProcessingRecentChanges else { return }
         isCheckingGrowth = true
@@ -1043,15 +1047,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Cancel any pending debounced refresh so we can run immediately
         recentChangeTask?.cancel()
         recentChangeTask = nil
-
-        if pendingRecentChangePaths.isEmpty {
-            // Force a root-level refresh instead of just re-reading stale DB data
-            let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-            for tp in enabledPaths {
-                pendingRecentChangePaths.insert(tp.url.standardizedFileURL)
-            }
-        }
-        await performRecentChangeRefresh()
+        configureFileWatcherIfNeeded()
+        await performRecentChangeRefresh(allowFullRefresh: false)
     }
 
     /// Silently reconciles the working set against a fresh full scan.
@@ -1558,6 +1555,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         growingCategories = growing.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
         stableCategories = stable.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
         stableTotalBytes = stableTotal
+        normalizeVisibleInventoryState()
         currentInventorySnapshotIDsByPath = snapshotIDsByPath
         currentGrowthBaselineSnapshotIDsByPath = growthBaselineSnapshotIDsByPath
 
@@ -1683,6 +1681,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             growingCategories = []
             stableCategories = allCategories
             stableTotalBytes = allCategories.reduce(0) { $0 + $1.currentSizeBytes }
+            normalizeVisibleInventoryState()
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.mapValues { groups in
                 groups.map { group in
                     var updatedGroup = group
@@ -1700,6 +1699,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             growingCategories = state.growingCategories
             stableCategories = state.stableCategories
             stableTotalBytes = state.stableTotalBytes
+            normalizeVisibleInventoryState()
             subcategoryGroupsByCategory = state.subcategoryGroupsByCategory
             invalidateGrowthContributorCache()
             reconcileDrillDownSelection()
@@ -1710,6 +1710,84 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction, updates)
+    }
+
+    private func normalizeVisibleInventoryState() {
+        var mergedByCategory: [GrowthCategory: CategoryInventoryItem] = [:]
+
+        for item in growingCategories + stableCategories {
+            if let existing = mergedByCategory[item.category] {
+                mergedByCategory[item.category] = CategoryInventoryItem(
+                    category: item.category,
+                    currentSizeBytes: existing.currentSizeBytes + item.currentSizeBytes,
+                    growthTrend: mergeGrowthTrend(existing.growthTrend, item.growthTrend),
+                    recentGrowthStory: mergeRecentGrowthStory(existing.recentGrowthStory, item.recentGrowthStory)
+                )
+            } else {
+                mergedByCategory[item.category] = item
+            }
+        }
+
+        let sorted = mergedByCategory.values.sorted {
+            if $0.currentSizeBytes == $1.currentSizeBytes {
+                return $0.category.displayName.localizedStandardCompare($1.category.displayName) == .orderedAscending
+            }
+            return $0.currentSizeBytes > $1.currentSizeBytes
+        }
+
+        growingCategories = sorted.filter { $0.recentGrowthStory != nil }
+        stableCategories = sorted.filter { $0.recentGrowthStory == nil }
+        stableTotalBytes = stableCategories.reduce(0) { $0 + $1.currentSizeBytes }
+    }
+
+    private func mergeGrowthTrend(
+        _ lhs: CategoryGrowthTrend?,
+        _ rhs: CategoryGrowthTrend?
+    ) -> CategoryGrowthTrend? {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return nil
+        case let (trend?, nil), let (nil, trend?):
+            return trend
+        case let (lhs?, rhs?):
+            let startedAt = min(lhs.growthStartedAt, rhs.growthStartedAt)
+            let growthBytes = lhs.growthBytes + rhs.growthBytes
+            let growthSpanDays = Calendar.current.dateComponents(
+                [.day],
+                from: startedAt,
+                to: Date()
+            ).day ?? max(lhs.growthSpanDays, rhs.growthSpanDays)
+
+            return CategoryGrowthTrend(
+                growthBytes: growthBytes,
+                growthStartedAt: startedAt,
+                growthSpanDays: max(1, growthSpanDays)
+            )
+        }
+    }
+
+    private func mergeRecentGrowthStory(
+        _ lhs: RecentGrowthStory?,
+        _ rhs: RecentGrowthStory?
+    ) -> RecentGrowthStory? {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return nil
+        case let (story?, nil), let (nil, story?):
+            return story
+        case let (lhs?, rhs?):
+            let startedAt = min(lhs.startedAt, rhs.startedAt)
+            let endedAt = max(lhs.endedAt, rhs.endedAt)
+            return RecentGrowthStory(
+                category: lhs.category,
+                subcategory: lhs.subcategory ?? rhs.subcategory,
+                deltaBytes: lhs.deltaBytes + rhs.deltaBytes,
+                startedAt: startedAt,
+                endedAt: endedAt,
+                duration: endedAt.timeIntervalSince(startedAt),
+                displayLabel: endedAt == lhs.endedAt ? lhs.displayLabel : rhs.displayLabel
+            )
+        }
     }
 
     private func growthContributorCacheKey(
@@ -2331,7 +2409,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
     }
 
-    private func performRecentChangeRefresh() async {
+    private func performRecentChangeRefresh(allowFullRefresh: Bool = true) async {
         guard !pendingRecentChangePaths.isEmpty else {
             hasPendingRecentChanges = false
             return
@@ -2400,6 +2478,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         if requiresFullRefresh {
             lastDetectedChangeAt = Date()
+            guard allowFullRefresh else {
+                return
+            }
             await loadInventory(isAutomatic: true)
             return
         }
@@ -2524,6 +2605,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             newStableTotal += stableCategories[i].currentSizeBytes
         }
         stableTotalBytes = newStableTotal
+        normalizeVisibleInventoryState()
 
         // Selectively invalidate subcategory topFiles for categories with non-zero deltas only
         let affectedCategories = categoryDeltas.filter { $0.value != 0 }.map(\.key)

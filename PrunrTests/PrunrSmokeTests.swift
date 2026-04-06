@@ -424,6 +424,64 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testAggregatedSubcategoryBreakdownPreservesBaselineGrowthWhenJournalIsPartial() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let trackedPath = TrackedPath(
+                id: trackedPathId,
+                url: URL(fileURLWithPath: "/Users/tester/dev"),
+                displayName: "dev"
+            )
+
+            let baselineSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let baselineSnapshotId = try XCTUnwrap(baselineSnapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: baselineSnapshotId,
+                entries: [
+                    ScanResult(path: "/Users/tester/dev/app/node_modules/react/index.js", sizeBytes: 100),
+                    ScanResult(path: "/Users/tester/dev/app/.build/output.bin", sizeBytes: 200)
+                ]
+            )
+
+            let currentSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let currentSnapshotId = try XCTUnwrap(currentSnapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: currentSnapshotId,
+                entries: [
+                    ScanResult(path: "/Users/tester/dev/app/node_modules/react/index.js", sizeBytes: 400),
+                    ScanResult(path: "/Users/tester/dev/app/.build/output.bin", sizeBytes: 500)
+                ]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: currentSnapshotId,
+                trackedPathId: trackedPathId
+            )
+
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [
+                    DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules): 300
+                ],
+                at: Date()
+            )
+
+            let groups = await BaselineService.shared.getSubcategoryBreakdown(
+                for: .developer,
+                trackedPathsById: [trackedPathId: trackedPath],
+                latestSnapshotIdsByPath: [trackedPathId: currentSnapshotId],
+                baselineSnapshotIdsByPath: [trackedPathId: baselineSnapshotId]
+            )
+
+            XCTAssertEqual(
+                groups.first(where: { $0.subcategory == .nodeModules })?.growthBytes,
+                300
+            )
+            XCTAssertEqual(
+                groups.first(where: { $0.subcategory == .buildArtifacts })?.growthBytes,
+                300
+            )
+        }
+    }
+
     func testInventoryWithTrendsSkipsJournalFallbackWithoutComparableBaseline() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let oldSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)

@@ -1,5 +1,22 @@
 # Todo
 
+## Beta bugfix round
+
+- [x] Reproduce and root-cause GitHub issues `#5`, `#6`, and `#7`
+- [x] Normalize category presentation state so duplicate category rows cannot survive refresh/delta paths
+- [x] Fix subcategory growth aggregation so parent drill-down stays consistent with file-level contributors
+- [x] Queue page/header/onboarding transitions instead of collapsing in-flight pushes
+- [x] Keep scheduled full rescans background-only and show only a subtle footer indicator
+- [x] Re-run `make build` and `make test`
+
+## Beta bugfix review
+
+- Duplicate category rows were a state-invariant bug, not just rendering: category items could survive across `growingCategories` and `stableCategories` at the same time after incremental promotions/demotions. The manager now canonicalizes visible category state by category key before the UI sees it.
+- Missing subcategory growth with visible file-level growth came from replacing baseline-derived subcategory totals with journal totals wholesale. Journal totals are now applied as an overlay, so subcategories that still only have baseline-backed growth do not disappear.
+- Navigation flicker/overlap came from starting a new push while the previous custom transition was still running, then force-stabilizing mid-flight. The drill-down list, header, and onboarding flows now queue the next transition and start it only after the current push finishes.
+- Scheduled stale reconciliations already ran in the background, but the footer gave no signal. The main page now keeps that work background-only and shows a subtle footer indicator in the timestamp slot while the quiet full refresh is running.
+- Verification: `make build` passed, `make test` passed, and a new regression test covers the partial-journal subcategory case.
+
 ## Drill-down navigation audit
 
 - [x] Inspect menu bar drill-down state and async navigation flow
@@ -104,3 +121,27 @@
 - On first launch, the app was still arming a watcher against the default tracked home path before onboarding completed, which was enough for macOS to request Desktop/Documents/iCloud-class access immediately.
 - Fix: do not start the watcher in `MenuBarManager.init()`, stop any existing watcher while `noBaseline` is true, and only configure watching after baseline state is confirmed or a successful scan creates one.
 - Verification: `make build` passed. `make test` is not a strong signal for this bug because the real behavior must be confirmed by relaunching the installed app with a clean TCC state.
+
+## Control affordances round
+
+- [x] Keep the footer refresh action shallow-only
+- [x] Make drive bar category segments clickable
+- [x] Re-run `make build` and `make test`
+
+## Control affordances review
+
+- The footer refresh button used to seed tracked roots when there were no pending file-watcher events, which could escalate into a full refresh path. It now only flushes pending watcher state and re-arms the watcher if needed, so it remains a user-controlled shallow refresh.
+- Drive bar category segments now support direct click-through to the matching category drill-down while preserving the existing hover-linked highlighting. Filler segments such as outside-scan-scope and uncategorized remainder stay non-navigable.
+- Verification: `make build` passed. An initial parallel `make test` hit Xcode's shared `build.db` lock; the serial rerun passed cleanly.
+
+## Control affordances follow-up
+
+- [x] Re-check the actual footer refresh runtime path after user reported it still triggered a full rescan
+- [x] Rework drive bar taps as real button interactions instead of relying on shape gestures
+- [x] Re-run `make build` and `make test`
+
+## Control affordances follow-up review
+
+- The first footer fix only removed the manual root seeding, but the shared recent-change pipeline could still escalate pending watcher events into `loadInventory()`. Manual footer refresh now explicitly runs the recent-change path with full-refresh escalation disabled.
+- The first drive-bar tap wiring used a gesture on the rendered rectangle segments. The interaction is now attached to real plain buttons per segment so category clicks are routed reliably while filler segments remain inert.
+- Verification: `make build` passed and `make test` passed after the follow-up fix.

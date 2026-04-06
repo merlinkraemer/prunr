@@ -798,7 +798,9 @@ actor BaselineService {
                 retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
             )
             if !journalTotals.isEmpty {
-                growthTotals = journalTotals
+                for (subcategory, total) in journalTotals {
+                    growthTotals[subcategory] = total
+                }
             }
 
             for group in groups {
@@ -1078,7 +1080,9 @@ actor BaselineService {
                     retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
                 )
                 if !journalTotals.isEmpty {
-                    growthTotals = journalTotals
+                    for (subcategory, total) in journalTotals {
+                        growthTotals[subcategory] = total
+                    }
                 }
             }
 

@@ -23,6 +23,9 @@ struct DriveBarView: View {
     /// Shared hover state so the drive bar and list rows can highlight each other
     @Binding var highlightedSegmentID: String?
 
+    /// Optional tap handler for interactive segments.
+    var onTapSegment: ((String) -> Void)? = nil
+
     /// When set, forces a segment to appear highlighted (like hover) and shows this label next to the bar
     var focusedSegmentID: String? = nil
     var focusedLabel: String? = nil
@@ -100,16 +103,27 @@ struct DriveBarView: View {
                     let availableSegmentWidth = max(0, usedWidth - (segmentSpacing * CGFloat(max(0, renderedSegments.count - 1))))
                     HStack(spacing: segmentSpacing) {
                         ForEach(renderedSegments) { segment in
-                            Rectangle()
-                                .fill(fillColor(for: segment))
-                                .frame(width: max(0, availableSegmentWidth * segment.fraction))
-                                .contentShape(Rectangle())
-                                .onHover { hovering in
-                                    guard !disableHover else { return }
-                                    withAnimation(.easeInOut(duration: 0.12)) {
-                                        highlightedSegmentID = hovering ? segment.id : nil
-                                    }
+                            Button {
+                                guard isInteractiveSegment(segment.id) else { return }
+                                onTapSegment?(segment.id)
+                            } label: {
+                                Rectangle()
+                                    .fill(fillColor(for: segment))
+                                    .frame(width: max(0, availableSegmentWidth * segment.fraction))
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!isInteractiveSegment(segment.id))
+                            .onHover { hovering in
+                                guard !disableHover else { return }
+                                withAnimation(.easeInOut(duration: 0.12)) {
+                                    highlightedSegmentID = hovering ? segment.id : nil
                                 }
+                            }
+                            .accessibilityLabel(accessibilityLabel(for: segment.id))
+                            .accessibilityAddTraits(isInteractiveSegment(segment.id) ? .isButton : [])
+                            .contentShape(Rectangle())
+                            .modifier(DriveBarSegmentHelpModifier(isInteractive: isInteractiveSegment(segment.id)))
                         }
                     }
                     .frame(width: usedWidth, alignment: .leading)
@@ -273,6 +287,20 @@ struct DriveBarView: View {
         segment.id == "outside-scan-scope" || segment.id == "other-used"
     }
 
+    private func isInteractiveSegment(_ id: String) -> Bool {
+        id != "outside-scan-scope" && id != "other-used"
+    }
+
+    private func accessibilityLabel(for id: String) -> String {
+        if let category = GrowthCategory(rawValue: id) {
+            return category.displayName
+        }
+        if id == "outside-scan-scope" {
+            return "Outside scan scope"
+        }
+        return "Other used storage"
+    }
+
     /// Converts bytes to GB/TB string (no space)
     private func bytesToGBString(_ bytes: Int64) -> String {
         let gb = Double(bytes) / 1_000_000_000
@@ -291,6 +319,18 @@ private struct RenderedSegment: Identifiable {
     let id: String
     let color: Color
     let fraction: CGFloat
+}
+
+private struct DriveBarSegmentHelpModifier: ViewModifier {
+    let isInteractive: Bool
+
+    func body(content: Content) -> some View {
+        if isInteractive {
+            content.help("Open category")
+        } else {
+            content
+        }
+    }
 }
 
 #Preview {

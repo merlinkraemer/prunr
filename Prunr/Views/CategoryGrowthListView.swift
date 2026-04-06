@@ -166,16 +166,22 @@ struct CategoryGrowthListView: View {
                     return
                 }
 
-                let direction: NavigationDirection = newValue.level.rawValue >= oldValue.level.rawValue ? .forward : .backward
+                let sourceScreen = activeTransition?.incoming ?? displayedScreen ?? oldValue
+                let direction: NavigationDirection = newValue.level.rawValue >= sourceScreen.level.rawValue ? .forward : .backward
                 let resolvedWidth = geometry.size.width > 0 ? geometry.size.width : pageWidth
 
                 guard resolvedWidth > 0 else {
-                    pendingTransition = PendingNavigationTransition(from: oldValue, to: newValue, direction: direction)
+                    pendingTransition = PendingNavigationTransition(from: sourceScreen, to: newValue, direction: direction)
+                    return
+                }
+
+                if activeTransition != nil {
+                    pendingTransition = PendingNavigationTransition(from: sourceScreen, to: newValue, direction: direction)
                     return
                 }
 
                 pendingTransition = nil
-                startNavigationTransition(from: oldValue, to: newValue, direction: direction, width: resolvedWidth)
+                startNavigationTransition(from: sourceScreen, to: newValue, direction: direction, width: resolvedWidth)
             }
         }
         .frame(maxHeight: maxHeight)
@@ -372,6 +378,16 @@ struct CategoryGrowthListView: View {
                 activeTransition = nil
                 pageOffset = 0
             }
+
+            guard let pendingTransition else { return }
+            self.pendingTransition = nil
+            guard pendingTransition.to != displayedScreen else { return }
+            startNavigationTransition(
+                from: displayedScreen ?? pendingTransition.from,
+                to: pendingTransition.to,
+                direction: pendingTransition.direction,
+                width: max(pageWidth, width)
+            )
         }
     }
 

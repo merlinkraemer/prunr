@@ -511,17 +511,24 @@ struct MenuBarView: View {
                 }
                 .onChange(of: currentOnboardingPage) { oldValue, newValue in
                     guard oldValue != newValue else { return }
-                    let direction: OnboardingNavigationDirection = newValue.rawValue >= oldValue.rawValue ? .forward : .backward
+                    let sourcePage = outgoingOnboardingPage == nil ? displayedOnboardingPage : displayedOnboardingPage
+                    let resolvedSourcePage = sourcePage
+                    let direction: OnboardingNavigationDirection = newValue.rawValue >= resolvedSourcePage.rawValue ? .forward : .backward
                     onboardingTransitionDirection = direction
                     let resolvedWidth = geometry.size.width > 0 ? geometry.size.width : onboardingWidth
 
                     guard resolvedWidth > 0 else {
-                        pendingOnboardingTransition = PendingOnboardingTransition(from: oldValue, to: newValue, direction: direction)
+                        pendingOnboardingTransition = PendingOnboardingTransition(from: resolvedSourcePage, to: newValue, direction: direction)
+                        return
+                    }
+
+                    if outgoingOnboardingPage != nil {
+                        pendingOnboardingTransition = PendingOnboardingTransition(from: resolvedSourcePage, to: newValue, direction: direction)
                         return
                     }
 
                     pendingOnboardingTransition = nil
-                    startOnboardingTransition(from: oldValue, to: newValue, width: resolvedWidth)
+                    startOnboardingTransition(from: resolvedSourcePage, to: newValue, width: resolvedWidth)
                 }
             }
             .background {
@@ -892,6 +899,16 @@ struct MenuBarView: View {
                 outgoingOnboardingPage = nil
                 onboardingOffset = 0
             }
+
+            guard let pendingOnboardingTransition else { return }
+            self.pendingOnboardingTransition = nil
+            guard pendingOnboardingTransition.to != displayedOnboardingPage else { return }
+            onboardingTransitionDirection = pendingOnboardingTransition.direction
+            startOnboardingTransition(
+                from: displayedOnboardingPage,
+                to: pendingOnboardingTransition.to,
+                width: max(onboardingWidth, width)
+            )
         }
     }
 
@@ -928,6 +945,7 @@ struct MenuBarView: View {
             freeBytes: manager.freeBytes,
             categorySegments: driveBarSegments,
             highlightedSegmentID: $highlightedStorageSegmentID,
+            onTapSegment: navigateFromDriveBar,
             focusedSegmentID: focusedDriveBarCategory?.category.rawValue,
             focusedLabel: focusedDriveBarLabel,
             focusedIcon: focusedDriveBarCategory?.category.icon,
@@ -1121,17 +1139,23 @@ struct MenuBarView: View {
             }
             .onChange(of: currentHeaderScreen) { oldValue, newValue in
                 guard oldValue != newValue else { return }
-                let direction: HeaderNavigationDirection = newValue.level.rawValue >= oldValue.level.rawValue ? .forward : .backward
+                let sourceHeader = activeHeaderTransition?.incoming ?? displayedHeader
+                let direction: HeaderNavigationDirection = newValue.level.rawValue >= sourceHeader.level.rawValue ? .forward : .backward
                 headerTransitionDirection = direction
                 let resolvedWidth = geometry.size.width > 0 ? geometry.size.width : headerWidth
 
                 guard resolvedWidth > 0 else {
-                    pendingHeaderTransition = PendingHeaderTransition(from: oldValue, to: newValue, direction: direction)
+                    pendingHeaderTransition = PendingHeaderTransition(from: sourceHeader, to: newValue, direction: direction)
+                    return
+                }
+
+                if activeHeaderTransition != nil {
+                    pendingHeaderTransition = PendingHeaderTransition(from: sourceHeader, to: newValue, direction: direction)
                     return
                 }
 
                 pendingHeaderTransition = nil
-                startHeaderTransition(from: oldValue, to: newValue, width: resolvedWidth)
+                startHeaderTransition(from: sourceHeader, to: newValue, width: resolvedWidth)
             }
         }
         .background {
@@ -1249,6 +1273,16 @@ struct MenuBarView: View {
                 activeHeaderTransition = nil
                 headerOffset = 0
             }
+
+            guard let pendingHeaderTransition else { return }
+            self.pendingHeaderTransition = nil
+            guard pendingHeaderTransition.to != displayedHeader else { return }
+            headerTransitionDirection = pendingHeaderTransition.direction
+            startHeaderTransition(
+                from: displayedHeader,
+                to: pendingHeaderTransition.to,
+                width: max(headerWidth, width)
+            )
         }
     }
 
@@ -1492,7 +1526,16 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var footerStatusText: some View {
-        if manager.isAutoScanning {
+        if manager.isBackgroundFullScanRunning {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color.secondary.opacity(0.75))
+                    .frame(width: 5, height: 5)
+                Text("Refreshing in background")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+        } else if manager.isAutoScanning {
             Text("Scanning...")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -1761,6 +1804,46 @@ struct MenuBarView: View {
             manager.selectedInventoryCategory = nil
             manager.isSubcategoryDrillDown = false
             manager.isDrilledDown = false
+        }
+    }
+
+    private func navigateFromDriveBar(segmentID: String) {
+        guard segmentID != outsideScopeSegmentID, segmentID != "other-used" else { return }
+        guard let category = GrowthCategory(rawValue: segmentID) else { return }
+        guard let item = (manager.growingCategories + manager.stableCategories)
+            .first(where: { $0.category == category }) else { return }
+
+        let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: category)
+        let groups = manager.subcategoryGroupsByCategory[category] ?? []
+        let selectedSubcategory = needsSubcategoryLoad || category.supportsSubcategories
+            ? nil
+            : groups.first(where: { $0.subcategory == nil }) ?? groups.first
+        let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            highlightedStorageSegmentID = segmentID
+            manager.selectedInventoryCategory = item
+            manager.selectedSubcategory = selectedSubcategory
+            manager.isDrilledDown = true
+            manager.isSubcategoryDrillDown = isSubcategoryDrillDown
+        }
+
+        guard needsSubcategoryLoad else { return }
+
+        Task { @MainActor in
+            let groups = await manager.loadSubcategoryBreakdown(for: category)
+            guard manager.selectedInventoryCategory?.category == category else { return }
+
+            guard !category.supportsSubcategories else { return }
+
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
+                manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
+            }
         }
     }
 
