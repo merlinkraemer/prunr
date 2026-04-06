@@ -15,13 +15,10 @@ struct MenuBarView: View {
     @State private var highlightedStorageSegmentID: String? = nil
     @State private var customOnboardingFolderPath: URL? = nil
     @State private var onboardingChosenFolderPath: URL? = nil
-    @State private var headerTransitionTask: Task<Void, Never>? = nil
-    @State private var headerTransitionDirection: HeaderNavigationDirection = .forward
+    @State private var drillTransitionCoordinator = DrilldownTransitionCoordinator()
     @State private var displayedHeader = HeaderScreen.overview
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
-    @State private var headerOffset: CGFloat = 0
     @State private var headerWidth: CGFloat = 0
-    @State private var pendingHeaderTransition: PendingHeaderTransition? = nil
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
     @State private var acceptedGrowthFeedbackTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
@@ -37,12 +34,6 @@ struct MenuBarView: View {
     private enum HeaderNavigationDirection {
         case forward
         case backward
-    }
-
-    private struct PendingHeaderTransition {
-        let from: HeaderScreen
-        let to: HeaderScreen
-        let direction: HeaderNavigationDirection
     }
 
     private struct ActiveHeaderTransition {
@@ -109,6 +100,19 @@ struct MenuBarView: View {
             case .files:
                 return "files-\(category?.category.rawValue ?? "none")-\(subcategory?.id ?? "none")"
             }
+        }
+    }
+
+    private func headerScreen(for pane: DrilldownListPane) -> HeaderScreen {
+        switch pane.level {
+        case .main:
+            return .overview
+        case .subcategories:
+            guard let category = pane.category else { return .overview }
+            return HeaderScreen(level: .category, category: category, subcategory: nil)
+        case .files:
+            guard let category = pane.category else { return .overview }
+            return HeaderScreen(level: .files, category: category, subcategory: pane.subcategory)
         }
     }
 
@@ -323,7 +327,7 @@ struct MenuBarView: View {
         }
         .onDisappear {
             onboardingTransitionTask?.cancel()
-            headerTransitionTask?.cancel()
+            drillTransitionCoordinator.cancelAndReset()
             acceptedGrowthFeedbackTask?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -1096,7 +1100,7 @@ struct MenuBarView: View {
         )
         .frame(maxHeight: .infinity, alignment: .top)
         .onDisappear {
-            headerTransitionTask?.cancel()
+            drillTransitionCoordinator.cancelAndReset()
         }
     }
 
@@ -1122,45 +1126,20 @@ struct MenuBarView: View {
                 headerPage(for: leftHeaderScreen, width: resolvedWidth)
                 headerPage(for: rightHeaderScreen, width: resolvedWidth)
             }
-            .offset(x: headerOffset)
+            .offset(x: drillTransitionCoordinator.slideOffset)
             .frame(width: resolvedWidth, alignment: .leading)
             .clipped()
             .onAppear {
                 if geometry.size.width > 0 {
                     headerWidth = geometry.size.width
                 }
-                if pendingHeaderTransition == nil && activeHeaderTransition == nil {
+                if activeHeaderTransition == nil {
                     displayedHeader = currentHeaderScreen
                 }
             }
             .onChange(of: geometry.size.width) { _, newWidth in
                 guard newWidth > 0 else { return }
                 headerWidth = newWidth
-
-                guard let pendingHeaderTransition else { return }
-                self.pendingHeaderTransition = nil
-                headerTransitionDirection = pendingHeaderTransition.direction
-                startHeaderTransition(from: pendingHeaderTransition.from, to: pendingHeaderTransition.to, width: newWidth)
-            }
-            .onChange(of: currentHeaderScreen) { oldValue, newValue in
-                guard oldValue != newValue else { return }
-                let sourceHeader = activeHeaderTransition?.incoming ?? displayedHeader
-                let direction: HeaderNavigationDirection = newValue.level.rawValue >= sourceHeader.level.rawValue ? .forward : .backward
-                headerTransitionDirection = direction
-                let resolvedWidth = geometry.size.width > 0 ? geometry.size.width : headerWidth
-
-                guard resolvedWidth > 0 else {
-                    pendingHeaderTransition = PendingHeaderTransition(from: sourceHeader, to: newValue, direction: direction)
-                    return
-                }
-
-                if activeHeaderTransition != nil {
-                    pendingHeaderTransition = PendingHeaderTransition(from: sourceHeader, to: newValue, direction: direction)
-                    return
-                }
-
-                pendingHeaderTransition = nil
-                startHeaderTransition(from: sourceHeader, to: newValue, width: resolvedWidth)
             }
         }
         .background {
@@ -1229,77 +1208,12 @@ struct MenuBarView: View {
         return selectedSubcategory.id == screenSubcategory.id ? selectedSubcategory : screenSubcategory
     }
 
-    private func startHeaderTransition(from previousHeader: HeaderScreen, to newHeader: HeaderScreen, width: CGFloat) {
-        headerTransitionTask?.cancel()
-        stabilizeInFlightHeaderTransitionIfNeeded()
-
-        guard width > 0 else {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                activeHeaderTransition = nil
-                displayedHeader = newHeader
-                headerOffset = 0
-            }
-            return
-        }
-
-        let initialOffset = headerTransitionDirection == .forward ? 0 : -width
-        let targetOffset = headerTransitionDirection == .forward ? -width : 0
-
-        var setupTransaction = Transaction()
-        setupTransaction.disablesAnimations = true
-        withTransaction(setupTransaction) {
-            activeHeaderTransition = ActiveHeaderTransition(
-                outgoing: previousHeader,
-                incoming: newHeader,
-                direction: headerTransitionDirection
-            )
-            headerOffset = initialOffset
-        }
-
-        headerTransitionTask = Task { @MainActor in
-            await withCheckedContinuation { continuation in
-                RunLoop.main.perform { continuation.resume() }
-            }
-            guard !Task.isCancelled else { return }
-
-            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-                headerOffset = targetOffset
-            }
-
-            try? await Task.sleep(for: .milliseconds(280))
-            guard !Task.isCancelled else { return }
-
-            var cleanupTransaction = Transaction()
-            cleanupTransaction.disablesAnimations = true
-            withTransaction(cleanupTransaction) {
-                displayedHeader = newHeader
-                activeHeaderTransition = nil
-                headerOffset = 0
-            }
-
-            guard let pendingHeaderTransition else { return }
-            self.pendingHeaderTransition = nil
-            guard pendingHeaderTransition.to != displayedHeader else { return }
-            headerTransitionDirection = pendingHeaderTransition.direction
-            startHeaderTransition(
-                from: displayedHeader,
-                to: pendingHeaderTransition.to,
-                width: max(headerWidth, width)
-            )
-        }
-    }
-
     private func synchronizeVisibleHeaderToCurrent() {
-        headerTransitionTask?.cancel()
-
+        drillTransitionCoordinator.cancelAndReset()
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            pendingHeaderTransition = nil
             activeHeaderTransition = nil
-            headerOffset = 0
             displayedHeader = currentHeaderScreen
         }
     }
@@ -1312,7 +1226,6 @@ struct MenuBarView: View {
         withTransaction(transaction) {
             displayedHeader = activeHeaderTransition.incoming
             self.activeHeaderTransition = nil
-            headerOffset = 0
         }
     }
 
@@ -1459,8 +1372,27 @@ struct MenuBarView: View {
                     stableTotalBytes: manager.stableTotalBytes,
                     manager: manager,
                     highlightedSegmentID: $highlightedStorageSegmentID,
+                    drillTransitionCoordinator: drillTransitionCoordinator,
+                    onPrepareHeaderTransition: { listOut, listIn, forward in
+                        let direction: HeaderNavigationDirection = forward ? .forward : .backward
+                        activeHeaderTransition = ActiveHeaderTransition(
+                            outgoing: headerScreen(for: listOut),
+                            incoming: headerScreen(for: listIn),
+                            direction: direction
+                        )
+                    },
+                    onStabilizeHeaderTransition: {
+                        stabilizeInFlightHeaderTransitionIfNeeded()
+                    },
+                    onCompleteHeaderTransition: { pane in
+                        displayedHeader = headerScreen(for: pane)
+                        activeHeaderTransition = nil
+                    },
+                    onSyncHeaderToListPane: { pane in
+                        displayedHeader = headerScreen(for: pane)
+                        activeHeaderTransition = nil
+                    },
                     onTapItem: { path in
-                        // Reveal item in Finder
                         NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
                     }
                 )

@@ -38,3 +38,27 @@ targets:
       path: Prunr/Prunr.entitlements
       properties:
         com.apple.security.app-sandbox: false
+
+  PrunrTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: PrunrTests
+    dependencies:
+      - target: Prunr
+      - package: GRDB
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.prunr.app.tests
+        PRODUCT_NAME: PrunrTests
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Prunr:
+    build:
+      targets:
+        Prunr: all
+    test:
+      targets:
+        - PrunrTests

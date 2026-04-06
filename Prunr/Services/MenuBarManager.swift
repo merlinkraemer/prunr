@@ -113,6 +113,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var selectedInventoryCategory: CategoryInventoryItem? = nil // New inventory-based drill-down selection
     var selectedSubcategory: SubcategoryGroup? = nil
     var isSubcategoryDrillDown: Bool = false
+
+    /// While true, `reconcileDrillDownSelection()` is skipped so inventory refreshes do not collapse drill-down mid-slide.
+    var isDrillDownTransitionAnimating: Bool = false
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
     var hasCompletedInitialSubcategoryWarmup = false
     private var subcategoryBreakdownCacheGenerationByCategory: [GrowthCategory: UInt64] = [:]
@@ -1105,6 +1108,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func reconcileDrillDownSelection() {
         guard isDrilledDown else { return }
+        guard !isDrillDownTransitionAnimating else { return }
 
         withAnimationsDisabled {
             guard let currentSelection = selectedInventoryCategory else {

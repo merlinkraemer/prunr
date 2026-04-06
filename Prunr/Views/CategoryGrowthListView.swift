@@ -23,6 +23,21 @@ struct CategoryGrowthListView: View {
     /// Shared hover state between the list and the drive bar
     @Binding var highlightedSegmentID: String?
 
+    /// Shared slide coordinator (header + list use the same offset and timing).
+    var drillTransitionCoordinator: DrilldownTransitionCoordinator
+
+    /// Prepares the header strip for the same outgoing/incoming panes as the list.
+    var onPrepareHeaderTransition: ((DrilldownListPane, DrilldownListPane, Bool) -> Void)?
+
+    /// Stabilizes the header when interrupting or finishing an in-flight slide.
+    var onStabilizeHeaderTransition: (() -> Void)?
+
+    /// Commits the header to match the list after a slide completes.
+    var onCompleteHeaderTransition: ((DrilldownListPane) -> Void)?
+
+    /// Keeps the header aligned when the list jumps to current manager state (e.g. popover reopen).
+    var onSyncHeaderToListPane: ((DrilldownListPane) -> Void)?
+
     /// Callback when an item is tapped (reveal in Finder)
     var onTapItem: (String) -> Void = { _ in }
 
@@ -33,10 +48,8 @@ struct CategoryGrowthListView: View {
     @State private var isLoadingMoreFiles = false
     @State private var subcategoryLoadTask: Task<Void, Never>? = nil
     @State private var subcategoryLoadToken = UUID()
-    @State private var navigationTask: Task<Void, Never>? = nil
-    @State private var displayedScreen: DrilldownScreen? = nil // nil until first appear
+    @State private var displayedScreen: DrilldownListPane? = nil // nil until first appear
     @State private var activeTransition: ActiveTransition? = nil
-    @State private var pageOffset: CGFloat = 0
     @State private var pageWidth: CGFloat = 0
     @State private var pendingTransition: PendingNavigationTransition? = nil
     @State private var hasInitializedDisplay = false
@@ -44,53 +57,24 @@ struct CategoryGrowthListView: View {
     @State private var isDataReady = false
     @State private var contributorPrefetchTask: Task<Void, Never>? = nil
 
-    private enum DrilldownLevel: Int {
-        case main
-        case subcategories
-        case files
-    }
-
     private enum NavigationDirection {
         case forward
         case backward
     }
 
     private struct ActiveTransition {
-        let outgoing: DrilldownScreen
-        let incoming: DrilldownScreen
+        let outgoing: DrilldownListPane
+        let incoming: DrilldownListPane
         let direction: NavigationDirection
     }
 
     private struct PendingNavigationTransition {
-        let from: DrilldownScreen
-        let to: DrilldownScreen
+        let from: DrilldownListPane
+        let to: DrilldownListPane
         let direction: NavigationDirection
     }
 
-    private struct DrilldownScreen: Equatable {
-        let level: DrilldownLevel
-        let category: CategoryInventoryItem?
-        let subcategory: SubcategoryGroup?
-
-        static let main = DrilldownScreen(level: .main, category: nil, subcategory: nil)
-
-        static func == (lhs: DrilldownScreen, rhs: DrilldownScreen) -> Bool {
-            lhs.id == rhs.id
-        }
-
-        var id: String {
-            switch level {
-            case .main:
-                return "main"
-            case .subcategories:
-                return "subcategories-\(category?.category.rawValue ?? "none")"
-            case .files:
-                return "files-\(category?.category.rawValue ?? "none")-\(subcategory?.id ?? "none")"
-            }
-        }
-    }
-
-    private var drilldownLevel: DrilldownLevel {
+    private var drilldownLevel: DrilldownListLevel {
         guard manager.isDrilledDown, manager.selectedInventoryCategory != nil else {
             return .main
         }
@@ -102,22 +86,22 @@ struct CategoryGrowthListView: View {
         return .subcategories
     }
 
-    private var currentScreen: DrilldownScreen {
-        DrilldownScreen(
+    private var currentScreen: DrilldownListPane {
+        DrilldownListPane(
             level: drilldownLevel,
             category: manager.selectedInventoryCategory,
             subcategory: manager.selectedSubcategory
         )
     }
 
-    private var leftScreen: DrilldownScreen {
+    private var leftScreen: DrilldownListPane {
         if let activeTransition {
             return activeTransition.direction == .forward ? activeTransition.outgoing : activeTransition.incoming
         }
         return displayedScreen ?? currentScreen
     }
 
-    private var rightScreen: DrilldownScreen {
+    private var rightScreen: DrilldownListPane {
         if let activeTransition {
             return activeTransition.direction == .forward ? activeTransition.incoming : activeTransition.outgoing
         }
@@ -132,7 +116,7 @@ struct CategoryGrowthListView: View {
                 screenPage(for: leftScreen, width: resolvedWidth)
                 screenPage(for: rightScreen, width: resolvedWidth)
             }
-            .offset(x: pageOffset)
+            .offset(x: drillTransitionCoordinator.slideOffset)
             .frame(width: resolvedWidth, alignment: .leading)
             .clipped()
             .onAppear {
@@ -210,11 +194,10 @@ struct CategoryGrowthListView: View {
             isLoadingSubcategories = false
             contributorPrefetchTask?.cancel()
             contributorPrefetchTask = nil
-            navigationTask?.cancel()
-            navigationTask = nil
             activeTransition = nil
-            pageOffset = 0
             pendingTransition = nil
+            drillTransitionCoordinator.cancelAndReset()
+            manager.isDrillDownTransitionAnimating = false
         }
         // Always-present pre-warm — no onAppear, no flags, no async
         // Keeps all branch types materialized in the view tree permanently
@@ -237,7 +220,7 @@ struct CategoryGrowthListView: View {
     }
 
     @ViewBuilder
-    private func screenView(for screen: DrilldownScreen) -> some View {
+    private func screenView(for screen: DrilldownListPane) -> some View {
         switch screen.level {
         case .main:
             categoryListView
@@ -255,7 +238,7 @@ struct CategoryGrowthListView: View {
         }
     }
 
-    private func resolvedSubcategory(for screen: DrilldownScreen) -> SubcategoryGroup? {
+    private func resolvedSubcategory(for screen: DrilldownListPane) -> SubcategoryGroup? {
         guard screen.level == .files else { return screen.subcategory }
 
         guard let selectedSubcategory = manager.selectedSubcategory else {
@@ -269,23 +252,24 @@ struct CategoryGrowthListView: View {
         return selectedSubcategory.id == screenSubcategory.id ? selectedSubcategory : screenSubcategory
     }
 
-    private func screenPage(for screen: DrilldownScreen, width: CGFloat) -> some View {
+    private func screenPage(for screen: DrilldownListPane, width: CGFloat) -> some View {
         screenView(for: screen)
             .frame(width: width)
     }
 
     private func synchronizeVisibleScreenToCurrent() {
-        navigationTask?.cancel()
+        drillTransitionCoordinator.cancelAndReset()
 
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             pendingTransition = nil
             activeTransition = nil
-            pageOffset = 0
             displayedScreen = currentScreen
             hasInitializedDisplay = true
+            manager.isDrillDownTransitionAnimating = false
         }
+        onSyncHeaderToListPane?(currentScreen)
     }
 
     private func stabilizeInFlightNavigationIfNeeded() {
@@ -296,99 +280,52 @@ struct CategoryGrowthListView: View {
         withTransaction(transaction) {
             displayedScreen = activeTransition.incoming
             self.activeTransition = nil
-            pageOffset = 0
+            manager.isDrillDownTransitionAnimating = false
         }
     }
 
     private func startNavigationTransition(
-        from previousScreen: DrilldownScreen,
-        to newScreen: DrilldownScreen,
+        from previousScreen: DrilldownListPane,
+        to newScreen: DrilldownListPane,
         direction: NavigationDirection,
         width: CGFloat
     ) {
-        navigationTask?.cancel()
-        stabilizeInFlightNavigationIfNeeded()
+        let forward = direction == .forward
 
-        guard width > 0 else {
-            // Wrap early-return mutations — without disablesAnimations,
-            // SwiftUI treats these as unanimated state changes and may
-            // apply implicit transitions to the structural teardown
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) {
-                activeTransition = nil
-                displayedScreen = newScreen
-                pageOffset = 0
-            }
-            return
-        }
-
-        let initialOffset: CGFloat = direction == .forward ? 0 : -width
-        let targetOffset: CGFloat = direction == .forward ? -width : 0
-
-        // Phase 1 — structural swap, no animation
-        // disablesAnimations is the documented way to suppress animation
-        // during the setup phase of a two-part transition update.
-        // Official docs: developer.apple.com/documentation/swiftui/transaction/disablesanimations
-        // "Indicates whether views should disable animations during the
-        //  initial phase of a two-part transition update"
-        var setupTx = Transaction()
-        setupTx.disablesAnimations = true
-        withTransaction(setupTx) {
-            activeTransition = ActiveTransition(
-                outgoing: previousScreen,
-                incoming: newScreen,
-                direction: direction
-            )
-            pageOffset = initialOffset
-        }
-
-        // Phase 2 — animate offset after layout commits
-        // Task { @MainActor } serializes after the current synchronous
-        // code but its run loop cycle boundary is not guaranteed by the
-        // Swift concurrency spec — it may resume before SwiftUI has
-        // committed Phase 1 layout to the display.
-        // RunLoop.main.perform is a Foundation primitive that explicitly
-        // enqueues work at the END of the current run loop iteration,
-        // after the current call stack fully unwinds. This is the only
-        // documented guarantee that Phase 1 layout has committed before
-        // the withAnimation transaction is created.
-        navigationTask = Task { @MainActor in
-            await withCheckedContinuation { continuation in
-                RunLoop.main.perform { continuation.resume() }
-            }
-            guard !Task.isCancelled else { return }
-
-            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-                pageOffset = targetOffset
-            }
-
-            try? await Task.sleep(for: .milliseconds(280))
-            guard !Task.isCancelled else { return }
-
-            // Phase 3 — structural teardown, no animation
-            // activeTransition = nil changes what leftScreen/rightScreen
-            // compute. Without disablesAnimations, SwiftUI animates this
-            // structural change, causing a visible snap or jump at the
-            // end of every slide transition.
-            var cleanupTx = Transaction()
-            cleanupTx.disablesAnimations = true
-            withTransaction(cleanupTx) {
+        drillTransitionCoordinator.performCoordinatedSlide(
+            width: width,
+            forward: forward,
+            stabilize: {
+                stabilizeInFlightNavigationIfNeeded()
+                onStabilizeHeaderTransition?()
+            },
+            phase1: {
+                manager.isDrillDownTransitionAnimating = true
+                activeTransition = ActiveTransition(
+                    outgoing: previousScreen,
+                    incoming: newScreen,
+                    direction: direction
+                )
+                onPrepareHeaderTransition?(previousScreen, newScreen, forward)
+            },
+            phase3: {
                 displayedScreen = newScreen
                 activeTransition = nil
-                pageOffset = 0
+                manager.isDrillDownTransitionAnimating = false
+                onCompleteHeaderTransition?(newScreen)
+            },
+            afterTeardown: {
+                guard let queued = self.pendingTransition else { return }
+                self.pendingTransition = nil
+                guard queued.to != displayedScreen else { return }
+                startNavigationTransition(
+                    from: displayedScreen ?? queued.from,
+                    to: queued.to,
+                    direction: queued.direction,
+                    width: max(pageWidth, width)
+                )
             }
-
-            guard let pendingTransition else { return }
-            self.pendingTransition = nil
-            guard pendingTransition.to != displayedScreen else { return }
-            startNavigationTransition(
-                from: displayedScreen ?? pendingTransition.from,
-                to: pendingTransition.to,
-                direction: pendingTransition.direction,
-                width: max(pageWidth, width)
-            )
-        }
+        )
     }
 
     // MARK: - Category List View
