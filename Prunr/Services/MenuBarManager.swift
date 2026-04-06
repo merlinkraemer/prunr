@@ -767,6 +767,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         guard beginInventoryRefresh() else { return }
         defer { endInventoryRefresh() }
 
+        let backgroundFullScanUI = isAutomatic
+        if backgroundFullScanUI {
+            isAutoScanning = true
+        }
+        defer {
+            if backgroundFullScanUI {
+                isAutoScanning = false
+            }
+        }
+
         isLoading = true
         errorMessage = nil
         noBaseline = false
@@ -898,9 +908,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Calculate elapsed time
         let elapsed = Date().timeIntervalSince(startTime)
 
-        // Apply minimum display duration (skip on cancellation or if stop was pressed)
+        // Apply minimum display duration (skip on cancellation, auto scans, or if stop was pressed)
         let shouldSkipDelay = wasCancelled || scanStartTime == nil
-        if !shouldSkipDelay && elapsed < minimumDisplayDuration {
+        if !shouldSkipDelay && !isAutomatic && elapsed < minimumDisplayDuration {
             let delay = minimumDisplayDuration - elapsed
             try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
         }
@@ -917,6 +927,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             isCleaningUp = false
         }
 
+        let scanWallDuration = Date().timeIntervalSince(startTime)
+
         isLoading = false
         hasIncrementalDeltasSinceSnapshot = false
         scanProgress = ""
@@ -930,8 +942,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isAnalyzingChanges = false
         scanStartTime = nil
         partialScanCategoryTotals = [:] // Clear live-fill data after scan completes
-        if completedSuccessfully {
+        if completedSuccessfully, !wasCancelled {
             lastAutomaticScanAt = completedSnapshotsByPath.values.map(\.createdAt).max() ?? Date()
+            SettingsStore.shared.applyAdaptiveFullScanIntervalIfNeeded(scanDuration: scanWallDuration)
         }
 
         await updatePathSize()
@@ -999,8 +1012,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         reconciliationTask?.cancel()
         reconciliationTask = nil
         isReconciling = false
-        isAutoScanning = true
-        defer { isAutoScanning = false }
         await loadInventory(isAutomatic: true)
         lastReconciliationAt = Date()
     }

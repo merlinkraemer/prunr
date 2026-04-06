@@ -110,7 +110,7 @@ private struct GeneralSettingsTab: View {
                         .buttonStyle(.borderedProminent)
                     }
                     
-                    Text("Required to scan system and user locations accurately.")
+                    Text("Grant access for the same Prunr you launch (for example /Applications versus an Xcode build). Separate macOS prompts for Desktop, Documents, or media libraries usually mean a different app entry or Full Disk Access is off for this build.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -126,7 +126,16 @@ private struct GeneralSettingsTab: View {
 
                         Spacer()
 
-                        Picker("", selection: $settingsStore.automaticFullScanIntervalHours) {
+                        Picker(
+                            "",
+                            selection: Binding(
+                                get: { settingsStore.automaticFullScanIntervalHours },
+                                set: { newValue in
+                                    settingsStore.markAutomaticFullScanIntervalChosenByUser()
+                                    settingsStore.automaticFullScanIntervalHours = newValue
+                                }
+                            )
+                        ) {
                             Text("Daily").tag(24)
                             Text("Every 2 days").tag(48)
                             Text("Every 3 days").tag(72)
@@ -135,6 +144,12 @@ private struct GeneralSettingsTab: View {
                         }
                         .pickerStyle(.menu)
                         .frame(width: 140)
+                    }
+
+                    if settingsStore.adaptiveFullScanIntervalApplied && !settingsStore.automaticFullScanIntervalUserTouched {
+                        Text("Interval was set from your first full scan. Pick a preset above to use a fixed schedule instead.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     HStack {
@@ -308,7 +323,8 @@ private struct GeneralSettingsTab: View {
     }
 
     private func refreshFullDiskAccess() {
-        let report = permissionsService.fullDiskAccessReport
+        let roots = settingsStore.enabledTrackedPaths.map(\.url)
+        let report = permissionsService.evaluateFullDiskAccess(scanRootURLs: roots)
         hasFullDiskAccess = report.isGranted
         blockedFullDiskAccessLocations = report.deniedLocations
     }

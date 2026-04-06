@@ -29,6 +29,8 @@ final class SettingsStore {
         static let hasPendingScopeChanges = "hasPendingScopeChanges"
         static let categoryHistoryRetentionDays = "categoryHistoryRetentionDays"
         static let automaticFullScanIntervalHours = "automaticFullScanIntervalHours"
+        static let automaticFullScanIntervalUserTouched = "automaticFullScanIntervalUserTouched"
+        static let adaptiveFullScanIntervalApplied = "adaptiveFullScanIntervalApplied"
         static let legacyTrackingStartedAt = "trackingStartedAt"
     }
 
@@ -96,6 +98,20 @@ final class SettingsStore {
     /// Maximum time between periodic full rescans.
     var automaticFullScanIntervalHours: Int {
         didSet { UserDefaults.standard.set(automaticFullScanIntervalHours, forKey: Keys.automaticFullScanIntervalHours) }
+    }
+
+    /// User changed the periodic rescan picker (stops one-shot adaptive updates).
+    var automaticFullScanIntervalUserTouched: Bool {
+        didSet {
+            UserDefaults.standard.set(automaticFullScanIntervalUserTouched, forKey: Keys.automaticFullScanIntervalUserTouched)
+        }
+    }
+
+    /// After the first successful full scan, we may set `automaticFullScanIntervalHours` once from duration.
+    var adaptiveFullScanIntervalApplied: Bool {
+        didSet {
+            UserDefaults.standard.set(adaptiveFullScanIntervalApplied, forKey: Keys.adaptiveFullScanIntervalApplied)
+        }
     }
 
     // MARK: - Computed Properties
@@ -208,7 +224,34 @@ final class SettingsStore {
             self.automaticFullScanIntervalHours = Self.defaultAutomaticFullScanIntervalHours
         }
 
+        self.automaticFullScanIntervalUserTouched = UserDefaults.standard.bool(forKey: Keys.automaticFullScanIntervalUserTouched)
+        self.adaptiveFullScanIntervalApplied = UserDefaults.standard.bool(forKey: Keys.adaptiveFullScanIntervalApplied)
+
         UserDefaults.standard.removeObject(forKey: Keys.legacyTrackingStartedAt)
+    }
+
+    /// Call when the user picks a preset in Settings (not for adaptive updates).
+    func markAutomaticFullScanIntervalChosenByUser() {
+        automaticFullScanIntervalUserTouched = true
+    }
+
+    /// After the first successful full scan, pick an interval from wall-clock duration unless the user already customized it.
+    func applyAdaptiveFullScanIntervalIfNeeded(scanDuration: TimeInterval) {
+        guard !automaticFullScanIntervalUserTouched else { return }
+        guard !adaptiveFullScanIntervalApplied else { return }
+
+        let hours = Self.recommendedFullScanIntervalHours(forScanDuration: scanDuration)
+        adaptiveFullScanIntervalApplied = true
+        automaticFullScanIntervalHours = hours
+    }
+
+    static func recommendedFullScanIntervalHours(forScanDuration seconds: TimeInterval) -> Int {
+        switch seconds {
+        case ..<300: 24
+        case ..<1200: 48
+        case ..<3600: 72
+        default: 168
+        }
     }
     
     // MARK: - Path Management

@@ -669,7 +669,7 @@ struct MenuBarView: View {
                     number: 1,
                     icon: "lock.shield",
                     title: "Grant Full Disk Access",
-                    description: "Grant full disk access in order to do full disk scan."
+                    description: "macOS needs this so Prunr can scan your chosen folders without repeated Desktop, Documents, or media-library prompts. Enable Prunr for the exact copy you run (for example the app in Applications versus a build from Xcode), then return here."
                 )
 
                 VStack(spacing: 14) {
@@ -685,6 +685,10 @@ struct MenuBarView: View {
                         VStack(spacing: 10) {
                             primaryActionButton("Open Full Disk Access", minWidth: 188) {
                                 openFullDiskAccessSettings()
+                            }
+
+                            secondaryActionButton("Check again", minWidth: 188) {
+                                refreshFullDiskAccess()
                             }
 
                             if !blockedFullDiskAccessLocations.isEmpty {
@@ -1042,7 +1046,8 @@ struct MenuBarView: View {
     }
 
     private func refreshFullDiskAccess() {
-        let report = permissionsService.fullDiskAccessReport
+        let roots = settingsStore.enabledTrackedPaths.map(\.url)
+        let report = permissionsService.evaluateFullDiskAccess(scanRootURLs: roots)
         hasFullDiskAccess = report.isGranted
         blockedFullDiskAccessLocations = report.deniedLocations
     }
@@ -1526,25 +1531,34 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var footerStatusText: some View {
-        if manager.isBackgroundFullScanRunning {
+        let backgroundWork = manager.isBackgroundFullScanRunning || manager.isAutoScanning
+        let relativePhrase: String? = {
+            if let lastChange = manager.lastDetectedChangeAt {
+                return relativeTime(from: lastChange)
+            }
+            if let lastScan = manager.lastAutomaticScanAt {
+                return relativeTime(from: lastScan)
+            }
+            return nil
+        }()
+
+        if backgroundWork {
             HStack(spacing: 6) {
                 Circle()
                     .fill(Color.secondary.opacity(0.75))
                     .frame(width: 5, height: 5)
-                Text("Refreshing in background")
+                Text(manager.isBackgroundFullScanRunning ? "Refreshing" : "Scanning")
+                    .foregroundStyle(.secondary)
+                if let relativePhrase {
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(relativePhrase)
+                        .foregroundStyle(.tertiary)
+                }
             }
             .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-        } else if manager.isAutoScanning {
-            Text("Scanning...")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        } else if let lastChange = manager.lastDetectedChangeAt {
-            Text(relativeTime(from: lastChange))
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-        } else if let lastScan = manager.lastAutomaticScanAt {
-            Text(relativeTime(from: lastScan))
+        } else if let relativePhrase {
+            Text(relativePhrase)
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
         } else {

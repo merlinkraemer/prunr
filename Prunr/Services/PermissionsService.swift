@@ -4,8 +4,9 @@ import SwiftUI
 
 /// Service for detecting and managing Full Disk Access permissions.
 ///
-/// macOS doesn't provide a direct API to check Full Disk Access status.
-/// We must test by attempting to access protected locations like /Library.
+/// macOS does not expose a supported API for FDA status. We combine a
+/// non-interactive TCC database read (fast) with optional readability checks
+/// on the user’s scan roots (after scope exists) so the UI matches real access.
 @MainActor
 @Observable
 final class PermissionsService {
@@ -31,25 +32,42 @@ final class PermissionsService {
 
     // MARK: - Full Disk Access Detection
 
-    /// Whether the app has Full Disk Access.
-    ///
-    /// Uses the TCC database as a surrogate probe. Avoid probing user-protected
-    /// folders here because that can itself trigger Desktop/Documents/etc prompts
-    /// during onboarding before the user has chosen to scan.
+    /// Whether the app has Full Disk Access (TCC “all files” only — no scan roots).
     var hasFullDiskAccess: Bool {
-        fullDiskAccessReport.isGranted
+        probeSystemFullDiskAccessViaTCC().isGranted
     }
 
-    var fullDiskAccessReport: FullDiskAccessReport {
-        checkFullDiskAccess()
+    /// Full report for scan roots (or TCC-only when `scanRootURLs` is empty).
+    func evaluateFullDiskAccess(scanRootURLs: [URL] = []) -> FullDiskAccessReport {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "debugForceFDADenied") {
+            return .debugDenied
+        }
+        #endif
+
+        guard probeSystemFullDiskAccessViaTCC().isGranted else {
+            return .denied
+        }
+
+        let roots = Self.normalizedScanRoots(scanRootURLs)
+        guard !roots.isEmpty else {
+            return .granted
+        }
+
+        var denied: [String] = []
+        for url in roots where !Self.isRootReadable(url) {
+            denied.append(Self.shortLocationLabel(for: url))
+        }
+
+        if denied.isEmpty {
+            return .granted
+        }
+        return FullDiskAccessReport(isGranted: false, deniedLocations: denied)
     }
 
     // MARK: - Permission Request
 
     /// Opens System Settings to the Full Disk Access pane.
-    ///
-    /// This uses the x-apple.systempreferences URL scheme to deep-link
-    /// directly to the Privacy & Security > Full Disk Access section.
     func requestFullDiskAccess() async {
         let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
@@ -65,18 +83,10 @@ final class PermissionsService {
         if hasFullDiskAccess {
             return .granted
         }
-        // Since we can't reliably distinguish between "not determined" and "denied"
-        // without FDA, we default to denied for UI purposes
         return .denied
     }
 
-    private func checkFullDiskAccess() -> FullDiskAccessReport {
-        #if DEBUG
-        if UserDefaults.standard.bool(forKey: "debugForceFDADenied") {
-            return .debugDenied
-        }
-        #endif
-
+    private func probeSystemFullDiskAccessViaTCC() -> FullDiskAccessReport {
         let tccDbURL = URL(fileURLWithPath: "/Library/Application Support/com.apple.TCC/TCC.db")
         do {
             _ = try Data(contentsOf: tccDbURL, options: [.mappedIfSafe])
@@ -85,20 +95,48 @@ final class PermissionsService {
             return .denied
         }
     }
+
+    private static func normalizedScanRoots(_ urls: [URL]) -> [URL] {
+        var seen: Set<String> = []
+        var result: [URL] = []
+        for url in urls {
+            let std = url.standardizedFileURL
+            let path = std.path
+            guard seen.insert(path).inserted else { continue }
+            result.append(std)
+        }
+        return result
+    }
+
+    private static func isRootReadable(_ url: URL) -> Bool {
+        FileManager.default.isReadableFile(atPath: url.path)
+    }
+
+    private static func shortLocationLabel(for url: URL) -> String {
+        let path = url.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path == home {
+            return "Home folder"
+        }
+        if path == "/" {
+            return "Full disk"
+        }
+        if path == "/System" || path.hasPrefix("/System/") {
+            return "System"
+        }
+        let name = url.lastPathComponent
+        return name.isEmpty ? path : name
+    }
 }
 
 // MARK: - PermissionStatus
 
 /// The permission status for Full Disk Access.
 enum PermissionStatus: String, CaseIterable {
-    /// Permission has not been requested yet
     case notDetermined
-    /// Full Disk Access has been granted
     case granted
-    /// Full Disk Access has been denied
     case denied
 
-    /// Display name for UI purposes.
     var displayName: String {
         switch self {
         case .notDetermined:
@@ -110,7 +148,6 @@ enum PermissionStatus: String, CaseIterable {
         }
     }
 
-    /// SF Symbol icon name for UI display.
     var icon: String {
         switch self {
         case .notDetermined:
