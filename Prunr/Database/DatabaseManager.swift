@@ -1281,6 +1281,10 @@ extension DatabaseManager {
                 sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
                 arguments: [trackedPathIdString]
             )
+            try db.execute(
+                sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
+                arguments: [trackedPathIdString]
+            )
         }
     }
 
