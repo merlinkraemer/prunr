@@ -92,13 +92,10 @@ actor BaselineService {
         let previousSnapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
         let previousSnapshotId = previousSnapshots.first?.id
 
-        if previousSnapshotId == nil {
-            try await db.clearRealtimeData(trackedPathId: trackedPath.id)
-        } else {
-            // Pre-clear working-set entries so the inline upserts during the scan
-            // don't accumulate stale rows from the previous scan's working set.
-            try await db.clearWorkingSetEntries(trackedPathId: trackedPath.id)
-        }
+        // Note: We intentionally do NOT clear the working set before scanning.
+        // The inline upserts use ON CONFLICT DO UPDATE, so they'll overwrite stale data.
+        // If the scan fails, we want to keep the old working set for live refresh to work correctly.
+        // Clearing it would cause RecentChangeService to calculate incorrect deltas.
 
         // Set UI state
         await MainActor.run {
@@ -156,7 +153,6 @@ actor BaselineService {
 
         return snapshot
     }
-
     /// Checks whether at least one snapshot exists.
     ///
     /// - Returns: `true` if a snapshot exists
