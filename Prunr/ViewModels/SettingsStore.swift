@@ -47,6 +47,8 @@ final class SettingsStore {
         didSet { saveTrackedPaths() }
     }
 
+    private(set) var availableCommonPaths: [TrackedPath]
+
     /// Main base directory for scanning
     var mainBasePath: String {
         didSet { UserDefaults.standard.set(mainBasePath, forKey: Keys.mainBasePath) }
@@ -125,10 +127,6 @@ final class SettingsStore {
         TrackedPath.mainBasePath(url: mainBaseURL)
     }
 
-    var availableCommonPaths: [TrackedPath] {
-        TrackedPath.commonPathPresets(baseDirectory: mainBaseURL)
-    }
-
     var selectedCommonPaths: [TrackedPath] {
         availableCommonPaths.filter { selectedCommonPathIDs.contains($0.id.uuidString) }
     }
@@ -192,7 +190,8 @@ final class SettingsStore {
             self.customTrackedPaths = []
         }
 
-        self.mainBasePath = UserDefaults.standard.string(forKey: Keys.mainBasePath) ?? defaultBasePath
+        let initialMainBasePath = UserDefaults.standard.string(forKey: Keys.mainBasePath) ?? defaultBasePath
+        self.mainBasePath = initialMainBasePath
 
         self.selectedCommonPathIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.selectedCommonPathIDs) ?? [])
         
@@ -226,6 +225,10 @@ final class SettingsStore {
 
         self.automaticFullScanIntervalUserTouched = UserDefaults.standard.bool(forKey: Keys.automaticFullScanIntervalUserTouched)
         self.adaptiveFullScanIntervalApplied = UserDefaults.standard.bool(forKey: Keys.adaptiveFullScanIntervalApplied)
+        self.availableCommonPaths = Self.loadAvailableCommonPaths(
+            for: URL(fileURLWithPath: initialMainBasePath, isDirectory: true)
+        )
+        self.selectedCommonPathIDs.formIntersection(Set(self.availableCommonPaths.map { $0.id.uuidString }))
 
         UserDefaults.standard.removeObject(forKey: Keys.legacyTrackingStartedAt)
     }
@@ -289,8 +292,10 @@ final class SettingsStore {
     }
 
     func setMainBasePath(_ url: URL) {
-        guard mainBasePath != url.path else { return }
-        mainBasePath = url.path
+        let standardizedURL = url.standardizedFileURL
+        guard mainBasePath != standardizedURL.path else { return }
+        mainBasePath = standardizedURL.path
+        refreshAvailableCommonPaths(for: standardizedURL)
 
         let availableIDs = Set(availableCommonPaths.map { $0.id.uuidString })
         selectedCommonPathIDs = selectedCommonPathIDs.intersection(availableIDs)
@@ -401,8 +406,16 @@ final class SettingsStore {
         UserDefaults.standard.set(customScanIgnores, forKey: Keys.customScanIgnores)
     }
 
+    private func refreshAvailableCommonPaths(for baseURL: URL) {
+        availableCommonPaths = Self.loadAvailableCommonPaths(for: baseURL)
+    }
+
     private func markScopeChanged() {
         hasPendingScopeChanges = true
+    }
+
+    private static func loadAvailableCommonPaths(for baseURL: URL) -> [TrackedPath] {
+        TrackedPath.commonPathPresets(baseDirectory: baseURL)
     }
     
     private func updateLaunchAtLogin() {

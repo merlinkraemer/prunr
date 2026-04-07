@@ -57,6 +57,7 @@ final class DatabaseManager {
 
         dbPool = try DatabasePool(path: dbURL.path, configuration: config)
         try runMigrations()
+        try clearWorkingSetRefreshStagingSynchronously()
     }
 
     func close() throws {
@@ -65,6 +66,16 @@ final class DatabaseManager {
             self.dbPool = nil
         }
         databasePath = nil
+    }
+
+    private func clearWorkingSetRefreshStagingSynchronously(sessionId: String? = nil) throws {
+        guard let dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try dbPool.write { db in
+            try Self.clearWorkingSetRefreshStagingRows(sessionId: sessionId, db: db)
+        }
     }
 
     /// Run database migrations using GRDB's DatabaseMigrator
@@ -447,6 +458,22 @@ final class DatabaseManager {
                 ON CONFLICT(trackedPathId, category) DO UPDATE SET
                     totalBytes = excluded.totalBytes,
                     updatedAt = excluded.updatedAt
+                """)
+        }
+
+        migrator.registerMigration("v19_add_working_set_refresh_staging") { db in
+            try db.create(table: "workingSetRefreshStaging", ifNotExists: true) { t in
+                t.column("sessionId", .text).notNull()
+                t.column("path", .text).notNull()
+                t.column("sizeBytes", .integer).notNull()
+                t.column("category", .text).notNull()
+                t.column("subcategory", .text).notNull().defaults(to: "")
+                t.primaryKey(["sessionId", "path"])
+            }
+
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_workingSetRefreshStaging_sessionId
+                ON workingSetRefreshStaging(sessionId)
                 """)
         }
 
@@ -1303,6 +1330,106 @@ extension DatabaseManager {
         entries: [ScanResult],
         updatedAt: Date = Date()
     ) async throws -> [JournalDeltaKey: Int64] {
+        let stagingSessionId = UUID().uuidString
+        try await clearWorkingSetRefreshStaging(sessionId: stagingSessionId)
+
+        do {
+            if !entries.isEmpty {
+                try await appendWorkingSetRefreshStaging(
+                    sessionId: stagingSessionId,
+                    entries: entries
+                )
+            }
+
+            return try await replaceWorkingSetSubtree(
+                trackedPathId: trackedPathId,
+                rootPath: rootPath,
+                stagingSessionId: stagingSessionId,
+                updatedAt: updatedAt
+            )
+        } catch {
+            try? await clearWorkingSetRefreshStaging(sessionId: stagingSessionId)
+            throw error
+        }
+    }
+
+    func appendWorkingSetRefreshStaging(
+        sessionId: String,
+        entries: [ScanResult]
+    ) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        guard !entries.isEmpty else { return }
+
+        let sqlChunkSize = 500
+
+        try await dbPool.write { db in
+            for startIndex in stride(from: 0, to: entries.count, by: sqlChunkSize) {
+                let endIndex = min(startIndex + sqlChunkSize, entries.count)
+                let batch = entries[startIndex..<endIndex]
+                let normalizedBatch = batch.map {
+                    (
+                        path: Self.normalizePath($0.path),
+                        sizeBytes: $0.sizeBytes,
+                        category: $0.category.rawValue,
+                        subcategory: $0.subcategory?.rawValue ?? ""
+                    )
+                }
+
+                let placeholders = Array(repeating: "(?,?,?,?,?)", count: normalizedBatch.count).joined(separator: ",")
+                let sql = """
+                    INSERT INTO workingSetRefreshStaging (sessionId, path, sizeBytes, category, subcategory)
+                    VALUES \(placeholders)
+                    ON CONFLICT(sessionId, path) DO UPDATE SET
+                        sizeBytes = excluded.sizeBytes,
+                        category = excluded.category,
+                        subcategory = excluded.subcategory
+                    """
+
+                var arguments: [DatabaseValueConvertible?] = []
+                arguments.reserveCapacity(normalizedBatch.count * 5)
+                for entry in normalizedBatch {
+                    arguments.append(sessionId)
+                    arguments.append(entry.path)
+                    arguments.append(entry.sizeBytes)
+                    arguments.append(entry.category)
+                    arguments.append(entry.subcategory)
+                }
+
+                try db.execute(sql: sql, arguments: StatementArguments(arguments))
+            }
+        }
+    }
+
+    func clearWorkingSetRefreshStaging(sessionId: String? = nil) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.write { db in
+            try Self.clearWorkingSetRefreshStagingRows(sessionId: sessionId, db: db)
+        }
+    }
+
+    private static func clearWorkingSetRefreshStagingRows(sessionId: String? = nil, db: Database) throws {
+        if let sessionId {
+            try db.execute(
+                sql: "DELETE FROM workingSetRefreshStaging WHERE sessionId = ?",
+                arguments: [sessionId]
+            )
+        } else {
+            try db.execute(sql: "DELETE FROM workingSetRefreshStaging")
+        }
+    }
+
+    func replaceWorkingSetSubtree(
+        trackedPathId: UUID,
+        rootPath: String,
+        stagingSessionId: String,
+        updatedAt: Date = Date()
+    ) async throws -> [JournalDeltaKey: Int64] {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
@@ -1312,69 +1439,95 @@ extension DatabaseManager {
         let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
 
         return try await dbPool.write { db in
-            let oldRows = try Row.fetchAll(
+            try db.execute(
+                sql: """
+                    INSERT OR IGNORE INTO paths (path)
+                    SELECT path
+                    FROM workingSetRefreshStaging
+                    WHERE sessionId = ?
+                    """,
+                arguments: [stagingSessionId]
+            )
+
+            try db.execute(
+                sql: """
+                    INSERT INTO pathClassification (pathId, category, subcategory)
+                    SELECT p.id, s.category, s.subcategory
+                    FROM workingSetRefreshStaging s
+                    JOIN paths p ON p.path = s.path
+                    WHERE s.sessionId = ?
+                    ON CONFLICT(pathId) DO UPDATE SET
+                        category = excluded.category,
+                        subcategory = excluded.subcategory
+                    """,
+                arguments: [stagingSessionId]
+            )
+
+            let deltaRows = try Row.fetchAll(
                 db,
                 sql: """
-                    SELECT p.path AS path, wse.sizeBytes AS sizeBytes
-                    FROM workingSetEntry wse
-                    JOIN paths p ON p.id = wse.pathId
-                    WHERE wse.trackedPathId = ?
-                      AND wse.pathId IN (
-                        SELECT id
-                        FROM paths
-                        WHERE path = ? OR path LIKE ?
-                      )
-                    """,
-                arguments: [trackedPathIdString, normalizedRoot, rootPrefix + "%"]
-            )
-
-            var oldSizes: [String: Int64] = [:]
-            oldSizes.reserveCapacity(oldRows.count)
-            for row in oldRows {
-                let path: String = row["path"] ?? ""
-                let sizeBytes: Int64 = row["sizeBytes"] ?? 0
-                oldSizes[path] = sizeBytes
-            }
-
-            var newSizes: [String: Int64] = [:]
-            var newClassifications: [String: ResolvedPathClassification] = [:]
-            newSizes.reserveCapacity(entries.count)
-            newClassifications.reserveCapacity(entries.count)
-            for entry in entries {
-                let normalizedPath = Self.normalizePath(entry.path)
-                newSizes[normalizedPath] = entry.sizeBytes
-                newClassifications[normalizedPath] = ResolvedPathClassification(
-                    category: entry.category,
-                    subcategory: entry.subcategory
-                )
-            }
-
-            let uniquePaths = Array(Set(newSizes.keys))
-            let pathIdByPath = try fetchPathIds(
-                for: uniquePaths,
-                classificationsByPath: newClassifications,
-                db: db
-            )
-
-            let allPaths = Set(oldSizes.keys).union(newSizes.keys)
-            var deltasByCategory: [JournalDeltaKey: Int64] = [:]
-            deltasByCategory.reserveCapacity(GrowthCategory.allCases.count)
-
-            for path in allPaths {
-                let oldSize = oldSizes[path] ?? 0
-                let newSize = newSizes[path] ?? 0
-                let delta = newSize - oldSize
-                guard delta != 0 else { continue }
-
-                let classification = newClassifications[path]
-                    ?? ResolvedPathClassification(
-                        category: GrowthCategory.categorize(path: path),
-                        subcategory: GrowthCategory.subcategorize(path: path)
+                    WITH oldRows AS (
+                        SELECT
+                            p.path AS path,
+                            wse.sizeBytes AS sizeBytes,
+                            pc.category AS category,
+                            pc.subcategory AS subcategory
+                        FROM workingSetEntry wse
+                        JOIN paths p ON p.id = wse.pathId
+                        JOIN pathClassification pc ON pc.pathId = wse.pathId
+                        WHERE wse.trackedPathId = ?
+                          AND (p.path = ? OR p.path LIKE ?)
+                    ),
+                    newRows AS (
+                        SELECT path, sizeBytes, category, subcategory
+                        FROM workingSetRefreshStaging
+                        WHERE sessionId = ?
+                    ),
+                    combined AS (
+                        SELECT
+                            COALESCE(newRows.category, oldRows.category) AS category,
+                            COALESCE(newRows.subcategory, oldRows.subcategory) AS subcategory,
+                            COALESCE(newRows.sizeBytes, 0) - COALESCE(oldRows.sizeBytes, 0) AS deltaBytes
+                        FROM oldRows
+                        LEFT JOIN newRows ON newRows.path = oldRows.path
+                        UNION ALL
+                        SELECT
+                            newRows.category AS category,
+                            newRows.subcategory AS subcategory,
+                            COALESCE(newRows.sizeBytes, 0) - COALESCE(oldRows.sizeBytes, 0) AS deltaBytes
+                        FROM newRows
+                        LEFT JOIN oldRows ON oldRows.path = newRows.path
+                        WHERE oldRows.path IS NULL
                     )
-                let category = classification.category
-                let subcategory = classification.subcategory
-                let key = JournalDeltaKey(category: category, subcategory: subcategory)
-                deltasByCategory[key, default: 0] += delta
+                    SELECT category, subcategory, SUM(deltaBytes) AS deltaBytes
+                    FROM combined
+                    WHERE deltaBytes != 0
+                    GROUP BY category, subcategory
+                    """,
+                arguments: [
+                    trackedPathIdString,
+                    normalizedRoot,
+                    rootPrefix + "%",
+                    stagingSessionId
+                ]
+            )
+
+            var deltasByCategory: [JournalDeltaKey: Int64] = [:]
+            deltasByCategory.reserveCapacity(deltaRows.count)
+            for row in deltaRows {
+                guard
+                    let rawCategory: String = row["category"],
+                    let category = GrowthCategory(rawValue: rawCategory)
+                else {
+                    continue
+                }
+
+                let rawSubcategory: String = row["subcategory"] ?? ""
+                let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
+                let deltaBytes: Int64 = row["deltaBytes"] ?? 0
+                guard deltaBytes != 0 else { continue }
+
+                deltasByCategory[JournalDeltaKey(category: category, subcategory: subcategory), default: 0] += deltaBytes
             }
 
             try db.execute(
@@ -1390,29 +1543,30 @@ extension DatabaseManager {
                 arguments: [trackedPathIdString, normalizedRoot, rootPrefix + "%"]
             )
 
-            guard !newSizes.isEmpty else {
-                return deltasByCategory
-            }
-
-            let statement = try db.makeStatement(
+            try db.execute(
                 sql: """
                     INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
-                    VALUES (?, ?, ?, ?)
-                    """
+                    SELECT ?, p.id, s.sizeBytes, ?
+                    FROM workingSetRefreshStaging s
+                    JOIN paths p ON p.path = s.path
+                    WHERE s.sessionId = ?
+                    ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
+                        sizeBytes = excluded.sizeBytes,
+                        updatedAt = excluded.updatedAt
+                    """,
+                arguments: [trackedPathIdString, updatedAt, stagingSessionId]
             )
-
-            for (path, sizeBytes) in newSizes {
-                guard let pathId = pathIdByPath[path] else {
-                    throw DatabaseError.pathLookupFailed(path)
-                }
-                try statement.execute(arguments: [trackedPathIdString, pathId, sizeBytes, updatedAt])
-            }
 
             try applyWorkingSetCategoryDeltas(
                 deltasByCategory,
                 trackedPathId: trackedPathIdString,
                 updatedAt: updatedAt,
                 db: db
+            )
+
+            try db.execute(
+                sql: "DELETE FROM workingSetRefreshStaging WHERE sessionId = ?",
+                arguments: [stagingSessionId]
             )
 
             return deltasByCategory

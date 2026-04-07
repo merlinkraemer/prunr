@@ -1,6 +1,11 @@
 import SwiftUI
 import AppKit
 
+private func menuBarViewDirectoryExists(at url: URL) -> Bool {
+    var isDirectory: ObjCBool = false
+    return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+}
+
 struct MenuBarView: View {
     @Bindable var manager: MenuBarManager
 
@@ -21,6 +26,7 @@ struct MenuBarView: View {
     @State private var headerWidth: CGFloat = 0
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
     @State private var acceptedGrowthFeedbackTask: Task<Void, Never>? = nil
+    @State private var scanAccessRefreshTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
     @State private var selectedOnboardingPage = OnboardingPage.folder
     @State private var displayedOnboardingPage = OnboardingPage.folder
@@ -28,6 +34,10 @@ struct MenuBarView: View {
     @State private var onboardingOffset: CGFloat = 0
     @State private var onboardingWidth: CGFloat = 0
     @State private var pendingOnboardingTransition: PendingOnboardingTransition? = nil
+    @State private var folderValidationTask: Task<Void, Never>? = nil
+    @State private var selectedScanFolderExists = false
+    @State private var onboardingChosenFolderExists = false
+    @State private var developerFolderExists = false
 
     private let outsideScopeSegmentID = "outside-scan-scope"
 
@@ -72,6 +82,12 @@ struct MenuBarView: View {
         let from: OnboardingPage
         let to: OnboardingPage
         let direction: OnboardingNavigationDirection
+    }
+
+    private struct FolderAvailabilitySnapshot: Sendable {
+        let selectedScanFolderExists: Bool
+        let onboardingChosenFolderExists: Bool
+        let developerFolderExists: Bool
     }
 
     private enum HeaderLevel: Int {
@@ -133,17 +149,8 @@ struct MenuBarView: View {
         URL(fileURLWithPath: settingsStore.mainBasePath, isDirectory: true)
     }
 
-    private var hasValidScanFolder: Bool {
-        FileManager.default.fileExists(atPath: selectedScanFolderURL.path)
-    }
-
-    private var hasExplicitOnboardingFolderChoice: Bool {
-        guard let onboardingChosenFolderPath else { return false }
-        return FileManager.default.fileExists(atPath: onboardingChosenFolderPath.path)
-    }
-
     private var onboardingFolderStepComplete: Bool {
-        hasEnabledScanPath && hasValidScanFolder && hasExplicitOnboardingFolderChoice
+        hasEnabledScanPath && selectedScanFolderExists && onboardingChosenFolderExists
     }
 
     private var onboardingPermissionSatisfied: Bool {
@@ -213,6 +220,33 @@ struct MenuBarView: View {
         shortDisplayPath(for: selectedScanFolderURL)
     }
 
+    private func refreshFolderAvailability() {
+        let selectedFolderURL = selectedScanFolderURL.standardizedFileURL
+        let chosenFolderURL = onboardingChosenFolderPath?.standardizedFileURL
+        let developerFolderURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("dev", isDirectory: true)
+            .standardizedFileURL
+
+        folderValidationTask?.cancel()
+        folderValidationTask = Task {
+            let snapshot = await Task.detached(priority: .utility) {
+                FolderAvailabilitySnapshot(
+                    selectedScanFolderExists: menuBarViewDirectoryExists(at: selectedFolderURL),
+                    onboardingChosenFolderExists: chosenFolderURL.map { menuBarViewDirectoryExists(at: $0) } ?? false,
+                    developerFolderExists: menuBarViewDirectoryExists(at: developerFolderURL)
+                )
+            }.value
+
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                selectedScanFolderExists = snapshot.selectedScanFolderExists
+                onboardingChosenFolderExists = snapshot.onboardingChosenFolderExists
+                developerFolderExists = snapshot.developerFolderExists
+            }
+        }
+    }
+
     private var scanFolderOptions: [OnboardingFolderOption] {
         var options: [OnboardingFolderOption] = []
         
@@ -227,7 +261,7 @@ struct MenuBarView: View {
                 url: home
             )
         )
-        if FileManager.default.fileExists(atPath: dev.path) {
+        if developerFolderExists {
             options.append(
                 OnboardingFolderOption(
                     id: "dev",
@@ -334,29 +368,28 @@ struct MenuBarView: View {
         }
         .frame(width: 320, height: 480)
         .onAppear {
-            refreshScanAccess()
-            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
             selectedOnboardingPage = maxUnlockedOnboardingPage
+            refreshFolderAvailability()
         }
         .onDisappear {
+            scanAccessRefreshTask?.cancel()
+            folderValidationTask?.cancel()
             onboardingTransitionTask?.cancel()
             drillTransitionCoordinator.cancelAndReset()
             acceptedGrowthFeedbackTask?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshScanAccess()
-            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
-        }
-        .onChange(of: hasRequiredScanAccess) { _, _ in
-            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
         }
         .onChange(of: settingsStore.mainBasePath) { _, _ in
+            refreshFolderAvailability()
             refreshScanAccess()
-            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
+        }
+        .onChange(of: onboardingChosenFolderPath) { _, _ in
+            refreshFolderAvailability()
         }
         .onChange(of: manager.noBaseline) { _, _ in
             refreshScanAccess()
-            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
         }
         .onChange(of: manager.runtimeBlockedLocations) { _, newValue in
             guard !newValue.isEmpty else { return }
@@ -384,7 +417,9 @@ struct MenuBarView: View {
             }
         }
         .task {
-            if !onboardingPermissionSatisfied {
+            let accessReport = await refreshScanAccessNow()
+
+            if !accessReport.isGranted {
                 await manager.checkBaseline(trackedPathsOverride: [settingsStore.mainTrackedPath])
                 isBootstrapping = false
                 return
@@ -1096,9 +1131,27 @@ struct MenuBarView: View {
     }
 
     private func refreshScanAccess() {
-        let report = permissionsService.evaluateScanScopeAccess(scanRootURLs: accessCheckRoots)
+        let roots = accessCheckRoots
+        scanAccessRefreshTask?.cancel()
+        scanAccessRefreshTask = Task {
+            let report = await permissionsService.evaluateScanScopeAccessAsync(scanRootURLs: roots)
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                hasRequiredScanAccess = report.isGranted
+                blockedScanAccessLocations = Array(Set(report.blockedLocations + manager.runtimeBlockedLocations)).sorted()
+                manager.isPermissionConfirmedForProtectedTraversal = report.isGranted
+            }
+        }
+    }
+
+    @discardableResult
+    private func refreshScanAccessNow() async -> PermissionsService.ScanScopeAccessReport {
+        let report = await permissionsService.evaluateScanScopeAccessAsync(scanRootURLs: accessCheckRoots)
         hasRequiredScanAccess = report.isGranted
         blockedScanAccessLocations = Array(Set(report.blockedLocations + manager.runtimeBlockedLocations)).sorted()
+        manager.isPermissionConfirmedForProtectedTraversal = report.isGranted
+        return report
     }
 
     private func openScanAccessSettings() {
@@ -1601,7 +1654,6 @@ struct MenuBarView: View {
         settingsStore.setMainBasePath(url)
         settingsStore.setPathEnabled(settingsStore.mainTrackedPath, enabled: true)
         refreshScanAccess()
-        manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
 
         if manager.noBaseline {
             settingsStore.clearPendingScopeChanges()

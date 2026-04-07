@@ -1393,6 +1393,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         return growthContributorsBySubcategory[cacheKey]
     }
 
+    private func directoryExistsOffMain(_ url: URL) async -> Bool {
+        let standardizedURL = url.standardizedFileURL
+        return await Task.detached(priority: .utility) {
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: standardizedURL.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }.value
+    }
+
     /// Takes the initial snapshot for enabled paths
     func takeInitialSnapshot() async {
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
@@ -1401,8 +1410,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         var pathsToTry = enabledPaths
         if pathsToTry.isEmpty {
             if let defaultPath = SettingsStore.shared.allTrackedPaths.first(where: { $0.isDefault }) {
-                // Ensure the path exists before enabling it
-                if FileManager.default.fileExists(atPath: defaultPath.url.path) {
+                if await directoryExistsOffMain(defaultPath.url) {
                     SettingsStore.shared.setPathEnabled(defaultPath, enabled: true)
                     pathsToTry = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
                 } else {
@@ -1473,7 +1481,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         if enabledPaths.isEmpty {
             if let defaultPath = SettingsStore.shared.allTrackedPaths.first(where: { $0.isDefault }) {
-                if FileManager.default.fileExists(atPath: defaultPath.url.path) {
+                if await directoryExistsOffMain(defaultPath.url) {
                     SettingsStore.shared.setPathEnabled(defaultPath, enabled: true)
                 }
             }
@@ -1537,6 +1545,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         noBaseline = !hasAnySnapshot
         updateMonitoredPathName()
         configureFileWatcherIfNeeded()
+    }
+
+    func configureMonitoringOnLaunch() async {
+        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        let scanRoots = trackedPaths.map(\.url.standardizedFileURL)
+        let accessReport = await PermissionsService.shared.evaluateScanScopeAccessAsync(scanRootURLs: scanRoots)
+        isPermissionConfirmedForProtectedTraversal = accessReport.isGranted
+        await checkBaseline(trackedPathsOverride: trackedPaths)
     }
 
     /// Loads just category totals from the pre-computed workingSetCategoryTotal table.

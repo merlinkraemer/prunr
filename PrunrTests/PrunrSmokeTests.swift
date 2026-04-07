@@ -79,6 +79,12 @@ final class PrunrSmokeTests: XCTestCase {
         return directory
     }
 
+    private func diskUsageBytes(at url: URL) throws -> Int64 {
+        var fileStat = stat()
+        XCTAssertEqual(lstat(url.path, &fileStat), 0)
+        return FileScanner.diskUsageBytes(for: fileStat)
+    }
+
     @MainActor
     private func withIsolatedTrackedPathSettings<T>(
         mainBaseURL: URL,
@@ -974,6 +980,39 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testDatabaseInitializationClearsAbandonedWorkingSetRefreshStaging() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PrunrTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        defer {
+            try? DatabaseManager.shared.close()
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
+
+        let dbPath = tempDirectory.appendingPathComponent("prunr.sqlite").path
+        try DatabaseManager.shared.initialize(at: dbPath)
+
+        try await DatabaseManager.shared.appendWorkingSetRefreshStaging(
+            sessionId: "stale-session",
+            entries: [
+                ScanResult(path: "/tmp/root/stale.txt", sizeBytes: 42)
+            ]
+        )
+
+        let rowCountBefore = try await DatabaseManager.shared.dbPool?.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM workingSetRefreshStaging") ?? 0
+        }
+        XCTAssertEqual(rowCountBefore, 1)
+
+        try DatabaseManager.shared.initialize(at: dbPath)
+
+        let rowCountAfter = try await DatabaseManager.shared.dbPool?.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM workingSetRefreshStaging") ?? 0
+        }
+        XCTAssertEqual(rowCountAfter, 0)
+    }
+
     func testRecentChangeRefreshPrefersFileOverTrackedRootDirectoryEvent() async throws {
         try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
             let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeRoot")
@@ -1016,8 +1055,9 @@ final class PrunrSmokeTests: XCTestCase {
             let metadata = try await self.workingSetMetadataByPath()
             let changed = try XCTUnwrap(metadata[changedFileURL.path])
             let untouched = try XCTUnwrap(metadata[untouchedFileURL.path])
+            let changedExpectedBytes = try self.diskUsageBytes(at: changedFileURL)
 
-            XCTAssertEqual(changed.sizeBytes, 512)
+            XCTAssertEqual(changed.sizeBytes, changedExpectedBytes)
             XCTAssertGreaterThan(changed.updatedAt, initialUpdatedAt)
             XCTAssertEqual(untouched.sizeBytes, 256)
             XCTAssertEqual(untouched.updatedAt, initialUpdatedAt)
@@ -1055,7 +1095,8 @@ final class PrunrSmokeTests: XCTestCase {
             }
 
             let inventory = await BaselineService.shared.getInventoryWithTrends(trackedPath: trackedPath)
-            XCTAssertEqual(inventory.first(where: { $0.category == .other })?.currentSizeBytes, 512)
+            let expectedBytes = try self.diskUsageBytes(at: changedFileURL)
+            XCTAssertEqual(inventory.first(where: { $0.category == .other })?.currentSizeBytes, expectedBytes)
 
             let snapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPath.id)
             XCTAssertEqual(snapshots.count, 1)
@@ -1107,8 +1148,9 @@ final class PrunrSmokeTests: XCTestCase {
             let metadata = try await self.workingSetMetadataByPath()
             let changed = try XCTUnwrap(metadata[changedFileURL.path])
             let untouched = try XCTUnwrap(metadata[untouchedFileURL.path])
+            let changedExpectedBytes = try self.diskUsageBytes(at: changedFileURL)
 
-            XCTAssertEqual(changed.sizeBytes, 160)
+            XCTAssertEqual(changed.sizeBytes, changedExpectedBytes)
             XCTAssertGreaterThan(changed.updatedAt, initialUpdatedAt)
             XCTAssertEqual(untouched.sizeBytes, 96)
             XCTAssertEqual(untouched.updatedAt, initialUpdatedAt)
@@ -1153,8 +1195,11 @@ final class PrunrSmokeTests: XCTestCase {
             }
 
             let metadata = try await self.workingSetMetadataByPath()
+            let expectedTotalBytes = try fileURLs.reduce(into: Int64(0)) { total, fileURL in
+                total += try self.diskUsageBytes(at: fileURL)
+            }
             XCTAssertEqual(metadata.count, 30)
-            XCTAssertEqual(metadata.values.reduce(0) { $0 + $1.sizeBytes }, 30 * 64)
+            XCTAssertEqual(metadata.values.reduce(0) { $0 + $1.sizeBytes }, expectedTotalBytes)
         }
     }
 
@@ -1194,6 +1239,50 @@ final class PrunrSmokeTests: XCTestCase {
                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM growthJournalBucket") ?? 0
             }
             XCTAssertEqual(journalCount, 0)
+        }
+    }
+
+    func testRecentChangeRefreshUsesAllocatedBytesForSparseFileUpdates() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeSparse")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let fileURL = tempDirectory.appendingPathComponent("sparse.bin")
+            try Data([0x01]).write(to: fileURL)
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [ScanResult(path: fileURL.path, sizeBytes: 1)]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 7_000)
+            )
+
+            let handle = try FileHandle(forWritingTo: fileURL)
+            try handle.seek(toOffset: 1_048_575)
+            try handle.write(contentsOf: Data([0xFF]))
+            try handle.close()
+
+            var fileStat = stat()
+            XCTAssertEqual(lstat(fileURL.path, &fileStat), 0)
+            let expectedBytes = FileScanner.diskUsageBytes(for: fileStat)
+            XCTAssertNotEqual(expectedBytes, 0)
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths([fileURL], trackedPath: trackedPath)
+
+            guard case .updated = result else {
+                XCTFail("recent change refresh should update sparse files incrementally")
+                return
+            }
+
+            let metadata = try await self.workingSetMetadataByPath()
+            XCTAssertEqual(metadata[fileURL.path]?.sizeBytes, expectedBytes)
+            XCTAssertLessThanOrEqual(expectedBytes, Int64(fileStat.st_size))
         }
     }
 
@@ -1321,9 +1410,10 @@ final class PrunrSmokeTests: XCTestCase {
             }
 
             let refreshedInventory = await BaselineService.shared.getInventoryWithTrends(trackedPath: trackedPath)
+            let expectedBytes = try self.diskUsageBytes(at: fileURL)
             XCTAssertEqual(
                 refreshedInventory.first(where: { $0.category == .developer })?.currentSizeBytes,
-                512
+                expectedBytes
             )
 
             let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 10)
@@ -1380,9 +1470,10 @@ final class PrunrSmokeTests: XCTestCase {
                 refreshedInventory.first(where: { $0.category == .other })?.currentSizeBytes,
                 64
             )
+            let expectedBytes = try self.diskUsageBytes(at: newFileURL)
             XCTAssertEqual(
                 refreshedInventory.first(where: { $0.category == .developer })?.currentSizeBytes,
-                256
+                expectedBytes
             )
         }
     }
@@ -1443,6 +1534,18 @@ final class PrunrSmokeTests: XCTestCase {
         let report = await MainActor.run {
             PermissionsService.shared.evaluateScanScopeAccess(scanRootURLs: [directory])
         }
+
+        XCTAssertTrue(report.isGranted)
+        XCTAssertTrue(report.blockedLocations.isEmpty)
+    }
+
+    func testScanScopeAccessAsyncAllowsReachableTemporaryDirectory() async throws {
+        let directory = try createTrackedPathDirectory(named: "PrunrAccessAsync")
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let report = await PermissionsService.shared.evaluateScanScopeAccessAsync(scanRootURLs: [directory])
 
         XCTAssertTrue(report.isGranted)
         XCTAssertTrue(report.blockedLocations.isEmpty)

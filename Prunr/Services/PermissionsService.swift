@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import os
 import SwiftUI
@@ -31,12 +32,31 @@ final class PermissionsService {
 
     /// Tracks whether a permission check is currently in progress
     var isCheckingPermission = false
+    private var lastLoggedBlockedLocations: Set<String> = []
 
     // MARK: - Scan Scope Access
 
     /// Returns whether the selected scan roots are reachable, plus any protected
     /// locations inside those roots that remain blocked.
     func evaluateScanScopeAccess(scanRootURLs: [URL]) -> ScanScopeAccessReport {
+        let report = Self.evaluateScanScopeAccessSynchronously(scanRootURLs: scanRootURLs)
+        logAccessReportIfNeeded(report)
+        return report
+    }
+
+    func evaluateScanScopeAccessAsync(scanRootURLs: [URL]) async -> ScanScopeAccessReport {
+        isCheckingPermission = true
+        defer { isCheckingPermission = false }
+
+        let report = await Task.detached(priority: .utility) {
+            Self.evaluateScanScopeAccessSynchronously(scanRootURLs: scanRootURLs)
+        }.value
+
+        logAccessReportIfNeeded(report)
+        return report
+    }
+
+    private nonisolated static func evaluateScanScopeAccessSynchronously(scanRootURLs: [URL]) -> ScanScopeAccessReport {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "debugForceFDADenied") {
             return .debugDenied
@@ -52,12 +72,11 @@ final class PermissionsService {
             switch probe {
             case .granted:
                 continue
-            case .permissionDenied(let reason):
+            case .permissionDenied:
                 let label = Self.shortLocationLabel(for: url)
                 blocked.insert(label)
-                Self.logger.warning("Permission denied for root '\(url.path, privacy: .public)': \(reason, privacy: .public)")
-            case .unavailable(let reason):
-                Self.logger.debug("Root probe unavailable for '\(url.path, privacy: .public)': \(reason, privacy: .public)")
+            case .unavailable:
+                continue
             }
         }
 
@@ -66,12 +85,9 @@ final class PermissionsService {
             switch probe {
             case .granted:
                 continue
-            case .permissionDenied(let reason):
+            case .permissionDenied:
                 let label = Self.shortLocationLabel(for: candidate)
                 blocked.insert(label)
-                Self.logger.warning(
-                    "Permission denied for protected descendant '\(candidate.path, privacy: .public)': \(reason, privacy: .public)"
-                )
             case .unavailable:
                 continue
             }
@@ -94,7 +110,7 @@ final class PermissionsService {
         NSWorkspace.shared.open(url)
     }
 
-    private static func normalizedScanRoots(_ urls: [URL]) -> [URL] {
+    private nonisolated static func normalizedScanRoots(_ urls: [URL]) -> [URL] {
         var seen: Set<String> = []
         var result: [URL] = []
         for url in urls {
@@ -106,7 +122,7 @@ final class PermissionsService {
         return result
     }
 
-    private static func protectedProbeCandidates(for roots: [URL]) -> [URL] {
+    private nonisolated static func protectedProbeCandidates(for roots: [URL]) -> [URL] {
         let fileManager = FileManager.default
         let home = fileManager.homeDirectoryForCurrentUser.standardizedFileURL
         let candidates: [URL] = [
@@ -130,7 +146,7 @@ final class PermissionsService {
         case unavailable(reason: String)
     }
 
-    private static func shortLocationLabel(for url: URL) -> String {
+    private nonisolated static func shortLocationLabel(for url: URL) -> String {
         let path = url.path
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         if path == home {
@@ -146,11 +162,11 @@ final class PermissionsService {
         return name.isEmpty ? path : name
     }
 
-    private static func isPath(_ candidate: String, inside root: String) -> Bool {
+    private nonisolated static func isPath(_ candidate: String, inside root: String) -> Bool {
         candidate == root || candidate.hasPrefix(root == "/" ? "/" : root + "/")
     }
 
-    private static func probeRootAccess(_ url: URL) -> AccessProbeResult {
+    private nonisolated static func probeRootAccess(_ url: URL) -> AccessProbeResult {
         let path = url.path
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
@@ -162,43 +178,64 @@ final class PermissionsService {
         return probeFileRead(url)
     }
 
-    private static func probeFileRead(_ url: URL) -> AccessProbeResult {
-        do {
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            _ = try handle.read(upToCount: 1)
+    private nonisolated static func probeFileRead(_ url: URL) -> AccessProbeResult {
+        url.withUnsafeFileSystemRepresentation { fileSystemPath in
+            guard let fileSystemPath else {
+                return .unavailable(reason: "Invalid file path")
+            }
+
+            let fileDescriptor = Darwin.open(fileSystemPath, O_RDONLY)
+            guard fileDescriptor >= 0 else {
+                return classifyPOSIXErrno(Darwin.errno)
+            }
+
+            Darwin.close(fileDescriptor)
             return .granted
-        } catch {
-            return classifyAccessError(error)
         }
     }
 
-    private static func probeDirectoryList(_ url: URL) -> AccessProbeResult {
-        do {
-            _ = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil).prefix(1)
+    private nonisolated static func probeDirectoryList(_ url: URL) -> AccessProbeResult {
+        url.withUnsafeFileSystemRepresentation { fileSystemPath in
+            guard let fileSystemPath else {
+                return .unavailable(reason: "Invalid directory path")
+            }
+
+            guard let directory = opendir(fileSystemPath) else {
+                return classifyPOSIXErrno(Darwin.errno)
+            }
+
+            closedir(directory)
             return .granted
-        } catch {
-            return classifyAccessError(error)
         }
     }
 
-    private static func classifyAccessError(_ error: Error) -> AccessProbeResult {
-        let nsError = error as NSError
-        if nsError.domain == NSPOSIXErrorDomain {
-            switch nsError.code {
-            case Int(EACCES):
-                return .permissionDenied(reason: "POSIX EACCES")
-            case Int(EPERM):
-                return .permissionDenied(reason: "POSIX EPERM")
-            default:
-                break
-            }
+    private nonisolated static func classifyPOSIXErrno(_ code: Int32) -> AccessProbeResult {
+        switch code {
+        case EACCES:
+            return .permissionDenied(reason: "POSIX EACCES")
+        case EPERM:
+            return .permissionDenied(reason: "POSIX EPERM")
+        case ENOENT:
+            return .unavailable(reason: "Path does not exist")
+        default:
+            return .unavailable(reason: "POSIX \(code)")
         }
-        if nsError.domain == NSCocoaErrorDomain {
-            if nsError.code == NSFileReadNoPermissionError || nsError.code == NSFileWriteNoPermissionError {
-                return .permissionDenied(reason: "Cocoa no-permission")
-            }
+    }
+
+    private func logAccessReportIfNeeded(_ report: ScanScopeAccessReport) {
+        let blocked = Set(report.blockedLocations)
+        guard blocked != lastLoggedBlockedLocations else { return }
+
+        let previouslyBlocked = lastLoggedBlockedLocations
+        lastLoggedBlockedLocations = blocked
+
+        if blocked.isEmpty {
+            guard !previouslyBlocked.isEmpty else { return }
+            Self.logger.notice("Scan scope access restored for current roots")
+            return
         }
-        return .unavailable(reason: "\(nsError.domain) \(nsError.code)")
+
+        let blockedSummary = blocked.sorted().joined(separator: ", ")
+        Self.logger.notice("Blocked scan scope locations: \(blockedSummary, privacy: .public)")
     }
 }

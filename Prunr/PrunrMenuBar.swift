@@ -13,7 +13,8 @@ struct PrunrMenuBar: App {
             Darwin.exit(exitCode)
         }
 
-        menuBarManager = MenuBarManager()
+        let manager = MenuBarManager()
+        menuBarManager = manager
 
         // Ensure app doesn't appear in Dock (menu bar-only app)
         NSApp.setActivationPolicy(.accessory)
@@ -21,6 +22,9 @@ struct PrunrMenuBar: App {
         // Initialize database on app launch
         do {
             try DatabaseManager.shared.initialize()
+            Task { @MainActor [manager] in
+                await manager.configureMonitoringOnLaunch()
+            }
             Task.detached(priority: .utility) {
                 await DatabaseCleanupService.shared.performStartupMaintenance()
             }

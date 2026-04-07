@@ -66,6 +66,7 @@ private struct GeneralSettingsTab: View {
     @State private var compactedNotice = ""
     @State private var hasRequiredScanAccess = false
     @State private var blockedScanAccessLocations: [String] = []
+    @State private var permissionRefreshTask: Task<Void, Never>? = nil
 
     private var appVersionText: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"
@@ -317,17 +318,26 @@ private struct GeneralSettingsTab: View {
         .onAppear {
             refreshScanAccess()
         }
+        .onDisappear {
+            permissionRefreshTask?.cancel()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshScanAccess()
         }
     }
 
     private func refreshScanAccess() {
-        let report = permissionsService.evaluateScanScopeAccess(
-            scanRootURLs: settingsStore.enabledTrackedPaths.map(\.url.standardizedFileURL)
-        )
-        hasRequiredScanAccess = report.isGranted
-        blockedScanAccessLocations = report.blockedLocations
+        let roots = settingsStore.enabledTrackedPaths.map(\.url.standardizedFileURL)
+        permissionRefreshTask?.cancel()
+        permissionRefreshTask = Task {
+            let report = await permissionsService.evaluateScanScopeAccessAsync(scanRootURLs: roots)
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                hasRequiredScanAccess = report.isGranted
+                blockedScanAccessLocations = report.blockedLocations
+            }
+        }
     }
 
     private func openScanAccessSettings() {

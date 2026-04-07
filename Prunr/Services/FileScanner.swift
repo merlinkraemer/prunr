@@ -1,27 +1,19 @@
 import Foundation
 import OSLog
 import Darwin
+import os
 
 /// Thread-safe cancellation token that lets the scan caller signal cancellation
 /// directly to the FTS producer, bypassing the stream consumer round-trip.
 final class ScanCancellationToken: @unchecked Sendable {
-    private let _cancelled: UnsafeMutablePointer<Int32> = {
-        let p = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
-        p.initialize(to: 0)
-        return p
-    }()
+    private let cancelled = OSAllocatedUnfairLock(initialState: false)
 
     var isCancelled: Bool {
-        OSAtomicOr32Barrier(0, _cancelled) != 0
+        cancelled.withLock { $0 }
     }
 
     func cancel() {
-        OSAtomicOr32Barrier(1, _cancelled)
-    }
-
-    deinit {
-        _cancelled.deinitialize(count: 1)
-        _cancelled.deallocate()
+        cancelled.withLock { $0 = true }
     }
 }
 
@@ -47,6 +39,11 @@ final class FileScanner {
         "/.icloud/",
         "/com~apple~"
     ]
+
+    static func diskUsageBytes(for fileStat: stat) -> Int64 {
+        let allocatedBytes = Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
+        return allocatedBytes > 0 ? allocatedBytes : Int64(fileStat.st_size)
+    }
 
     // MARK: - Public API
 
@@ -128,8 +125,7 @@ final class FileScanner {
                     case FTS_F:
                         guard let statPointer = entry.pointee.fts_statp else { continue }
                         let stat = statPointer.pointee
-                        let allocatedBytes = Int64(stat.st_blocks) * Int64(DEV_BSIZE)
-                        let sizeBytes = allocatedBytes > 0 ? allocatedBytes : Int64(stat.st_size)
+                        let sizeBytes = Self.diskUsageBytes(for: stat)
                         let (category, subcategory) = GrowthCategory.classify(path: path)
                         let result = ScanResult(
                             path: path,

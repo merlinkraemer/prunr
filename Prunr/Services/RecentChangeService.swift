@@ -15,6 +15,7 @@ actor RecentChangeService {
         "/Library/Application Support/Prunr/",
         "/.build/derivedData/"
     ]
+    private static let stagingBatchSize = 1000
 
     enum RefreshResult: Sendable {
         case noChanges
@@ -72,23 +73,31 @@ actor RecentChangeService {
         var mergedDeltas: [DatabaseManager.JournalDeltaKey: Int64] = [:]
 
         for target in targets {
-            let entries: [ScanResult]
-            switch target {
-            case .file(let result):
-                entries = [result]
-            case .subtree(let root):
-                entries = await scanResults(for: root, ignoredNames: ignoredNames)
-            case .removal:
-                entries = []
-            }
-
             do {
-                let deltas = try await db.replaceWorkingSetSubtree(
-                    trackedPathId: trackedPath.id,
-                    rootPath: target.rootPath,
-                    entries: entries,
-                    updatedAt: scanTimestamp
-                )
+                let deltas: [DatabaseManager.JournalDeltaKey: Int64]
+                switch target {
+                case .file(let result):
+                    deltas = try await db.replaceWorkingSetSubtree(
+                        trackedPathId: trackedPath.id,
+                        rootPath: target.rootPath,
+                        entries: [result],
+                        updatedAt: scanTimestamp
+                    )
+                case .subtree(let root):
+                    deltas = try await applySubtreeRefresh(
+                        for: root,
+                        trackedPath: trackedPath,
+                        ignoredNames: ignoredNames,
+                        updatedAt: scanTimestamp
+                    )
+                case .removal:
+                    deltas = try await db.replaceWorkingSetSubtree(
+                        trackedPathId: trackedPath.id,
+                        rootPath: target.rootPath,
+                        entries: [],
+                        updatedAt: scanTimestamp
+                    )
+                }
                 for (key, delta) in deltas where delta != 0 {
                     mergedDeltas[key, default: 0] += delta
                 }
@@ -112,26 +121,59 @@ actor RecentChangeService {
         }
     }
 
-    private func scanResults(for root: URL, ignoredNames: Set<String>) async -> [ScanResult] {
+    private func applySubtreeRefresh(
+        for root: URL,
+        trackedPath: TrackedPath,
+        ignoredNames: Set<String>,
+        updatedAt: Date
+    ) async throws -> [DatabaseManager.JournalDeltaKey: Int64] {
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory)
-        guard exists else { return [] }
-
-        if !isDirectory.boolValue {
-            return []
+        guard exists, isDirectory.boolValue else {
+            return try await db.replaceWorkingSetSubtree(
+                trackedPathId: trackedPath.id,
+                rootPath: root.path,
+                entries: [],
+                updatedAt: updatedAt
+            )
         }
 
-        var results: [ScanResult] = []
-        let stream = scanner.scan(root, ignoredNames: ignoredNames)
+        let stagingSessionId = UUID().uuidString
+        try await db.clearWorkingSetRefreshStaging(sessionId: stagingSessionId)
+
         do {
-            for try await result in stream {
-                results.append(result)
-            }
-        } catch {
-            print("[RecentChangeService] Subtree scan failed for \(root.path): \(error)")
-        }
+            var batch: [ScanResult] = []
+            batch.reserveCapacity(Self.stagingBatchSize)
 
-        return results
+            let stream = scanner.scan(root, ignoredNames: ignoredNames)
+            for try await result in stream {
+                batch.append(result)
+                if batch.count >= Self.stagingBatchSize {
+                    try await db.appendWorkingSetRefreshStaging(
+                        sessionId: stagingSessionId,
+                        entries: batch
+                    )
+                    batch.removeAll(keepingCapacity: true)
+                }
+            }
+
+            if !batch.isEmpty {
+                try await db.appendWorkingSetRefreshStaging(
+                    sessionId: stagingSessionId,
+                    entries: batch
+                )
+            }
+
+            return try await db.replaceWorkingSetSubtree(
+                trackedPathId: trackedPath.id,
+                rootPath: root.path,
+                stagingSessionId: stagingSessionId,
+                updatedAt: updatedAt
+            )
+        } catch {
+            try? await db.clearWorkingSetRefreshStaging(sessionId: stagingSessionId)
+            throw error
+        }
     }
 
     /// Maximum number of individual refresh targets before coalescing to a single tracked-root rescan.
@@ -222,7 +264,7 @@ actor RecentChangeService {
         }
         var fileStat = stat()
         guard lstat(url.path, &fileStat) == 0 else { return nil }
-        let sizeBytes = Int64(fileStat.st_size)
+        let sizeBytes = FileScanner.diskUsageBytes(for: fileStat)
         let path = url.path
         let (category, subcategory) = GrowthCategory.classify(path: path)
         return ScanResult(
