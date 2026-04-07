@@ -52,12 +52,18 @@ actor RecentChangeService {
             return .noChanges
         }
 
-        if changedPaths.count > Self.maxRefreshTargets {
+        // If there are an insane number of events (e.g. 50k+ from a git checkout or npm install),
+        // trying to coalesce them with lstat calls will take too long. Fall back to a full scan.
+        if changedPaths.count > 25_000 {
             return .needsFullScan
         }
 
         let targets = refreshTargets(from: changedPaths, trackedPath: trackedPath)
         guard !targets.isEmpty else { return .noChanges }
+
+        if targets.count > Self.maxRefreshTargets {
+            return .needsFullScan
+        }
 
         if targets.contains(where: {
             if case .subtree(let url) = $0 {
