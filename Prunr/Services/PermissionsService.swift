@@ -1,22 +1,24 @@
 import AppKit
 import Foundation
+import os
 import SwiftUI
 
-/// Service for detecting and managing Full Disk Access permissions.
+/// Service for checking whether the current scan scope is reachable.
 ///
-/// macOS does not expose a supported API for FDA status. We combine a
-/// non-interactive TCC database read (fast) with optional readability checks
-/// on the user’s scan roots (after scope exists) so the UI matches real access.
+/// macOS does not expose a supported API for asking whether Full Disk Access is
+/// enabled. Product behavior therefore probes the actual scan roots plus a few
+/// protected descendants that commonly require extra privacy access.
 @MainActor
 @Observable
 final class PermissionsService {
-    struct FullDiskAccessReport: Sendable {
-        let isGranted: Bool
-        let deniedLocations: [String]
+    private static let logger = Logger(subsystem: "com.prunr.permissions", category: "ScanScopeAccess")
 
-        static let granted = FullDiskAccessReport(isGranted: true, deniedLocations: [])
-        static let denied = FullDiskAccessReport(isGranted: false, deniedLocations: [])
-        static let debugDenied = FullDiskAccessReport(isGranted: false, deniedLocations: ["Debug override"])
+    struct ScanScopeAccessReport: Sendable {
+        let isGranted: Bool
+        let blockedLocations: [String]
+
+        static let granted = ScanScopeAccessReport(isGranted: true, blockedLocations: [])
+        static let debugDenied = ScanScopeAccessReport(isGranted: false, blockedLocations: ["Debug override"])
     }
 
     // MARK: - Singleton
@@ -30,70 +32,66 @@ final class PermissionsService {
     /// Tracks whether a permission check is currently in progress
     var isCheckingPermission = false
 
-    // MARK: - Full Disk Access Detection
+    // MARK: - Scan Scope Access
 
-    /// Whether the app has Full Disk Access (TCC “all files” only — no scan roots).
-    var hasFullDiskAccess: Bool {
-        probeSystemFullDiskAccessViaTCC().isGranted
-    }
-
-    /// Full report for scan roots (or TCC-only when `scanRootURLs` is empty).
-    func evaluateFullDiskAccess(scanRootURLs: [URL] = []) -> FullDiskAccessReport {
+    /// Returns whether the selected scan roots are reachable, plus any protected
+    /// locations inside those roots that remain blocked.
+    func evaluateScanScopeAccess(scanRootURLs: [URL]) -> ScanScopeAccessReport {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "debugForceFDADenied") {
             return .debugDenied
         }
         #endif
 
-        guard probeSystemFullDiskAccessViaTCC().isGranted else {
-            return .denied
-        }
-
         let roots = Self.normalizedScanRoots(scanRootURLs)
-        guard !roots.isEmpty else {
-            return .granted
+        guard !roots.isEmpty else { return .granted }
+
+        var blocked = Set<String>()
+        for url in roots {
+            let probe = Self.probeRootAccess(url)
+            switch probe {
+            case .granted:
+                continue
+            case .permissionDenied(let reason):
+                let label = Self.shortLocationLabel(for: url)
+                blocked.insert(label)
+                Self.logger.warning("Permission denied for root '\(url.path, privacy: .public)': \(reason, privacy: .public)")
+            case .unavailable(let reason):
+                Self.logger.debug("Root probe unavailable for '\(url.path, privacy: .public)': \(reason, privacy: .public)")
+            }
         }
 
-        var denied: [String] = []
-        for url in roots where !Self.isRootReadable(url) {
-            denied.append(Self.shortLocationLabel(for: url))
+        for candidate in Self.protectedProbeCandidates(for: roots) {
+            let probe = Self.probeRootAccess(candidate)
+            switch probe {
+            case .granted:
+                continue
+            case .permissionDenied(let reason):
+                let label = Self.shortLocationLabel(for: candidate)
+                blocked.insert(label)
+                Self.logger.warning(
+                    "Permission denied for protected descendant '\(candidate.path, privacy: .public)': \(reason, privacy: .public)"
+                )
+            case .unavailable:
+                continue
+            }
         }
 
-        if denied.isEmpty {
+        if blocked.isEmpty {
             return .granted
         }
-        return FullDiskAccessReport(isGranted: false, deniedLocations: denied)
+        return ScanScopeAccessReport(isGranted: false, blockedLocations: blocked.sorted())
     }
 
     // MARK: - Permission Request
 
-    /// Opens System Settings to the Full Disk Access pane.
+    /// Opens System Settings to the Full Disk Access pane for protected locations.
     func requestFullDiskAccess() async {
         let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
         )!
 
         NSWorkspace.shared.open(url)
-    }
-
-    // MARK: - Permission Status
-
-    /// The current permission status based on Full Disk Access availability.
-    var permissionStatus: PermissionStatus {
-        if hasFullDiskAccess {
-            return .granted
-        }
-        return .denied
-    }
-
-    private func probeSystemFullDiskAccessViaTCC() -> FullDiskAccessReport {
-        let tccDbURL = URL(fileURLWithPath: "/Library/Application Support/com.apple.TCC/TCC.db")
-        do {
-            _ = try Data(contentsOf: tccDbURL, options: [.mappedIfSafe])
-            return .granted
-        } catch {
-            return .denied
-        }
     }
 
     private static func normalizedScanRoots(_ urls: [URL]) -> [URL] {
@@ -108,8 +106,28 @@ final class PermissionsService {
         return result
     }
 
-    private static func isRootReadable(_ url: URL) -> Bool {
-        FileManager.default.isReadableFile(atPath: url.path)
+    private static func protectedProbeCandidates(for roots: [URL]) -> [URL] {
+        let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser.standardizedFileURL
+        let candidates: [URL] = [
+            home.appendingPathComponent("Library/Safari/History.db"),
+            home.appendingPathComponent("Library/Messages/chat.db"),
+            home.appendingPathComponent("Library/Mail", isDirectory: true)
+        ]
+
+        return candidates.filter { candidate in
+            let standardizedCandidate = candidate.standardizedFileURL
+            guard roots.contains(where: { isPath(standardizedCandidate.path, inside: $0.path) }) else {
+                return false
+            }
+            return fileManager.fileExists(atPath: standardizedCandidate.path)
+        }
+    }
+
+    private enum AccessProbeResult {
+        case granted
+        case permissionDenied(reason: String)
+        case unavailable(reason: String)
     }
 
     private static func shortLocationLabel(for url: URL) -> String {
@@ -127,35 +145,60 @@ final class PermissionsService {
         let name = url.lastPathComponent
         return name.isEmpty ? path : name
     }
-}
 
-// MARK: - PermissionStatus
+    private static func isPath(_ candidate: String, inside root: String) -> Bool {
+        candidate == root || candidate.hasPrefix(root == "/" ? "/" : root + "/")
+    }
 
-/// The permission status for Full Disk Access.
-enum PermissionStatus: String, CaseIterable {
-    case notDetermined
-    case granted
-    case denied
+    private static func probeRootAccess(_ url: URL) -> AccessProbeResult {
+        let path = url.path
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return .unavailable(reason: "Path does not exist")
+        }
+        if isDirectory.boolValue {
+            return probeDirectoryList(url)
+        }
+        return probeFileRead(url)
+    }
 
-    var displayName: String {
-        switch self {
-        case .notDetermined:
-            "Not Determined"
-        case .granted:
-            "Granted"
-        case .denied:
-            "Denied"
+    private static func probeFileRead(_ url: URL) -> AccessProbeResult {
+        do {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            _ = try handle.read(upToCount: 1)
+            return .granted
+        } catch {
+            return classifyAccessError(error)
         }
     }
 
-    var icon: String {
-        switch self {
-        case .notDetermined:
-            "questionmark.circle"
-        case .granted:
-            "checkmark.circle.fill"
-        case .denied:
-            "xmark.circle.fill"
+    private static func probeDirectoryList(_ url: URL) -> AccessProbeResult {
+        do {
+            _ = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil).prefix(1)
+            return .granted
+        } catch {
+            return classifyAccessError(error)
         }
+    }
+
+    private static func classifyAccessError(_ error: Error) -> AccessProbeResult {
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain {
+            switch nsError.code {
+            case Int(EACCES):
+                return .permissionDenied(reason: "POSIX EACCES")
+            case Int(EPERM):
+                return .permissionDenied(reason: "POSIX EPERM")
+            default:
+                break
+            }
+        }
+        if nsError.domain == NSCocoaErrorDomain {
+            if nsError.code == NSFileReadNoPermissionError || nsError.code == NSFileWriteNoPermissionError {
+                return .permissionDenied(reason: "Cocoa no-permission")
+            }
+        }
+        return .unavailable(reason: "\(nsError.domain) \(nsError.code)")
     }
 }

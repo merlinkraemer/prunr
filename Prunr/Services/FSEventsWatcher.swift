@@ -23,16 +23,9 @@ actor FSEventsWatcher {
     /// The underlying FSEventStream, if created and started.
     private var stream: FSEventStreamRef?
 
-    /// Current debounce task for pending changes.
-    private var debounceTask: Task<Void, Never>?
-
-    /// Paths accumulated since the debounce window started.
-    private var pendingPaths = Set<URL>()
-
-    /// Whether the accumulated batch includes a dropped/root-changed event.
-    private var pendingRequiresFullRescan = false
-
-    /// Debounce interval in seconds (default: 3.0)
+    /// Coalescing interval in seconds (default: 1.0).
+    /// Passed through to the FSEvents stream latency so the system can coalesce
+    /// callbacks before they reach the app.
     private let debounceInterval: TimeInterval
 
     /// Callback invoked when debounced changes are detected.
@@ -89,7 +82,6 @@ actor FSEventsWatcher {
         // File-level events give us more reliable roots for incremental rescans.
         let flags = FSEventStreamCreateFlags(
             kFSEventStreamCreateFlagFileEvents |
-            kFSEventStreamCreateFlagNoDefer |
             kFSEventStreamCreateFlagWatchRoot
         )
 
@@ -131,13 +123,13 @@ actor FSEventsWatcher {
 
                 // Trigger debounced handling
                 Task {
-                    await watcher.handleEventPaths(changedPaths, requiresFullRescan: requiresFullRescan)
+                    await watcher.emitChangeBatch(changedPaths, requiresFullRescan: requiresFullRescan)
                 }
             },
             &context,
             paths as CFArray,
             UInt64(kFSEventStreamEventIdSinceNow),
-            0.5,
+            debounceInterval,
             flags
         ) else {
             releaseCallbackInfoIfNeeded()
@@ -169,12 +161,6 @@ actor FSEventsWatcher {
     ///
     /// This stops the stream, invalidates it, and cleans up resources.
     func stop() {
-        // Cancel any pending debounce task
-        debounceTask?.cancel()
-        debounceTask = nil
-        pendingPaths.removeAll()
-        pendingRequiresFullRescan = false
-
         guard let eventStream = stream else {
             isRunning = false
             releaseCallbackInfoIfNeeded()
@@ -208,39 +194,14 @@ actor FSEventsWatcher {
 
     // MARK: - Private Methods
 
-    /// Handles event paths with debouncing.
-    ///
-    /// Cancels any existing debounce task and creates a new one that will
-    /// invoke the onChange callback after the debounce interval.
+    /// Emits a single coalesced FSEvents callback to the app.
     ///
     /// - Parameters:
     ///   - paths: Set of URLs that changed
     ///   - requiresFullRescan: Whether the stream reported dropped/root-change events
-    private func handleEventPaths(_ paths: Set<URL>, requiresFullRescan: Bool = false) {
+    private func emitChangeBatch(_ paths: Set<URL>, requiresFullRescan: Bool = false) {
         guard isRunning else { return }
-
-        pendingPaths.formUnion(paths)
-        if requiresFullRescan {
-            pendingRequiresFullRescan = true
-        }
-        debounceTask?.cancel()
-
-        debounceTask = Task {
-            try? await Task.sleep(nanoseconds: UInt64(debounceInterval * 1_000_000_000))
-
-            // Only invoke if not cancelled
-            guard !Task.isCancelled else { return }
-            guard isRunning else { return }
-
-            let batch = ChangeBatch(
-                changedPaths: pendingPaths,
-                requiresFullRescan: pendingRequiresFullRescan
-            )
-            pendingPaths.removeAll()
-            pendingRequiresFullRescan = false
-            debounceTask = nil
-            onChange?(batch)
-        }
+        onChange?(ChangeBatch(changedPaths: paths, requiresFullRescan: requiresFullRescan))
     }
 
     // MARK: - Cleanup
@@ -258,8 +219,6 @@ actor FSEventsWatcher {
     }
 
     deinit {
-        debounceTask?.cancel()
-
         // Clean up stream if still running
         if let eventStream = stream {
             FSEventStreamStop(eventStream)

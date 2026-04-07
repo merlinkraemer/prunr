@@ -1036,6 +1036,55 @@ actor BaselineService {
         }
     }
 
+    func loadMoreSubcategoryFilesFromWorkingSet(
+        for category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        trackedPathIds: [UUID],
+        totalBytes: Int64,
+        offset: Int,
+        limit: Int = SubcategoryGroup.loadMoreBatchSize
+    ) async -> [GrowthItem] {
+        do {
+            let requestedCount = offset + limit
+            var entries: [SnapshotEntryWithPath] = []
+
+            for trackedPathId in trackedPathIds {
+                let rows = try await db.fetchWorkingSetEntriesByClassification(
+                    trackedPathId: trackedPathId,
+                    category: category,
+                    subcategory: subcategory,
+                    offset: 0,
+                    limit: requestedCount
+                )
+                entries.append(contentsOf: rows)
+            }
+
+            let page = entries
+                .sorted { lhs, rhs in
+                    if lhs.sizeBytes == rhs.sizeBytes {
+                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+                    }
+                    return lhs.sizeBytes > rhs.sizeBytes
+                }
+                .dropFirst(offset)
+                .prefix(limit)
+
+            return page.map { entry in
+                let percent = totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0
+                return GrowthItem(
+                    path: entry.path,
+                    growthBytes: entry.sizeBytes,
+                    currentSizeBytes: entry.sizeBytes,
+                    percentOfParent: percent,
+                    subcategory: subcategory
+                )
+            }
+        } catch {
+            print("[BaselineService] Error loading aggregated working set files for subcategory: \(error)")
+            return []
+        }
+    }
+
     func getSubcategoryGrowthTotals(
         trackedPathId: UUID,
         snapshotId: Int64,

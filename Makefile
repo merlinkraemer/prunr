@@ -31,7 +31,7 @@ STRESS_FANOUT ?= 250
 STRESS_MUTATE_COUNT ?= 1000
 STRESS_MUTATE_BYTES ?= 1048576
 
-.PHONY: all build run dev launch clean clean-build reset-dev-state help doctor test open logs stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean
+.PHONY: all build install-app run dev launch clean clean-build reset-dev-state help doctor test open logs stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean
 
 all: help
 
@@ -65,11 +65,17 @@ build:
 		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES)
 	@echo "$(GREEN)Build complete!$(NC)"
 
-run: kill build launch
+run: kill install-app launch
+
+install-app: build
+	@echo "$(BLUE)Installing $(SCHEME) to /Applications...$(NC)"
+	@rm -rf "/Applications/$(SCHEME).app"
+	@ditto "$(DERIVED_DATA)/Build/Products/$(CONFIG)/$(SCHEME).app" "/Applications/$(SCHEME).app"
+	@echo "$(GREEN)Installed /Applications/$(SCHEME).app$(NC)"
 
 launch:
 	@echo "$(BLUE)Launching $(SCHEME)...$(NC)"
-	open $(DERIVED_DATA)/Build/Products/$(CONFIG)/$(SCHEME).app
+	open /Applications/$(SCHEME).app
 
 dev: kill reset-dev-state clean-build build launch
 

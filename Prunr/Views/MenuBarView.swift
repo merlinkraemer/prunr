@@ -8,8 +8,8 @@ struct MenuBarView: View {
     @State private var settingsStore = SettingsStore.shared
     @State private var settingsHover = false
     @State private var refreshHover = false
-    @State private var hasFullDiskAccess: Bool? = nil
-    @State private var blockedFullDiskAccessLocations: [String] = []
+    @State private var hasRequiredScanAccess: Bool? = nil
+    @State private var blockedScanAccessLocations: [String] = []
     @State private var isBootstrapping = true
     @State private var permissionsService = PermissionsService.shared
     @State private var highlightedStorageSegmentID: String? = nil
@@ -22,8 +22,8 @@ struct MenuBarView: View {
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
     @State private var acceptedGrowthFeedbackTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
-    @State private var selectedOnboardingPage = OnboardingPage.permissions
-    @State private var displayedOnboardingPage = OnboardingPage.permissions
+    @State private var selectedOnboardingPage = OnboardingPage.folder
+    @State private var displayedOnboardingPage = OnboardingPage.folder
     @State private var outgoingOnboardingPage: OnboardingPage? = nil
     @State private var onboardingOffset: CGFloat = 0
     @State private var onboardingWidth: CGFloat = 0
@@ -48,8 +48,8 @@ struct MenuBarView: View {
     }
 
     private enum OnboardingPage: Int, CaseIterable {
-        case permissions
         case folder
+        case permissions
         case scan
 
         var number: Int {
@@ -58,10 +58,10 @@ struct MenuBarView: View {
 
         var title: String {
             switch self {
-            case .permissions:
-                return "Access"
             case .folder:
                 return "Folder"
+            case .permissions:
+                return "Access"
             case .scan:
                 return "Scan"
             }
@@ -146,16 +146,28 @@ struct MenuBarView: View {
         hasEnabledScanPath && hasValidScanFolder && hasExplicitOnboardingFolderChoice
     }
 
-    private var maxUnlockedOnboardingPage: OnboardingPage {
-        if hasFullDiskAccess != true {
-            return .permissions
-        }
+    private var onboardingPermissionSatisfied: Bool {
+        hasRequiredScanAccess == true
+    }
 
+    private var maxUnlockedOnboardingPage: OnboardingPage {
         if !onboardingFolderStepComplete {
             return .folder
         }
 
+        if !onboardingPermissionSatisfied {
+            return .permissions
+        }
+
         return .scan
+    }
+
+    private var accessCheckRoots: [URL] {
+        let enabledRoots = settingsStore.enabledTrackedPaths.map(\.url.standardizedFileURL)
+        if manager.noBaseline || enabledRoots.isEmpty {
+            return [selectedScanFolderURL]
+        }
+        return enabledRoots
     }
 
     private var currentOnboardingPage: OnboardingPage {
@@ -186,13 +198,13 @@ struct MenuBarView: View {
             if manager.isLoading || manager.isAutoScanning {
                 return page == .scan
             }
-            return page == .folder || page == .scan
+            return page.rawValue <= currentOnboardingPage.rawValue
         }
         return page.rawValue <= maxUnlockedOnboardingPage.rawValue
     }
 
     private var canNavigateBackInOnboarding: Bool {
-        guard currentOnboardingPage != .permissions else { return false }
+        guard currentOnboardingPage != .folder else { return false }
         guard let previousPage = OnboardingPage(rawValue: currentOnboardingPage.rawValue - 1) else { return false }
         return onboardingStepIsUnlocked(previousPage)
     }
@@ -301,8 +313,8 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if hasFullDiskAccess == false && !manager.noBaseline {
-                fullDiskAccessBanner
+            if hasRequiredScanAccess == false && !manager.noBaseline {
+                additionalAccessBanner
             }
 
             Group {
@@ -322,7 +334,8 @@ struct MenuBarView: View {
         }
         .frame(width: 320, height: 480)
         .onAppear {
-            refreshFullDiskAccess()
+            refreshScanAccess()
+            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
             selectedOnboardingPage = maxUnlockedOnboardingPage
         }
         .onDisappear {
@@ -331,7 +344,23 @@ struct MenuBarView: View {
             acceptedGrowthFeedbackTask?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshFullDiskAccess()
+            refreshScanAccess()
+            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
+        }
+        .onChange(of: hasRequiredScanAccess) { _, _ in
+            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
+        }
+        .onChange(of: settingsStore.mainBasePath) { _, _ in
+            refreshScanAccess()
+            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
+        }
+        .onChange(of: manager.noBaseline) { _, _ in
+            refreshScanAccess()
+            manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
+        }
+        .onChange(of: manager.runtimeBlockedLocations) { _, newValue in
+            guard !newValue.isEmpty else { return }
+            blockedScanAccessLocations = Array(Set(blockedScanAccessLocations + newValue)).sorted()
         }
         .onChange(of: manager.isPopoverShown) { _, isShown in
             guard isShown else { return }
@@ -355,7 +384,7 @@ struct MenuBarView: View {
             }
         }
         .task {
-            if hasFullDiskAccess != true {
+            if !onboardingPermissionSatisfied {
                 await manager.checkBaseline(trackedPathsOverride: [settingsStore.mainTrackedPath])
                 isBootstrapping = false
                 return
@@ -667,52 +696,10 @@ struct MenuBarView: View {
     @ViewBuilder
     private func onboardingPageCard(for page: OnboardingPage) -> some View {
         switch page {
-        case .permissions:
-            VStack(spacing: 10) {
-                onboardingTitleSection(
-                    number: 1,
-                    icon: "lock.shield",
-                    title: "Grant Full Disk Access",
-                    description: "macOS needs this so Prunr can scan your chosen folders without repeated Desktop, Documents, or media-library prompts. Enable Prunr for the exact copy you run (for example the app in Applications versus a build from Xcode), then return here."
-                )
-
-                VStack(spacing: 14) {
-                    if hasFullDiskAccess == true {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("Full Disk Access ready")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundStyle(.green)
-                    } else {
-                        VStack(spacing: 10) {
-                            primaryActionButton("Open Full Disk Access", minWidth: 188) {
-                                openFullDiskAccessSettings()
-                            }
-
-                            secondaryActionButton("Check again", minWidth: 188) {
-                                refreshFullDiskAccess()
-                            }
-
-                            if !blockedFullDiskAccessLocations.isEmpty {
-                                Text("Still blocked: \(blockedFullDiskAccessLocations.prefix(3).joined(separator: ", "))")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 22)
-            }
-
         case .folder:
             VStack(spacing: 10) {
                 onboardingTitleSection(
-                    number: 2,
+                    number: 1,
                     icon: "folder.badge.gearshape",
                     title: "Setup Path",
                     description: "Pick the scope for your first scan."
@@ -724,7 +711,6 @@ struct MenuBarView: View {
                             let isSelected = onboardingChosenFolderPath?.standardizedFileURL == option.url.standardizedFileURL
 
                             Button {
-                                guard hasFullDiskAccess == true else { return }
                                 applyOnboardingScanFolder(option.url)
                             } label: {
                                 HStack(spacing: 10) {
@@ -761,7 +747,6 @@ struct MenuBarView: View {
                             .padding(.vertical, 4)
 
                         Button {
-                            guard hasFullDiskAccess == true else { return }
                             manager.showOnboardingFolderPicker { url in
                                 if let url = url {
                                     customOnboardingFolderPath = url
@@ -782,6 +767,49 @@ struct MenuBarView: View {
 
                     }
                 }
+            }
+
+        case .permissions:
+            VStack(spacing: 10) {
+                onboardingTitleSection(
+                    number: 2,
+                    icon: "lock.shield",
+                    title: "Review Privacy Access",
+                    description: "Prunr checks whether the folder you chose is actually reachable. Some protected locations may still need extra macOS privacy access."
+                )
+
+                VStack(spacing: 14) {
+                    if onboardingPermissionSatisfied {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("Selected scan scope is accessible")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundStyle(.green)
+                    } else {
+                        VStack(spacing: 10) {
+                            primaryActionButton("Open Privacy Settings", minWidth: 188) {
+                                openScanAccessSettings()
+                            }
+
+                            if !blockedScanAccessLocations.isEmpty {
+                                Text("Still blocked: \(blockedScanAccessLocations.prefix(3).joined(separator: ", "))")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                            } else {
+                                Text("Choose a folder first, then return here if macOS blocks protected locations inside it.")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 22)
             }
 
         case .scan:
@@ -807,9 +835,27 @@ struct MenuBarView: View {
                                 .truncationMode(.middle)
                         }
 
+                        if !onboardingPermissionSatisfied {
+                            VStack(spacing: 8) {
+                                Text(
+                                    blockedScanAccessLocations.isEmpty
+                                        ? "Open Privacy Settings if macOS blocks protected locations inside this folder."
+                                        : "Protected locations still blocked: \(blockedScanAccessLocations.prefix(3).joined(separator: ", "))"
+                                )
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+
+                                secondaryActionButton("Open Privacy Settings", minWidth: 168) {
+                                    openScanAccessSettings()
+                                }
+                            }
+                        }
+
                         primaryActionButton("Start Scan", minWidth: 168) {
                             startOnboardingFirstScan()
                         }
+                        .opacity(onboardingPermissionSatisfied ? 1.0 : 0.5)
                     }
                 }
             }
@@ -1049,33 +1095,32 @@ struct MenuBarView: View {
         focusedDriveBarCategory != nil
     }
 
-    private func refreshFullDiskAccess() {
-        let roots = settingsStore.enabledTrackedPaths.map(\.url)
-        let report = permissionsService.evaluateFullDiskAccess(scanRootURLs: roots)
-        hasFullDiskAccess = report.isGranted
-        blockedFullDiskAccessLocations = report.deniedLocations
+    private func refreshScanAccess() {
+        let report = permissionsService.evaluateScanScopeAccess(scanRootURLs: accessCheckRoots)
+        hasRequiredScanAccess = report.isGranted
+        blockedScanAccessLocations = Array(Set(report.blockedLocations + manager.runtimeBlockedLocations)).sorted()
     }
 
-    private func openFullDiskAccessSettings() {
+    private func openScanAccessSettings() {
         Task {
             await permissionsService.requestFullDiskAccess()
         }
     }
 
-    private var fullDiskAccessBanner: some View {
+    private var additionalAccessBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "lock.shield")
                 .font(.system(size: 11))
                 .foregroundStyle(.orange)
 
-            Text("Full Disk Access required")
+            Text("Extra macOS privacy access may be required")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.primary)
 
             Spacer()
 
             Button("Open") {
-                openFullDiskAccessSettings()
+                openScanAccessSettings()
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -1555,12 +1600,14 @@ struct MenuBarView: View {
         onboardingChosenFolderPath = url
         settingsStore.setMainBasePath(url)
         settingsStore.setPathEnabled(settingsStore.mainTrackedPath, enabled: true)
+        refreshScanAccess()
+        manager.isPermissionConfirmedForProtectedTraversal = onboardingPermissionSatisfied
 
         if manager.noBaseline {
             settingsStore.clearPendingScopeChanges()
         }
 
-        selectedOnboardingPage = .scan
+        selectedOnboardingPage = .permissions
     }
 
     private func shortDisplayPath(for url: URL) -> String {
@@ -1583,7 +1630,7 @@ struct MenuBarView: View {
     }
 
     private func startOnboardingFirstScan() {
-        guard hasFullDiskAccess == true else { return }
+        guard onboardingPermissionSatisfied else { return }
         guard manager.noBaseline else { return }
         guard onboardingFolderStepComplete else { return }
         guard !manager.isLoading, !manager.isAutoScanning else { return }

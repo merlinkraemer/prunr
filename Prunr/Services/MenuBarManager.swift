@@ -116,6 +116,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// While true, `reconcileDrillDownSelection()` is skipped so inventory refreshes do not collapse drill-down mid-slide.
     var isDrillDownTransitionAnimating: Bool = false
+    /// Gate for watchers/silent reconciliations touching protected folders.
+    var isPermissionConfirmedForProtectedTraversal = false
+    /// Most recent paths that failed with permission errors during runtime operations.
+    var runtimeBlockedLocations: [String] = []
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
     var hasCompletedInitialSubcategoryWarmup = false
     private var subcategoryBreakdownCacheGenerationByCategory: [GrowthCategory: UInt64] = [:]
@@ -257,22 +261,21 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// - Parameters:
     ///   - trackedPath: The path whose scan produced these partial totals.
     ///   - totals: Partial `[GrowthCategory: Int64]` accumulated so far by ScanService.
-    private func applyPartialCategoryTotals(from trackedPath: TrackedPath, totals: [GrowthCategory: Int64]) {
-        // Merge the new totals into the aggregate (replace any existing entry from this path
-        // since these totals are cumulative within the scan, not incremental per callback).
-        // For multi-path parallel scans we keep a running merge across all paths;
-        // the simplest correct approach is to just overwrite the values for each received key
-        // since the totals from a single path are always monotonically increasing.
-        for (category, bytes) in totals {
-            partialScanCategoryTotals[category, default: 0] = max(
-                partialScanCategoryTotals[category, default: 0],
-                bytes
-            )
+    func applyPartialCategoryTotals(from trackedPath: TrackedPath, totals: [GrowthCategory: Int64]) {
+        // Progress totals are cumulative per tracked path. Store the latest totals
+        // for that path and then sum across all active tracked paths.
+        partialScanCategoryTotalsByPathID[trackedPath.id] = totals
+
+        var aggregateTotals: [GrowthCategory: Int64] = [:]
+        for perPathTotals in partialScanCategoryTotalsByPathID.values {
+            for (category, bytes) in perPathTotals where bytes > 0 {
+                aggregateTotals[category, default: 0] += bytes
+            }
         }
 
         // Convert partial totals to CategoryInventoryItem (no growth trend during scan)
         // and push to stableCategories so views see them live.
-        let liveCategories = partialScanCategoryTotals
+        let liveCategories = aggregateTotals
             .filter { $0.value > 0 }
             .map { category, bytes in
                 CategoryInventoryItem(
@@ -367,7 +370,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Partial category totals accumulated across all currently-scanning paths.
     /// Updated live every ~2 seconds during scan so the UI can show categories filling in.
     /// Reset to empty when a scan starts or finishes.
-    private var partialScanCategoryTotals: [GrowthCategory: Int64] = [:]
+    private var partialScanCategoryTotalsByPathID: [UUID: [GrowthCategory: Int64]] = [:]
 
     var isAnalyzingChanges: Bool = false {
         didSet { updateMenuBarActivityEffect() }
@@ -409,6 +412,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     nonisolated(unsafe) private var recentChangeTask: Task<Void, Never>?
     private var isInventoryRefreshInProgress = false
     private var pendingRecentChangePaths: Set<URL> = []
+    private var pendingRecentChangeRequiresFullRefresh = false
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
     private var isUnderDiskPressure = false
@@ -416,8 +420,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var hasPendingRecentChanges = false
     var isProcessingRecentChanges = false
     /// True when incremental deltas have been applied since the last full scan snapshot.
-    /// Routes subcategory drill-down reads to the working set instead of the stale snapshot.
+    /// Drill-down reads should then prefer the live working set over the stale snapshot.
     private var hasIncrementalDeltasSinceSnapshot = false
+    private var liveWorkingSetDrillDownCategories: Set<GrowthCategory> = []
     /// True only when the user explicitly tapped the "Check Growth" button.
     var isCheckingGrowth = false {
         didSet { updateMenuBarActivityEffect() }
@@ -653,9 +658,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         errorMessage = nil
         hasPendingRecentChanges = false
         pendingRecentChangePaths.removeAll()
+        pendingRecentChangeRequiresFullRefresh = false
         lastDetectedChangeAt = nil
         lastAutomaticScanAt = nil
         hasIncrementalDeltasSinceSnapshot = false
+        liveWorkingSetDrillDownCategories = []
         updateMonitoredPathName()
         updateFreeSpace()
         await checkBaseline()
@@ -782,12 +789,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         isLoading = true
         errorMessage = nil
+        runtimeBlockedLocations = []
         noBaseline = false
         filesScanned = 0
         isAnalyzingChanges = false
         recentChangeTask?.cancel()
         recentChangeTask = nil
         pendingRecentChangePaths.removeAll()
+        pendingRecentChangeRequiresFullRefresh = false
         hasPendingRecentChanges = false
         scanProgress = "Scanning \(trackedPath.displayName)..."
         scanCurrentPath = trackedPath.url.path
@@ -797,7 +806,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanProgressPercentage = 0.03
         scanEstimatedTotalFiles = 0
         hasReliableScanProgressEstimate = false
-        partialScanCategoryTotals = [:] // Reset live-fill data for this scan session
+        partialScanCategoryTotalsByPathID = [:] // Reset live-fill data for this scan session
 
         // Record scan start time for minimum display duration
         let startTime = Date()
@@ -816,6 +825,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         do {
+            await armFileWatcherBeforeFullScanIfNeeded(for: enabledPaths)
+
             // First, take a new snapshot
             completedSnapshotsByPath = try await createBaselines(
                 for: enabledPaths,
@@ -868,7 +879,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             // Refresh storage space after scan (ISS-042)
             updateFreeSpace()
-            hasPendingRecentChanges = !pendingRecentChangePaths.isEmpty
+            hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
         } catch {
             if let baselineError = error as? BaselineService.BaselineError,
                case .insufficientSnapshots = baselineError {
@@ -900,6 +911,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 scanCurrentPathDisplay = ""
                 isAnalyzingChanges = false
                 wasCancelled = true
+            } else if let scanError = error as? ScanError, case .permissionDenied(let path) = scanError {
+                let label = URL(fileURLWithPath: path).lastPathComponent
+                runtimeBlockedLocations = [label.isEmpty ? path : label]
+                if !isAutomatic {
+                    errorMessage = "Permission denied: \(path)"
+                }
             } else {
                 print("[MenuBarManager] Error loading inventory: \(error)")
                 if !isAutomatic {
@@ -934,6 +951,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         isLoading = false
         hasIncrementalDeltasSinceSnapshot = false
+        liveWorkingSetDrillDownCategories = []
         scanProgress = ""
         scanCurrentPath = ""
         scanCurrentPathDisplay = ""
@@ -944,7 +962,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         filesScanned = 0
         isAnalyzingChanges = false
         scanStartTime = nil
-        partialScanCategoryTotals = [:] // Clear live-fill data after scan completes
+        partialScanCategoryTotalsByPathID = [:] // Clear live-fill data after scan completes
         if completedSuccessfully, !wasCancelled {
             lastAutomaticScanAt = completedSnapshotsByPath.values.map(\.createdAt).max() ?? Date()
             SettingsStore.shared.applyAdaptiveFullScanIntervalIfNeeded(scanDuration: scanWallDuration)
@@ -953,7 +971,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         await updatePathSize()
 
         // Flush any FSEvents that arrived during the scan
-        if !pendingRecentChangePaths.isEmpty {
+        if pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty {
             scheduleRecentChangeRefreshTask(after: 0.5)
         }
     }
@@ -1039,6 +1057,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
 
             suppressGrowthIndicators = false
+            hasIncrementalDeltasSinceSnapshot = false
+            liveWorkingSetDrillDownCategories = []
             await loadInventoryFromLatestSnapshot(
                 refreshedAt: Date(),
                 invalidateSubcategoryCache: true,
@@ -1068,6 +1088,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Silently reconciles the working set against a fresh full scan.
     /// No spinners, no status text changes — applies corrections as incremental patches.
     func performSilentReconciliation() async {
+        guard isPermissionConfirmedForProtectedTraversal else { return }
         guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else { return }
         isReconciling = true
         defer {
@@ -1081,7 +1102,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         do {
             _ = try await createBaselines(for: enabledPaths) { _, _ in }
         } catch {
-            Self.logger.error("Silent reconciliation failed: \(error.localizedDescription)")
+            if let scanError = error as? ScanError, case .permissionDenied(let path) = scanError {
+                let label = URL(fileURLWithPath: path).lastPathComponent
+                runtimeBlockedLocations = [label.isEmpty ? path : label]
+                Self.logger.error("Silent reconciliation permission denied at: \(path, privacy: .public)")
+            } else {
+                Self.logger.error("Silent reconciliation failed: \(error.localizedDescription)")
+            }
             return
         }
 
@@ -1094,6 +1121,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Kicks off silent reconciliation if the last one exceeds the user's configured scan interval.
     func reconcileIfStale() {
+        guard isPermissionConfirmedForProtectedTraversal else { return }
         guard !noBaseline else { return }
         let staleThreshold = SettingsStore.shared.automaticFullScanInterval
         if let lastReconciliation = lastReconciliationAt ?? lastAutomaticScanAt,
@@ -1208,7 +1236,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
 
             let groups: [SubcategoryGroup]
-            if currentInventorySnapshotIDsByPath.isEmpty {
+            if shouldUseWorkingSetForSubcategoryDetails(category) {
                 groups = await baselineService.getSubcategoryBreakdownFromWorkingSet(
                     for: category,
                     trackedPathsById: trackedPathsByID,
@@ -1264,13 +1292,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         guard group.hasMoreFiles else { return nil }
 
         let additionalFiles: [GrowthItem]
-        if currentInventorySnapshotIDsByPath.isEmpty {
+        if shouldUseWorkingSetForSubcategoryDetails(category) {
             let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-            guard let primaryPath = primaryTrackedPath(from: enabledPaths) else { return nil }
+            let trackedPathsByID = trackedPathsByID(enabledPaths)
+            guard !trackedPathsByID.isEmpty else { return nil }
             additionalFiles = await baselineService.loadMoreSubcategoryFilesFromWorkingSet(
                 for: category,
                 subcategory: group.subcategory,
-                trackedPathId: primaryPath.id,
+                trackedPathIds: Array(trackedPathsByID.keys),
                 totalBytes: group.totalBytes,
                 offset: group.loadedFileCount
             )
@@ -1400,6 +1429,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         hasReliableScanProgressEstimate = false
 
         do {
+            await armFileWatcherBeforeFullScanIfNeeded(for: pathsToTry)
             _ = try await createBaselines(for: pathsToTry) { _, _ in }
             noBaseline = false
             scanProgress = ""
@@ -1458,6 +1488,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isAutoScanning = true
 
         do {
+            await armFileWatcherBeforeFullScanIfNeeded(for: pathsToScan)
             _ = try await createBaselines(for: pathsToScan) { _, _ in }
             noBaseline = false
         } catch {
@@ -1552,6 +1583,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             || previousSnapshotSignature != newSnapshotSignature
             || previousBaselineSignature != newBaselineSignature
 
+        if previousSnapshotSignature != newSnapshotSignature {
+            hasIncrementalDeltasSinceSnapshot = false
+            liveWorkingSetDrillDownCategories = []
+        }
+
         var growing: [CategoryInventoryItem] = []
         var stable: [CategoryInventoryItem] = []
         var stableTotal: Int64 = 0
@@ -1620,7 +1656,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             reconciliationResult = nil
             currentInventorySnapshotIDsByPath = [:]
             currentGrowthBaselineSnapshotIDsByPath = [:]
+            hasIncrementalDeltasSinceSnapshot = false
+            liveWorkingSetDrillDownCategories = []
         }
+    }
+
+    private func shouldUseWorkingSetForSubcategoryDetails(_ category: GrowthCategory) -> Bool {
+        guard !currentInventorySnapshotIDsByPath.isEmpty else { return true }
+        return hasIncrementalDeltasSinceSnapshot
     }
 
     private func resolveSubcategoryBreakdownLoad(
@@ -2340,6 +2383,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func configureFileWatcherIfNeeded() {
+        guard isPermissionConfirmedForProtectedTraversal else {
+            watchedPaths = []
+            Task { @MainActor in
+                if let watcher = fileEventsWatcher {
+                    await watcher.stop()
+                }
+                fileEventsWatcher = nil
+            }
+            return
+        }
         guard !noBaseline else {
             watchedPaths = []
             Task { @MainActor in
@@ -2390,29 +2443,64 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let watcher = FSEventsWatcher(pathsToWatch: urls, debounceInterval: 1.0)
         await watcher.setOnChange { [weak self] changeBatch in
             Task { @MainActor in
-                guard let self else { return }
-
-                // Filter out noisy paths before processing
-                let filteredPaths = changeBatch.changedPaths.filter { url in
-                    !FSEventsNoiseFilter.shouldIgnore(url.path)
-                }
-                guard !filteredPaths.isEmpty else { return }
-                guard !self.shouldIgnoreAutoScanChanges(filteredPaths) else { return }
-
-                self.lastFileEventAt = Date()
-                // Always accumulate — never drop events during scan/cleanup
-                self.pendingRecentChangePaths.formUnion(filteredPaths.map(\.standardizedFileURL))
-                self.hasPendingRecentChanges = true
-
-                // Only schedule processing when not scanning — events accumulate
-                // and will be flushed after loadInventory completes
-                if !self.isLoading, !self.isAutoScanning {
-                    self.scheduleRecentChangeRefreshTask(after: self.currentRecentChangeDebounce)
-                }
+                self?.recordFileWatcherChangeBatch(changeBatch)
             }
         }
         fileEventsWatcher = watcher
         await watcher.start()
+    }
+
+    @MainActor
+    func recordFileWatcherChangeBatch(_ changeBatch: FSEventsWatcher.ChangeBatch) {
+        let filteredPaths = changeBatch.changedPaths.filter { url in
+            !FSEventsNoiseFilter.shouldIgnore(url.path)
+        }
+
+        if changeBatch.requiresFullRescan {
+            pendingRecentChangeRequiresFullRefresh = true
+        }
+
+        if !filteredPaths.isEmpty && !shouldIgnoreAutoScanChanges(filteredPaths) {
+            lastFileEventAt = Date()
+            // Always accumulate — never drop events during scan/cleanup.
+            pendingRecentChangePaths.formUnion(filteredPaths.map(\.standardizedFileURL))
+        }
+
+        guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
+            return
+        }
+
+        hasPendingRecentChanges = true
+
+        // Only schedule processing when not scanning — events accumulate
+        // and will be flushed after loadInventory completes.
+        if !isLoading, !isAutoScanning {
+            scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+        }
+    }
+
+    private func watcherURLs(for trackedPaths: [TrackedPath]) -> [URL] {
+        trackedPaths
+            .filter { shouldAutoWatchTrackedPath($0) }
+            .map(\.url.standardizedFileURL)
+    }
+
+    @MainActor
+    private func armFileWatcherBeforeFullScanIfNeeded(for trackedPaths: [TrackedPath]) async {
+        guard isPermissionConfirmedForProtectedTraversal else { return }
+
+        let urls = watcherURLs(for: trackedPaths)
+        guard !urls.isEmpty else { return }
+
+        let watchedSignature = urls.map(\.path)
+        if watchedSignature == watchedPaths,
+           let watcher = fileEventsWatcher,
+           await watcher.isRunning {
+            return
+        }
+
+        watchedPaths = watchedSignature
+        await configureFileWatcher(with: urls)
     }
 
     private func scheduleRecentChangeRefresh(_ changedPaths: Set<URL>) {
@@ -2424,8 +2512,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
     }
 
-    private func performRecentChangeRefresh(allowFullRefresh: Bool = true) async {
-        guard !pendingRecentChangePaths.isEmpty else {
+    func performRecentChangeRefresh(allowFullRefresh: Bool = true) async {
+        guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
             hasPendingRecentChanges = false
             return
         }
@@ -2437,7 +2525,28 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         guard !enabledPaths.isEmpty else {
             pendingRecentChangePaths.removeAll()
+            pendingRecentChangeRequiresFullRefresh = false
             hasPendingRecentChanges = false
+            return
+        }
+
+        if pendingRecentChangeRequiresFullRefresh {
+            guard allowFullRefresh else {
+                hasPendingRecentChanges = true
+                scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+                return
+            }
+
+            pendingRecentChangeRequiresFullRefresh = false
+            pendingRecentChangePaths.removeAll()
+            isProcessingRecentChanges = true
+            defer {
+                isProcessingRecentChanges = false
+                hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
+            }
+
+            lastDetectedChangeAt = Date()
+            await loadInventory(isAutomatic: true)
             return
         }
 
@@ -2446,7 +2555,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isProcessingRecentChanges = true
         defer {
             isProcessingRecentChanges = false
-            hasPendingRecentChanges = !pendingRecentChangePaths.isEmpty
+            hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
         }
 
         // Route each changed path to the tracked path it falls under
@@ -2623,16 +2732,26 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         normalizeVisibleInventoryState()
 
         // Selectively invalidate subcategory topFiles for categories with non-zero deltas only
-        let affectedCategories = categoryDeltas.filter { $0.value != 0 }.map(\.key)
+        let affectedCategories = Set(categoryDeltas.compactMap { category, delta in
+            delta != 0 ? category : nil
+        })
+        liveWorkingSetDrillDownCategories.formUnion(affectedCategories)
         var needsDrillDownReload = false
         for category in affectedCategories {
+            if let task = subcategoryBreakdownLoadTasks[category] {
+                task.cancel()
+                subcategoryBreakdownLoadTasks[category] = nil
+                subcategoryBreakdownLoadingCategories.remove(category)
+            }
+
             if subcategoryGroupsByCategory[category] != nil {
                 // Invalidate just this category's subcategory cache so it reloads on next drill-down
                 subcategoryGroupsByCategory.removeValue(forKey: category)
                 subcategoryBreakdownCacheGenerationByCategory.removeValue(forKey: category)
-                if isDrilledDown, selectedInventoryCategory?.category == category {
-                    needsDrillDownReload = true
-                }
+            }
+
+            if isDrilledDown, selectedInventoryCategory?.category == category {
+                needsDrillDownReload = true
             }
         }
 

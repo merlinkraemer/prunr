@@ -10,6 +10,12 @@ actor RecentChangeService {
 
     private init() {}
 
+    /// App-internal locations that must never feed incremental growth deltas.
+    private let internalPathFragments: [String] = [
+        "/Library/Application Support/Prunr/",
+        "/.build/derivedData/"
+    ]
+
     enum RefreshResult: Sendable {
         case noChanges
         case updated(deltas: [DatabaseManager.JournalDeltaKey: Int64])
@@ -141,6 +147,9 @@ actor RecentChangeService {
 
         for url in changedPaths {
             let standardized = url.standardizedFileURL
+            if shouldIgnoreInternalPath(standardized.path) {
+                continue
+            }
             guard isWithinTrackedRoot(standardized.path, trackedRoot: trackedRoot.path) else { continue }
 
             var isDirectory: ObjCBool = false
@@ -208,6 +217,9 @@ actor RecentChangeService {
     }
 
     private func scanResult(forFileAt url: URL) -> ScanResult? {
+        if shouldIgnoreInternalPath(url.standardizedFileURL.path) {
+            return nil
+        }
         var fileStat = stat()
         guard lstat(url.path, &fileStat) == 0 else { return nil }
         let sizeBytes = Int64(fileStat.st_size)
@@ -219,6 +231,13 @@ actor RecentChangeService {
             category: category,
             subcategory: subcategory
         )
+    }
+
+    private func shouldIgnoreInternalPath(_ path: String) -> Bool {
+        for fragment in internalPathFragments where path.contains(fragment) {
+            return true
+        }
+        return false
     }
 
     private func coalescedPaths(_ paths: Set<String>) -> [String] {

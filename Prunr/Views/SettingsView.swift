@@ -64,8 +64,8 @@ private struct GeneralSettingsTab: View {
     @State private var showDeleteSnapshotsConfirmation = false
     @State private var showingSavedNotice = false
     @State private var compactedNotice = ""
-    @State private var hasFullDiskAccess = false
-    @State private var blockedFullDiskAccessLocations: [String] = []
+    @State private var hasRequiredScanAccess = false
+    @State private var blockedScanAccessLocations: [String] = []
 
     private var appVersionText: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"
@@ -91,26 +91,26 @@ private struct GeneralSettingsTab: View {
 
                 Section("Permissions") {
                     HStack {
-                        Image(systemName: hasFullDiskAccess ? "checkmark.circle.fill" : "shield.fill")
-                            .foregroundStyle(hasFullDiskAccess ? .green : .orange)
+                        Image(systemName: hasRequiredScanAccess ? "checkmark.circle.fill" : "shield.fill")
+                            .foregroundStyle(hasRequiredScanAccess ? .green : .orange)
                         
-                        Text(hasFullDiskAccess ? "Full Disk Access granted" : "Full Disk Access required")
+                        Text(hasRequiredScanAccess ? "Current scan scope is accessible" : "Extra privacy access needed for current scan scope")
                     }
 
-                    if !hasFullDiskAccess && !blockedFullDiskAccessLocations.isEmpty {
-                        Text("Still blocked: \(blockedFullDiskAccessLocations.prefix(4).joined(separator: ", "))")
+                    if !hasRequiredScanAccess && !blockedScanAccessLocations.isEmpty {
+                        Text("Still blocked: \(blockedScanAccessLocations.prefix(4).joined(separator: ", "))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     
-                    if !hasFullDiskAccess {
-                        Button("Open Full Disk Access") {
-                            openFullDiskAccessSettings()
+                    if !hasRequiredScanAccess {
+                        Button("Open Privacy Settings") {
+                            openScanAccessSettings()
                         }
                         .buttonStyle(.borderedProminent)
                     }
                     
-                    Text("Grant access for the same Prunr you launch (for example /Applications versus an Xcode build). Separate macOS prompts for Desktop, Documents, or media libraries usually mean a different app entry or Full Disk Access is off for this build.")
+                    Text("Prunr checks the folders you selected plus protected locations inside them. Open Privacy Settings only if macOS blocks part of that scope.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -315,21 +315,22 @@ private struct GeneralSettingsTab: View {
             Text("This removes all saved history and cannot be undone.")
         }
         .onAppear {
-            refreshFullDiskAccess()
+            refreshScanAccess()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshFullDiskAccess()
+            refreshScanAccess()
         }
     }
 
-    private func refreshFullDiskAccess() {
-        let roots = settingsStore.enabledTrackedPaths.map(\.url)
-        let report = permissionsService.evaluateFullDiskAccess(scanRootURLs: roots)
-        hasFullDiskAccess = report.isGranted
-        blockedFullDiskAccessLocations = report.deniedLocations
+    private func refreshScanAccess() {
+        let report = permissionsService.evaluateScanScopeAccess(
+            scanRootURLs: settingsStore.enabledTrackedPaths.map(\.url.standardizedFileURL)
+        )
+        hasRequiredScanAccess = report.isGranted
+        blockedScanAccessLocations = report.blockedLocations
     }
 
-    private func openFullDiskAccessSettings() {
+    private func openScanAccessSettings() {
         Task { await permissionsService.requestFullDiskAccess() }
     }
 

@@ -9,6 +9,7 @@ enum FSEventsNoiseFilter {
 
     private static let ignoredDirectoryPrefixes: [String] = [
         "Library/Saved Application State/",
+        "Library/Application Support/Prunr/",
         "Library/Caches/com.apple.Safari/",
         "Library/Caches/CloudKit/",
         "Library/Caches/com.apple.nsurlsessiond/",

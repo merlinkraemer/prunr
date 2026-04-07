@@ -38,6 +38,11 @@ final class DatabaseManager {
         let fileManager = FileManager.default
         let dbURL = URL(fileURLWithPath: dbPath)
 
+        if let existingPool = dbPool {
+            try existingPool.close()
+            dbPool = nil
+        }
+
         try fileManager.createDirectory(
             at: dbURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -52,6 +57,14 @@ final class DatabaseManager {
 
         dbPool = try DatabasePool(path: dbURL.path, configuration: config)
         try runMigrations()
+    }
+
+    func close() throws {
+        if let dbPool {
+            try dbPool.close()
+            self.dbPool = nil
+        }
+        databasePath = nil
     }
 
     /// Run database migrations using GRDB's DatabaseMigrator
@@ -84,7 +97,10 @@ final class DatabaseManager {
             try db.create(index: "idx_snapshotEntry_snapshotId", on: "snapshotEntry", columns: ["snapshotId"])
 
             // Index for faster path lookups (for drill-down operations)
-            try db.create(index: "idx_snapshotEntry_path", on: "snapshotEntry", columns: ["path"])
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_snapshotEntry_path
+                ON snapshotEntry(path)
+                """)
         }
 
         // Migration v2: Add trackedPathId to snapshot table
@@ -100,8 +116,11 @@ final class DatabaseManager {
 
         // Migration v3: Add index on path column for faster queries
         migrator.registerMigration("v3_add_path_index") { db in
-            // Check if index already exists (for databases created after v1)
-            try? db.create(index: "idx_snapshotEntry_path", on: "snapshotEntry", columns: ["path"])
+            // Databases created after v1 already have this index.
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_snapshotEntry_path
+                ON snapshotEntry(path)
+                """)
         }
 
         // Migration v4: Add composite index for delta query optimization

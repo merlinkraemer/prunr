@@ -11,6 +11,7 @@ final class PrunrSmokeTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
 
         defer {
+            try? DatabaseManager.shared.close()
             try? FileManager.default.removeItem(at: tempDirectory)
         }
 
@@ -28,6 +29,7 @@ final class PrunrSmokeTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
 
         defer {
+            try? DatabaseManager.shared.close()
             try? FileManager.default.removeItem(at: tempDirectory)
         }
 
@@ -75,6 +77,48 @@ final class PrunrSmokeTests: XCTestCase {
             .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    @MainActor
+    private func withIsolatedTrackedPathSettings<T>(
+        mainBaseURL: URL,
+        _ body: () async throws -> T
+    ) async throws -> T {
+        let settings = SettingsStore.shared
+        let originalMainBasePath = settings.mainBasePath
+        let originalCustomTrackedPaths = settings.customTrackedPaths
+        let originalSelectedCommonPathIDs = Set(settings.selectedCommonPaths.map(\.id))
+        let originalEnabledPathIDs = Set(settings.allTrackedPaths.filter { settings.isPathEnabled($0) }.map(\.id))
+        let originalHasPendingScopeChanges = settings.hasPendingScopeChanges
+
+        defer {
+            settings.setMainBasePath(URL(fileURLWithPath: originalMainBasePath, isDirectory: true))
+            settings.customTrackedPaths = originalCustomTrackedPaths
+
+            for path in settings.availableCommonPaths {
+                settings.setCommonPathSelected(path, selected: originalSelectedCommonPathIDs.contains(path.id))
+            }
+
+            for path in settings.allTrackedPaths {
+                settings.setPathEnabled(path, enabled: originalEnabledPathIDs.contains(path.id))
+            }
+
+            settings.hasPendingScopeChanges = originalHasPendingScopeChanges
+        }
+
+        settings.setMainBasePath(mainBaseURL)
+        settings.customTrackedPaths = []
+
+        for path in settings.availableCommonPaths {
+            settings.setCommonPathSelected(path, selected: false)
+        }
+
+        for path in settings.allTrackedPaths {
+            settings.setPathEnabled(path, enabled: path.id == settings.mainTrackedPath.id)
+        }
+
+        settings.hasPendingScopeChanges = false
+        return try await body()
     }
 
     func testDownloadsPathsCategorizeAsDownloads() {
@@ -1388,5 +1432,152 @@ final class PrunrSmokeTests: XCTestCase {
             )
             XCTAssertTrue(contributors.isEmpty)
         }
+    }
+
+    func testScanScopeAccessAllowsReachableTemporaryDirectory() async throws {
+        let directory = try createTrackedPathDirectory(named: "PrunrAccess")
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let report = await MainActor.run {
+            PermissionsService.shared.evaluateScanScopeAccess(scanRootURLs: [directory])
+        }
+
+        XCTAssertTrue(report.isGranted)
+        XCTAssertTrue(report.blockedLocations.isEmpty)
+    }
+
+    @MainActor
+    func testMenuBarManagerAggregatesPartialScanCategoryTotalsAcrossTrackedPaths() {
+        let manager = MenuBarManager()
+        let firstPath = TrackedPath(
+            id: UUID(),
+            url: URL(fileURLWithPath: "/tmp/prunr-path-one", isDirectory: true),
+            displayName: "One"
+        )
+        let secondPath = TrackedPath(
+            id: UUID(),
+            url: URL(fileURLWithPath: "/tmp/prunr-path-two", isDirectory: true),
+            displayName: "Two"
+        )
+
+        manager.applyPartialCategoryTotals(
+            from: firstPath,
+            totals: [.downloads: 100, .developer: 20]
+        )
+        manager.applyPartialCategoryTotals(
+            from: secondPath,
+            totals: [.downloads: 50, .developer: 5]
+        )
+
+        XCTAssertEqual(
+            manager.stableCategories.first(where: { $0.category == .downloads })?.currentSizeBytes,
+            150
+        )
+        XCTAssertEqual(
+            manager.stableCategories.first(where: { $0.category == .developer })?.currentSizeBytes,
+            25
+        )
+    }
+
+    @MainActor
+    func testMenuBarManagerRecentChangeRefreshUsesLiveSubcategoryStructureForAffectedCategory() async throws {
+        let trackedRoot = try createTrackedPathDirectory(named: "PrunrIssue6")
+        defer {
+            try? FileManager.default.removeItem(at: trackedRoot)
+        }
+
+        try await withEmptyTemporaryDatabase { _ in
+            try await self.withIsolatedTrackedPathSettings(mainBaseURL: trackedRoot) {
+                let trackedPath = SettingsStore.shared.mainTrackedPath
+                let manager = MenuBarManager()
+
+                let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPath.id)
+                let snapshotId = try XCTUnwrap(snapshot.id)
+                try await DatabaseManager.shared.addEntries(
+                    to: snapshotId,
+                    entries: [
+                        ScanResult(
+                            path: trackedRoot.appendingPathComponent("app/.build/output.bin").path,
+                            sizeBytes: 128_000
+                        )
+                    ]
+                )
+                try await DatabaseManager.shared.rebuildWorkingSet(
+                    from: snapshotId,
+                    trackedPathId: trackedPath.id
+                )
+
+                await manager.loadInventoryFromLatestSnapshot(
+                    refreshedAt: Date(),
+                    invalidateSubcategoryCache: true,
+                    force: true
+                )
+
+                let liveFile = trackedRoot.appendingPathComponent("app/node_modules/react/index.js")
+                try FileManager.default.createDirectory(
+                    at: liveFile.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                let liveGrowthBytes = 2 * 1_024 * 1_024
+                try Data(repeating: 0x41, count: liveGrowthBytes).write(to: liveFile)
+
+                manager.recordFileWatcherChangeBatch(
+                    FSEventsWatcher.ChangeBatch(
+                        changedPaths: [liveFile],
+                        requiresFullRescan: false
+                    )
+                )
+                await manager.performRecentChangeRefresh(allowFullRefresh: false)
+
+                XCTAssertNotNil(manager.lastDetectedChangeAt)
+                XCTAssertEqual(
+                    manager.growingCategories.first(where: { $0.category == .developer })?.currentSizeBytes,
+                    Int64(128_000 + liveGrowthBytes)
+                )
+
+                let refreshedInventory = await BaselineService.shared.getInventoryWithTrends(trackedPath: trackedPath)
+                XCTAssertEqual(
+                    refreshedInventory.first(where: { $0.category == .developer })?.currentSizeBytes,
+                    Int64(128_000 + liveGrowthBytes)
+                )
+
+                let liveGroups = await BaselineService.shared.getSubcategoryBreakdownFromWorkingSet(
+                    for: .developer,
+                    trackedPathsById: [trackedPath.id: trackedPath],
+                    baselineSnapshotIdsByPath: [trackedPath.id: snapshotId]
+                )
+                XCTAssertEqual(
+                    liveGroups.first(where: { $0.subcategory == .nodeModules })?.growthBytes,
+                    Int64(liveGrowthBytes)
+                )
+
+                let groups = await manager.loadSubcategoryBreakdown(for: .developer)
+                let nodeModules = try XCTUnwrap(groups.first(where: { $0.subcategory == .nodeModules }))
+                XCTAssertEqual(nodeModules.growthBytes, Int64(liveGrowthBytes))
+
+                let contributors = await manager.loadGrowthContributors(
+                    for: nodeModules,
+                    category: .developer
+                )
+                XCTAssertEqual(contributors.first?.path, liveFile.path)
+                XCTAssertEqual(contributors.first?.growthBytes, Int64(liveGrowthBytes))
+            }
+        }
+    }
+
+    @MainActor
+    func testMenuBarManagerRetainsPendingRefreshWhenWatcherRequiresFullRescan() async {
+        let manager = MenuBarManager()
+
+        manager.recordFileWatcherChangeBatch(
+            FSEventsWatcher.ChangeBatch(changedPaths: [], requiresFullRescan: true)
+        )
+        XCTAssertTrue(manager.hasPendingRecentChanges)
+
+        await manager.performRecentChangeRefresh(allowFullRefresh: false)
+
+        XCTAssertTrue(manager.hasPendingRecentChanges)
     }
 }
