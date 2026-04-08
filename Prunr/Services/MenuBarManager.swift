@@ -2482,7 +2482,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Refresh custom ignores cache before starting watcher
         FSEventsNoiseFilter.refreshCustomIgnoresCache()
 
-        let watcher = FSEventsWatcher(pathsToWatch: urls, debounceInterval: 1.0)
+        let watcher = FSEventsWatcher(pathsToWatch: urls, coalescingInterval: 1.0)
         await watcher.setOnChange { [weak self] changeBatch in
             Task { @MainActor in
                 self?.recordFileWatcherChangeBatch(changeBatch)

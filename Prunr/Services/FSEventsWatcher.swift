@@ -2,7 +2,7 @@ import Foundation
 import CoreServices
 import os
 
-/// Actor that manages FSEventStream for file system monitoring with debounced change detection.
+/// Actor that manages FSEventStream for file system monitoring with coalesced change detection.
 ///
 /// FSEventsWatcher wraps the low-level FSEventStream API from CoreServices,
 /// providing a Swift-async interface with configurable debouncing to prevent
@@ -27,9 +27,9 @@ actor FSEventsWatcher {
     /// Coalescing interval in seconds (default: 1.0).
     /// Passed through to the FSEvents stream latency so the system can coalesce
     /// callbacks before they reach the app.
-    private let debounceInterval: TimeInterval
+    private let coalescingInterval: TimeInterval
 
-    /// Callback invoked when debounced changes are detected.
+    /// Callback invoked when coalesced changes are detected.
     private var onChange: ((ChangeBatch) -> Void)?
 
     /// Paths being watched by this watcher.
@@ -48,10 +48,10 @@ actor FSEventsWatcher {
     ///
     /// - Parameters:
     ///   - pathsToWatch: Array of file URLs to monitor for changes
-    ///   - debounceInterval: Seconds to wait before invoking onChange (default: 1.0 for near-realtime)
-    init(pathsToWatch: [URL], debounceInterval: TimeInterval = 1.0) {
+    ///   - coalescingInterval: Seconds to wait before invoking onChange (default: 1.0 for near-realtime)
+    init(pathsToWatch: [URL], coalescingInterval: TimeInterval = 1.0) {
         self.pathsToWatch = pathsToWatch
-        self.debounceInterval = debounceInterval
+        self.coalescingInterval = coalescingInterval
     }
 
     // MARK: - Lifecycle
@@ -67,7 +67,9 @@ actor FSEventsWatcher {
         let paths = pathsToWatch.map { $0.path as CFString }
 
         // Create context to pass 'self' to the callback
-        let contextPtr = Unmanaged.passRetained(self as AnyObject).toOpaque()
+        // Use passRetained to keep self alive for the lifetime of the stream.
+        // Balanced by releaseCallbackInfoIfNeeded() in stop() / deinit.
+        let contextPtr = Unmanaged.passRetained(self).toOpaque()
         callbackInfoPointer = contextPtr
 
         // Set up the callback context structure
@@ -123,7 +125,7 @@ actor FSEventsWatcher {
                     }
                 }
 
-                // Trigger debounced handling
+                // Trigger coalesced handling
                 Task {
                     await watcher.emitChangeBatch(changedPaths, requiresFullRescan: requiresFullRescan)
                 }
@@ -131,7 +133,7 @@ actor FSEventsWatcher {
             &context,
             paths as CFArray,
             UInt64(kFSEventStreamEventIdSinceNow),
-            debounceInterval,
+            coalescingInterval,
             flags
         ) else {
             releaseCallbackInfoIfNeeded()
@@ -185,11 +187,11 @@ actor FSEventsWatcher {
 
     /// Sets the callback to be invoked when changes are detected.
     ///
-    /// The callback is invoked after the debounce interval elapses without
+    /// The callback is invoked after the coalescing interval elapses without
     /// additional events, providing the coalesced changed paths and whether
     /// the stream reported a dropped/root-changed condition.
     ///
-    /// - Parameter callback: Closure taking a debounced change batch
+    /// - Parameter callback: Closure taking a coalesced change batch
     func setOnChange(_ callback: @escaping (ChangeBatch) -> Void) {
         onChange = callback
     }
@@ -219,7 +221,7 @@ actor FSEventsWatcher {
 
     private nonisolated static func releaseCallbackInfo(_ callbackInfoPointer: UnsafeMutableRawPointer?) {
         guard let callbackInfoPointer else { return }
-        Unmanaged<AnyObject>.fromOpaque(callbackInfoPointer).release()
+        Unmanaged<FSEventsWatcher>.fromOpaque(callbackInfoPointer).release()
     }
 
     deinit {
