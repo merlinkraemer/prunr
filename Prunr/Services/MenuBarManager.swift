@@ -104,10 +104,22 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
 
-    // Published state for UI
-    var growingCategories: [CategoryInventoryItem] = []  // Categories with active growth trends
-    var stableCategories: [CategoryInventoryItem] = []   // Categories without growth trends
-    var stableTotalBytes: Int64 = 0  // Sum of stable category sizes
+    // Single source of truth for all category inventory items.
+    // Views read `growingCategories` / `stableCategories` (computed from this).
+    var allCategories: [CategoryInventoryItem] = []
+
+    // Computed partitions — automatically derived from allCategories
+    var growingCategories: [CategoryInventoryItem] {
+        allCategories.filter { $0.recentGrowthStory != nil }
+            .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+    }
+    var stableCategories: [CategoryInventoryItem] {
+        allCategories.filter { $0.recentGrowthStory == nil }
+            .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+    }
+    var stableTotalBytes: Int64 {
+        stableCategories.reduce(0) { $0 + $1.currentSizeBytes }
+    }
     var reconciliationResult: DiskAccountingResult? = nil // Free-space accounting data
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
     var selectedInventoryCategory: CategoryInventoryItem? = nil // New inventory-based drill-down selection
@@ -144,9 +156,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private struct GrowthPresentationState {
-        let growingCategories: [CategoryInventoryItem]
-        let stableCategories: [CategoryInventoryItem]
-        let stableTotalBytes: Int64
+        let allCategories: [CategoryInventoryItem]
         let subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]]
     }
 
@@ -292,12 +302,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         guard !liveCategories.isEmpty else { return }
 
         // During scan, replace ALL in-memory categories with partial data.
-        // Do NOT merge with existing growingCategories — normalizeVisibleInventoryState
-        // would add them together, causing category bloat.
-        growingCategories = []
-        stableCategories = liveCategories
-        stableTotalBytes = liveCategories.reduce(0) { $0 + $1.currentSizeBytes }
-        Logger.progress.info("applyPartial done: growing=0 stable=\(liveCategories.count)")
+        // No separate growing/stable split needed — partials never have growth stories.
+        allCategories = liveCategories
+        Logger.progress.info("applyPartial done: categories=\(liveCategories.count)")
     }
 
     private func preferredTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
@@ -926,9 +933,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             if let baselineError = error as? BaselineService.BaselineError,
                case .insufficientSnapshots = baselineError {
                 noBaseline = false
-                growingCategories = []
-                stableCategories = []
-                stableTotalBytes = 0
+                allCategories = []
                 subcategoryGroupsByCategory = [:]
                 invalidateGrowthContributorCache()
                 currentInventorySnapshotIDsByPath = [:]
@@ -938,9 +943,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             } else if let baselineError = error as? BaselineService.BaselineError,
                case .noBaseline = baselineError {
                 noBaseline = true
-                growingCategories = []
-                stableCategories = []
-                stableTotalBytes = 0
+                allCategories = []
                 subcategoryGroupsByCategory = [:]
                 invalidateGrowthContributorCache()
                 currentInventorySnapshotIDsByPath = [:]
@@ -1621,9 +1624,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
 
         // All appear as stable initially (no growth stories loaded yet)
-        growingCategories = []
-        stableCategories = items
-        stableTotalBytes = items.reduce(0) { $0 + $1.currentSizeBytes }
+        allCategories = items
         noBaseline = false
         return true
     }
@@ -1648,25 +1649,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             liveWorkingSetDrillDownCategories = []
         }
 
-        var growing: [CategoryInventoryItem] = []
-        var stable: [CategoryInventoryItem] = []
-        var stableTotal: Int64 = 0
+        let visibleInventory = inventory.map {
+            suppressGrowthIndicators ? suppressedGrowthItem(from: $0) : $0
+        }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
 
-        for item in inventory {
-            let visibleItem = suppressGrowthIndicators ? suppressedGrowthItem(from: item) : item
-
-            if visibleItem.recentGrowthStory != nil {
-                growing.append(visibleItem)
-            } else {
-                stable.append(visibleItem)
-                stableTotal += visibleItem.currentSizeBytes
-            }
-        }
-
-        growingCategories = growing.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
-        stableCategories = stable.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
-        stableTotalBytes = stableTotal
-        normalizeVisibleInventoryState()
+        allCategories = visibleInventory
         currentInventorySnapshotIDsByPath = snapshotIDsByPath
         currentGrowthBaselineSnapshotIDsByPath = growthBaselineSnapshotIDsByPath
 
@@ -1677,7 +1664,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             subcategoryBreakdownLoadingCategories = []
             hasCompletedInitialSubcategoryWarmup = false
         } else {
-            let validCategories = Set((growingCategories + stableCategories).map(\.category))
+            let validCategories = Set(allCategories.map(\.category))
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
             subcategoryBreakdownCacheGenerationByCategory = subcategoryBreakdownCacheGenerationByCategory.filter {
                 validCategories.contains($0.key)
@@ -1701,9 +1688,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func clearInventoryState() {
         withAnimationsDisabled {
-            growingCategories = []
-            stableCategories = []
-            stableTotalBytes = 0
+            allCategories = []
             cancelSubcategoryBreakdownLoads()
             subcategoryGroupsByCategory = [:]
             subcategoryBreakdownCacheGenerationByCategory = [:]
@@ -1783,23 +1768,17 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func captureGrowthPresentationState() -> GrowthPresentationState {
         GrowthPresentationState(
-            growingCategories: growingCategories,
-            stableCategories: stableCategories,
-            stableTotalBytes: stableTotalBytes,
+            allCategories: allCategories,
             subcategoryGroupsByCategory: subcategoryGroupsByCategory
         )
     }
 
     private func clearVisibleGrowthIndicators() {
         withAnimationsDisabled {
-            let allCategories = (growingCategories + stableCategories)
+            allCategories = allCategories
                 .map(suppressedGrowthItem(from:))
                 .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
 
-            growingCategories = []
-            stableCategories = allCategories
-            stableTotalBytes = allCategories.reduce(0) { $0 + $1.currentSizeBytes }
-            normalizeVisibleInventoryState()
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.mapValues { groups in
                 groups.map { group in
                     var updatedGroup = group
@@ -1814,10 +1793,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     private func restoreGrowthPresentationState(_ state: GrowthPresentationState) {
         withAnimationsDisabled {
-            growingCategories = state.growingCategories
-            stableCategories = state.stableCategories
-            stableTotalBytes = state.stableTotalBytes
-            normalizeVisibleInventoryState()
+            allCategories = state.allCategories
             subcategoryGroupsByCategory = state.subcategoryGroupsByCategory
             invalidateGrowthContributorCache()
             reconcileDrillDownSelection()
@@ -1828,106 +1804,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction, updates)
-    }
-
-    private func normalizeVisibleInventoryState() {
-        let growing = growingCategories
-        let stable = stableCategories
-        let allItems = growing + stable
-
-        // P0 assertion: detect duplicate categories that should not exist after the bloat fix
-        var seen = Set<GrowthCategory>()
-        for item in allItems {
-            if seen.contains(item.category) {
-                let growingNames = growing.map(\.category.displayName)
-                let stableNames = stable.map(\.category.displayName)
-                assertionFailure("Duplicate category '\(item.category.displayName)' in visible inventory state")
-                Logger.state.critical("DUPLICATE: \(item.category.displayName) — growing=\(growingNames) stable=\(stableNames)")
-                break
-            }
-            seen.insert(item.category)
-        }
-
-        let growingCount = growing.count
-        let stableCount = stable.count
-        let totalBytes = allItems.reduce(0) { $0 + $1.currentSizeBytes }
-        Logger.state.info("normalize: growing=\(growingCount) stable=\(stableCount) total=\(totalBytes) bytes")
-
-        var mergedByCategory: [GrowthCategory: CategoryInventoryItem] = [:]
-
-        for item in allItems {
-            if let existing = mergedByCategory[item.category] {
-                mergedByCategory[item.category] = CategoryInventoryItem(
-                    category: item.category,
-                    currentSizeBytes: existing.currentSizeBytes + item.currentSizeBytes,
-                    growthTrend: mergeGrowthTrend(existing.growthTrend, item.growthTrend),
-                    recentGrowthStory: mergeRecentGrowthStory(existing.recentGrowthStory, item.recentGrowthStory)
-                )
-            } else {
-                mergedByCategory[item.category] = item
-            }
-        }
-
-        let sorted = mergedByCategory.values.sorted {
-            if $0.currentSizeBytes == $1.currentSizeBytes {
-                return $0.category.displayName.localizedStandardCompare($1.category.displayName) == .orderedAscending
-            }
-            return $0.currentSizeBytes > $1.currentSizeBytes
-        }
-
-        growingCategories = sorted.filter { $0.recentGrowthStory != nil }
-        stableCategories = sorted.filter { $0.recentGrowthStory == nil }
-        stableTotalBytes = stableCategories.reduce(0) { $0 + $1.currentSizeBytes }
-    }
-
-    private func mergeGrowthTrend(
-        _ lhs: CategoryGrowthTrend?,
-        _ rhs: CategoryGrowthTrend?
-    ) -> CategoryGrowthTrend? {
-        switch (lhs, rhs) {
-        case (nil, nil):
-            return nil
-        case let (trend?, nil), let (nil, trend?):
-            return trend
-        case let (lhs?, rhs?):
-            let startedAt = min(lhs.growthStartedAt, rhs.growthStartedAt)
-            let growthBytes = lhs.growthBytes + rhs.growthBytes
-            let growthSpanDays = Calendar.current.dateComponents(
-                [.day],
-                from: startedAt,
-                to: Date()
-            ).day ?? max(lhs.growthSpanDays, rhs.growthSpanDays)
-
-            return CategoryGrowthTrend(
-                growthBytes: growthBytes,
-                growthStartedAt: startedAt,
-                growthSpanDays: max(1, growthSpanDays)
-            )
-        }
-    }
-
-    private func mergeRecentGrowthStory(
-        _ lhs: RecentGrowthStory?,
-        _ rhs: RecentGrowthStory?
-    ) -> RecentGrowthStory? {
-        switch (lhs, rhs) {
-        case (nil, nil):
-            return nil
-        case let (story?, nil), let (nil, story?):
-            return story
-        case let (lhs?, rhs?):
-            let startedAt = min(lhs.startedAt, rhs.startedAt)
-            let endedAt = max(lhs.endedAt, rhs.endedAt)
-            return RecentGrowthStory(
-                category: lhs.category,
-                subcategory: lhs.subcategory ?? rhs.subcategory,
-                deltaBytes: lhs.deltaBytes + rhs.deltaBytes,
-                startedAt: startedAt,
-                endedAt: endedAt,
-                duration: endedAt.timeIntervalSince(startedAt),
-                displayLabel: endedAt == lhs.endedAt ? lhs.displayLabel : rhs.displayLabel
-            )
-        }
     }
 
     private func growthContributorCacheKey(

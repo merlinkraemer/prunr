@@ -758,7 +758,7 @@ final class PrunrSmokeTests: XCTestCase {
             try? FileManager.default.removeItem(at: tempDirectory)
         }
 
-        let watcher = FSEventsWatcher(pathsToWatch: [tempDirectory], debounceInterval: 0.1)
+        let watcher = FSEventsWatcher(pathsToWatch: [tempDirectory], coalescingInterval: 0.1)
         let expectation = expectation(description: "watcher emits changed path")
 
         await watcher.setOnChange { changeBatch in
@@ -1614,8 +1614,7 @@ final class PrunrSmokeTests: XCTestCase {
 
                 await manager.loadInventoryFromLatestSnapshot(
                     refreshedAt: Date(),
-                    invalidateSubcategoryCache: true,
-                    force: true
+                    invalidateSubcategoryCache: true
                 )
 
                 let liveFile = trackedRoot.appendingPathComponent("app/node_modules/react/index.js")
