@@ -435,6 +435,46 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var lastAcceptedGrowthAt: Date? = nil
     private var suppressGrowthIndicators = false
 
+    // MARK: - Scan Progress AsyncStream
+
+    /// Events delivered from scan progress callbacks via AsyncStream for ordered processing.
+    private enum ScanProgressEvent {
+        case progress(trackedPath: TrackedPath, progress: ScanService.ScanProgress)
+        case scanCompleted
+    }
+
+    @ObservationIgnored
+    private var progressContinuation: AsyncStream<ScanProgressEvent>.Continuation?
+    @ObservationIgnored
+    private var progressStream: AsyncStream<ScanProgressEvent>?
+    @ObservationIgnored
+    private var progressConsumerTask: Task<Void, Never>?
+
+    private func setupProgressStream() {
+        let (stream, continuation) = AsyncStream<ScanProgressEvent>.makeStream()
+        progressStream = stream
+        progressContinuation = continuation
+        progressConsumerTask = Task { @MainActor [weak self] in
+            for await event in stream {
+                guard let self else { return }
+                switch event {
+                case .progress(let trackedPath, let progress):
+                    self.applyAggregateScanProgress(for: trackedPath, progress: progress)
+                case .scanCompleted:
+                    break
+                }
+            }
+        }
+    }
+
+    private func teardownProgressStream() {
+        progressContinuation?.finish()
+        progressContinuation = nil
+        progressConsumerTask?.cancel()
+        progressConsumerTask = nil
+        progressStream = nil
+    }
+
     // Silent background reconciliation
     private var lastReconciliationAt: Date?
     private var isReconciling = false
@@ -820,12 +860,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         var completedSuccessfully = false
         var completedSnapshotsByPath: [UUID: Snapshot] = [:]
 
-        // Create progress callback for updating UI during scan
-        // Note: MainActor.run ensures UI updates happen on main thread
-        let progressCallback: (TrackedPath, ScanService.ScanProgress) -> Void = { trackedPath, progress in
-            Task { @MainActor in
-                self.applyAggregateScanProgress(for: trackedPath, progress: progress)
-            }
+        // Create progress callback using AsyncStream for ordered delivery
+        setupProgressStream()
+        let progressCallback: (TrackedPath, ScanService.ScanProgress) -> Void = { [weak self] trackedPath, progress in
+            self?.progressContinuation?.yield(.progress(trackedPath: trackedPath, progress: progress))
         }
 
         do {
@@ -956,6 +994,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isLoading = false
         hasIncrementalDeltasSinceSnapshot = false
         liveWorkingSetDrillDownCategories = []
+        teardownProgressStream()
         scanProgress = ""
         scanCurrentPath = ""
         scanCurrentPathDisplay = ""
