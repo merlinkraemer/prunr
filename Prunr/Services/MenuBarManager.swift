@@ -1794,14 +1794,20 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let growing = growingCategories
         let stable = stableCategories
         let allItems = growing + stable
-        let categoryMap = Dictionary(grouping: allItems, by: { $0.category })
-        let duplicates = categoryMap.filter { $0.value.count > 1 }
-        if !duplicates.isEmpty {
-            let dupNames = duplicates.keys.map(\.displayName)
-            let growingNames = growing.map(\.category.displayName)
-            let stableNames = stable.map(\.category.displayName)
-            Logger.state.error("DUPLICATE CATEGORIES detected: \(dupNames) — growing=\(growingNames) stable=\(stableNames)")
+
+        // P0 assertion: detect duplicate categories that should not exist after the bloat fix
+        var seen = Set<GrowthCategory>()
+        for item in allItems {
+            if seen.contains(item.category) {
+                let growingNames = growing.map(\.category.displayName)
+                let stableNames = stable.map(\.category.displayName)
+                assertionFailure("Duplicate category '\(item.category.displayName)' in visible inventory state")
+                Logger.state.critical("DUPLICATE: \(item.category.displayName) — growing=\(growingNames) stable=\(stableNames)")
+                break
+            }
+            seen.insert(item.category)
         }
+
         let growingCount = growing.count
         let stableCount = stable.count
         let totalBytes = allItems.reduce(0) { $0 + $1.currentSizeBytes }
