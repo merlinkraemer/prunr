@@ -1021,14 +1021,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     func loadInventoryFromLatestSnapshot(
         refreshedAt: Date? = nil,
-        invalidateSubcategoryCache: Bool = false,
-        force: Bool = false
+        invalidateSubcategoryCache: Bool = false
     ) async {
-        if force {
-            isInventoryRefreshInProgress = true
-        } else {
-            guard beginInventoryRefresh() else { return }
-        }
+        guard beginInventoryRefresh() else { return }
         defer { endInventoryRefresh() }
 
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
@@ -1083,7 +1078,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Accepts current growth by resetting baselines to the current working set sizes.
     /// Optimistic: clears visible growth indicators instantly, then commits to DB.
     func acceptGrowth() async {
-        guard !isLoading, !isAutoScanning, !isCheckingGrowth else { return }
+        let loading = isLoading
+        let autoScanning = isAutoScanning
+        let checking = isCheckingGrowth
+        let refreshing = isInventoryRefreshInProgress
+        guard !loading, !autoScanning, !checking, !refreshing else {
+            Logger.inventory.warning("acceptGrowth skipped — busy state: loading=\(loading) autoScanning=\(autoScanning) checking=\(checking) refreshing=\(refreshing)")
+            return
+        }
         let priorPresentationState = captureGrowthPresentationState()
         isAcceptingGrowth = true
         defer { isAcceptingGrowth = false }
@@ -1104,8 +1106,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             liveWorkingSetDrillDownCategories = []
             await loadInventoryFromLatestSnapshot(
                 refreshedAt: Date(),
-                invalidateSubcategoryCache: true,
-                force: true
+                invalidateSubcategoryCache: true
             )
             lastAcceptedGrowthAt = Date()
         } catch {
