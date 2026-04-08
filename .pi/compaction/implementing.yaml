@@ -1,0 +1,64 @@
+extracts:
+  task-state:
+    description: Current implementation goal, progress, blockers, and next steps
+    persist: .pi/session-state/implementing/task.json
+    format: |
+      { goal: string, constraints: string[], done: string[], in_progress: string[], blocked: string[], next_steps: string[] }
+    strategy: llm
+    maxTokens: 2000
+    priority: critical
+
+  decisions:
+    description: Design and architectural decisions with rationale
+    persist: .pi/session-state/implementing/decisions.json
+    format: |
+      Array of { decision: string, rationale: string, alternatives_considered: string[], files_affected: string[] }
+    strategy: llm
+    maxTokens: 2000
+    priority: high
+
+  api-contracts:
+    description: API interfaces, type signatures, and contracts defined or modified
+    persist: .pi/session-state/implementing/api-contracts.json
+    format: |
+      Array of { name: string, type: string, signature: string, file: string }
+    strategy: llm
+    maxTokens: 1500
+    priority: high
+
+  user-corrections:
+    description: User corrections and stated preferences
+    persist: .pi/session-state/implementing/corrections.json
+    format: |
+      Array of { timestamp: number, correction: string, context: string }
+    strategy: mechanical
+    maxEntries: 30
+    priority: high
+
+  file-awareness:
+    description: Files read, modified, and created
+    persist: .pi/session-state/implementing/files.json
+    format: |
+      { read: string[], modified: string[] }
+    strategy: mechanical
+    priority: low
+
+reassemble:
+  budget: 12000
+  overflow: trim-lowest
+  sources:
+    - source: .pi/session-state/implementing/task.json
+      as: "Implementation progress:"
+      wrap: task-state
+    - source: .pi/session-state/implementing/decisions.json
+      as: "Design decisions made:"
+      wrap: decisions
+    - source: .pi/session-state/implementing/api-contracts.json
+      as: "API contracts defined:"
+      wrap: api-contracts
+    - source: .pi/session-state/implementing/corrections.json
+      as: "User corrections (must be honored):"
+      wrap: user-corrections
+    - source: .pi/session-state/implementing/files.json
+      as: "Files touched:"
+      wrap: file-context

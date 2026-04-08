@@ -1,0 +1,52 @@
+extracts:
+  error-observations:
+    description: Error messages, stack traces, and failure patterns observed
+    persist: .pi/session-state/debugging/errors.json
+    format: |
+      Array of { timestamp: number, error: string, context: string }
+    strategy: mechanical
+    maxEntries: 30
+    priority: high
+
+  hypotheses:
+    description: Debugging hypotheses — what has been tried, ruled out, and what looks promising
+    persist: .pi/session-state/debugging/hypotheses.json
+    format: |
+      { tried: Array<{ hypothesis: string, result: string }>, ruled_out: string[], promising: string[] }
+    strategy: llm
+    maxTokens: 2000
+    priority: critical
+
+  file-awareness:
+    description: Files read, modified, and created during debugging
+    persist: .pi/session-state/debugging/files.json
+    format: |
+      { read: string[], modified: string[] }
+    strategy: mechanical
+    priority: low
+
+  reproduction-steps:
+    description: Steps to reproduce the issue being debugged
+    persist: .pi/session-state/debugging/reproduction.json
+    format: |
+      { steps: string[], environment: string, triggers: string[] }
+    strategy: llm
+    maxTokens: 1500
+    priority: high
+
+reassemble:
+  budget: 10000
+  overflow: trim-lowest
+  sources:
+    - source: .pi/session-state/debugging/hypotheses.json
+      as: "Debugging hypotheses (what has been tried and what is promising):"
+      wrap: hypotheses
+    - source: .pi/session-state/debugging/errors.json
+      as: "Error observations:"
+      wrap: error-observations
+    - source: .pi/session-state/debugging/reproduction.json
+      as: "Reproduction steps:"
+      wrap: reproduction-steps
+    - source: .pi/session-state/debugging/files.json
+      as: "Files investigated:"
+      wrap: file-context

@@ -18,8 +18,18 @@ struct MenuBarView: View {
     @State private var isBootstrapping = true
     @State private var permissionsService = PermissionsService.shared
     @State private var highlightedStorageSegmentID: String? = nil
-    @State private var customOnboardingFolderPath: URL? = nil
-    @State private var onboardingChosenFolderPath: URL? = nil
+    @State private var customOnboardingFolderPath: URL? = {
+        if let pathString = UserDefaults.standard.string(forKey: "onboardingChosenFolderPath") {
+            return URL(fileURLWithPath: pathString, isDirectory: true)
+        }
+        return nil
+    }()
+    @State private var onboardingChosenFolderPath: URL? = {
+        if let pathString = UserDefaults.standard.string(forKey: "onboardingChosenFolderPath") {
+            return URL(fileURLWithPath: pathString, isDirectory: true)
+        }
+        return nil
+    }()
     @State private var drillTransitionCoordinator = DrilldownTransitionCoordinator()
     @State private var displayedHeader = HeaderScreen.overview
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
@@ -35,8 +45,16 @@ struct MenuBarView: View {
     @State private var onboardingWidth: CGFloat = 0
     @State private var pendingOnboardingTransition: PendingOnboardingTransition? = nil
     @State private var folderValidationTask: Task<Void, Never>? = nil
-    @State private var selectedScanFolderExists = false
-    @State private var onboardingChosenFolderExists = false
+    @State private var selectedScanFolderExists = {
+        let path = SettingsStore.shared.mainBasePath
+        return menuBarViewDirectoryExists(at: URL(fileURLWithPath: path, isDirectory: true))
+    }()
+    @State private var onboardingChosenFolderExists = {
+        if let pathString = UserDefaults.standard.string(forKey: "onboardingChosenFolderPath") {
+            return menuBarViewDirectoryExists(at: URL(fileURLWithPath: pathString, isDirectory: true))
+        }
+        return false
+    }()
     @State private var developerFolderExists = false
 
     private let outsideScopeSegmentID = "outside-scan-scope"
@@ -1651,6 +1669,7 @@ struct MenuBarView: View {
 
     private func applyOnboardingScanFolder(_ url: URL) {
         onboardingChosenFolderPath = url
+        UserDefaults.standard.set(url.path, forKey: "onboardingChosenFolderPath")
         settingsStore.setMainBasePath(url)
         settingsStore.setPathEnabled(settingsStore.mainTrackedPath, enabled: true)
         refreshScanAccess()

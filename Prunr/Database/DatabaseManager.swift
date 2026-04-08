@@ -1561,6 +1561,7 @@ extension DatabaseManager {
                 arguments: [trackedPathIdString, updatedAt, stagingSessionId]
             )
 
+            // Apply incremental deltas to category totals.
             try applyWorkingSetCategoryDeltas(
                 deltasByCategory,
                 trackedPathId: trackedPathIdString,
@@ -1923,6 +1924,111 @@ extension DatabaseManager {
         }
 
         return result
+    }
+
+    /// Recalculates ALL `workingSetCategoryTotal` rows by summing actual
+    /// `workingSetEntry` rows grouped by category. Eliminates any drift.
+    private func recalculateAllCategoryTotals(
+        trackedPathId: String,
+        updatedAt: Date,
+        db: Database
+    ) throws {
+        // Sum actual bytes from workingSetEntry for every category
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT pc.category AS category, SUM(wse.sizeBytes) AS totalBytes
+                FROM workingSetEntry wse
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                WHERE wse.trackedPathId = ?
+                GROUP BY pc.category
+                """,
+            arguments: [trackedPathId]
+        )
+
+        var computedTotals: [GrowthCategory: Int64] = [:]
+        for row in rows {
+            guard let rawCategory: String = row["category"],
+                  let category = GrowthCategory(rawValue: rawCategory)
+            else { continue }
+            computedTotals[category] = row["totalBytes"] ?? 0
+        }
+
+        // Delete all existing totals and re-insert from computed values
+        try db.execute(
+            sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
+            arguments: [trackedPathId]
+        )
+
+        guard !computedTotals.isEmpty else { return }
+
+        let upsert = try db.makeStatement(sql: """
+            INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
+            VALUES (?, ?, ?, ?)
+            """)
+        for (category, totalBytes) in computedTotals where totalBytes > 0 {
+            try upsert.execute(arguments: [trackedPathId, category.rawValue, totalBytes, updatedAt])
+        }
+    }
+
+    /// Recalculates `workingSetCategoryTotal` for the given categories by summing
+    /// actual `workingSetEntry` rows. Eliminates drift that can accumulate from
+    /// repeated incremental delta applications.
+    private func recalculateAffectedCategoryTotals(
+        affectedCategories: Set<GrowthCategory>,
+        trackedPathId: String,
+        updatedAt: Date,
+        db: Database
+    ) throws {
+        guard !affectedCategories.isEmpty else { return }
+
+        let categoryPlaceholders = affectedCategories.map { _ in "?" }.joined(separator: ",")
+        let categoryArgs: [DatabaseValueConvertible?] = affectedCategories.map { $0.rawValue }
+
+        // Sum actual bytes from workingSetEntry for each affected category
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT pc.category AS category, SUM(wse.sizeBytes) AS totalBytes
+                FROM workingSetEntry wse
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                WHERE wse.trackedPathId = ?
+                  AND pc.category IN (
+                """ + categoryPlaceholders + ")\n" +
+                """
+                GROUP BY pc.category
+                """,
+            arguments: StatementArguments([trackedPathId] + categoryArgs)
+        )
+
+        var computedTotals: [GrowthCategory: Int64] = [:]
+        for row in rows {
+            guard let rawCategory: String = row["category"],
+                  let category = GrowthCategory(rawValue: rawCategory)
+            else { continue }
+            computedTotals[category] = row["totalBytes"] ?? 0
+        }
+
+        let upsert = try db.makeStatement(sql: """
+            INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(trackedPathId, category) DO UPDATE SET
+                totalBytes = excluded.totalBytes,
+                updatedAt = excluded.updatedAt
+            """)
+        let delete = try db.makeStatement(sql: """
+            DELETE FROM workingSetCategoryTotal
+            WHERE trackedPathId = ? AND category = ?
+            """)
+
+        for category in affectedCategories {
+            let totalBytes = computedTotals[category] ?? 0
+            if totalBytes == 0 {
+                try delete.execute(arguments: [trackedPathId, category.rawValue])
+            } else {
+                try upsert.execute(arguments: [trackedPathId, category.rawValue, totalBytes, updatedAt])
+            }
+        }
     }
 
     private func applyWorkingSetCategoryDeltas(

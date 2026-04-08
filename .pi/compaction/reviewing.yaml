@@ -1,0 +1,40 @@
+extracts:
+  findings:
+    description: Code review findings with severity and location
+    persist: .pi/session-state/reviewing/findings.json
+    format: |
+      Array of { severity: string, file: string, line: number | null, finding: string, suggestion: string }
+    strategy: llm
+    maxTokens: 3000
+    priority: critical
+
+  patterns:
+    description: Recurring patterns or anti-patterns observed across files
+    persist: .pi/session-state/reviewing/patterns.json
+    format: |
+      Array of { pattern: string, occurrences: string[], recommendation: string }
+    strategy: llm
+    maxTokens: 1500
+    priority: high
+
+  file-awareness:
+    description: Files reviewed
+    persist: .pi/session-state/reviewing/files.json
+    format: |
+      { read: string[], modified: string[] }
+    strategy: mechanical
+    priority: low
+
+reassemble:
+  budget: 10000
+  overflow: trim-lowest
+  sources:
+    - source: .pi/session-state/reviewing/findings.json
+      as: "Review findings:"
+      wrap: findings
+    - source: .pi/session-state/reviewing/patterns.json
+      as: "Observed patterns:"
+      wrap: patterns
+    - source: .pi/session-state/reviewing/files.json
+      as: "Files reviewed:"
+      wrap: file-context

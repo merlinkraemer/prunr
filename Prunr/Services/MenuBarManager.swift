@@ -290,10 +290,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         // Only update if there's actual data — avoids a flash of empty categories.
         guard !liveCategories.isEmpty else { return }
 
-        // During scan, show partial data in stableCategories (growing categories are unknown yet)
+        // During scan, replace ALL in-memory categories with partial data.
+        // Do NOT merge with existing growingCategories — normalizeVisibleInventoryState
+        // would add them together, causing category bloat.
+        growingCategories = []
         stableCategories = liveCategories
         stableTotalBytes = liveCategories.reduce(0) { $0 + $1.currentSizeBytes }
-        normalizeVisibleInventoryState()
     }
 
     private func preferredTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
@@ -2627,156 +2629,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         if hadUpdate {
             lastDetectedChangeAt = Date()
+            // Reload inventory from DB ground truth instead of patching in-memory.
+            // The incremental refresh already updated workingSetEntry + category totals
+            // in the DB. Just read them back — no drift possible.
             if !allDeltas.isEmpty {
-                applyIncrementalDeltas(allDeltas)
+                await loadInventoryFromLatestSnapshot(
+                    refreshedAt: Date(),
+                    invalidateSubcategoryCache: false
+                )
             }
-        }
-    }
-
-    /// Patches category totals in-place from incremental deltas.
-    /// Creates new category entries when they don't exist yet (e.g. deltas-only mode).
-    /// No subcategory cache invalidation, no spinners.
-    private func applyIncrementalDeltas(_ deltas: [DatabaseManager.JournalDeltaKey: Int64]) {
-        guard !deltas.isEmpty else { return }
-        hasIncrementalDeltasSinceSnapshot = true
-
-        // Aggregate deltas by category (sum all subcategory deltas)
-        var categoryDeltas: [GrowthCategory: Int64] = [:]
-        for (key, delta) in deltas {
-            categoryDeltas[key.category, default: 0] += delta
-        }
-
-        // Track which categories were already present so we can add missing ones
-        var matchedCategories = Set<GrowthCategory>()
-
-        let now = Date()
-
-        // Apply to growing categories (clamp to zero — deltas-only mode can overshoot)
-        for i in growingCategories.indices {
-            if let delta = categoryDeltas[growingCategories[i].category] {
-                growingCategories[i].currentSizeBytes = max(0, growingCategories[i].currentSizeBytes + delta)
-                matchedCategories.insert(growingCategories[i].category)
-                if delta > 0 {
-                    growingCategories[i].recentGrowthStory = accumulateGrowthStory(
-                        existing: growingCategories[i].recentGrowthStory,
-                        category: growingCategories[i].category,
-                        delta: delta,
-                        now: now
-                    )
-                }
-            }
-        }
-
-        // Demote growing categories whose size hit zero or whose growth story
-        // is now fully offset by shrinkage
-        var demotedIndices = IndexSet()
-        for i in growingCategories.indices {
-            if growingCategories[i].currentSizeBytes == 0 {
-                growingCategories[i].recentGrowthStory = nil
-                demotedIndices.insert(i)
-            } else if let delta = categoryDeltas[growingCategories[i].category], delta < 0 {
-                if let story = growingCategories[i].recentGrowthStory {
-                    let newDelta = story.deltaBytes + delta
-                    if newDelta <= 0 {
-                        growingCategories[i].recentGrowthStory = nil
-                        demotedIndices.insert(i)
-                    } else {
-                        growingCategories[i].recentGrowthStory = RecentGrowthStory(
-                            category: story.category, subcategory: story.subcategory,
-                            deltaBytes: newDelta, startedAt: story.startedAt,
-                            endedAt: now, duration: story.duration,
-                            displayLabel: story.displayLabel
-                        )
-                    }
-                }
-            }
-        }
-        for i in demotedIndices.reversed() {
-            stableCategories.append(growingCategories.remove(at: i))
-        }
-
-        // Apply to stable categories (clamp to zero) and promote those with growth
-        var promotedIndices = IndexSet()
-        for i in stableCategories.indices {
-            if let delta = categoryDeltas[stableCategories[i].category] {
-                stableCategories[i].currentSizeBytes = max(0, stableCategories[i].currentSizeBytes + delta)
-                matchedCategories.insert(stableCategories[i].category)
-                if delta > 0 {
-                    stableCategories[i].recentGrowthStory = accumulateGrowthStory(
-                        existing: stableCategories[i].recentGrowthStory,
-                        category: stableCategories[i].category,
-                        delta: delta,
-                        now: now
-                    )
-                    if stableCategories[i].recentGrowthStory != nil {
-                        promotedIndices.insert(i)
-                    }
-                }
-            }
-        }
-        // Move categories with new growth from stable → growing so they're visible
-        for i in promotedIndices.reversed() {
-            growingCategories.append(stableCategories.remove(at: i))
-        }
-
-        // Create new entries for categories that don't exist yet (deltas-only mode bootstrap)
-        for (category, delta) in categoryDeltas where !matchedCategories.contains(category) && delta >= 1_048_576 {
-            let story = RecentGrowthStory(
-                category: category, subcategory: nil,
-                deltaBytes: delta, startedAt: now, endedAt: now,
-                duration: 0, displayLabel: "just now"
-            )
-            let item = CategoryInventoryItem(
-                category: category,
-                currentSizeBytes: delta,
-                growthTrend: nil,
-                recentGrowthStory: story
-            )
-            growingCategories.append(item)
-        }
-
-        // Re-sort growing categories by size descending
-        if !growingCategories.isEmpty {
-            growingCategories.sort { $0.currentSizeBytes > $1.currentSizeBytes }
-        }
-
-        var newStableTotal: Int64 = 0
-        for i in stableCategories.indices {
-            newStableTotal += stableCategories[i].currentSizeBytes
-        }
-        stableTotalBytes = newStableTotal
-        normalizeVisibleInventoryState()
-
-        // Selectively invalidate subcategory topFiles for categories with non-zero deltas only
-        let affectedCategories = Set(categoryDeltas.compactMap { category, delta in
-            delta != 0 ? category : nil
-        })
-        liveWorkingSetDrillDownCategories.formUnion(affectedCategories)
-        var needsDrillDownReload = false
-        for category in affectedCategories {
-            if let task = subcategoryBreakdownLoadTasks[category] {
-                task.cancel()
-                subcategoryBreakdownLoadTasks[category] = nil
-                subcategoryBreakdownLoadingCategories.remove(category)
-            }
-
-            if subcategoryGroupsByCategory[category] != nil {
-                // Invalidate just this category's subcategory cache so it reloads on next drill-down
-                subcategoryGroupsByCategory.removeValue(forKey: category)
-                subcategoryBreakdownCacheGenerationByCategory.removeValue(forKey: category)
-            }
-
-            if isDrilledDown, selectedInventoryCategory?.category == category {
-                needsDrillDownReload = true
-            }
-        }
-
-        reconcileDrillDownSelection()
-
-        // If the currently drilled-down category was invalidated, reload its subcategory data
-        // in the background so the user doesn't see an empty drilldown.
-        if needsDrillDownReload, let category = selectedInventoryCategory?.category {
-            preloadSubcategoryBreakdowns(for: [category])
         }
     }
 
