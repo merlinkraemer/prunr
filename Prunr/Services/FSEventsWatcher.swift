@@ -1,5 +1,6 @@
 import Foundation
 import CoreServices
+import os
 
 /// Actor that manages FSEventStream for file system monitoring with debounced change detection.
 ///
@@ -89,6 +90,7 @@ actor FSEventsWatcher {
         guard let newStream = FSEventStreamCreate(
             kCFAllocatorDefault,
             { (streamRef, clientCallbackInfo, numEvents, eventPaths, eventFlags, eventIds) in
+                Logger.fsEvents.debug("FSEvents callback: \(numEvents) events, fullRescan checking")
                 // Extract the watcher instance from context
                 guard let info = clientCallbackInfo else { return }
 
@@ -201,6 +203,8 @@ actor FSEventsWatcher {
     ///   - requiresFullRescan: Whether the stream reported dropped/root-change events
     private func emitChangeBatch(_ paths: Set<URL>, requiresFullRescan: Bool = false) {
         guard isRunning else { return }
+        let running = isRunning
+        Logger.fsEvents.info("emitChangeBatch: \(paths.count) paths, running=\(running)")
         onChange?(ChangeBatch(changedPaths: paths, requiresFullRescan: requiresFullRescan))
     }
 

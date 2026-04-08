@@ -262,6 +262,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     ///   - trackedPath: The path whose scan produced these partial totals.
     ///   - totals: Partial `[GrowthCategory: Int64]` accumulated so far by ScanService.
     func applyPartialCategoryTotals(from trackedPath: TrackedPath, totals: [GrowthCategory: Int64]) {
+        Logger.progress.info("applyPartial: path=\(trackedPath.id) categories=\(totals.count)")
         // Progress totals are cumulative per tracked path. Store the latest totals
         // for that path and then sum across all active tracked paths.
         partialScanCategoryTotalsByPathID[trackedPath.id] = totals
@@ -296,6 +297,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         growingCategories = []
         stableCategories = liveCategories
         stableTotalBytes = liveCategories.reduce(0) { $0 + $1.currentSizeBytes }
+        Logger.progress.info("applyPartial done: growing=0 stable=\(liveCategories.count)")
     }
 
     private func preferredTrackedPath(from paths: [TrackedPath]? = nil) -> TrackedPath? {
@@ -1789,9 +1791,25 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func normalizeVisibleInventoryState() {
+        let growing = growingCategories
+        let stable = stableCategories
+        let allItems = growing + stable
+        let categoryMap = Dictionary(grouping: allItems, by: { $0.category })
+        let duplicates = categoryMap.filter { $0.value.count > 1 }
+        if !duplicates.isEmpty {
+            let dupNames = duplicates.keys.map(\.displayName)
+            let growingNames = growing.map(\.category.displayName)
+            let stableNames = stable.map(\.category.displayName)
+            Logger.state.error("DUPLICATE CATEGORIES detected: \(dupNames) — growing=\(growingNames) stable=\(stableNames)")
+        }
+        let growingCount = growing.count
+        let stableCount = stable.count
+        let totalBytes = allItems.reduce(0) { $0 + $1.currentSizeBytes }
+        Logger.state.info("normalize: growing=\(growingCount) stable=\(stableCount) total=\(totalBytes) bytes")
+
         var mergedByCategory: [GrowthCategory: CategoryInventoryItem] = [:]
 
-        for item in growingCategories + stableCategories {
+        for item in allItems {
             if let existing = mergedByCategory[item.category] {
                 mergedByCategory[item.category] = CategoryInventoryItem(
                     category: item.category,
