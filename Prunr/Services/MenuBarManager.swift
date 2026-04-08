@@ -921,6 +921,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             completedSuccessfully = true
             configureFileWatcherIfNeeded()
 
+            // Flush any FSEvents that accumulated during the scan so they're
+            // processed promptly rather than sitting in the coalescing queue.
+            await fileEventsWatcher?.flush()
+
             let snapshotTimestamp = aggregation.latestSnapshotDate ?? Date()
             if !growingCategories.isEmpty {
                 lastDetectedChangeAt = snapshotTimestamp

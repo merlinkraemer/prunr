@@ -83,9 +83,12 @@ actor FSEventsWatcher {
         callbackContext = context
 
         // File-level events give us more reliable roots for incremental rescans.
+        // NoDefer ensures events are delivered promptly even after a quiet period,
+        // rather than being held until the coalescing interval expires.
         let flags = FSEventStreamCreateFlags(
             kFSEventStreamCreateFlagFileEvents |
-            kFSEventStreamCreateFlagWatchRoot
+            kFSEventStreamCreateFlagWatchRoot |
+            kFSEventStreamCreateFlagNoDefer
         )
 
         // Create the event stream
@@ -184,6 +187,16 @@ actor FSEventsWatcher {
     }
 
     // MARK: - Callback Management
+
+    /// Flushes any pending FSEvents to the callback immediately.
+    ///
+    /// Useful after a manual scan completes to ensure any file changes that
+    /// occurred during the scan are delivered promptly rather than waiting for
+    /// the next coalescing window.
+    func flush() {
+        guard let eventStream = stream, isRunning else { return }
+        FSEventStreamFlushSync(eventStream)
+    }
 
     /// Sets the callback to be invoked when changes are detected.
     ///
