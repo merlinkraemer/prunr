@@ -267,7 +267,7 @@ struct MenuBarView: View {
 
     private var scanFolderOptions: [OnboardingFolderOption] {
         var options: [OnboardingFolderOption] = []
-        
+
         let home = FileManager.default.homeDirectoryForCurrentUser
         let dev = home.appendingPathComponent("dev", isDirectory: true)
 
@@ -297,7 +297,7 @@ struct MenuBarView: View {
                 url: URL(fileURLWithPath: "/", isDirectory: true)
             )
         )
-        
+
         // Add custom path if one was selected via file picker
         if let customPath = customOnboardingFolderPath {
             let isAlreadyInList = options.contains { $0.url.standardizedFileURL == customPath.standardizedFileURL }
@@ -531,7 +531,7 @@ struct MenuBarView: View {
 
             // Page navigation container - swaps between main/detail pages
             pageNavigationContent
-            
+
             Spacer(minLength: 0)
 
             // Footer buttons (no separator)

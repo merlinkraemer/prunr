@@ -3,6 +3,8 @@
 **Date:** 2026-04-08  
 **Scope:** Every pattern used in the codebase audited against Apple documentation (Swift Concurrency, SwiftUI @Observable, FSEvents), GRDB documentation, and macOS filesystem semantics.
 
+> Historical note: this review predates the current single-source-of-truth inventory refactor and the `AsyncStream` progress pipeline. Treat it as preserved analysis, not the current architecture spec. For current state, use `docs/STATE.md` and `docs/OVERVIEW.md`.
+
 ---
 
 ## Table of Contents

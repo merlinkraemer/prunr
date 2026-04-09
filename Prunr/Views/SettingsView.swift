@@ -94,7 +94,7 @@ private struct GeneralSettingsTab: View {
                     HStack {
                         Image(systemName: hasRequiredScanAccess ? "checkmark.circle.fill" : "shield.fill")
                             .foregroundStyle(hasRequiredScanAccess ? .green : .orange)
-                        
+
                         Text(hasRequiredScanAccess ? "Current scan scope is accessible" : "Extra privacy access needed for current scan scope")
                     }
 
@@ -103,14 +103,14 @@ private struct GeneralSettingsTab: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    
+
                     if !hasRequiredScanAccess {
                         Button("Open Privacy Settings") {
                             openScanAccessSettings()
                         }
                         .buttonStyle(.borderedProminent)
                     }
-                    
+
                     Text("Prunr checks the folders you selected plus protected locations inside them. Open Privacy Settings only if macOS blocks part of that scope.")
                         .font(.caption)
                         .foregroundStyle(.secondary)

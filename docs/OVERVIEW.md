@@ -22,7 +22,8 @@ Prunr is a macOS menu bar app that answers **“What filled my disk?”** by tra
    - Baseline snapshot IDs are stored in SQLite and referenced via `UserDefaults`.
 
 2. **Watch**  
-   - An FSEvents-based watcher monitors enabled paths with roughly a **3s debounce**.  
+   - An FSEvents-based watcher monitors enabled paths with stream coalescing plus manager-side recent-change debouncing.
+   - Current timing is roughly **1.0s FSEvents coalescing** with **1.5s normal** and **0.75s pressure** refresh debounce windows.
    - File system activity is used to decide **when** to run a scan so scans feel timely but not spammy.
 
 3. **Scan**  
@@ -65,4 +66,3 @@ This is a high-level, non-phased view of where Prunr is and where it is going.
 - **Explain, don’t just clean**: Prunr focuses on clear explanations of what changed, not one-click cleaning.
 - **Be a good menu bar citizen**: Small, fast, unobtrusive, visually aligned with native macOS patterns.
 - **Favor clarity over knobs**: Hardcoded thresholds (like the 70% drill-down heuristic and ≥100MB “big files”) keep the initial UX simple.
-

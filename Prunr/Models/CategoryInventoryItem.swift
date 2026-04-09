@@ -88,25 +88,25 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
         self.growthBytes = growthBytes
         self.topFiles = topFiles
     }
-    
+
     /// Whether there are more files to load beyond what's in topFiles
     var hasMoreFiles: Bool {
         topFiles.count < fileCount
     }
-    
+
     /// Number of files currently loaded
     var loadedFileCount: Int {
         topFiles.count
     }
-    
+
     // MARK: - Pagination Constants
-    
+
     /// Initial number of files to load per subcategory
     static let initialLoadLimit = 20
-    
+
     /// Number of additional files to load when "Load More" is clicked
     static let loadMoreBatchSize = 50
-    
+
     /// Maximum files that can be loaded (safeguard against memory issues)
     static let maxLoadableFiles = 500
 }

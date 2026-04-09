@@ -623,9 +623,9 @@ struct CategoryGrowthListView: View {
             group.id
         ].joined(separator: ":")
     }
-    
+
     // MARK: - Load More Button
-    
+
     private func loadMoreButton(totalFiles: Int) -> some View {
         Button {
             Task {
@@ -645,7 +645,7 @@ struct CategoryGrowthListView: View {
                     Image(systemName: "arrow.down.circle")
                         .font(.system(size: 14))
                 }
-                
+
                 // Read remaining count from current manager state
                 let remaining = manager.selectedSubcategory.map { totalFiles - $0.loadedFileCount } ?? 0
                 Text("Load more (\(remaining) remaining)")
@@ -660,9 +660,9 @@ struct CategoryGrowthListView: View {
         .padding(.horizontal, 6)
         .padding(.top, 8)
     }
-    
+
     // MARK: - Max Files Reached View
-    
+
     private func maxFilesReachedView(loadedCount: Int) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")

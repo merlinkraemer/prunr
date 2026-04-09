@@ -758,23 +758,31 @@ final class PrunrSmokeTests: XCTestCase {
             try? FileManager.default.removeItem(at: tempDirectory)
         }
 
-        let watcher = FSEventsWatcher(pathsToWatch: [tempDirectory], coalescingInterval: 0.1)
+        let watcher = await MainActor.run {
+            FSEventsWatcher(pathsToWatch: [tempDirectory], coalescingInterval: 0.1)
+        }
         let expectation = expectation(description: "watcher emits changed path")
 
-        await watcher.setOnChange { changeBatch in
+        await MainActor.run {
+            watcher.setOnChange { changeBatch in
             if changeBatch.changedPaths.contains(where: { $0.path.hasPrefix(tempDirectory.path) }) {
                 XCTAssertFalse(changeBatch.requiresFullRescan)
                 expectation.fulfill()
             }
         }
-        await watcher.start()
+        }
+        await MainActor.run {
+            watcher.start()
+        }
         try? await Task.sleep(for: .milliseconds(250))
 
         let fileURL = tempDirectory.appendingPathComponent("watch.txt")
         try "hello".write(to: fileURL, atomically: true, encoding: .utf8)
 
         await fulfillment(of: [expectation], timeout: 5.0)
-        await watcher.stop()
+        await MainActor.run {
+            watcher.stop()
+        }
     }
 
     func testCleanupCapsSnapshotHistoryByCount() async throws {

@@ -1,0 +1,7 @@
+{
+  "name": "prunr-monitor",
+  "private": true,
+  "scripts": {
+    "monitor": "node scripts/monitor.mjs"
+  }
+}

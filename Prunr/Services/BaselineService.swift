@@ -129,6 +129,13 @@ actor BaselineService {
             ))
         }
 
+        if previousSnapshotId == nil {
+            // A first successful baseline must become the new source of truth.
+            // Clear any stale realtime state left behind from pre-baseline runs.
+            try await db.rebuildWorkingSet(from: snapshotId, trackedPathId: trackedPath.id)
+            try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)
+        }
+
         // Record deltas to growth journal only when a previous snapshot exists.
         // On first scan (previousSnapshotId == nil) this block is skipped entirely —
         // no calculateDeltas call and no journal recording, so first-scan cost is
@@ -1225,8 +1232,16 @@ actor BaselineService {
     func getInventoryWithTrends(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
         var inventory = await getCategoryInventory(trackedPath: trackedPath)
         let comparisonSnapshots = try? await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id)
-        guard comparisonSnapshots?.baselineSnapshotId != nil else {
+        guard let comparisonSnapshots else {
             return inventory
+        }
+
+        if comparisonSnapshots.baselineSnapshotId == nil {
+            let snapshots = try? await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
+            let hasSingleSnapshotOnly = (snapshots?.count == 1)
+            guard hasSingleSnapshotOnly else {
+                return inventory
+            }
         }
 
         let recentStories = await growthJournalService.recentGrowthStories(

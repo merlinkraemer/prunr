@@ -1,0 +1,18 @@
+included:
+  - Prunr
+  - PrunrTests
+
+excluded:
+  - LocalPackages
+  - .build
+  - build
+
+only_rules:
+  - colon
+  - comma
+  - control_statement
+  - trailing_newline
+  - trailing_whitespace
+  - vertical_whitespace
+
+reporter: github-actions-logging

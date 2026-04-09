@@ -1,8 +1,10 @@
 # Product Mission
 
+> Archived product-mission note. This document preserves the original framing, but the current shipped app state is described in `docs/STATE.md` and `docs/OVERVIEW.md`.
+
 ## Pitch
 
-**Prunr** is a macOS app that tracks what's eating your disk space *over time* and helps you reclaim it fast.
+**Prunr** is a macOS menu bar app that tracks what's eating your disk space *over time* and helps you reclaim it fast.
 
 Unlike tools that show what's big (DaisyDisk) or blindly clean caches (CleanMyMac), Prunr answers the question: *"What grew recently?"* – whether it's 10,000 small npm packages, forgotten downloads, or runaway app caches.
 
@@ -46,15 +48,15 @@ Prunr fills the gap: **accurate size tracking + time-based deltas + clear answer
 
 ## Key Features
 
-### MVP (v1.0)
+### Original MVP framing
 
 **Snapshot-based monitoring**
-- Periodic snapshots of folder sizes (hourly default)
-- 7 days of history stored locally
-- Lightweight database (~50-200MB)
+- Periodic snapshots of folder sizes (originally framed as hourly)
+- Local history retained on device
+- Lightweight SQLite-backed database
 
 **Time-based delta view**
-- "What grew in the last 24h / 7 days / custom range"
+- "What grew recently"
 - Sortable list: folder, current size, change (+/-), when
 - Drill-down from category to specific folders
 
@@ -71,9 +73,7 @@ Prunr fills the gap: **accurate size tracking + time-based deltas + clear answer
 - Quick access to full app
 
 **Full app window**
-- Detailed list view of growth
-- Manual scan trigger
-- Settings for paths, thresholds, snapshot frequency
+- This was part of the original framing; the shipped app is menu-bar only with Settings.
 
 ### Post-MVP (v2.0+)
 

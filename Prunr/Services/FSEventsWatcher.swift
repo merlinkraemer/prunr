@@ -2,12 +2,13 @@ import Foundation
 import CoreServices
 import os
 
-/// Actor that manages FSEventStream for file system monitoring with coalesced change detection.
+/// Main-actor watcher that manages FSEventStream for file system monitoring with coalesced change detection.
 ///
 /// FSEventsWatcher wraps the low-level FSEventStream API from CoreServices,
 /// providing a Swift-async interface with configurable debouncing to prevent
 /// spamming callbacks when multiple rapid changes occur.
-actor FSEventsWatcher {
+@MainActor
+final class FSEventsWatcher {
 
     // MARK: - Types
 
@@ -41,7 +42,6 @@ actor FSEventsWatcher {
     /// Callback context storage - needs to be stored to keep it alive
     private var callbackContext: FSEventStreamContext?
     private var callbackInfoPointer: UnsafeMutableRawPointer?
-
     // MARK: - Initialization
 
     /// Creates a new FSEvents watcher for the given paths.
@@ -66,8 +66,7 @@ actor FSEventsWatcher {
         // Convert URLs to path strings for FSEvents
         let paths = pathsToWatch.map { $0.path as CFString }
 
-        // Create context to pass 'self' to the callback
-        // Use passRetained to keep self alive for the lifetime of the stream.
+        // Create context to pass `self` to the C callback.
         // Balanced by releaseCallbackInfoIfNeeded() in stop() / deinit.
         let contextPtr = Unmanaged.passRetained(self).toOpaque()
         callbackInfoPointer = contextPtr
@@ -128,9 +127,11 @@ actor FSEventsWatcher {
                     }
                 }
 
-                // Trigger coalesced handling
-                Task {
-                    await watcher.emitChangeBatch(changedPaths, requiresFullRescan: requiresFullRescan)
+                MainActor.assumeIsolated {
+                    watcher.emitChangeBatch(
+                        changedPaths,
+                        requiresFullRescan: requiresFullRescan
+                    )
                 }
             },
             &context,

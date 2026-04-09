@@ -5,9 +5,8 @@
 - Universal binary (Apple Silicon + Intel)
 
 ## UI Layer
-- **SwiftUI** – native, declarative UI framework
-- **MenuBarExtra** – SwiftUI-native menu bar component
-- **SwiftUI Charts** – for future visual/treemap features
+- **SwiftUI** – native, declarative UI framework and `App` entrypoint
+- **AppKit** – menu bar shell, popover/panel presentation, and status item handling
 
 ## Data Layer
 - **GRDB.swift** – robust Swift SQLite wrapper, type-safe, well-documented
@@ -17,10 +16,8 @@
 ## Background & Scheduling
 - **SMAppService** – launch-at-login registration
 - App stays alive via menu bar presence
-- **Timer** – periodic snapshot scheduling while app is running
-
-## Notifications
-- **UserNotifications** – native framework for low-space alerts
+- **Timer** – periodic refresh and scan scheduling while app is running
+- **CoreServices FSEvents** – filesystem change monitoring and coalescing
 
 ## Architecture
 - **Swift concurrency** – async/await, actors for background scanning

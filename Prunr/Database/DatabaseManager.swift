@@ -494,7 +494,6 @@ extension DatabaseManager {
         let updatedAt: Date
     }
 
-
     /// Creates a new snapshot with the current timestamp for a specific path
     /// - Parameters:
     ///   - trackedPathId: The ID of the TrackedPath this snapshot belongs to

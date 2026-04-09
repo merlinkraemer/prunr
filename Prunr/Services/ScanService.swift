@@ -102,7 +102,7 @@ actor ScanService {
     static func captureVolumeFreeSpace(for url: URL? = nil) -> Int64? {
         let targetURL = (url ?? URL(fileURLWithPath: "/")).standardizedFileURL
         let resourceKeys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
-        
+
         do {
             let resourceValues = try targetURL.resourceValues(forKeys: resourceKeys)
             if let capacity = resourceValues.volumeAvailableCapacityForImportantUsage {

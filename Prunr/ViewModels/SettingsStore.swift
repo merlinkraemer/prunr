@@ -14,7 +14,7 @@ final class SettingsStore {
         "Thumbs.db",
         "desktop.ini"
     ]
-    
+
     // MARK: - Keys
 
     private enum Keys {
@@ -39,9 +39,9 @@ final class SettingsStore {
     static let defaultCategoryHistoryRetentionDays = 30
     static let defaultAutomaticFullScanIntervalHours = 24
     static let automaticFullScanIntervalPresetHours = [24, 48, 72, 168, 336]
-    
+
     // MARK: - Properties
-    
+
     /// User-configured tracked paths (additional to defaults)
     var customTrackedPaths: [TrackedPath] {
         didSet { saveTrackedPaths() }
@@ -58,7 +58,7 @@ final class SettingsStore {
     private var selectedCommonPathIDs: Set<String> {
         didSet { UserDefaults.standard.set(Array(selectedCommonPathIDs), forKey: Keys.selectedCommonPathIDs) }
     }
-    
+
     /// User-added boundary folder names
     var customBoundaries: [String] {
         didSet { saveCustomBoundaries() }
@@ -68,12 +68,12 @@ final class SettingsStore {
     var customScanIgnores: [String] {
         didSet { saveCustomScanIgnores() }
     }
-    
+
     /// Disabled path IDs (for checkboxes)
     private var disabledPathIDs: Set<String> {
         didSet { UserDefaults.standard.set(Array(disabledPathIDs), forKey: Keys.disabledPaths) }
     }
-    
+
     /// Disabled boundary names
     private var disabledBoundaryNames: Set<String> {
         didSet { UserDefaults.standard.set(Array(disabledBoundaryNames), forKey: Keys.disabledBoundaries) }
@@ -117,7 +117,7 @@ final class SettingsStore {
     }
 
     // MARK: - Computed Properties
-    
+
     /// All tracked paths (defaults + custom)
     var allTrackedPaths: [TrackedPath] {
         [mainTrackedPath] + selectedCommonPaths + customTrackedPaths
@@ -146,7 +146,7 @@ final class SettingsStore {
     private var mainBaseURL: URL {
         URL(fileURLWithPath: mainBasePath, isDirectory: true)
     }
-    
+
     /// Enabled tracked paths only
     var enabledTrackedPaths: [TrackedPath] {
         allTrackedPaths.filter { isPathEnabled($0) }
@@ -156,7 +156,7 @@ final class SettingsStore {
     var enabledOverviewPaths: [TrackedPath] {
         enabledTrackedPaths.filter { !isCommonPath($0) }
     }
-    
+
     /// All boundaries (standard + custom)
     var allBoundaries: Set<String> {
         BoundaryConfig.standardBoundaries.union(Set(customBoundaries))
@@ -166,7 +166,7 @@ final class SettingsStore {
     var allScanIgnoreNames: Set<String> {
         Self.defaultScanIgnoreNames.union(Set(customScanIgnores))
     }
-    
+
     /// Enabled boundaries only
     var enabledBoundaries: Set<String> {
         allBoundaries.filter { isBoundaryEnabled($0) }
@@ -175,9 +175,9 @@ final class SettingsStore {
     var automaticFullScanInterval: TimeInterval {
         TimeInterval(automaticFullScanIntervalHours * 60 * 60)
     }
-    
+
     // MARK: - Init
-    
+
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let defaultBasePath = home.path
@@ -194,16 +194,16 @@ final class SettingsStore {
         self.mainBasePath = initialMainBasePath
 
         self.selectedCommonPathIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.selectedCommonPathIDs) ?? [])
-        
+
         // Load custom boundaries
         self.customBoundaries = UserDefaults.standard.stringArray(forKey: Keys.customBoundaries) ?? []
 
         // Load custom scan ignores
         self.customScanIgnores = UserDefaults.standard.stringArray(forKey: Keys.customScanIgnores) ?? []
-        
+
         // Load disabled paths
         self.disabledPathIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.disabledPaths) ?? [])
-        
+
         // Load disabled boundaries
         self.disabledBoundaryNames = Set(UserDefaults.standard.stringArray(forKey: Keys.disabledBoundaries) ?? [])
 
@@ -256,15 +256,15 @@ final class SettingsStore {
         default: 168
         }
     }
-    
+
     // MARK: - Path Management
-    
+
     func addTrackedPath(_ path: TrackedPath) {
         guard !allTrackedPaths.contains(where: { $0.url == path.url }) else { return }
         customTrackedPaths.append(path)
         markScopeChanged()
     }
-    
+
     func removeTrackedPath(_ path: TrackedPath) {
         let beforeCount = customTrackedPaths.count
         customTrackedPaths.removeAll { $0.id == path.id }
@@ -273,11 +273,11 @@ final class SettingsStore {
             markScopeChanged()
         }
     }
-    
+
     func isPathEnabled(_ path: TrackedPath) -> Bool {
         !disabledPathIDs.contains(path.id.uuidString)
     }
-    
+
     func setPathEnabled(_ path: TrackedPath, enabled: Bool) {
         let wasEnabled = isPathEnabled(path)
         guard wasEnabled != enabled else { return }
@@ -364,24 +364,24 @@ final class SettingsStore {
     func removeScanIgnore(_ name: String) {
         customScanIgnores.removeAll { $0 == name }
     }
-    
+
     // MARK: - Boundary Management
-    
+
     func addBoundary(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !customBoundaries.contains(trimmed) else { return }
         customBoundaries.append(trimmed)
     }
-    
+
     func removeBoundary(_ name: String) {
         customBoundaries.removeAll { $0 == name }
         disabledBoundaryNames.remove(name)
     }
-    
+
     func isBoundaryEnabled(_ name: String) -> Bool {
         !disabledBoundaryNames.contains(name)
     }
-    
+
     func setBoundaryEnabled(_ name: String, enabled: Bool) {
         if enabled {
             disabledBoundaryNames.remove(name)
@@ -389,15 +389,15 @@ final class SettingsStore {
             disabledBoundaryNames.insert(name)
         }
     }
-    
+
     // MARK: - Persistence
-    
+
     private func saveTrackedPaths() {
         if let data = try? JSONEncoder().encode(customTrackedPaths) {
             UserDefaults.standard.set(data, forKey: Keys.trackedPaths)
         }
     }
-    
+
     private func saveCustomBoundaries() {
         UserDefaults.standard.set(customBoundaries, forKey: Keys.customBoundaries)
     }
@@ -417,7 +417,7 @@ final class SettingsStore {
     private static func loadAvailableCommonPaths(for baseURL: URL) -> [TrackedPath] {
         TrackedPath.commonPathPresets(baseDirectory: baseURL)
     }
-    
+
     private func updateLaunchAtLogin() {
         do {
             if launchAtLogin {

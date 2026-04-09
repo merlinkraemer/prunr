@@ -31,7 +31,7 @@ struct DriveBarView: View {
     var focusedLabel: String? = nil
     var focusedIcon: String? = nil
     var focusedIconColor: Color = .secondary
-    
+
     /// When true, disables hover interactions on the bar segments
     var disableHover: Bool = false
 

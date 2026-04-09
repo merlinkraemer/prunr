@@ -4,7 +4,7 @@ actor GrowthJournalService {
     static let shared = GrowthJournalService()
 
     private let db = DatabaseManager.shared
-    private let recentStoryThresholdBytes: Int64 = 10 * 1024 * 1024
+    private let recentStoryThresholdBytes: Int64 = 1 * 1024 * 1024
     private let recentStoryWindow: TimeInterval = 24 * 60 * 60
 
     private init() {}

@@ -80,6 +80,13 @@ final class DropdownPanel: NSPanel {
 @MainActor
 @Observable
 final class MenuBarManager: NSObject, NSPopoverDelegate {
+    private static func inventorySortsBefore(_ lhs: CategoryInventoryItem, _ rhs: CategoryInventoryItem) -> Bool {
+        if lhs.currentSizeBytes == rhs.currentSizeBytes {
+            return lhs.category.displayName.localizedStandardCompare(rhs.category.displayName) == .orderedAscending
+        }
+        return lhs.currentSizeBytes > rhs.currentSizeBytes
+    }
+
     private var statusItem: NSStatusItem?
     var popover: NSPopover?
     var panel: DropdownPanel?
@@ -91,7 +98,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private let clickDebounceInterval: TimeInterval = 0.1 // 100ms
 
     private static let logger = Logger(subsystem: "com.prunr.MenuBarManager", category: "Reconciliation")
-
 
     /// Baseline service for growth tracking
     private let baselineService = BaselineService.shared
@@ -111,11 +117,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // Computed partitions — automatically derived from allCategories
     var growingCategories: [CategoryInventoryItem] {
         allCategories.filter { $0.recentGrowthStory != nil }
-            .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+            .sorted(by: Self.inventorySortsBefore)
     }
     var stableCategories: [CategoryInventoryItem] {
         allCategories.filter { $0.recentGrowthStory == nil }
-            .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+            .sorted(by: Self.inventorySortsBefore)
     }
     var stableTotalBytes: Int64 {
         stableCategories.reduce(0) { $0 + $1.currentSizeBytes }
@@ -296,7 +302,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                     recentGrowthStory: nil
                 )
             }
-            .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+            .sorted(by: Self.inventorySortsBefore)
 
         // Only update if there's actual data — avoids a flash of empty categories.
         guard !liveCategories.isEmpty else { return }
@@ -678,7 +684,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
 
-
     @objc private func resetBaseline() {
         guard confirmDeleteAllSnapshots() else { return }
         Task { await performReset() }
@@ -923,7 +928,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
             // Flush any FSEvents that accumulated during the scan so they're
             // processed promptly rather than sitting in the coalescing queue.
-            await fileEventsWatcher?.flush()
+            fileEventsWatcher?.flush()
 
             let snapshotTimestamp = aggregation.latestSnapshotDate ?? Date()
             if !growingCategories.isEmpty {
@@ -1625,7 +1630,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let items = itemsByCategory.map {
             CategoryInventoryItem(category: $0.key, currentSizeBytes: $0.value,
                                   growthTrend: nil, recentGrowthStory: nil)
-        }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+        }.sorted(by: Self.inventorySortsBefore)
 
         // All appear as stable initially (no growth stories loaded yet)
         allCategories = items
@@ -1655,7 +1660,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         let visibleInventory = inventory.map {
             suppressGrowthIndicators ? suppressedGrowthItem(from: $0) : $0
-        }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+        }.sorted(by: Self.inventorySortsBefore)
 
         allCategories = visibleInventory
         currentInventorySnapshotIDsByPath = snapshotIDsByPath
@@ -1781,7 +1786,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         withAnimationsDisabled {
             allCategories = allCategories
                 .map(suppressedGrowthItem(from:))
-                .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
+                .sorted(by: Self.inventorySortsBefore)
 
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.mapValues { groups in
                 groups.map { group in
@@ -2349,7 +2354,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             watchedPaths = []
             Task { @MainActor in
                 if let watcher = fileEventsWatcher {
-                    await watcher.stop()
+                    watcher.stop()
                 }
                 fileEventsWatcher = nil
             }
@@ -2359,7 +2364,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             watchedPaths = []
             Task { @MainActor in
                 if let watcher = fileEventsWatcher {
-                    await watcher.stop()
+                    watcher.stop()
                 }
                 fileEventsWatcher = nil
             }
@@ -2374,7 +2379,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         if watchedSignature == watchedPaths {
             Task { @MainActor in
-                if let watcher = fileEventsWatcher, await watcher.isRunning {
+                if let watcher = fileEventsWatcher, watcher.isRunning {
                     return
                 }
                 await configureFileWatcher(with: urls)
@@ -2391,7 +2396,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     @MainActor
     private func configureFileWatcher(with urls: [URL]) async {
         if let watcher = fileEventsWatcher {
-            await watcher.stop()
+            watcher.stop()
         }
         fileEventsWatcher = nil
 
@@ -2403,13 +2408,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         FSEventsNoiseFilter.refreshCustomIgnoresCache()
 
         let watcher = FSEventsWatcher(pathsToWatch: urls, coalescingInterval: 1.0)
-        await watcher.setOnChange { [weak self] changeBatch in
-            Task { @MainActor in
-                self?.recordFileWatcherChangeBatch(changeBatch)
+        watcher.setOnChange { [weak self] changeBatch in
+            RunLoop.main.perform {
+                MainActor.assumeIsolated {
+                    self?.recordFileWatcherChangeBatch(changeBatch)
+                }
             }
         }
         fileEventsWatcher = watcher
-        await watcher.start()
+        watcher.start()
     }
 
     @MainActor
@@ -2457,7 +2464,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let watchedSignature = urls.map(\.path)
         if watchedSignature == watchedPaths,
            let watcher = fileEventsWatcher,
-           await watcher.isRunning {
+           watcher.isRunning {
             return
         }
 
@@ -2573,15 +2580,16 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         if hadUpdate {
             lastDetectedChangeAt = Date()
+            hasIncrementalDeltasSinceSnapshot = true
+            liveWorkingSetDrillDownCategories.formUnion(allDeltas.keys.map(\.category))
+            invalidateGrowthContributorCache()
             // Reload inventory from DB ground truth instead of patching in-memory.
             // The incremental refresh already updated workingSetEntry + category totals
             // in the DB. Just read them back — no drift possible.
-            if !allDeltas.isEmpty {
-                await loadInventoryFromLatestSnapshot(
-                    refreshedAt: Date(),
-                    invalidateSubcategoryCache: false
-                )
-            }
+            await loadInventoryFromLatestSnapshot(
+                refreshedAt: Date(),
+                invalidateSubcategoryCache: false
+            )
         }
     }
 
@@ -2676,7 +2684,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         reconciliationTask?.cancel()
         let watcher = fileEventsWatcher
         if let watcher {
-            Task { await watcher.stop() }
+            Task { @MainActor in
+                watcher.stop()
+            }
         }
     }
 }

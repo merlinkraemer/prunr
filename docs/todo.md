@@ -1,5 +1,53 @@
 # Todo
 
+## Apple platform pattern audit
+
+- [x] Review product docs and implementation to extract the dominant Apple-platform patterns
+- [x] Validate each dominant pattern against current Apple documentation
+- [x] Record findings, mismatches, and follow-up recommendations
+
+## Apple platform pattern audit review
+
+- Dominant shipped patterns are: SwiftUI `App` scenes with a menu bar shell, AppKit-backed menu bar presentation (`NSStatusItem` + `NSPopover`/`NSPanel`), `@MainActor` + `@Observable` state containers, Swift concurrency with actors / `TaskGroup` / `AsyncStream`, CoreServices `FSEventStream` bridging, `UserDefaults` + `SMAppService` settings persistence, and Foundation volume-capacity queries.
+- Strong alignment: the scan pipeline now uses structured concurrency more defensibly than older review docs suggest. [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L451) routes scan progress through `AsyncStream`, [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L800) uses `withThrowingTaskGroup`, and [ScanService.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/ScanService.swift#L168) uses `withTaskCancellationHandler`.
+- Strong alignment: filesystem monitoring follows Apple’s FSEvents lifecycle and safety flags. [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L95) creates the stream, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L150) schedules it, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L157) starts it, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L181) stops / invalidates / releases it, and [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L196) exposes `FSEventStreamFlushSync`.
+- Medium mismatch: project docs still claim the app uses SwiftUI `MenuBarExtra`, but runtime code is an AppKit shell built around [NSStatusBar.system.statusItem](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L541), [NSPopover](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L552), and a custom [NSPanel](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L8); see [tech-stack.md](/Users/merlinkraemer/dev/projects/prunr/documentation/tech-stack.md#L7).
+- Medium mismatch: product docs also list `UserNotifications` and `SwiftUI Charts`, but the shipped app code does not currently use those frameworks. [tech-stack.md](/Users/merlinkraemer/dev/projects/prunr/documentation/tech-stack.md#L7)
+- Medium mismatch: settings persistence is correct but not especially idiomatic SwiftUI. [SettingsStore.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/ViewModels/SettingsStore.swift#L53) and nearby properties hand-roll `UserDefaults` read/write instead of using `@AppStorage` where scene-level or view-level preferences would be sufficient.
+- Follow-up status: the watcher bridge is now explicit and main-actor-bound in the current worktree. [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L10) declares the watcher `@MainActor`, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L124) delivers the C callback via `MainActor.assumeIsolated`, and [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L2411) records batches on the same actor boundary.
+- GitHub issue alignment: `#5` and `#6` are stale relative to `main` because the current code already uses `allCategories` as the source of truth and re-hydrates subcategory drill-down state on refresh; `#7` is partially stale because the code queues transitions and guards against mid-slide collapse, but it still wants a manual UI repro before we treat it as fully closed.
+
+## Apple platform audit follow-up
+
+- [x] Replace the FSEvents callback `Task` hop with a tighter callback-to-actor handoff
+- [x] Re-run focused verification for the watcher change
+- [x] Reassess issue `#7` against current code and record whether this pass closes it or leaves a manual repro gap
+- [x] Add follow-up review notes with what was proven and what remains manual
+
+## Apple platform audit follow-up review
+
+- `FSEventsWatcher` now matches the stream's actual execution model instead of pretending the callback arrives on an arbitrary executor. The watcher is `@MainActor`, the stream is scheduled onto `DispatchQueue.main`, and the callback delivers batches through `MainActor.assumeIsolated` rather than an unstructured hop. [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L10)
+- `MenuBarManager` was aligned to the same boundary by removing the extra watcher `await`s and recording change batches directly on the main actor. [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L2396)
+- Verification: `xcodebuild -project Prunr.xcodeproj -scheme Prunr -destination 'platform=macOS' build` passed.
+- Verification: focused smoke tests were run directly against the watcher and recent-change paths:
+- `PrunrSmokeTests/testFSEventsWatcherReportsRealFilesystemChanges`
+- `PrunrSmokeTests/testMenuBarManagerRetainsPendingRefreshWhenWatcherRequiresFullRescan`
+- `PrunrSmokeTests/testMenuBarManagerRecentChangeRefreshUsesLiveSubcategoryStructureForAffectedCategory`
+- Result: the first two focused tests passed, and `testMenuBarManagerRecentChangeRefreshUsesLiveSubcategoryStructureForAffectedCategory` still fails in the current worktree with `XCTUnwrap` on a missing `SubcategoryGroup`. That leaves the repo not fully green for this verification pass.
+- Issue `#7` remains a manual verification item. The current code still matches the intended fix shape, and the issue tracker already notes that the remaining gap is a fresh UI repro rather than a known code defect.
+
+## Prunr reset skill
+
+- [x] Add a repo-local `prunr-reset` skill for clean reinstall testing
+- [x] Implement a deterministic reset script for app uninstall, state purge, rebuild, and reinstall
+- [x] Validate the script wiring and document usage
+
+## Prunr reset skill review
+
+- Added a repo-local skill at [.agents/skills/prunr-reset/SKILL.md](/Users/merlinkraemer/dev/projects/prunr/.agents/skills/prunr-reset/SKILL.md) with UI metadata in [.agents/skills/prunr-reset/agents/openai.yaml](/Users/merlinkraemer/dev/projects/prunr/.agents/skills/prunr-reset/agents/openai.yaml).
+- The bundled script at [.agents/skills/prunr-reset/scripts/reset-prunr.sh](/Users/merlinkraemer/dev/projects/prunr/.agents/skills/prunr-reset/scripts/reset-prunr.sh) stops the app, removes `/Applications/Prunr.app`, clears `~/Library/Application Support/Prunr`, clears standard per-user cache/state paths for bundle id `com.prunr.app`, then runs `make install-app`.
+- Verification: `bash -n .agents/skills/prunr-reset/scripts/reset-prunr.sh` passed and the script was marked executable.
+
 ## Beta bugfix round
 
 - [x] Reproduce and root-cause GitHub issues `#5`, `#6`, and `#7`
@@ -145,3 +193,127 @@
 - The first footer fix only removed the manual root seeding, but the shared recent-change pipeline could still escalate pending watcher events into `loadInventory()`. Manual footer refresh now explicitly runs the recent-change path with full-refresh escalation disabled.
 - The first drive-bar tap wiring used a gesture on the rendered rectangle segments. The interaction is now attached to real plain buttons per segment so category clicks are routed reliably while filler segments remain inert.
 - Verification: `make build` passed and `make test` passed after the follow-up fix.
+
+## Merge review: architecture fixes Phase 6-7
+
+- [x] Inspect latest merge commit and isolate the merged Phase 6 / Phase 7 changes
+- [x] Compare merged code against `docs/action-plan-architecture-fixes.md`
+- [x] Run project verification for the merged state
+- [x] Document review findings and manual test coverage
+
+## Merge review notes
+
+- Reviewed merge `f0b6c9a` (`refactor/phase7-fsevents-coalescing`), which contains `90bb0cf` (Phase 6 single-source-of-truth refactor) and `cb6f93e` (Phase 7 FSEvents `NoDefer` + post-scan flush).
+- Phase 6 code shape largely matches the plan: `allCategories` is now the stored source of truth, `growingCategories` / `stableCategories` / `stableTotalBytes` are computed, and `normalizeVisibleInventoryState()` plus the merge helpers were removed.
+- Phase 7 code shape also matches the plan: `kFSEventStreamCreateFlagNoDefer` was added and `MenuBarManager` now flushes the watcher after a successful scan.
+- Verification:
+- `make build` passed.
+- `make test` failed with 3 smoke-test failures:
+- `testFirstBaselineClearsStaleRealtimeGrowthState`
+- `testMenuBarManagerRecentChangeRefreshUsesLiveSubcategoryStructureForAffectedCategory`
+- one additional failure in the same recent-change path (`XCTUnwrap` on the missing `node_modules` subgroup inside that test)
+- Review findings:
+- The Phase 6 refactor changed category sorting semantics. Before the refactor, `normalizeVisibleInventoryState()` used a stable secondary sort by category display name when byte sizes were equal. The new computed properties sort only by byte size. Equal-sized categories can now reorder between refreshes, which violates the phase goal of preserving identical UI behavior and risks visible list/segment jitter.
+- Independent of root cause, the merged state does not pass the project test suite, so the phase cannot be considered validated against the implementation doc's regression expectations yet.
+
+## Scan indicator audit
+
+- [x] Document `npm run monitor` in repo-local agent guidance
+- [x] Audit footer scan-indicator behavior without changing runtime code
+- [x] Record the likely cause and next fix boundary
+
+## Scan indicator audit review
+
+- Added concise monitor usage notes to [AGENTS.md](/Users/merlinkraemer/dev/projects/prunr/AGENTS.md) and [CLAUDE.md](/Users/merlinkraemer/dev/projects/prunr/CLAUDE.md) because the repo did not previously contain project-local copies.
+- Category bloat appears addressed in the current refactor path: the live scan no longer exposes repeated category-row growth, and the refactor now derives visible lists from `allCategories` instead of mutating duplicate presentation arrays.
+- The footer indicator is broader than the intended product behavior. [MenuBarView.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Views/MenuBarView.swift#L1582) shows the footer whenever `isBackgroundFullScanRunning || isAutoScanning`.
+- `isBackgroundFullScanRunning` is just `isReconciling` in [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L152), which matches the scheduled stale full-rescan path in [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L1179).
+- But `isAutoScanning` is also set for other automatic full-scan paths that are not the periodic background reconcile:
+- [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L836) marks any `loadInventory(isAutomatic: true)` run as auto-scanning.
+- [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L1086) uses that path for `refreshVisibleInventory()`.
+- [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L2516) and [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L2575) use that same path when recent-change refresh escalates into a full refresh.
+- That means the footer can stay active during watcher-driven automatic rescans or post-scan escalations, even if the user expectation is “only show during the recurring scheduled full scan”.
+- The footer also is not animated today beyond the menu-bar title pulse. [MenuBarView.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Views/MenuBarView.swift#L1590) renders a static dot plus text, while the only scan pulse is the status-item alpha effect in [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L2015).
+- Settings already support a dynamic recurring full-scan interval, but it is inferred from first-scan wall-clock duration, not directly from scan-path size. See [SettingsStore.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/ViewModels/SettingsStore.swift#L241) and [SettingsView.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Views/SettingsView.swift#L124). The user can then override it with fixed presets in Settings.
+- Recommended fix boundary for the next pass: separate “scheduled background full reconciliation” state from generic “automatic full refresh” state, then key the footer indicator and subtle animation only off the scheduled background state.
+
+## Test suite expansion
+
+## Scan indicator fix
+
+- [ ] Commit the current checkpoint before changing runtime behavior
+- [ ] Narrow the footer scan indicator to scheduled background full reconciliations only
+- [ ] Add a subtle footer-only animation for scheduled background full reconciliations
+- [ ] Re-run focused verification for scan-indicator state selection and UI rendering
+
+- [x] Audit the current local suite and GitHub CI status
+- [x] Fix the red baseline/incremental-refresh regressions on `main`
+- [x] Split coverage into focused XCTest files by subsystem instead of one monolithic smoke file
+- [x] Add targeted regression coverage for ordering stability and first-baseline/live-working-set behavior
+- [x] Regenerate the Xcode project so new test files are included
+- [x] Re-run focused tests and the full `make test` suite
+
+## Test suite review
+
+- GitHub CI is not red because of a failing workflow; this repo currently has no app-owned GitHub Actions workflow configured. `gh run list` returned no runs, the repo has no top-level `.github/workflows`, and the merge commit had no attached status contexts.
+- The local suite was the real blocker. `main` started red with 3 failing tests around first-baseline cleanup and post-refactor incremental drill-down behavior.
+- Runtime fixes landed in the scan/journal path and manager refresh path:
+- first successful baseline now rebuilds the tracked-path working set from the new snapshot and clears stale growth-journal buckets
+- single-snapshot realtime growth is now allowed to surface in inventory when there is exactly one valid baseline snapshot
+- incremental recent-change refresh now marks the manager as working-set-backed, invalidates cached drill-down data, and reloads inventory from DB ground truth
+- category ordering now restores the deterministic secondary sort by category display name when byte totals are equal
+- Test-suite expansion:
+- added shared test harness in [PrunrTestCase.swift](/Users/merlinkraemer/dev/projects/prunr/PrunrTests/TestSupport/PrunrTestCase.swift)
+- added focused regression coverage in [BaselineServiceRegressionTests.swift](/Users/merlinkraemer/dev/projects/prunr/PrunrTests/BaselineServiceRegressionTests.swift)
+- added focused regression coverage in [MenuBarManagerRegressionTests.swift](/Users/merlinkraemer/dev/projects/prunr/PrunrTests/MenuBarManagerRegressionTests.swift)
+- regenerated [project.pbxproj](/Users/merlinkraemer/dev/projects/prunr/Prunr.xcodeproj/project.pbxproj) with `xcodegen generate` so the new test files are part of `PrunrTests`
+- Verification:
+- targeted regression run passed after the fixes
+- `make test` passed with 45 tests, 0 failures
+
+## CI setup
+
+- [x] Add a GitHub Actions workflow for PRs and main-branch pushes
+- [x] Add a repo-owned SwiftLint configuration for CI linting
+- [x] Verify the workflow inputs locally where possible
+
+## Live scan monitor
+
+- [x] Inspect the current live scan state, persisted runtime surfaces, and recent refactor behavior to define monitor checks
+- [x] Add a repo-local `npm run monitor` command for live scan inspection
+- [x] Sample live process CPU/RSS, SQLite snapshot/category state, autoscan defaults, and permission/log anomalies
+- [x] Run the monitor against the current home-directory scan and validate the output shape
+- [x] Record review notes and any follow-up bugs found
+
+## Live scan monitor review
+
+- Added a dependency-free CLI at [scripts/monitor.mjs](/Users/merlinkraemer/dev/projects/prunr/scripts/monitor.mjs) plus [package.json](/Users/merlinkraemer/dev/projects/prunr/package.json) so the repo now supports `npm run monitor`.
+- The monitor samples the live `Prunr` process with `ps`, reads autoscan/root config from `defaults export com.prunr.app -`, inspects `~/Library/Application Support/Prunr/prunr.db` with `sqlite3 -json`, and scrapes unified logs with `/usr/bin/log show`.
+- Current checks cover:
+- scan progress on the newest snapshot via `snapshotEntry` row/byte deltas
+- CPU / RSS growth and simple leak / stall heuristics
+- category-total inflation or staleness versus `workingSetEntry`
+- autoscan interval / adaptive scheduling visibility
+- permission-related and repeated CacheDelete log anomalies
+- Verification against the active full-home scan:
+- `npm run monitor -- --help` passed
+- `npm run monitor -- --samples 2 --interval 2` reported the live process and current snapshot growth correctly
+- `npm run monitor -- --samples 1` reported snapshot `#7`, active CPU around `100%`, RSS in the `126-310 MB` range during sampling, and a persistent warning that category totals lagged working-set updates by about `3m22s`
+- Follow-up bug candidate: during the active full scan, `workingSetEntry.updatedAt` advanced with snapshot `#7` while `workingSetCategoryTotal.updatedAt` stayed pinned to the prior timestamp for multiple monitor samples. That may be an expected end-of-scan batch boundary, but it is the first runtime signal worth validating once this scan completes.
+- [x] Document branch-gating guidance
+
+## CI review
+
+- Added [ci.yml](/Users/merlinkraemer/dev/projects/prunr/.github/workflows/ci.yml) to run on pull requests to `main`, pushes to `main`, and manual dispatch.
+- The workflow has three required-quality jobs:
+- `repo-checks`: installs `xcodegen`, regenerates the project, and fails if [project.pbxproj](/Users/merlinkraemer/dev/projects/prunr/Prunr.xcodeproj/project.pbxproj) is out of sync with [project.yml](/Users/merlinkraemer/dev/projects/prunr/project.yml)
+- `lint`: installs `swiftlint` and runs the repo-owned config from [.swiftlint.yml](/Users/merlinkraemer/dev/projects/prunr/.swiftlint.yml)
+- `build-and-test`: regenerates the project, runs `make build`, then runs `make test`
+- The lint config is intentionally narrow and repo-owned so CI enforces consistent hygiene without introducing a large surprise rule set all at once.
+- To make the lint job green, trailing whitespace and double-blank-line violations were cleaned across the tracked Swift sources.
+- Local verification:
+- `swiftlint lint --strict --config .swiftlint.yml` passed
+- workflow YAML structure parsed successfully
+- re-running `xcodegen generate` left [project.pbxproj](/Users/merlinkraemer/dev/projects/prunr/Prunr.xcodeproj/project.pbxproj) byte-identical
+- `make test` passed with 45 tests, 0 failures
+- Branch gating recommendation: in GitHub branch protection for `main`, require the `Repo Checks`, `SwiftLint`, and `Build And Test` status checks before merge. That part is repository settings, not code, so it still needs to be toggled in GitHub.
