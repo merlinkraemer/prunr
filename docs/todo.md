@@ -1,6 +1,60 @@
 # Todo
 
-## Apple platform pattern audit
+## Beta readiness (current)
+
+Status at 2026-04-13: build green, 45 tests pass, CI configured. App not running, last scan 65h old.
+
+### 🔴 Must fix before beta
+
+- [ ] Investigate CPU 150% when app runs for extended periods (#9)
+  - `npm run monitor` confirmed ~100% CPU during active scans, RSS 126–310 MB
+  - Likely FSEvents callback tight loop, scheduled reconciliation stuck, or hot write path on `workingSetCategoryTotal`
+  - Needs long-term monitoring with `npm run monitor -- --samples 20 --interval 5` before and after fix
+- [ ] Verify page transition flicker fix (#7)
+  - Code queues transitions and guards mid-slide collapse, but issue still reproducible per manual testing
+  - Needs hands-on UI repro: open/close popover, drill into categories, trigger rescans, watch for animation glitches
+  - May still be a deeper animation-state race beyond the queueing fix
+
+### 🟡 Should fix before beta
+
+- [ ] Settings UI cleanup (#10, supersedes closed #3)
+  - Layout spacing, typography, clear labeling for scan intervals/roots/permissions
+  - Remove dead/unreachable options, ensure changes take effect without restart
+
+### ✅ Done
+
+- [x] Architecture fixes Phase 6-7 (single allCategories source of truth, FSEvents NoDefer + post-scan flush)
+- [x] Drill-down navigation hardening (queued transitions, preserved subcategory state during reloads)
+- [x] Permission gating fix (deferred FSEvents watcher startup until after onboarding/baseline)
+- [x] Control affordances (clickable drive-bar segments, shallow-only footer refresh)
+- [x] Scan indicator fix (narrowed footer to scheduled background reconciliations only, with subtle pulse)
+- [x] Test suite expansion (split into focused regression files, fixed 3 red baseline tests, 45 tests green)
+- [x] CI setup (GitHub Actions: repo checks, SwiftLint, build+test)
+- [x] Live scan monitor (`npm run monitor`)
+- [x] Legacy UI cleanup (removed dead windowed shell and unreachable code)
+- [x] Beta cleanup (removed deltas-only onboarding, dead category-growth layer, legacy settings migration)
+- [x] Runtime audit (incremental refresh escalation, free-space multi-volume, cursor pagination)
+
+### 📋 Beta release checklist (#11)
+
+- [ ] CPU performance issue (#9) resolved or mitigated
+- [ ] Page transition flicker (#7) verified fixed or mitigated
+- [ ] Settings UI cleanup (#10) complete
+- [ ] Manual smoke test: clean install → onboarding → first scan → drill-down → settings
+- [ ] Manual smoke test: leave app running overnight, check CPU/RSS next day
+- [ ] Enable GitHub branch protection on `main` (require CI checks)
+
+### Post-beta backlog
+
+- Investigate CacheDelete/GetAPFSVolumeRole log noise (likely benign, 30 occurrences in monitor)
+- Category-vs-working-set drift monitoring (-5.79 MB observed)
+- Update tech-stack.md to reflect actual AppKit shell (not SwiftUI MenuBarExtra)
+
+---
+
+## Completed work (archive)
+
+### Apple platform pattern audit
 
 - [x] Review product docs and implementation to extract the dominant Apple-platform patterns
 - [x] Validate each dominant pattern against current Apple documentation
@@ -241,10 +295,20 @@
 
 ## Scan indicator fix
 
-- [ ] Commit the current checkpoint before changing runtime behavior
-- [ ] Narrow the footer scan indicator to scheduled background full reconciliations only
-- [ ] Add a subtle footer-only animation for scheduled background full reconciliations
-- [ ] Re-run focused verification for scan-indicator state selection and UI rendering
+- [x] Commit the current checkpoint before changing runtime behavior
+- [x] Narrow the footer scan indicator to scheduled background full reconciliations only
+- [x] Add a subtle footer-only animation for scheduled background full reconciliations
+- [x] Re-run focused verification for scan-indicator state selection and UI rendering
+
+## Scan indicator fix review
+
+- Checkpoint commit created before the runtime change: `43fe976` (`chore: checkpoint refactor and monitor tooling`).
+- The footer indicator now keys only off the scheduled background reconciliation state instead of the broader `isAutoScanning` bucket. [MenuBarView.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Views/MenuBarView.swift#L1581) now shows the footer status row only when `manager.isBackgroundFullScanRunning` is true.
+- Automatic full refreshes triggered by watcher escalation or other `loadInventory(isAutomatic: true)` paths no longer keep the footer status visible by themselves. That preserves the audit boundary without changing those runtime paths elsewhere.
+- The footer now adds a subtle pulse to the dot and label only while the scheduled background reconciliation indicator is visible. [MenuBarView.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Views/MenuBarView.swift#L1593)
+- Verification: `make build` passed.
+- Verification: `xcodebuild -project Prunr.xcodeproj -scheme Prunr -destination 'platform=macOS' test -only-testing:PrunrTests/MenuBarManagerRegressionTests` passed.
+- Manual runtime verification still matters for product feel: confirm the footer stays quiet during long initial/manual scans and recent-change refreshes, then briefly appears with the new pulse only when the recurring stale reconciliation fires.
 
 - [x] Audit the current local suite and GitHub CI status
 - [x] Fix the red baseline/incremental-refresh regressions on `main`

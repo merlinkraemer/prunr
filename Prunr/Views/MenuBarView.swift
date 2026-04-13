@@ -56,6 +56,7 @@ struct MenuBarView: View {
         return false
     }()
     @State private var developerFolderExists = false
+    @State private var footerBackgroundScanPulse = false
 
     private let outsideScopeSegmentID = "outside-scan-scope"
 
@@ -1579,7 +1580,6 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var footerStatusText: some View {
-        let backgroundWork = manager.isBackgroundFullScanRunning || manager.isAutoScanning
         let relativePhrase: String? = {
             if let lastChange = manager.lastDetectedChangeAt {
                 return relativeTime(from: lastChange)
@@ -1590,13 +1590,15 @@ struct MenuBarView: View {
             return nil
         }()
 
-        if backgroundWork {
+        if manager.isBackgroundFullScanRunning {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(Color.secondary.opacity(0.75))
+                    .fill(Color.secondary.opacity(footerBackgroundScanPulse ? 0.78 : 0.42))
                     .frame(width: 5, height: 5)
-                Text(manager.isBackgroundFullScanRunning ? "Refreshing" : "Scanning")
+                    .scaleEffect(footerBackgroundScanPulse ? 1.0 : 0.82)
+                Text("Refreshing")
                     .foregroundStyle(.secondary)
+                    .opacity(footerBackgroundScanPulse ? 0.96 : 0.72)
                 if let relativePhrase {
                     Text("·")
                         .foregroundStyle(.tertiary)
@@ -1605,6 +1607,15 @@ struct MenuBarView: View {
                 }
             }
             .font(.system(size: 11))
+            .onAppear {
+                footerBackgroundScanPulse = false
+                withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                    footerBackgroundScanPulse = true
+                }
+            }
+            .onDisappear {
+                footerBackgroundScanPulse = false
+            }
         } else if let relativePhrase {
             Text(relativePhrase)
                 .font(.system(size: 11))
