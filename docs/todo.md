@@ -1,5 +1,9 @@
 # Todo
 
+## Beta audit triage (2026-04-17)
+
+- Plan moved to [docs/beta-audit-plan.md](/Users/merlinkraemer/dev/projects/prunr/docs/beta-audit-plan.md).
+
 ## Beta readiness (current)
 
 Status at 2026-04-13: build green, 45 tests pass, CI configured. App not running, last scan 65h old.
