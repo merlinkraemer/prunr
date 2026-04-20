@@ -79,7 +79,7 @@ final class DropdownPanel: NSPanel {
 
 @MainActor
 @Observable
-final class MenuBarManager: NSObject, NSPopoverDelegate {
+final class MenuBarManager: NSObject {
     private static func inventorySortsBefore(_ lhs: CategoryInventoryItem, _ rhs: CategoryInventoryItem) -> Bool {
         if lhs.currentSizeBytes == rhs.currentSizeBytes {
             return lhs.category.displayName.localizedStandardCompare(rhs.category.displayName) == .orderedAscending
@@ -88,7 +88,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private var statusItem: NSStatusItem?
-    var popover: NSPopover?
     var panel: DropdownPanel?
     var isPopoverShown = false
     var usePanel = true // Use panel instead of popover for native dropdown look
@@ -548,20 +547,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             button.alphaValue = 1.0
         }
 
-        // Configure popover (fallback)
-        popover = NSPopover()
-        popover?.contentSize = NSSize(width: 320, height: 480)
-        popover?.behavior = .transient
-        popover?.delegate = self
-        popover?.contentViewController = NSHostingController(rootView: MenuBarView(manager: self))
-
-        // Configure panel for native dropdown look (no arrow)
-        let panelContent = NSHostingView(rootView: MenuBarView(manager: self))
-        panelContent.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
-
-        panel = DropdownPanel(contentView: panelContent) { [weak self] in
+        // Panel uses a placeholder NSView — NSHostingView<MenuBarView> is created
+        // lazily in togglePopover() on first show. This prevents the SwiftUI view tree
+        // from being alive in the hidden NSPanel, which reduces CA display cycle overhead.
+        let placeholder = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        panel = DropdownPanel(contentView: placeholder) { [weak self] in
             self?.isPopoverShown = false
-            // Reset auto-close suspension state when panel closes via focus loss
             self?.panelAutoCloseSuspensionCount = 0
             self?.panel?.closesOnResignKey = true
         }
@@ -638,50 +629,39 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     @objc private func openSettings() {
         // Close popover if open
-        if let popover = popover, popover.isShown {
-            popover.performClose(nil)
+        if let panel = panel, panel.isVisible {
+            panel.orderOut(nil)
             isPopoverShown = false
         }
 
-        // Small delay to ensure popover is fully closed
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        // Open settings window programmatically.
+        // Since we don't use SwiftUI's Settings scene (to avoid creating an NSHostingView
+        // that participates in the CA display cycle), we create the settings window on demand.
+        // We're already on the main thread (@MainActor), so no dispatch needed.
 
-            // Bring Settings window to front immediately - ISS-024
-            // Use a very short delay (50ms) to let window creation complete
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                NSApp.activate()
-
-                // Find settings window by title
-                if let settingsWindow = NSApp.windows.first(where: {
-                    $0.title.contains("Settings")
-                }) {
-                    // Ensure window behavior is correct
-                    settingsWindow.hidesOnDeactivate = false
-
-                    // Temporarily elevate window level to bring to front
-                    let originalLevel = settingsWindow.level
-                    settingsWindow.level = .floating
-                    settingsWindow.makeKeyAndOrderFront(nil)
-                    settingsWindow.orderFrontRegardless()
-
-                    // Reset to normal level immediately after focusing (no delay)
-                    settingsWindow.level = originalLevel
-                } else {
-                    // If window not found yet, try once more with a longer delay
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        NSApp.activate()
-                        if let settingsWindow = NSApp.windows.first(where: { $0.title.contains("Settings") }) {
-                            settingsWindow.hidesOnDeactivate = false
-                            settingsWindow.level = .floating
-                            settingsWindow.makeKeyAndOrderFront(nil)
-                            settingsWindow.orderFrontRegardless()
-                            settingsWindow.level = .normal
-                        }
-                    }
-                }
-            }
+        // Check if settings window already exists
+        if let existing = NSApp.windows.first(where: { $0.title.contains("Prunr Settings") }) {
+            NSApp.activate()
+            existing.makeKeyAndOrderFront(nil)
+            existing.orderFrontRegardless()
+            return
         }
+
+        let settingsView = SettingsView()
+        let hostingController = NSHostingController(rootView: settingsView)
+        hostingController.title = "Prunr Settings"
+
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Prunr Settings"
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.isReleasedWhenClosed = true
+        window.setFrame(NSRect(x: 0, y: 0, width: 400, height: 350), display: true)
+        window.center()
+        window.hidesOnDeactivate = false
+
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     @objc private func resetBaseline() {
@@ -1902,46 +1882,52 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         togglePopover()
     }
 
+    /// Tracks whether the panel's SwiftUI hosting view has been installed.
+    private var panelHostingViewInstalled = false
+
     @objc private func togglePopover() {
         guard let button = statusItem?.button else {
             return
         }
 
         if let panel = panel, panel.isVisible {
-            // Panel is shown, close it
             panel.orderOut(nil)
             isPopoverShown = false
-
-            // Reset auto-close suspension state when manually closing
             panelAutoCloseSuspensionCount = 0
             panel.closesOnResignKey = true
         } else {
-            // Panel is not shown, show it
             guard let buttonWindow = button.window,
                   buttonWindow.screen != nil else {
                 return
             }
 
-            // Ensure auto-close is enabled when opening
+            // Lazily install the SwiftUI hosting view on first show.
+            // This defers MenuBarView creation until the user opens the panel,
+            // preventing continuous CA layout passes while the panel is hidden.
+            if !panelHostingViewInstalled {
+                panelHostingViewInstalled = true
+                let panelContent = NSHostingView(rootView: MenuBarView(manager: self))
+                panelContent.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
+                if let visualEffectView = panel?.contentView as? NSVisualEffectView {
+                    visualEffectView.subviews.forEach { $0.removeFromSuperview() }
+                    visualEffectView.addSubview(panelContent)
+                } else {
+                    panel?.contentView = panelContent
+                }
+            }
+
             panelAutoCloseSuspensionCount = 0
             panel?.closesOnResignKey = true
 
-            // Activate app to ensure panel comes to front
             NSApp.activate()
 
-            // Get button frame in screen coordinates
             let buttonFrameInWindow = button.convert(button.bounds, to: nil)
             let buttonFrameInScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
 
-            // Position panel below the button, aligned to right edge
             let panelWidth: CGFloat = 320
             let panelHeight: CGFloat = 480
 
-            // Right-align panel with button
             let panelX = buttonFrameInScreen.origin.x + buttonFrameInScreen.size.width - panelWidth
-
-            // Position below menu bar (button bottom is at top of screen area)
-            // Menu bar is at the top of screenFrame, button is below it
             let panelY = buttonFrameInScreen.origin.y - panelHeight - 5
 
             let panelFrame = NSRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight)
@@ -2119,8 +2105,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             if let panel = panel, panel.isVisible {
                 panel.orderOut(nil)
             }
-            // Also close popover for legacy support
-            popover?.performClose(nil)
             isPopoverShown = false
 
             // Reset auto-close suspension state when manually closing
@@ -2329,21 +2313,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
     }
     #endif
-
-    // MARK: - NSPopoverDelegate
-
-    func popoverDidClose(_ notification: Notification) {
-        if isPopoverShown {
-            isPopoverShown = false
-        }
-    }
-
-    func popoverWillClose(_ notification: Notification) {
-        // Early state sync for better reliability (ISS-013)
-        if isPopoverShown {
-            isPopoverShown = false
-        }
-    }
 
     private func configureFileWatcherIfNeeded() {
         guard isPermissionConfirmedForProtectedTraversal else {
