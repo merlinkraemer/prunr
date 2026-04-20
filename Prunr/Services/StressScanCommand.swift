@@ -16,6 +16,8 @@ enum HeadlessCommandRouter {
             case "stress-report":
                 let config = try StressReportConfig(arguments: Array(arguments.dropFirst()))
                 return StressScanCommand.executeReport(config: config)
+            case "e2e":
+                return runE2E(arguments: Array(arguments.dropFirst()))
             default:
                 return nil
             }
@@ -25,12 +27,12 @@ enum HeadlessCommandRouter {
         }
     }
 
-    private static func runAsync(_ operation: @escaping @Sendable () async -> Int32) -> Int32 {
+    static func runAsync(_ operation: @escaping @Sendable () async -> Int32) -> Int32 {
         let holder = ExitCodeHolder()
 
         Task(priority: .userInitiated) {
-            holder.value = await operation()
-            holder.isFinished = true
+            let result = await operation()
+            holder.markFinished(value: result)
         }
 
         while !holder.isFinished {
@@ -517,7 +519,24 @@ private enum StressCommandError: LocalizedError {
     }
 }
 
-private final class ExitCodeHolder: @unchecked Sendable {
-    var value: Int32 = 1
-    var isFinished = false
+final class ExitCodeHolder: @unchecked Sendable {
+    let lock = NSLock()
+    var _value: Int32 = 1
+    var _isFinished = false
+
+    var value: Int32 {
+        get { lock.lock(); defer { lock.unlock() }; return _value }
+        set { lock.lock(); defer { lock.unlock() }; _value = newValue }
+    }
+
+    var isFinished: Bool {
+        lock.lock(); defer { lock.unlock() }; return _isFinished
+    }
+
+    func markFinished(value: Int32) {
+        lock.lock()
+        _value = value
+        _isFinished = true
+        lock.unlock()
+    }
 }

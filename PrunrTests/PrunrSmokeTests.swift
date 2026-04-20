@@ -765,11 +765,11 @@ final class PrunrSmokeTests: XCTestCase {
 
         await MainActor.run {
             watcher.setOnChange { changeBatch in
-            if changeBatch.changedPaths.contains(where: { $0.path.hasPrefix(tempDirectory.path) }) {
-                XCTAssertFalse(changeBatch.requiresFullRescan)
-                expectation.fulfill()
+                if changeBatch.changedPaths.contains(where: { $0.path.hasPrefix(tempDirectory.path) }) {
+                    XCTAssertFalse(changeBatch.requiresFullRescan)
+                    expectation.fulfill()
+                }
             }
-        }
         }
         await MainActor.run {
             watcher.start()
@@ -783,6 +783,18 @@ final class PrunrSmokeTests: XCTestCase {
         await MainActor.run {
             watcher.stop()
         }
+    }
+
+    func testFSEventsNoiseFilterIgnoresSQLiteSidecars() {
+        XCTAssertTrue(
+            FSEventsNoiseFilter.shouldIgnore("/Users/tester/Library/Application Support/Prunr/prunr.sqlite-wal")
+        )
+        XCTAssertTrue(
+            FSEventsNoiseFilter.shouldIgnore("/Users/tester/Library/Application Support/Prunr/prunr.sqlite-shm")
+        )
+        XCTAssertTrue(
+            FSEventsNoiseFilter.shouldIgnore("/Users/tester/Library/Application Support/Prunr/prunr.sqlite-journal")
+        )
     }
 
     func testCleanupCapsSnapshotHistoryByCount() async throws {
@@ -1689,5 +1701,54 @@ final class PrunrSmokeTests: XCTestCase {
         await manager.performRecentChangeRefresh(allowFullRefresh: false)
 
         XCTAssertTrue(manager.hasPendingRecentChanges)
+    }
+
+    func testWorkingSetCategoryDeltasDeleteZeroTotalsWithoutReadback() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let trackedPath = TrackedPath(
+                id: trackedPathId,
+                url: URL(fileURLWithPath: "/Users/tester/dev"),
+                displayName: "dev"
+            )
+
+            let baselineSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let baselineSnapshotId = try XCTUnwrap(baselineSnapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: baselineSnapshotId,
+                entries: [
+                    ScanResult(path: "/Users/tester/dev/app/node_modules/react/index.js", sizeBytes: 400)
+                ]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: baselineSnapshotId,
+                trackedPathId: trackedPathId
+            )
+
+            let deltasByCategory = try await DatabaseManager.shared.replaceWorkingSetSubtree(
+                trackedPathId: trackedPathId,
+                rootPath: "/Users/tester/dev/app",
+                entries: []
+            )
+            XCTAssertEqual(
+                deltasByCategory[DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules)],
+                -400
+            )
+
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: deltasByCategory,
+                at: Date()
+            )
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let rowCount = try await dbPool.read { db in
+                try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM workingSetCategoryTotal WHERE trackedPathId = ?",
+                    arguments: [trackedPathId.uuidString]
+                )
+            }
+            XCTAssertEqual(rowCount, 0)
+        }
     }
 }

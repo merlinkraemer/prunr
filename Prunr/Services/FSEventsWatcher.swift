@@ -31,7 +31,7 @@ final class FSEventsWatcher {
     private let coalescingInterval: TimeInterval
 
     /// Callback invoked when coalesced changes are detected.
-    private var onChange: ((ChangeBatch) -> Void)?
+    private var onChange: (@MainActor (ChangeBatch) -> Void)?
 
     /// Paths being watched by this watcher.
     private(set) var pathsToWatch: [URL]
@@ -58,7 +58,7 @@ final class FSEventsWatcher {
 
     /// Starts monitoring the configured paths for file system events.
     ///
-    /// This creates an FSEventStream, schedules it on the main run loop,
+    /// This creates an FSEventStream, schedules it on the main queue,
     /// and begins receiving notifications for changes.
     func start() {
         guard !isRunning else { return }
@@ -189,16 +189,6 @@ final class FSEventsWatcher {
 
     // MARK: - Callback Management
 
-    /// Flushes any pending FSEvents to the callback immediately.
-    ///
-    /// Useful after a manual scan completes to ensure any file changes that
-    /// occurred during the scan are delivered promptly rather than waiting for
-    /// the next coalescing window.
-    func flush() {
-        guard let eventStream = stream, isRunning else { return }
-        FSEventStreamFlushSync(eventStream)
-    }
-
     /// Sets the callback to be invoked when changes are detected.
     ///
     /// The callback is invoked after the coalescing interval elapses without
@@ -206,7 +196,7 @@ final class FSEventsWatcher {
     /// the stream reported a dropped/root-changed condition.
     ///
     /// - Parameter callback: Closure taking a coalesced change batch
-    func setOnChange(_ callback: @escaping (ChangeBatch) -> Void) {
+    func setOnChange(_ callback: @escaping @MainActor (ChangeBatch) -> Void) {
         onChange = callback
     }
 

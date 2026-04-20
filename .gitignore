@@ -45,6 +45,9 @@ fastlane/test_output
 test_data/
 tmp/stress-tree/
 tmp/stress-results/
+tmp/e2e-results/
+tmp/e2e-runtime-results/
+tmp/e2e-runtime-tree/
 tmp/task*-check/
 tmp/task*-results/
 tmp/classifier-results/

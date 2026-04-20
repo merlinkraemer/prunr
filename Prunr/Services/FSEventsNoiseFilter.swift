@@ -34,6 +34,9 @@ enum FSEventsNoiseFilter {
         ".swo",
         ".tmp",
         "~",
+        "-wal",
+        "-shm",
+        "-journal",
     ]
 
     /// Returns `true` if the path should be ignored (it represents noise, not meaningful storage changes).

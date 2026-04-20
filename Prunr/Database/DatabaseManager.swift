@@ -489,11 +489,6 @@ extension DatabaseManager {
         let subcategory: GrowthSubcategory?
     }
 
-    private struct WorkingSetCategoryRow {
-        let totalBytes: Int64
-        let updatedAt: Date
-    }
-
     /// Creates a new snapshot with the current timestamp for a specific path
     /// - Parameters:
     ///   - trackedPathId: The ID of the TrackedPath this snapshot belongs to
@@ -1894,37 +1889,6 @@ extension DatabaseManager {
         return result
     }
 
-    private func fetchWorkingSetCategoryRows(
-        trackedPathId: String,
-        db: Database
-    ) throws -> [GrowthCategory: WorkingSetCategoryRow] {
-        let rows = try Row.fetchAll(
-            db,
-            sql: """
-                SELECT category, totalBytes, updatedAt
-                FROM workingSetCategoryTotal
-                WHERE trackedPathId = ?
-                """,
-            arguments: [trackedPathId]
-        )
-
-        var result: [GrowthCategory: WorkingSetCategoryRow] = [:]
-        for row in rows {
-            guard
-                let rawCategory: String = row["category"],
-                let category = GrowthCategory(rawValue: rawCategory)
-            else {
-                continue
-            }
-
-            let totalBytes: Int64 = row["totalBytes"] ?? 0
-            let updatedAt: Date = row["updatedAt"] ?? Date()
-            result[category] = WorkingSetCategoryRow(totalBytes: totalBytes, updatedAt: updatedAt)
-        }
-
-        return result
-    }
-
     private func applyWorkingSetCategoryDeltas(
         _ deltasByCategory: [JournalDeltaKey: Int64],
         trackedPathId: String,
@@ -1933,35 +1897,30 @@ extension DatabaseManager {
     ) throws {
         guard !deltasByCategory.isEmpty else { return }
 
-        var totalsByCategory = try fetchWorkingSetCategoryRows(trackedPathId: trackedPathId, db: db)
+        var categoryDeltas: [GrowthCategory: Int64] = [:]
+        for (key, deltaBytes) in deltasByCategory where deltaBytes != 0 {
+            categoryDeltas[key.category, default: 0] += deltaBytes
+        }
+
+        guard !categoryDeltas.isEmpty else { return }
+
         let upsert = try db.makeStatement(sql: """
             INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, MAX(0, ?), ?)
             ON CONFLICT(trackedPathId, category) DO UPDATE SET
-                totalBytes = excluded.totalBytes,
+                totalBytes = MAX(0, workingSetCategoryTotal.totalBytes + ?),
                 updatedAt = excluded.updatedAt
             """)
         let delete = try db.makeStatement(sql: """
             DELETE FROM workingSetCategoryTotal
-            WHERE trackedPathId = ? AND category = ?
+            WHERE trackedPathId = ? AND totalBytes <= 0
             """)
 
-        for (key, deltaBytes) in deltasByCategory where deltaBytes != 0 {
-            let existing = totalsByCategory[key.category]?.totalBytes ?? 0
-            let nextTotal = max(0, existing + deltaBytes)
-
-            if nextTotal == 0 {
-                try delete.execute(arguments: [trackedPathId, key.category.rawValue])
-                totalsByCategory[key.category] = nil
-                continue
-            }
-
-            try upsert.execute(arguments: [trackedPathId, key.category.rawValue, nextTotal, updatedAt])
-            totalsByCategory[key.category] = WorkingSetCategoryRow(
-                totalBytes: nextTotal,
-                updatedAt: updatedAt
-            )
+        for (category, deltaBytes) in categoryDeltas where deltaBytes != 0 {
+            try upsert.execute(arguments: [trackedPathId, category.rawValue, deltaBytes, updatedAt, deltaBytes])
         }
+
+        try delete.execute(arguments: [trackedPathId])
     }
 }
 

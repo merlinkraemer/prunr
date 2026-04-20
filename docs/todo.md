@@ -4,6 +4,30 @@
 
 - Plan moved to [docs/beta-audit-plan.md](/Users/merlinkraemer/dev/projects/prunr/docs/beta-audit-plan.md).
 
+## Beta audit Phase 1 execution
+
+- [x] Create pre-implementation checkpoint commit (`65a3b0e`, `chore: checkpoint before beta audit phase 1`)
+- [x] Exclude app-private watcher roots before stream creation and keep SQLite sidecar filtering as backup
+- [x] Remove scan-complete FSEvents flush and redundant main-run-loop re-dispatch
+- [x] Replace `workingSetCategoryTotal` read-modify-write loops with SQL delta updates
+- [x] Run `make build`
+- [x] Run focused smoke tests for watcher and recent-change behavior
+
+## Beta audit Phase 1 review
+
+- `make build` passed on the final Phase 1 tree.
+- Focused smoke tests passed via `xcodebuild test` for:
+- `PrunrTests/PrunrSmokeTests/testFSEventsWatcherReportsRealFilesystemChanges`
+- `PrunrTests/PrunrSmokeTests/testFSEventsNoiseFilterIgnoresSQLiteSidecars`
+- `PrunrTests/PrunrSmokeTests/testRecentChangeRefreshUpdatesVisibleInventoryFromWorkingSet`
+- `PrunrTests/PrunrSmokeTests/testRecentChangeRefreshPromotesTrackedRootDirectoryEventToFullScan`
+- `PrunrTests/PrunrSmokeTests/testMenuBarManagerRetainsPendingRefreshWhenWatcherRequiresFullRescan`
+- `PrunrTests/PrunrSmokeTests/testWorkingSetCategoryDeltasDeleteZeroTotalsWithoutReadback`
+- Manual validation failed: app crashed on the first scan during live testing on 2026-04-17 18:51 +07 before the rescan-loop check could complete.
+- Phase 1 is parked pending crash triage and a fresh handoff note in [docs/handoff-beta-audit-phase1-crash-2026-04-17.md](/Users/merlinkraemer/dev/projects/prunr/docs/handoff-beta-audit-phase1-crash-2026-04-17.md).
+- Remaining manual gate after crash triage: live app validation that finishing a scan no longer triggers an immediate follow-up scan, plus the monitor pass from `docs/beta-audit-plan.md`.
+- Test logs still show pre-existing SQLite misuse / `GrowthJournalService` warnings during `testRecentChangeRefreshPromotesTrackedRootDirectoryEventToFullScan`; that test still passed and this phase did not address that separate issue.
+
 ## Beta readiness (current)
 
 Status at 2026-04-13: build green, 45 tests pass, CI configured. App not running, last scan 65h old.

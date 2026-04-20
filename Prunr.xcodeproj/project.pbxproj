@@ -49,6 +49,7 @@
 		CF108B3C9788F1F1C26CF774 /* DeltaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */; };
 		D5A25E92406063EA2390D57D /* BaselineServiceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A383561A5F56D4F912AA9F07 /* BaselineServiceRegressionTests.swift */; };
 		D708B58DF59CBCD995F25398 /* Delta.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1FD965ED095B5AD6BC9CE03 /* Delta.swift */; };
+		D94047D5681A34F763B9888F /* E2ETestCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F92B2286BD72019F4CFDFB /* E2ETestCommand.swift */; };
 		E0C6E09DD20217111EDFCA69 /* DrilldownTransitionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E6FEE64AD47C800334F9958 /* DrilldownTransitionCoordinator.swift */; };
 		E338FC37EE276E7D1346DDDD /* HiddenScrollIndicators.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3EA4C041C7D64E331BF0232 /* HiddenScrollIndicators.swift */; };
 		F106F7F5C105C8CD3A15021D /* MenuBarManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08EB343218571F3B97D51611 /* MenuBarManager.swift */; };
@@ -81,6 +82,7 @@
 		40E989B2BA4D011B5C20B82D /* FileScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileScanner.swift; sourceTree = "<group>"; };
 		43903A2B7D47CDB2B20369FB /* DriveBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveBarView.swift; sourceTree = "<group>"; };
 		4A9F8B31974CB6DD8085C3F1 /* PrunrTestCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrunrTestCase.swift; sourceTree = "<group>"; };
+		50F92B2286BD72019F4CFDFB /* E2ETestCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2ETestCommand.swift; sourceTree = "<group>"; };
 		52D26AD1272CBF1764A7E804 /* CategoryDetectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDetectionService.swift; sourceTree = "<group>"; };
 		559792451B4985A1A23FDA0E /* Logger+Prunr.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Logger+Prunr.swift"; sourceTree = "<group>"; };
 		5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeltaService.swift; sourceTree = "<group>"; };
@@ -249,6 +251,7 @@
 				80A10C308A2C694CD6B761DB /* DatabaseCleanupService.swift */,
 				5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */,
 				1D9601CAA1193992B7E7AA1E /* DiskSpaceService.swift */,
+				50F92B2286BD72019F4CFDFB /* E2ETestCommand.swift */,
 				40E989B2BA4D011B5C20B82D /* FileScanner.swift */,
 				C918D45CF08B646E3ABAE820 /* FSEventsNoiseFilter.swift */,
 				ADFA692654D900931A96C796 /* FSEventsWatcher.swift */,
@@ -411,6 +414,7 @@
 				650E2A6C6CDF0B45A84B5957 /* DrilldownListPane.swift in Sources */,
 				E0C6E09DD20217111EDFCA69 /* DrilldownTransitionCoordinator.swift in Sources */,
 				7389AF844788619A1DF413F8 /* DriveBarView.swift in Sources */,
+				D94047D5681A34F763B9888F /* E2ETestCommand.swift in Sources */,
 				53BD8763724D3CC68ED76FCB /* FSEventsNoiseFilter.swift in Sources */,
 				4B0B33CD9EAE0386D6E163A6 /* FSEventsWatcher.swift in Sources */,
 				8D1CA082042D60BC7B5D588C /* FileScanner.swift in Sources */,

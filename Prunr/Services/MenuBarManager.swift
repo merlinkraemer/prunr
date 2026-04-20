@@ -926,10 +926,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             completedSuccessfully = true
             configureFileWatcherIfNeeded()
 
-            // Flush any FSEvents that accumulated during the scan so they're
-            // processed promptly rather than sitting in the coalescing queue.
-            fileEventsWatcher?.flush()
-
             let snapshotTimestamp = aggregation.latestSnapshotDate ?? Date()
             if !growingCategories.isEmpty {
                 lastDetectedChangeAt = snapshotTimestamp
@@ -2409,11 +2405,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         let watcher = FSEventsWatcher(pathsToWatch: urls, coalescingInterval: 1.0)
         watcher.setOnChange { [weak self] changeBatch in
-            RunLoop.main.perform {
-                MainActor.assumeIsolated {
-                    self?.recordFileWatcherChangeBatch(changeBatch)
-                }
-            }
+            self?.recordFileWatcherChangeBatch(changeBatch)
         }
         fileEventsWatcher = watcher
         watcher.start()
@@ -2452,6 +2444,39 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         trackedPaths
             .filter { shouldAutoWatchTrackedPath($0) }
             .map(\.url.standardizedFileURL)
+            .filter { candidate in
+                let candidatePath = candidate.path
+                return !watcherExcludedRoots().contains { excludedRoot in
+                    let excludedPath = excludedRoot.path
+                    return candidatePath == excludedPath || candidatePath.hasPrefix(excludedPath + "/")
+                }
+            }
+    }
+
+    private func watcherExcludedRoots() -> [URL] {
+        var excludedRoots = [
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Prunr", isDirectory: true)
+                .standardizedFileURL
+        ]
+
+        if let dbPath = DatabaseManager.shared.databasePath {
+            excludedRoots.append(
+                URL(fileURLWithPath: dbPath)
+                    .deletingLastPathComponent()
+                    .standardizedFileURL
+            )
+        }
+
+        var uniqueRoots: [URL] = []
+        var seenPaths = Set<String>()
+        for root in excludedRoots {
+            if seenPaths.insert(root.path).inserted {
+                uniqueRoots.append(root)
+            }
+        }
+
+        return uniqueRoots
     }
 
     @MainActor
