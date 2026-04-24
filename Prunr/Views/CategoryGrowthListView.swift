@@ -475,7 +475,6 @@ struct CategoryGrowthListView: View {
             contributorTaskKey(for: group, category: $0)
         } ?? "contributors-\(group.id)"
         let visibleGrowthContributors = loadedContributorTaskID == contributorTaskID ? growthContributors : []
-        let showContributorLoadingRow = isLoadingContributors && visibleGrowthContributors.isEmpty
         let showFileSkeleton = isLoadingContributors && loadedFiles.isEmpty
 
         // Filter out growth contributors from the "all files" list to avoid duplicates
@@ -498,10 +497,6 @@ struct CategoryGrowthListView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                         .padding(.top, 12)
                     } else {
-                        if showContributorLoadingRow {
-                            contributorLoadingRow
-                        }
-
                         // Growth contributors section
                         if !visibleGrowthContributors.isEmpty {
                             ForEach(visibleGrowthContributors) { contributor in
@@ -714,6 +709,8 @@ struct CategoryGrowthListView: View {
 
         guard needsSubcategoryLoad else {
             subcategoryLoadTask = nil
+            let groups = manager.subcategoryGroupsByCategory[item.category] ?? []
+            prefetchGrowthContributors(for: groups, category: item.category)
             return
         }
 
@@ -756,18 +753,49 @@ struct CategoryGrowthListView: View {
                     manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
                 }
             }
+            prefetchGrowthContributors(for: groups, category: selectedCategory)
         }
         subcategoryLoadTask = loadTask
     }
 
-    private func selectSubcategory(_ group: SubcategoryGroup, category _: GrowthCategory) {
+    private func selectSubcategory(_ group: SubcategoryGroup, category: GrowthCategory) {
         contributorPrefetchTask?.cancel()
 
         var transaction = Transaction()
         transaction.disablesAnimations = true
+
+        let cached = manager.cachedGrowthContributors(for: group, category: category)
+
         withTransaction(transaction) {
             manager.selectedSubcategory = group
             manager.isSubcategoryDrillDown = true
+
+            if let cached {
+                growthContributors = cached
+                loadedContributorTaskID = contributorTaskKey(for: group, category: category)
+                isLoadingContributors = false
+            } else {
+                loadedContributorTaskID = nil
+                growthContributors = []
+                isLoadingContributors = true
+            }
+        }
+
+        if cached == nil {
+            contributorPrefetchTask = Task { @MainActor in
+                _ = await manager.loadGrowthContributors(for: group, category: category)
+            }
+        }
+    }
+
+    private func prefetchGrowthContributors(for groups: [SubcategoryGroup], category: GrowthCategory) {
+        contributorPrefetchTask?.cancel()
+        guard !groups.isEmpty else { return }
+        contributorPrefetchTask = Task { @MainActor in
+            for group in groups {
+                guard !Task.isCancelled else { return }
+                _ = await manager.loadGrowthContributors(for: group, category: category)
+            }
         }
     }
 
