@@ -1252,12 +1252,17 @@ struct MenuBarView: View {
                 }
                 if activeHeaderTransition == nil {
                     displayedHeader = currentHeaderScreen
+                } else {
+                    synchronizeVisibleHeaderToCurrent()
                 }
             }
             .onChange(of: geometry.size.width) { _, newWidth in
                 guard newWidth > 0 else { return }
                 headerWidth = newWidth
             }
+        }
+        .onDisappear {
+            synchronizeVisibleHeaderToCurrent()
         }
         .background {
             ZStack {
@@ -1857,7 +1862,7 @@ struct MenuBarView: View {
     // MARK: - Helper Methods
 
     private var canNavigateBackFromDrilldown: Bool {
-        manager.isDrilledDown && manager.selectedInventoryCategory != nil
+        manager.isDrilledDown && manager.selectedInventoryCategory != nil && !manager.isDrillDownTransitionAnimating
     }
 
     private func navigateBackFromDrilldown() {

@@ -198,6 +198,7 @@ struct CategoryGrowthListView: View {
             pendingTransition = nil
             drillTransitionCoordinator.cancelAndReset()
             manager.isDrillDownTransitionAnimating = false
+            displayedScreen = currentScreen
         }
         // Always-present pre-warm — no onAppear, no flags, no async
         // Keeps all branch types materialized in the view tree permanently
