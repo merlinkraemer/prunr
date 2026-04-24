@@ -40,6 +40,17 @@ final class FileScanner {
         "/com~apple~"
     ]
 
+    /// Known problematic paths that can cause FTS to hang or severely slow down.
+    /// These are skipped at the directory level to prevent scan stalls.
+    private let problematicPathFragments: [String] = [
+        ".photolibrary",              // Photos app library bundles — special filesystem, can hang
+        ".photoslibrary",
+        "/Library/Mail/",             // Mail app data — extremely high file counts, slow access
+        "/.Trash/",                   // Deleted files — not useful to scan
+        "/.MobileBackups/",           // Time Machine local snapshots
+        "/Library/Saved Application State/",
+    ]
+
     static func diskUsageBytes(for fileStat: stat) -> Int64 {
         let allocatedBytes = Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
         return allocatedBytes > 0 ? allocatedBytes : Int64(fileStat.st_size)
@@ -77,7 +88,7 @@ final class FileScanner {
                 var lastLogCount = 0
                 let logInterval = 5000
                 let normalizedIgnoredNames = Set(ignoredNames.map { $0.lowercased() })
-                let options = FTS_PHYSICAL | FTS_NOCHDIR
+                let options = FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV
                 let rootPath = rootURL.path
                 let duplicatedRoot = strdup(rootPath)
 
@@ -141,7 +152,7 @@ final class FileScanner {
                             lastLogCount = count
                         }
 
-                        if count % 20000 == 0 {
+                        if count % 10000 == 0 {
                             await Task.yield()
                         }
 
@@ -187,6 +198,12 @@ final class FileScanner {
 
         // Skip iCloud directories that can hang
         for fragment in iCloudPathFragments where path.contains(fragment) {
+            return true
+        }
+
+        // Skip known problematic paths that cause FTS stalls
+        for fragment in problematicPathFragments where path.contains(fragment) {
+            Self.logger.debug("Skipping problematic directory: \(path, privacy: .public)")
             return true
         }
 
