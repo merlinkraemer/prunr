@@ -2,6 +2,7 @@
   "name": "prunr-monitor",
   "private": true,
   "scripts": {
-    "monitor": "node scripts/monitor.mjs"
+    "monitor": "node scripts/monitor.mjs",
+    "reset": "bash .agents/skills/prunr-reset/scripts/reset-prunr.sh"
   }
 }
