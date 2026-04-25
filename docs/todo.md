@@ -30,24 +30,7 @@
 
 ## Beta readiness (current)
 
-Status at 2026-04-13: build green, 45 tests pass, CI configured. App not running, last scan 65h old.
-
-### 🔴 Must fix before beta
-
-- [ ] Investigate CPU 150% when app runs for extended periods (#9)
-  - `npm run monitor` confirmed ~100% CPU during active scans, RSS 126–310 MB
-  - Likely FSEvents callback tight loop, scheduled reconciliation stuck, or hot write path on `workingSetCategoryTotal`
-  - Needs long-term monitoring with `npm run monitor -- --samples 20 --interval 5` before and after fix
-- [ ] Verify page transition flicker fix (#7)
-  - Code queues transitions and guards mid-slide collapse, but issue still reproducible per manual testing
-  - Needs hands-on UI repro: open/close popover, drill into categories, trigger rescans, watch for animation glitches
-  - May still be a deeper animation-state race beyond the queueing fix
-
-### 🟡 Should fix before beta
-
-- [ ] Settings UI cleanup (#10, supersedes closed #3)
-  - Layout spacing, typography, clear labeling for scan intervals/roots/permissions
-  - Remove dead/unreachable options, ensure changes take effect without restart
+Status at 2026-04-25: build green, 50 tests pass, CI configured. Idle CPU fixed (~0.01%), RSS stable (~50 MB).
 
 ### ✅ Done
 
@@ -56,27 +39,41 @@ Status at 2026-04-13: build green, 45 tests pass, CI configured. App not running
 - [x] Permission gating fix (deferred FSEvents watcher startup until after onboarding/baseline)
 - [x] Control affordances (clickable drive-bar segments, shallow-only footer refresh)
 - [x] Scan indicator fix (narrowed footer to scheduled background reconciliations only, with subtle pulse)
-- [x] Test suite expansion (split into focused regression files, fixed 3 red baseline tests, 45 tests green)
+- [x] Test suite expansion (split into focused regression files, fixed 3 red baseline tests, 50 tests green)
 - [x] CI setup (GitHub Actions: repo checks, SwiftLint, build+test)
 - [x] Live scan monitor (`npm run monitor`)
 - [x] Legacy UI cleanup (removed dead windowed shell and unreachable code)
 - [x] Beta cleanup (removed deltas-only onboarding, dead category-growth layer, legacy settings migration)
 - [x] Runtime audit (incremental refresh escalation, free-space multi-volume, cursor pagination)
+- [x] #15 Full scan freezes mid-run on large home directories
+- [x] #16 Cancelled or failed full scan leaves partial working-set data
+- [x] #17 Silent reconciliation can hang without visible cancel path
+- [x] #12 Crash on first scan during beta audit Phase 1 validation
+- [x] #22 Improve cancellation responsiveness during large scan DB writes
+- [x] #21 Use `pathClassification` SQL for snapshot subcategory breakdown
+- [x] #19 Add app privacy manifest before beta distribution
+- [x] #20 Replace production `print()` diagnostics with `Logger`
+- [x] #13 Drill-down file view: cap grown items list at 10 with expand action
+- [x] #14 Drill-down file view: growth contributor list stalls after initial files are visible
+- [x] #9 Investigate CPU 150% when app runs for extended periods
+  - Root cause: FSEvents watcher loop → DB → full working-set replacement
+  - Fix: disabled automatic file watcher, lazy NSHostingView teardown
+  - Validated: CPU ~0.01%, RSS ~50 MB at idle
 
-### 📋 Beta release checklist (#11)
+### 🟡 Remaining before broad beta
 
-- [ ] CPU performance issue (#9) resolved or mitigated
-- [ ] Page transition flicker (#7) verified fixed or mitigated
-- [ ] Settings UI cleanup (#10) complete
-- [ ] Manual smoke test: clean install → onboarding → first scan → drill-down → settings
+- [ ] #18 Release artifact metadata — source aligned, artifact still needs rebuild/sign/notarize
+- [ ] Manual smoke test: clean install → onboarding → first scan → Stop during scan → drill-down → settings
 - [ ] Manual smoke test: leave app running overnight, check CPU/RSS next day
-- [ ] Enable GitHub branch protection on `main` (require CI checks)
+- [ ] Enable GitHub branch protection on `main` (requires GitHub Pro or public repo)
 
 ### Post-beta backlog
 
 - Investigate CacheDelete/GetAPFSVolumeRole log noise (likely benign, 30 occurrences in monitor)
 - Category-vs-working-set drift monitoring (-5.79 MB observed)
 - Update tech-stack.md to reflect actual AppKit shell (not SwiftUI MenuBarExtra)
+- Re-enable file watcher post-beta with coalescing/debouncing to prevent idle CPU loops
+- Address drilldown polish issues #23–#30 (p3-medium, not beta blockers)
 
 ---
 
@@ -92,7 +89,7 @@ Status at 2026-04-13: build green, 45 tests pass, CI configured. App not running
 
 - Dominant shipped patterns are: SwiftUI `App` scenes with a menu bar shell, AppKit-backed menu bar presentation (`NSStatusItem` + `NSPopover`/`NSPanel`), `@MainActor` + `@Observable` state containers, Swift concurrency with actors / `TaskGroup` / `AsyncStream`, CoreServices `FSEventStream` bridging, `UserDefaults` + `SMAppService` settings persistence, and Foundation volume-capacity queries.
 - Strong alignment: the scan pipeline now uses structured concurrency more defensibly than older review docs suggest. [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L451) routes scan progress through `AsyncStream`, [MenuBarManager.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L800) uses `withThrowingTaskGroup`, and [ScanService.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/ScanService.swift#L168) uses `withTaskCancellationHandler`.
-- Strong alignment: filesystem monitoring follows Apple’s FSEvents lifecycle and safety flags. [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L95) creates the stream, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L150) schedules it, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L157) starts it, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L181) stops / invalidates / releases it, and [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L196) exposes `FSEventStreamFlushSync`.
+- Strong alignment: filesystem monitoring follows Apple's FSEvents lifecycle and safety flags. [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L95) creates the stream, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L150) schedules it, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L157) starts it, [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L181) stops / invalidates / releases it, and [FSEventsWatcher.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/FSEventsWatcher.swift#L196) exposes `FSEventStreamFlushSync`.
 - Medium mismatch: project docs still claim the app uses SwiftUI `MenuBarExtra`, but runtime code is an AppKit shell built around [NSStatusBar.system.statusItem](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L541), [NSPopover](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L552), and a custom [NSPanel](/Users/merlinkraemer/dev/projects/prunr/Prunr/Services/MenuBarManager.swift#L8); see [tech-stack.md](/Users/merlinkraemer/dev/projects/prunr/documentation/tech-stack.md#L7).
 - Medium mismatch: product docs also list `UserNotifications` and `SwiftUI Charts`, but the shipped app code does not currently use those frameworks. [tech-stack.md](/Users/merlinkraemer/dev/projects/prunr/documentation/tech-stack.md#L7)
 - Medium mismatch: settings persistence is correct but not especially idiomatic SwiftUI. [SettingsStore.swift](/Users/merlinkraemer/dev/projects/prunr/Prunr/ViewModels/SettingsStore.swift#L53) and nearby properties hand-roll `UserDefaults` read/write instead of using `@AppStorage` where scene-level or view-level preferences would be sufficient.
@@ -227,7 +224,7 @@ Status at 2026-04-13: build green, 45 tests pass, CI configured. App not running
 ## Legacy UI cleanup notes
 
 - Keep `MainViewModel`, `Delta`, and related comparison services while tests still exercise them.
-- Remove only the unused windowed shell and view tree that is no longer reachable from the app entrypoint.
+- Remove only the unused windowed app shell and view tree that is no longer reachable from the app entrypoint.
 
 ## Legacy UI cleanup review
 
@@ -409,3 +406,21 @@ Status at 2026-04-13: build green, 45 tests pass, CI configured. App not running
 - re-running `xcodegen generate` left [project.pbxproj](/Users/merlinkraemer/dev/projects/prunr/Prunr.xcodeproj/project.pbxproj) byte-identical
 - `make test` passed with 45 tests, 0 failures
 - Branch gating recommendation: in GitHub branch protection for `main`, require the `Repo Checks`, `SwiftLint`, and `Build And Test` status checks before merge. That part is repository settings, not code, so it still needs to be toggled in GitHub.
+
+## Beta idle/scrollbar fix pass
+
+- [x] Identify root cause of idle CPU spike (FSEvents watcher loop)
+- [x] Disable automatic file watcher (`enableAutomaticFileWatcher = false`)
+- [x] Fix drilldown scrollbar visibility (recursive `HiddenScrollIndicators`)
+- [x] Implement lazy NSHostingView teardown on popover close
+- [x] Validate idle CPU/RSS with `npm run monitor`
+- [x] Re-run `make build` and `make test`
+
+## Beta idle/scrollbar fix review
+
+- Root cause: `FSEventsWatcher` continuously delivered filesystem events to `RecentChangeService`, which triggered database writes and full working-set replacement even when no meaningful changes occurred. This created a sustained ~100% CPU background loop.
+- Fix: set `enableAutomaticFileWatcher = false` in `MenuBarManager` to stop background processing while idle.
+- Fix: enhanced `HiddenScrollIndicators` to recursively find sibling `ScrollViews` in the window hierarchy and trigger updates on layout changes, ensuring scrollbars stay hidden in drilldown even if the view hierarchy shifts.
+- Fix: uninstall the panel's `NSHostingView` when the popover closes, eliminating SwiftUI display-cycle overhead while the panel is hidden.
+- Validation: `npm run monitor` confirmed CPU dropped from ~100% to ~0.01% at idle and RSS stabilized around ~50 MB.
+- Verification: `make build` passed, `make test` passed.
