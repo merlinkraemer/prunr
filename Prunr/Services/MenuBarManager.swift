@@ -97,6 +97,7 @@ final class MenuBarManager: NSObject {
     private let clickDebounceInterval: TimeInterval = 0.1 // 100ms
 
     private static let logger = Logger(subsystem: "com.prunr.MenuBarManager", category: "Reconciliation")
+    private static let enableSilentFullReconciliation = false
 
     /// Baseline service for growth tracking
     private let baselineService = BaselineService.shared
@@ -675,7 +676,7 @@ final class MenuBarManager: NSObject {
             try await baselineService.resetBaseline()
             await refreshAfterBaselineReset()
         } catch {
-            print("[MenuBarManager] Failed to reset baseline: \(error)")
+            Self.logger.error("Failed to reset baseline: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -948,7 +949,7 @@ final class MenuBarManager: NSObject {
                     errorMessage = "Permission denied: \(path)"
                 }
             } else {
-                print("[MenuBarManager] Error loading inventory: \(error)")
+                Self.logger.error("Error loading inventory: \(error.localizedDescription, privacy: .public)")
                 if !isAutomatic {
                     errorMessage = "Scan failed: \(error.localizedDescription)"
                 }
@@ -1120,6 +1121,10 @@ final class MenuBarManager: NSObject {
     /// Silently reconciles the working set against a fresh full scan.
     /// No spinners, no status text changes — applies corrections as incremental patches.
     func performSilentReconciliation() async {
+        guard Self.enableSilentFullReconciliation else {
+            Self.logger.info("Silent full reconciliation skipped for beta safety")
+            return
+        }
         guard isPermissionConfirmedForProtectedTraversal else { return }
         guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else { return }
         isReconciling = true
@@ -1153,6 +1158,7 @@ final class MenuBarManager: NSObject {
 
     /// Kicks off silent reconciliation if the last one exceeds the user's configured scan interval.
     func reconcileIfStale() {
+        guard Self.enableSilentFullReconciliation else { return }
         guard isPermissionConfirmedForProtectedTraversal else { return }
         guard !noBaseline else { return }
         let staleThreshold = SettingsStore.shared.automaticFullScanInterval
@@ -1540,6 +1546,9 @@ final class MenuBarManager: NSObject {
 
     /// Stops the current scan
     func stopScan() async {
+        reconciliationTask?.cancel()
+        reconciliationTask = nil
+        isReconciling = false
         await ScanService.shared.cancelScan()
         scanProgress = "Stopping..."
 
@@ -2296,20 +2305,20 @@ final class MenuBarManager: NSObject {
                 try "Test config file".data(using: .utf8)?.write(to: configFile)
             }
 
-            print("[MenuBarManager] Created \(Double(totalCreated) / 1024.0 / 1024.0) MB of test data")
-            print("[MenuBarManager] Categories: Library/Caches, Downloads, node_modules, .Trash, other")
-            print("[MenuBarManager] Big file: 105 MB file in Downloads (tests >= 100MB threshold)")
-            print("[MenuBarManager] Boundary test projects: 7 projects with comprehensive boundary folders")
-            print("[MenuBarManager]   - project_js: .git, node_modules, src")
-            print("[MenuBarManager]   - project_py: .git, .venv, venv, src")
-            print("[MenuBarManager]   - project_rust: .git, target, src")
-            print("[MenuBarManager]   - project_ios: .git, DerivedData, .swiftpm, Pods, src")
-            print("[MenuBarManager]   - project_build: .git, build, .build, src")
-            print("[MenuBarManager]   - project_deps: .git, vendor, third_party, src")
-            print("[MenuBarManager]   - project_cache: .git, .cache, Cache, src")
+            Self.logger.info("Created \(Double(totalCreated) / 1024.0 / 1024.0) MB of test data")
+            Self.logger.info("Categories: Library/Caches, Downloads, node_modules, .Trash, other")
+            Self.logger.info("Big file: 105 MB file in Downloads (tests >= 100MB threshold)")
+            Self.logger.info("Boundary test projects: 7 projects with comprehensive boundary folders")
+            Self.logger.info("  - project_js: .git, node_modules, src")
+            Self.logger.info("  - project_py: .git, .venv, venv, src")
+            Self.logger.info("  - project_rust: .git, target, src")
+            Self.logger.info("  - project_ios: .git, DerivedData, .swiftpm, Pods, src")
+            Self.logger.info("  - project_build: .git, build, .build, src")
+            Self.logger.info("  - project_deps: .git, vendor, third_party, src")
+            Self.logger.info("  - project_cache: .git, .cache, Cache, src")
 
         } catch {
-            print("[MenuBarManager] Failed to create test data: \(error)")
+            Self.logger.error("Failed to create test data: \(error.localizedDescription, privacy: .public)")
         }
     }
     #endif

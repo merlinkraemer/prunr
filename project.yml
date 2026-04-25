@@ -22,8 +22,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.prunr.app
         PRODUCT_NAME: Prunr
-        MARKETING_VERSION: "0.1.2"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.1.3"
+        CURRENT_PROJECT_VERSION: "2"
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)

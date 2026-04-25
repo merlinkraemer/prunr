@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import OSLog
 
 actor RecentChangeService {
     static let shared = RecentChangeService()
@@ -7,6 +8,7 @@ actor RecentChangeService {
     private let scanner = FileScanner()
     private let db = DatabaseManager.shared
     private let growthJournalService = GrowthJournalService.shared
+    private let logger = Logger(subsystem: "com.prunr.app", category: "RecentChanges")
 
     private init() {}
 
@@ -48,7 +50,7 @@ actor RecentChangeService {
             let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
             guard !snapshots.isEmpty else { return .noChanges }
         } catch {
-            print("[RecentChangeService] Failed checking snapshot history: \(error)")
+            logger.error("Failed checking snapshot history: \(error.localizedDescription, privacy: .public)")
             return .noChanges
         }
 
@@ -108,7 +110,7 @@ actor RecentChangeService {
                     mergedDeltas[key, default: 0] += delta
                 }
             } catch {
-                print("[RecentChangeService] Failed refreshing target \(target.rootPath): \(error)")
+                logger.error("Failed refreshing target \(target.rootPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -122,7 +124,7 @@ actor RecentChangeService {
             )
             return .updated(deltas: mergedDeltas)
         } catch {
-            print("[RecentChangeService] Failed recording journal deltas: \(error)")
+            logger.error("Failed recording journal deltas: \(error.localizedDescription, privacy: .public)")
             return .noChanges
         }
     }

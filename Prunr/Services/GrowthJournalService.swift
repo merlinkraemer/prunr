@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 actor GrowthJournalService {
     static let shared = GrowthJournalService()
@@ -6,6 +7,7 @@ actor GrowthJournalService {
     private let db = DatabaseManager.shared
     private let recentStoryThresholdBytes: Int64 = 1 * 1024 * 1024
     private let recentStoryWindow: TimeInterval = 24 * 60 * 60
+    private let logger = Logger(subsystem: "com.prunr.app", category: "GrowthJournal")
 
     private init() {}
 
@@ -33,7 +35,7 @@ actor GrowthJournalService {
             let buckets = try await db.fetchGrowthJournalBuckets(trackedPathId: trackedPath.id, since: cutoff)
             return buildStories(from: buckets, now: Date(), retentionWindow: retentionWindow)
         } catch {
-            print("[GrowthJournalService] Failed to fetch recent growth stories: \(error)")
+            logger.error("Failed to fetch recent growth stories: \(error.localizedDescription, privacy: .public)")
             return [:]
         }
     }
@@ -48,7 +50,7 @@ actor GrowthJournalService {
                 since: snapshotDate
             )
         } catch {
-            print("[GrowthJournalService] Failed to fetch deltas since last snapshot: \(error)")
+            logger.error("Failed to fetch deltas since last snapshot: \(error.localizedDescription, privacy: .public)")
             return [:]
         }
     }
@@ -68,7 +70,7 @@ actor GrowthJournalService {
                 since: cutoff
             )
         } catch {
-            print("[GrowthJournalService] Failed to fetch subcategory growth totals: \(error)")
+            logger.error("Failed to fetch subcategory growth totals: \(error.localizedDescription, privacy: .public)")
             return [:]
         }
     }
@@ -80,7 +82,7 @@ actor GrowthJournalService {
         do {
             try await db.pruneGrowthJournalBuckets(olderThan: cutoff)
         } catch {
-            print("[GrowthJournalService] Failed to prune growth journal: \(error)")
+            logger.error("Failed to prune growth journal: \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		14F4297EBC226AB16C032CD7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 303D3B747088C2665CA0FAC0 /* PrivacyInfo.xcprivacy */; };
 		1F2640969451EF4323DCABED /* DiskAccountingResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9921DE49FF88377717A1B3B5 /* DiskAccountingResult.swift */; };
 		23C6B435F8650971423F8967 /* DiskSpaceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D9601CAA1193992B7E7AA1E /* DiskSpaceService.swift */; };
 		25A34949AFDCD40C6D929C26 /* StressScanCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 682BA88806D93558C3ADEC4A /* StressScanCommand.swift */; };
@@ -47,6 +48,7 @@
 		C51BB0A8E9DBA9CC3F92608C /* FormattedBytes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 796F6F1A106D7E112D447B19 /* FormattedBytes.swift */; };
 		C9D4F1FFD8E341992F3B2E19 /* ExpandableList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99E7A9176C148C19BAAF8BB4 /* ExpandableList.swift */; };
 		CCADDA2C8B53555582FAD8C5 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = D9A0EE7728E6F09ABE5343D3 /* GRDB */; };
+		CCDA82F4AD00B28F15268BA4 /* BetaReadinessRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F267CC2C11F13BE6D448B9B /* BetaReadinessRegressionTests.swift */; };
 		CF108B3C9788F1F1C26CF774 /* DeltaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */; };
 		D5A25E92406063EA2390D57D /* BaselineServiceRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A383561A5F56D4F912AA9F07 /* BaselineServiceRegressionTests.swift */; };
 		D708B58DF59CBCD995F25398 /* Delta.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1FD965ED095B5AD6BC9CE03 /* Delta.swift */; };
@@ -76,6 +78,8 @@
 		1D9601CAA1193992B7E7AA1E /* DiskSpaceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskSpaceService.swift; sourceTree = "<group>"; };
 		25E6413BC5E09F3DB8AA03F4 /* RecentChangeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentChangeService.swift; sourceTree = "<group>"; };
 		2B953D7CD08AC50B0B235D07 /* PermissionsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsService.swift; sourceTree = "<group>"; };
+		2F267CC2C11F13BE6D448B9B /* BetaReadinessRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BetaReadinessRegressionTests.swift; sourceTree = "<group>"; };
+		303D3B747088C2665CA0FAC0 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		346A454CD5E69D90C84D7375 /* ScanResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanResult.swift; sourceTree = "<group>"; };
 		38637F37D3A1771F44AD4C7F /* Prunr.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Prunr.entitlements; sourceTree = "<group>"; };
 		3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanService.swift; sourceTree = "<group>"; };
@@ -171,6 +175,7 @@
 			isa = PBXGroup;
 			children = (
 				A383561A5F56D4F912AA9F07 /* BaselineServiceRegressionTests.swift */,
+				2F267CC2C11F13BE6D448B9B /* BetaReadinessRegressionTests.swift */,
 				D4E1ECC974C4E402965F0B80 /* MenuBarManagerRegressionTests.swift */,
 				AD8D4EB6F8A0B9C7511BF043 /* PrunrSmokeTests.swift */,
 				421B9F53780179534531673D /* TestSupport */,
@@ -190,6 +195,7 @@
 			isa = PBXGroup;
 			children = (
 				ED22215848F7B27478151FD0 /* Assets.xcassets */,
+				303D3B747088C2665CA0FAC0 /* PrivacyInfo.xcprivacy */,
 				38637F37D3A1771F44AD4C7F /* Prunr.entitlements */,
 				AF0B553533A012BE2ECF5D8B /* PrunrMenuBar.swift */,
 				56751E7EE62C9E82649CB0AA /* Database */,
@@ -390,6 +396,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4D41E6BE5C1A4553D3D34C63 /* Assets.xcassets in Resources */,
+				14F4297EBC226AB16C032CD7 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -401,6 +408,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D5A25E92406063EA2390D57D /* BaselineServiceRegressionTests.swift in Sources */,
+				CCDA82F4AD00B28F15268BA4 /* BetaReadinessRegressionTests.swift in Sources */,
 				A2075B826B9DF97C49F42362 /* MenuBarManagerRegressionTests.swift in Sources */,
 				F1516F105D412B399A09CFFE /* PrunrSmokeTests.swift in Sources */,
 				732F15CC74B3FA55867B9AC0 /* PrunrTestCase.swift in Sources */,
@@ -474,7 +482,7 @@
 				CODE_SIGN_ENTITLEMENTS = Prunr/Prunr.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -485,7 +493,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.2;
+				MARKETING_VERSION = 0.1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.prunr.app;
 				PRODUCT_NAME = Prunr;
 				SDKROOT = macosx;
@@ -638,7 +646,7 @@
 				CODE_SIGN_ENTITLEMENTS = Prunr/Prunr.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -649,7 +657,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.2;
+				MARKETING_VERSION = 0.1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.prunr.app;
 				PRODUCT_NAME = Prunr;
 				SDKROOT = macosx;

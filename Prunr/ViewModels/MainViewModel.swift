@@ -157,6 +157,8 @@ final class MainViewModel {
                     errorMessage = "Permission denied: \(path)\n\nGrant Full Disk Access in System Settings > Privacy & Security > Full Disk Access"
                 case .invalidPath:
                     errorMessage = "Invalid path or path does not exist"
+                case .stalled(let path):
+                    errorMessage = "Scan stalled while reading: \(path)"
                 case .unknown(let err):
                     errorMessage = "Scan failed: \(err.localizedDescription)"
                 case .cancelled:

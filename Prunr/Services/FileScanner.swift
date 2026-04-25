@@ -17,6 +17,43 @@ final class ScanCancellationToken: @unchecked Sendable {
     }
 }
 
+private final class ScanTraversalState: @unchecked Sendable {
+    struct Snapshot {
+        let lastProgressAt: Date
+        let currentPath: String
+        let isFinished: Bool
+    }
+
+    private struct State {
+        var lastProgressAt: Date
+        var currentPath: String
+        var isFinished = false
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
+
+    init(rootPath: String) {
+        state = OSAllocatedUnfairLock(initialState: State(lastProgressAt: Date(), currentPath: rootPath))
+    }
+
+    func markProgress(path: String) {
+        state.withLock {
+            $0.lastProgressAt = Date()
+            $0.currentPath = path
+        }
+    }
+
+    func markFinished() {
+        state.withLock { $0.isFinished = true }
+    }
+
+    func snapshot() -> Snapshot {
+        state.withLock {
+            Snapshot(lastProgressAt: $0.lastProgressAt, currentPath: $0.currentPath, isFinished: $0.isFinished)
+        }
+    }
+}
+
 /// Recursively scans directories and streams scan results.
 ///
 /// Optimized for speed: low-level FTS traversal avoids Foundation URL/resourceValues
@@ -26,6 +63,8 @@ final class FileScanner {
     // MARK: - Properties
 
     private static let logger = Logger(subsystem: "com.prunr.FileScanner", category: "Scanning")
+    private static let traversalStallTimeout: TimeInterval = 30
+    private static let watchdogInterval: TimeInterval = 5
 
     /// App-internal paths to avoid recursive self-observation.
     private let internalPathFragments: [String] = [
@@ -38,17 +77,6 @@ final class FileScanner {
         "/Library/Mobile Documents/",
         "/.icloud/",
         "/com~apple~"
-    ]
-
-    /// Known problematic paths that can cause FTS to hang or severely slow down.
-    /// These are skipped at the directory level to prevent scan stalls.
-    private let problematicPathFragments: [String] = [
-        ".photolibrary",              // Photos app library bundles — special filesystem, can hang
-        ".photoslibrary",
-        "/Library/Mail/",             // Mail app data — extremely high file counts, slow access
-        "/.Trash/",                   // Deleted files — not useful to scan
-        "/.MobileBackups/",           // Time Machine local snapshots
-        "/Library/Saved Application State/",
     ]
 
     static func diskUsageBytes(for fileStat: stat) -> Int64 {
@@ -64,10 +92,35 @@ final class FileScanner {
     /// - Returns: An AsyncThrowingStream that yields ScanResult values
     func scan(_ rootURL: URL, ignoredNames: Set<String>, cancellationToken: ScanCancellationToken? = nil) -> AsyncThrowingStream<ScanResult, Error> {
         return AsyncThrowingStream<ScanResult, Error> { continuation in
+            let traversalState = ScanTraversalState(rootPath: rootURL.path)
+            let watchdogTask = Task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(Self.watchdogInterval))
+                    guard !Task.isCancelled else { return }
+
+                    let snapshot = traversalState.snapshot()
+                    guard !snapshot.isFinished else { return }
+
+                    let stalledFor = Date().timeIntervalSince(snapshot.lastProgressAt)
+                    guard stalledFor >= Self.traversalStallTimeout else { continue }
+
+                    Self.logger.error("Traversal watchdog aborting scan after \(stalledFor)s without progress at \(snapshot.currentPath, privacy: .public)")
+                    cancellationToken?.cancel()
+                    continuation.finish(throwing: ScanError.stalled(snapshot.currentPath))
+                    return
+                }
+            }
+
             let producerTask = Task { [weak self] in
                 guard let self else {
+                    traversalState.markFinished()
                     continuation.finish()
                     return
+                }
+
+                defer {
+                    traversalState.markFinished()
+                    watchdogTask.cancel()
                 }
 
                 let fileManager = FileManager.default
@@ -75,11 +128,13 @@ final class FileScanner {
                 // Verify root path exists before enumerating
                 var isDirectory: ObjCBool = false
                 guard fileManager.fileExists(atPath: rootURL.path, isDirectory: &isDirectory) else {
+                    traversalState.markFinished()
                     continuation.finish(throwing: ScanError.invalidPath)
                     return
                 }
 
                 guard isDirectory.boolValue else {
+                    traversalState.markFinished()
                     continuation.finish(throwing: ScanError.invalidPath)
                     return
                 }
@@ -125,6 +180,7 @@ final class FileScanner {
                     let info = Int32(entry.pointee.fts_info)
                     let level = Int(entry.pointee.fts_level)
                     let path = String(cString: entry.pointee.fts_path)
+                    traversalState.markProgress(path: path)
 
                     switch info {
                     case FTS_D:
@@ -178,6 +234,7 @@ final class FileScanner {
 
             // Cancel the producer when the stream is terminated (consumer cancelled or dropped)
             continuation.onTermination = { @Sendable _ in
+                watchdogTask.cancel()
                 producerTask.cancel()
             }
         }
@@ -187,24 +244,47 @@ final class FileScanner {
 
     private func shouldSkipDirectory(path: String, name: String, ignoredNames: Set<String>) -> Bool {
         let lowercasedName = name.lowercased()
+        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
 
         if ignoredNames.contains(lowercasedName) {
             return true
         }
 
-        for fragment in internalPathFragments where path.contains(fragment) {
+        for fragment in internalPathFragments where standardizedPath.contains(fragment) {
             return true
         }
 
         // Skip iCloud directories that can hang
-        for fragment in iCloudPathFragments where path.contains(fragment) {
+        for fragment in iCloudPathFragments where standardizedPath.contains(fragment) {
             return true
         }
 
         // Skip known problematic paths that cause FTS stalls
-        for fragment in problematicPathFragments where path.contains(fragment) {
+        if shouldSkipProblematicDirectory(path: standardizedPath, lowercasedName: lowercasedName) {
             Self.logger.debug("Skipping problematic directory: \(path, privacy: .public)")
             return true
+        }
+
+        return false
+    }
+
+    private func shouldSkipProblematicDirectory(path: String, lowercasedName: String) -> Bool {
+        if lowercasedName.hasSuffix(".photolibrary") || lowercasedName.hasSuffix(".photoslibrary") {
+            return true
+        }
+
+        let components = path.split(separator: "/").map { String($0).lowercased() }
+        for index in components.indices {
+            switch components[index] {
+            case "mail" where index > 0 && components[index - 1] == "library":
+                return true
+            case ".trash", ".mobilebackups":
+                return true
+            case "saved application state" where index > 0 && components[index - 1] == "library":
+                return true
+            default:
+                continue
+            }
         }
 
         return false

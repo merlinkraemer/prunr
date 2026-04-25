@@ -523,6 +523,10 @@ struct CategoryGrowthListView: View {
                             .padding(.vertical, 4)
                         }
 
+                        if isLoadingContributors {
+                            contributorLoadingRow
+                        }
+
                         // All files section
                         ExpandableList(
                             items: nonGrowthFiles,

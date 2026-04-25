@@ -583,26 +583,44 @@ extension DatabaseManager {
     ///
     /// Uses multi-row VALUES inserts in chunks of 500 rows (much fewer SQL round-trips
     /// than per-row prepared statement execution).
-    func addEntries(to snapshotId: Int64, entries: [ScanResult]) async throws {
-        try await addEntriesCore(to: snapshotId, entries: entries, trackedPathId: nil, updatedAt: nil)
+    func addEntries(
+        to snapshotId: Int64,
+        entries: [ScanResult],
+        cancellationToken: ScanCancellationToken? = nil
+    ) async throws {
+        try await addEntriesCore(
+            to: snapshotId,
+            entries: entries,
+            trackedPathId: nil,
+            updatedAt: nil,
+            cancellationToken: cancellationToken
+        )
     }
 
-    /// Internal implementation that optionally also writes to workingSetEntry in the same transaction.
-    /// When trackedPathId + updatedAt are provided the caller must NOT call rebuildWorkingSet separately.
+    /// Internal implementation that optionally also writes to workingSetEntry in the same per-chunk transaction.
+    /// When trackedPathId + updatedAt are provided the caller must restore or rebuild the working set on failure.
     func addEntriesWithWorkingSet(
         to snapshotId: Int64,
         entries: [ScanResult],
         trackedPathId: UUID,
-        updatedAt: Date
+        updatedAt: Date,
+        cancellationToken: ScanCancellationToken? = nil
     ) async throws {
-        try await addEntriesCore(to: snapshotId, entries: entries, trackedPathId: trackedPathId, updatedAt: updatedAt)
+        try await addEntriesCore(
+            to: snapshotId,
+            entries: entries,
+            trackedPathId: trackedPathId,
+            updatedAt: updatedAt,
+            cancellationToken: cancellationToken
+        )
     }
 
     private func addEntriesCore(
         to snapshotId: Int64,
         entries: [ScanResult],
         trackedPathId: UUID?,
-        updatedAt: Date?
+        updatedAt: Date?,
+        cancellationToken: ScanCancellationToken?
     ) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
@@ -615,13 +633,17 @@ extension DatabaseManager {
 
         let trackedPathIdString = trackedPathId?.uuidString
 
-        // Use a single transaction for all batches (much faster)
-        // Note: We can't call Task.yield() inside the database write block
-        try await dbPool.write { db in
-            for startIndex in stride(from: 0, to: entries.count, by: sqlChunkSize) {
-                let endIndex = min(startIndex + sqlChunkSize, entries.count)
-                let batch = entries[startIndex..<endIndex]
+        // Write each SQL chunk in its own transaction so cancellation can be observed
+        // between chunks instead of waiting for a very large writer transaction to finish.
+        for startIndex in stride(from: 0, to: entries.count, by: sqlChunkSize) {
+            if Task.isCancelled || cancellationToken?.isCancelled == true {
+                throw CancellationError()
+            }
 
+            let endIndex = min(startIndex + sqlChunkSize, entries.count)
+            let batch = entries[startIndex..<endIndex]
+
+            try await dbPool.write { db in
                 let normalizedBatch = batch.map {
                     (
                         path: Self.normalizePath($0.path),
@@ -684,6 +706,10 @@ extension DatabaseManager {
                     }
                     try db.execute(sql: wsSQL, arguments: StatementArguments(wsArgs))
                 }
+            }
+
+            if Task.isCancelled || cancellationToken?.isCancelled == true {
+                throw CancellationError()
             }
         }
     }
@@ -1213,6 +1239,157 @@ extension DatabaseManager {
         }
     }
 
+    /// Builds subcategory summaries for a snapshot using SQL-level pathClassification filtering.
+    /// This is the fallback for older snapshots that do not have precomputed subcategorySnapshot rows.
+    func fetchSubcategoryGroupsByClassification(
+        for snapshotId: Int64,
+        category: GrowthCategory,
+        topLimit: Int
+    ) async throws -> [SubcategoryGroup] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let rows = try await dbPool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT
+                        pc.subcategory AS subcategory,
+                        COALESCE(SUM(se.sizeBytes), 0) AS totalBytes,
+                        COUNT(*) AS fileCount
+                    FROM snapshotEntry se
+                    JOIN pathClassification pc ON pc.pathId = se.pathId
+                    WHERE se.snapshotId = ? AND pc.category = ?
+                    GROUP BY pc.subcategory
+                    HAVING COALESCE(SUM(se.sizeBytes), 0) > 0
+                    ORDER BY totalBytes DESC, pc.subcategory ASC
+                    """,
+                arguments: [snapshotId, category.rawValue]
+            )
+        }
+
+        var groups: [SubcategoryGroup] = []
+        groups.reserveCapacity(rows.count)
+
+        for row in rows {
+            let rawSubcategory: String = row["subcategory"] ?? ""
+            let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
+            let totalBytes: Int64 = row["totalBytes"] ?? 0
+            let fileCount: Int = row["fileCount"] ?? 0
+
+            let topEntries = try await fetchSnapshotEntriesByClassification(
+                snapshotId: snapshotId,
+                category: category,
+                subcategory: subcategory,
+                offset: 0,
+                limit: topLimit
+            )
+
+            groups.append(makeSubcategoryGroup(
+                category: category,
+                subcategory: subcategory,
+                totalBytes: totalBytes,
+                fileCount: fileCount,
+                entries: topEntries
+            ))
+        }
+
+        return groups
+    }
+
+    func fetchWorkingSetSubcategoryGroupsByClassification(
+        trackedPathId: UUID,
+        category: GrowthCategory,
+        topLimit: Int
+    ) async throws -> [SubcategoryGroup] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+        let rows = try await dbPool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT
+                        pc.subcategory AS subcategory,
+                        COALESCE(SUM(wse.sizeBytes), 0) AS totalBytes,
+                        COUNT(*) AS fileCount
+                    FROM workingSetEntry wse
+                    JOIN pathClassification pc ON pc.pathId = wse.pathId
+                    WHERE wse.trackedPathId = ? AND pc.category = ?
+                    GROUP BY pc.subcategory
+                    HAVING COALESCE(SUM(wse.sizeBytes), 0) > 0
+                    ORDER BY totalBytes DESC, pc.subcategory ASC
+                    """,
+                arguments: [trackedPathIdString, category.rawValue]
+            )
+        }
+
+        var groups: [SubcategoryGroup] = []
+        groups.reserveCapacity(rows.count)
+
+        for row in rows {
+            let rawSubcategory: String = row["subcategory"] ?? ""
+            let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
+            let totalBytes: Int64 = row["totalBytes"] ?? 0
+            let fileCount: Int = row["fileCount"] ?? 0
+
+            let topEntries = try await fetchWorkingSetEntriesByClassification(
+                trackedPathId: trackedPathId,
+                category: category,
+                subcategory: subcategory,
+                offset: 0,
+                limit: topLimit
+            )
+
+            groups.append(makeSubcategoryGroup(
+                category: category,
+                subcategory: subcategory,
+                totalBytes: totalBytes,
+                fileCount: fileCount,
+                entries: topEntries
+            ))
+        }
+
+        return groups
+    }
+
+    private func makeSubcategoryGroup(
+        category: GrowthCategory,
+        subcategory: GrowthSubcategory?,
+        totalBytes: Int64,
+        fileCount: Int,
+        entries: [SnapshotEntryWithPath]
+    ) -> SubcategoryGroup {
+        let displayName: String
+        if let subcategory {
+            displayName = subcategory.displayName
+        } else {
+            displayName = category.supportsSubcategories ? "Uncategorized" : "Files"
+        }
+
+        let topFiles = entries.map { entry in
+            GrowthItem(
+                path: entry.path,
+                growthBytes: entry.sizeBytes,
+                currentSizeBytes: entry.sizeBytes,
+                percentOfParent: totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0,
+                subcategory: subcategory
+            )
+        }
+
+        return SubcategoryGroup(
+            subcategory: subcategory,
+            displayName: displayName,
+            totalBytes: totalBytes,
+            fileCount: fileCount,
+            growthBytes: nil,
+            topFiles: topFiles
+        )
+    }
+
     func rebuildWorkingSet(from snapshotId: Int64, trackedPathId: UUID, updatedAt: Date = Date()) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
@@ -1280,6 +1457,25 @@ extension DatabaseManager {
                 arguments: [trackedPathIdString]
             )
         }
+    }
+
+    /// Restores the live working set to the latest complete snapshot for a tracked path.
+    /// If no complete snapshot exists, clears live rows for that path.
+    /// Returns the snapshot ID used for restore, or nil when rows were cleared.
+    @discardableResult
+    func restoreWorkingSetFromLatestSnapshotOrClear(trackedPathId: UUID) async throws -> Int64? {
+        let latestSnapshots = try await fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 1)
+        if let latestSnapshot = latestSnapshots.first, let latestSnapshotId = latestSnapshot.id {
+            try await rebuildWorkingSet(
+                from: latestSnapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: latestSnapshot.createdAt
+            )
+            return latestSnapshotId
+        }
+
+        try await clearWorkingSetEntries(trackedPathId: trackedPathId)
+        return nil
     }
 
     /// Replaces all working-set category totals for a tracked path using the provided in-memory totals.

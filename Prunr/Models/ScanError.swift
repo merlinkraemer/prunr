@@ -11,6 +11,9 @@ enum ScanError: Error, LocalizedError, Sendable {
     /// Scan was cancelled by the user
     case cancelled
 
+    /// Scan traversal stopped making progress and was aborted
+    case stalled(String)
+
     /// An unknown error occurred during scanning
     case unknown(Error)
 
@@ -22,6 +25,8 @@ enum ScanError: Error, LocalizedError, Sendable {
             return "Invalid path or path does not exist"
         case .cancelled:
             return "Scan cancelled"
+        case .stalled(let path):
+            return "Scan stalled while reading: \(path)\n\nThe scan was stopped so Prunr can recover. Try scanning a smaller folder or add this location to the ignore list."
         case .unknown(let error):
             return "Scan failed: \(error.localizedDescription)"
         }
@@ -36,6 +41,8 @@ enum ScanError: Error, LocalizedError, Sendable {
             return "Check that the path exists and you have access to it."
         case .cancelled:
             return nil
+        case .stalled:
+            return "Try again after excluding problematic folders, or choose a more specific tracked path."
         case .unknown:
             return "Try again or contact support if the problem persists."
         }

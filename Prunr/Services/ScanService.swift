@@ -109,7 +109,7 @@ actor ScanService {
                 return Int64(capacity)
             }
         } catch {
-            print("[ScanService] Failed to capture volume free space: \(error)")
+            Logger.scan.error("Failed to capture volume free space: \(error.localizedDescription, privacy: .public)")
         }
         return nil
     }
@@ -210,7 +210,7 @@ actor ScanService {
         logger.debug("Created snapshot ID: \(snapshotId)")
 
         // Batch insert configuration
-        let batchSize = 50000 // Increased from 15000 — fewer transactions = less overhead
+        let batchSize = 10000
         var batch: [ScanResult] = []
         var count = 0
         var lastProgressUpdate = Date()
@@ -325,10 +325,11 @@ actor ScanService {
                             to: snapshotId,
                             entries: batch,
                             trackedPathId: trackedPathId,
-                            updatedAt: snapshot.createdAt
+                            updatedAt: snapshot.createdAt,
+                            cancellationToken: cancellationToken
                         )
                     } else {
-                        try await db.addEntries(to: snapshotId, entries: batch)
+                        try await db.addEntries(to: snapshotId, entries: batch, cancellationToken: cancellationToken)
                     }
                     batch.removeAll()
 
@@ -417,16 +418,17 @@ actor ScanService {
                 logger.debug("Inserting final batch of \(batch.count) entries")
                 try throwIfCancelled("final batch insert preflight")
                 if alsoWriteWorkingSet {
-                    try await db.addEntriesWithWorkingSet(
-                        to: snapshotId,
-                        entries: batch,
-                        trackedPathId: trackedPathId,
-                        updatedAt: snapshot.createdAt
-                    )
-                } else {
-                    try await db.addEntries(to: snapshotId, entries: batch)
+                        try await db.addEntriesWithWorkingSet(
+                            to: snapshotId,
+                            entries: batch,
+                            trackedPathId: trackedPathId,
+                            updatedAt: snapshot.createdAt,
+                            cancellationToken: cancellationToken
+                        )
+                    } else {
+                        try await db.addEntries(to: snapshotId, entries: batch, cancellationToken: cancellationToken)
+                    }
                 }
-            }
 
             // If we co-wrote the working set inline, write its category totals from the
             // in-memory categoryTotals dict (avoids a separate SQL GROUP BY over 2.2M rows).
@@ -480,8 +482,11 @@ actor ScanService {
             do {
                 try await db.deleteSnapshot(id: snapshotId)
                 logger.info("Deleted incomplete snapshot ID: \(snapshotId)")
+                if alsoWriteWorkingSet {
+                    try await restoreWorkingSetAfterFailedInlineScan(trackedPathId: trackedPathId)
+                }
             } catch {
-                logger.error("Failed to delete incomplete snapshot ID \(snapshotId): \(error.localizedDescription)")
+                logger.error("Failed to clean up incomplete scan state for snapshot ID \(snapshotId): \(error.localizedDescription)")
             }
 
             // Wrap errors appropriately
@@ -490,6 +495,11 @@ actor ScanService {
                     logger.info("Scan was cancelled")
                 }
                 throw scanError
+            }
+
+            if error is CancellationError {
+                logger.info("Database write was cancelled")
+                throw ScanError.cancelled
             }
 
             // Check for permission errors
@@ -531,6 +541,14 @@ actor ScanService {
         } catch {
             logger.debug("Could not load historical entry estimate: \(error.localizedDescription)")
             return nil
+        }
+    }
+
+    private func restoreWorkingSetAfterFailedInlineScan(trackedPathId: UUID) async throws {
+        if let latestSnapshotId = try await db.restoreWorkingSetFromLatestSnapshotOrClear(trackedPathId: trackedPathId) {
+            logger.info("Restored working set from latest complete snapshot \(latestSnapshotId)")
+        } else {
+            logger.info("Cleared working set because failed scan had no previous snapshot")
         }
     }
 }

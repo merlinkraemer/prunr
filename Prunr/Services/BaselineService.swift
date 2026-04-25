@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Actor that manages snapshots and growth list calculations.
 ///
@@ -46,6 +47,7 @@ actor BaselineService {
     /// Scan service reference
     private let scanService = ScanService.shared
     private let growthJournalService = GrowthJournalService.shared
+    private let logger = Logger(subsystem: "com.prunr.app", category: "Baseline")
 
     /// Boundary configuration for stopping drill-down
     private let boundaryConfig = BoundaryConfig.default
@@ -92,10 +94,8 @@ actor BaselineService {
         let previousSnapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
         let previousSnapshotId = previousSnapshots.first?.id
 
-        // Note: We intentionally do NOT clear the working set before scanning.
-        // The inline upserts use ON CONFLICT DO UPDATE, so they'll overwrite stale data.
-        // If the scan fails, we want to keep the old working set for live refresh to work correctly.
-        // Clearing it would cause RecentChangeService to calculate incorrect deltas.
+        // Do not update the live working set until the scan completes successfully.
+        // This keeps cancelled/failed full scans from leaving hybrid old+new inventory data.
 
         // Set UI state
         await MainActor.run {
@@ -108,20 +108,18 @@ actor BaselineService {
             }
         }
 
-        // Run full scan.
-        // Pass alsoWriteWorkingSet=true so working-set rows are written inline during
-        // the scan transaction — this eliminates the separate rebuildWorkingSet pass
-        // that previously copied 2.2M rows after the scan completed.
+        // Run full scan into an isolated snapshot first. The working set is rebuilt
+        // from that completed snapshot only after the scan succeeds.
         let snapshot = try await scanService.scan(
             path: trackedPath.url.path,
             trackedPathId: trackedPath.id,
             ignoredNames: ignoredNames,
-            alsoWriteWorkingSet: true,
+            alsoWriteWorkingSet: false,
             progress: progress
         )
 
         guard let snapshotId = snapshot.id else {
-            print("[BaselineService] ERROR: Failed to create snapshot with ID")
+            logger.error("Failed to create snapshot with ID")
             throw ScanError.unknown(NSError(
                 domain: "BaselineService",
                 code: -1,
@@ -129,10 +127,10 @@ actor BaselineService {
             ))
         }
 
+        try await db.rebuildWorkingSet(from: snapshotId, trackedPathId: trackedPath.id, updatedAt: snapshot.createdAt)
+
         if previousSnapshotId == nil {
-            // A first successful baseline must become the new source of truth.
-            // Clear any stale realtime state left behind from pre-baseline runs.
-            try await db.rebuildWorkingSet(from: snapshotId, trackedPathId: trackedPath.id)
+            // A first successful baseline must clear stale realtime growth left behind from pre-baseline runs.
             try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)
         }
 
@@ -480,7 +478,7 @@ actor BaselineService {
 
             return items
         } catch {
-            print("[BaselineService] Error getting category inventory: \(error)")
+            logger.error("Error getting category inventory: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -492,162 +490,13 @@ actor BaselineService {
                 return precomputedGroups
             }
 
-            struct SubcategoryAccumulator {
-                struct TopEntryHeap {
-                    private(set) var entries: [SnapshotEntryWithPath] = []
-                    let limit: Int
-
-                    mutating func insert(_ entry: SnapshotEntryWithPath) {
-                        guard limit > 0 else { return }
-
-                        if entries.count < limit {
-                            entries.append(entry)
-                            siftUp(from: entries.count - 1)
-                            return
-                        }
-
-                        guard let smallest = entries.first, isBetter(entry, than: smallest) else {
-                            return
-                        }
-
-                        entries[0] = entry
-                        siftDown(from: 0)
-                    }
-
-                    private func comesBefore(_ lhs: SnapshotEntryWithPath, _ rhs: SnapshotEntryWithPath) -> Bool {
-                        if lhs.sizeBytes != rhs.sizeBytes {
-                            return lhs.sizeBytes < rhs.sizeBytes
-                        }
-                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedDescending
-                    }
-
-                    private func isBetter(_ lhs: SnapshotEntryWithPath, than rhs: SnapshotEntryWithPath) -> Bool {
-                        if lhs.sizeBytes != rhs.sizeBytes {
-                            return lhs.sizeBytes > rhs.sizeBytes
-                        }
-                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
-                    }
-
-                    private mutating func siftUp(from index: Int) {
-                        var child = index
-                        while child > 0 {
-                            let parent = (child - 1) / 2
-                            guard comesBefore(entries[child], entries[parent]) else { break }
-                            entries.swapAt(child, parent)
-                            child = parent
-                        }
-                    }
-
-                    private mutating func siftDown(from index: Int) {
-                        var parent = index
-
-                        while true {
-                            let left = parent * 2 + 1
-                            let right = left + 1
-                            var candidate = parent
-
-                            if left < entries.count && comesBefore(entries[left], entries[candidate]) {
-                                candidate = left
-                            }
-
-                            if right < entries.count && comesBefore(entries[right], entries[candidate]) {
-                                candidate = right
-                            }
-
-                            guard candidate != parent else { break }
-                            entries.swapAt(parent, candidate)
-                            parent = candidate
-                        }
-                    }
-                }
-
-                var totalBytes: Int64 = 0
-                var fileCount: Int = 0
-                var topEntries: TopEntryHeap
-
-                init(limit: Int) {
-                    topEntries = TopEntryHeap(limit: limit)
-                }
-
-                mutating func add(_ entry: SnapshotEntryWithPath) {
-                    totalBytes += entry.sizeBytes
-                    fileCount += 1
-                    topEntries.insert(entry)
-                }
-            }
-
-            var grouped: [GrowthSubcategory?: SubcategoryAccumulator] = [:]
-            let pageSize = 5_000
-            var lastEntryId: Int64?
-
-            while true {
-                if Task.isCancelled {
-                    return []
-                }
-
-                let entries = try await db.fetchEntriesPaginatedUnordered(
-                    for: snapshotId,
-                    afterEntryId: lastEntryId,
-                    limit: pageSize
-                )
-                guard !entries.isEmpty else { break }
-
-                for entry in entries {
-                    if Task.isCancelled {
-                        return []
-                    }
-
-                    guard GrowthCategory.categorize(path: entry.path) == category else { continue }
-                    let subcategory = GrowthCategory.subcategorize(path: entry.path)
-
-                    grouped[subcategory, default: SubcategoryAccumulator(limit: initialSubcategoryFileLimit)].add(entry)
-                }
-
-                lastEntryId = entries.last?.id
-            }
-
-            let groups = grouped.map { subcategory, accumulator -> SubcategoryGroup in
-                let displayName: String
-                if let subcategory {
-                    displayName = subcategory.displayName
-                } else {
-                    displayName = category.supportsSubcategories ? "Uncategorized" : "Files"
-                }
-
-                let totalBytes = accumulator.totalBytes
-                let sortedTopEntries = accumulator.topEntries.entries.sorted {
-                    if $0.sizeBytes == $1.sizeBytes {
-                        return $0.path.localizedStandardCompare($1.path) == .orderedAscending
-                    }
-                    return $0.sizeBytes > $1.sizeBytes
-                }
-                let topFiles = sortedTopEntries.map { entry in
-                    let percent = totalBytes > 0
-                        ? Double(entry.sizeBytes) / Double(totalBytes)
-                        : 0
-
-                    return GrowthItem(
-                        path: entry.path,
-                        growthBytes: entry.sizeBytes,
-                        currentSizeBytes: entry.sizeBytes,
-                        percentOfParent: percent,
-                        subcategory: subcategory
-                    )
-                }
-
-                return SubcategoryGroup(
-                    subcategory: subcategory,
-                    displayName: displayName,
-                    totalBytes: totalBytes,
-                    fileCount: accumulator.fileCount,
-                    growthBytes: nil,
-                    topFiles: topFiles
-                )
-            }
-
-            return groups.sorted { $0.totalBytes > $1.totalBytes }
+            return try await db.fetchSubcategoryGroupsByClassification(
+                for: snapshotId,
+                category: category,
+                topLimit: initialSubcategoryFileLimit
+            )
         } catch {
-            print("[BaselineService] Error getting subcategory breakdown for \(category.rawValue): \(error)")
+            logger.error("Error getting subcategory breakdown for \(category.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -656,122 +505,13 @@ actor BaselineService {
     /// are newer than the latest full snapshot.
     func getSubcategoryBreakdownFromWorkingSet(for category: GrowthCategory, trackedPathId: UUID) async -> [SubcategoryGroup] {
         do {
-            struct SubcategoryAccumulator {
-                struct TopEntryHeap {
-                    private(set) var entries: [SnapshotEntryWithPath] = []
-                    let limit: Int
-
-                    mutating func insert(_ entry: SnapshotEntryWithPath) {
-                        guard limit > 0 else { return }
-                        if entries.count < limit {
-                            entries.append(entry)
-                            siftUp(from: entries.count - 1)
-                            return
-                        }
-                        guard let smallest = entries.first, entry.sizeBytes > smallest.sizeBytes else { return }
-                        entries[0] = entry
-                        siftDown(from: 0)
-                    }
-
-                    private mutating func siftUp(from index: Int) {
-                        var child = index
-                        while child > 0 {
-                            let parent = (child - 1) / 2
-                            guard entries[child].sizeBytes < entries[parent].sizeBytes else { break }
-                            entries.swapAt(child, parent)
-                            child = parent
-                        }
-                    }
-
-                    private mutating func siftDown(from index: Int) {
-                        var parent = index
-                        while true {
-                            let left = parent * 2 + 1
-                            let right = left + 1
-                            var candidate = parent
-                            if left < entries.count && entries[left].sizeBytes < entries[candidate].sizeBytes {
-                                candidate = left
-                            }
-                            if right < entries.count && entries[right].sizeBytes < entries[candidate].sizeBytes {
-                                candidate = right
-                            }
-                            guard candidate != parent else { break }
-                            entries.swapAt(parent, candidate)
-                            parent = candidate
-                        }
-                    }
-                }
-
-                var totalBytes: Int64 = 0
-                var fileCount: Int = 0
-                var topEntries: TopEntryHeap
-
-                init(limit: Int) {
-                    topEntries = TopEntryHeap(limit: limit)
-                }
-
-                mutating func add(_ entry: SnapshotEntryWithPath) {
-                    totalBytes += entry.sizeBytes
-                    fileCount += 1
-                    topEntries.insert(entry)
-                }
-            }
-
-            var grouped: [GrowthSubcategory?: SubcategoryAccumulator] = [:]
-            let pageSize = 5_000
-            var offset = 0
-
-            while true {
-                if Task.isCancelled { return [] }
-
-                let entries = try await db.fetchWorkingSetEntriesByCategory(
-                    trackedPathId: trackedPathId, category: category, offset: offset, limit: pageSize
-                )
-                guard !entries.isEmpty else { break }
-
-                for entry in entries {
-                    if Task.isCancelled { return [] }
-                    let subcategory = GrowthCategory.subcategorize(path: entry.path)
-                    grouped[subcategory, default: SubcategoryAccumulator(limit: initialSubcategoryFileLimit)].add(entry)
-                }
-
-                offset += entries.count
-            }
-
-            let groups = grouped.map { subcategory, accumulator -> SubcategoryGroup in
-                let displayName: String
-                if let subcategory {
-                    displayName = subcategory.displayName
-                } else {
-                    displayName = category.supportsSubcategories ? "Uncategorized" : "Files"
-                }
-
-                let totalBytes = accumulator.totalBytes
-                let sortedTopEntries = accumulator.topEntries.entries.sorted { $0.sizeBytes > $1.sizeBytes }
-                let topFiles = sortedTopEntries.map { entry in
-                    let percent = totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0
-                    return GrowthItem(
-                        path: entry.path,
-                        growthBytes: entry.sizeBytes,
-                        currentSizeBytes: entry.sizeBytes,
-                        percentOfParent: percent,
-                        subcategory: subcategory
-                    )
-                }
-
-                return SubcategoryGroup(
-                    subcategory: subcategory,
-                    displayName: displayName,
-                    totalBytes: totalBytes,
-                    fileCount: accumulator.fileCount,
-                    growthBytes: nil,
-                    topFiles: topFiles
-                )
-            }
-
-            return groups.sorted { $0.totalBytes > $1.totalBytes }
+            return try await db.fetchWorkingSetSubcategoryGroupsByClassification(
+                trackedPathId: trackedPathId,
+                category: category,
+                topLimit: initialSubcategoryFileLimit
+            )
         } catch {
-            print("[BaselineService] Error getting working set subcategory breakdown for \(category.rawValue): \(error)")
+            logger.error("Error getting working set subcategory breakdown for \(category.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -861,7 +601,7 @@ actor BaselineService {
                 limit: limit
             )
         } catch {
-            print("[BaselineService] Error fetching growth contributors: \(error)")
+            logger.error("Error fetching growth contributors: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -948,7 +688,7 @@ actor BaselineService {
                 )
             }
         } catch {
-            print("[BaselineService] Error loading more files for subcategory: \(error)")
+            logger.error("Error loading more files for subcategory: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -999,7 +739,7 @@ actor BaselineService {
                 )
             }
         } catch {
-            print("[BaselineService] Error loading aggregated files for subcategory: \(error)")
+            logger.error("Error loading aggregated files for subcategory: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -1034,7 +774,7 @@ actor BaselineService {
                 )
             }
         } catch {
-            print("[BaselineService] Error loading working set files for subcategory: \(error)")
+            logger.error("Error loading working set files for subcategory: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -1083,7 +823,7 @@ actor BaselineService {
                 )
             }
         } catch {
-            print("[BaselineService] Error loading aggregated working set files for subcategory: \(error)")
+            logger.error("Error loading aggregated working set files for subcategory: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
@@ -1100,7 +840,7 @@ actor BaselineService {
                 category: category
             )
         } catch {
-            print("[BaselineService] Error fetching subcategory growth totals for \(category.rawValue): \(error)")
+            logger.error("Error fetching subcategory growth totals for \(category.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return [:]
         }
     }
@@ -1284,7 +1024,7 @@ actor BaselineService {
                         comparison.baselineSnapshotId ?? comparison.currentSnapshotId
                 }
             } catch {
-                print("[BaselineService] Error resolving snapshots for \(trackedPath.displayName): \(error)")
+                logger.error("Error resolving snapshots for \(trackedPath.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
 
             let inventory = await getInventoryWithTrends(trackedPath: trackedPath)

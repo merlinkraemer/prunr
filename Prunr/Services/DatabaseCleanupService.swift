@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import OSLog
 
 /// Service for automatic database cleanup and maintenance
 /// Runs automatically after scans with sensible defaults
@@ -50,6 +51,7 @@ actor DatabaseCleanupService {
 
     private let db = DatabaseManager.shared
     private var isStartupMaintenanceRunning = false
+    private let logger = Logger(subsystem: "com.prunr.app", category: "DatabaseCleanup")
 
     private init() {}
 
@@ -103,7 +105,7 @@ actor DatabaseCleanupService {
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
             }
         } catch {
-            print("[DatabaseCleanupService] Auto-cleanup failed: \(error.localizedDescription)")
+            logger.error("Auto-cleanup failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -155,7 +157,7 @@ actor DatabaseCleanupService {
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
             }
         } catch {
-            print("[DatabaseCleanupService] Startup maintenance failed: \(error.localizedDescription)")
+            logger.error("Startup maintenance failed: \(error.localizedDescription, privacy: .public)")
         }
 
         UserDefaults.standard.set(appVersion, forKey: Self.appVersionKey)
