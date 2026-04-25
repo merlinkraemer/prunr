@@ -633,7 +633,7 @@ final class MenuBarManager: NSObject {
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
     }
 
-    @objc private func openSettings() {
+    @objc func openSettings() {
         // Close popover if open
         if let panel = panel, panel.isVisible {
             panel.orderOut(nil)

@@ -635,6 +635,11 @@ struct CategoryGrowthListView: View {
             : groups.first(where: { $0.subcategory == nil }) ?? groups.first
         let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
 
+        // For categories without subcategories that need async loading, defer
+        // drilling down so we can transition directly from main → files instead
+        // of showing a brief intermediate subcategory screen.
+        let shouldDrillDownImmediately = !needsSubcategoryLoad || item.category.supportsSubcategories
+
         // Suppress implicit animations from state mutations so only the
         // explicit slide animation in startNavigationTransition runs.
         var t = Transaction()
@@ -643,7 +648,7 @@ struct CategoryGrowthListView: View {
             isLoadingSubcategories = needsSubcategoryLoad
             manager.selectedInventoryCategory = item
             manager.selectedSubcategory = selectedSubcategory
-            manager.isDrilledDown = true
+            manager.isDrilledDown = shouldDrillDownImmediately
             manager.isSubcategoryDrillDown = isSubcategoryDrillDown
         }
 
@@ -691,6 +696,9 @@ struct CategoryGrowthListView: View {
                 if !selectedCategory.supportsSubcategories {
                     manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
                     manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
+                    // Transition from main directly to files now that the single
+                    // group is known, avoiding a visible intermediate subcategory step.
+                    manager.isDrilledDown = true
                 }
             }
             prefetchGrowthContributors(for: groups, category: selectedCategory)

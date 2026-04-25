@@ -9,7 +9,6 @@ private func menuBarViewDirectoryExists(at url: URL) -> Bool {
 struct MenuBarView: View {
     @Bindable var manager: MenuBarManager
 
-    @Environment(\.openSettings) private var openSettings
     @State private var settingsStore = SettingsStore.shared
     @State private var settingsHover = false
     @State private var refreshHover = false
@@ -326,8 +325,9 @@ struct MenuBarView: View {
         // Paths tab is tag 1 in SettingsView
         UserDefaults.standard.set(1, forKey: "settingsSelectedTab")
 
-        // Use openSettings environment action
-        openSettings()
+        // Use manager's programmatic settings opener (SwiftUI \.openSettings is
+        // unavailable because we use a pure AppKit entry point without a Settings scene).
+        manager.openSettings()
 
         // Ensure Settings window is focused immediately - ISS-024
         // Same improved logic as MenuBarManager.openSettings with faster 50ms delay
@@ -1905,13 +1905,17 @@ struct MenuBarView: View {
             : groups.first(where: { $0.subcategory == nil }) ?? groups.first
         let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
 
+        // For categories without subcategories that need async loading, defer
+        // drilling down so we can transition directly from main → files.
+        let shouldDrillDownImmediately = !needsSubcategoryLoad || category.supportsSubcategories
+
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             highlightedStorageSegmentID = segmentID
             manager.selectedInventoryCategory = item
             manager.selectedSubcategory = selectedSubcategory
-            manager.isDrilledDown = true
+            manager.isDrilledDown = shouldDrillDownImmediately
             manager.isSubcategoryDrillDown = isSubcategoryDrillDown
         }
 
@@ -1928,6 +1932,9 @@ struct MenuBarView: View {
             withTransaction(transaction) {
                 manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
                 manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
+                // Transition from main directly to files now that the single
+                // group is known, avoiding a visible intermediate subcategory step.
+                manager.isDrilledDown = true
             }
         }
     }
