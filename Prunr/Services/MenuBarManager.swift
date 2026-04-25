@@ -98,6 +98,7 @@ final class MenuBarManager: NSObject {
 
     private static let logger = Logger(subsystem: "com.prunr.MenuBarManager", category: "Reconciliation")
     private static let enableSilentFullReconciliation = false
+    private static let enableAutomaticFileWatcher = false
 
     /// Baseline service for growth tracking
     private let baselineService = BaselineService.shared
@@ -556,6 +557,7 @@ final class MenuBarManager: NSObject {
             self?.isPopoverShown = false
             self?.panelAutoCloseSuspensionCount = 0
             self?.panel?.closesOnResignKey = true
+            self?.uninstallPanelHostingView()
         }
     }
 
@@ -633,6 +635,7 @@ final class MenuBarManager: NSObject {
         if let panel = panel, panel.isVisible {
             panel.orderOut(nil)
             isPopoverShown = false
+            uninstallPanelHostingView()
         }
 
         // Open settings window programmatically.
@@ -1894,6 +1897,19 @@ final class MenuBarManager: NSObject {
     /// Tracks whether the panel's SwiftUI hosting view has been installed.
     private var panelHostingViewInstalled = false
 
+    private func uninstallPanelHostingView() {
+        guard panelHostingViewInstalled else { return }
+        panelHostingViewInstalled = false
+
+        let placeholder = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        if let visualEffectView = panel?.contentView as? NSVisualEffectView {
+            visualEffectView.subviews.forEach { $0.removeFromSuperview() }
+            visualEffectView.addSubview(placeholder)
+        } else {
+            panel?.contentView = placeholder
+        }
+    }
+
     @objc private func togglePopover() {
         guard let button = statusItem?.button else {
             return
@@ -1904,6 +1920,7 @@ final class MenuBarManager: NSObject {
             isPopoverShown = false
             panelAutoCloseSuspensionCount = 0
             panel.closesOnResignKey = true
+            uninstallPanelHostingView()
         } else {
             guard let buttonWindow = button.window,
                   buttonWindow.screen != nil else {
@@ -2115,6 +2132,7 @@ final class MenuBarManager: NSObject {
                 panel.orderOut(nil)
             }
             isPopoverShown = false
+            uninstallPanelHostingView()
 
             // Reset auto-close suspension state when manually closing
             panelAutoCloseSuspensionCount = 0
@@ -2324,6 +2342,16 @@ final class MenuBarManager: NSObject {
     #endif
 
     private func configureFileWatcherIfNeeded() {
+        guard Self.enableAutomaticFileWatcher else {
+            watchedPaths = []
+            Task { @MainActor in
+                if let watcher = fileEventsWatcher {
+                    watcher.stop()
+                }
+                fileEventsWatcher = nil
+            }
+            return
+        }
         guard isPermissionConfirmedForProtectedTraversal else {
             watchedPaths = []
             Task { @MainActor in
@@ -2459,6 +2487,7 @@ final class MenuBarManager: NSObject {
 
     @MainActor
     private func armFileWatcherBeforeFullScanIfNeeded(for trackedPaths: [TrackedPath]) async {
+        guard Self.enableAutomaticFileWatcher else { return }
         guard isPermissionConfirmedForProtectedTraversal else { return }
 
         let urls = watcherURLs(for: trackedPaths)
