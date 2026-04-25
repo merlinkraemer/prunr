@@ -102,7 +102,7 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
     // MARK: - Pagination Constants
 
     /// Initial number of files to load per subcategory
-    static let initialLoadLimit = 20
+    static let initialLoadLimit = 50
 
     /// Number of additional files to load when "Load More" is clicked
     static let loadMoreBatchSize = 50

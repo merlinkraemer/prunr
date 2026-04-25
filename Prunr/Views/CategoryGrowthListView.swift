@@ -468,8 +468,7 @@ struct CategoryGrowthListView: View {
         let loadedBytes = loadedFiles.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
         let remainingCount = max(0, group.fileCount - loadedFiles.count)
         let remainingBytes = max(0, group.totalBytes - loadedBytes)
-        let hasMoreFiles = group.hasMoreFiles
-        let canLoadMore = hasMoreFiles && group.loadedFileCount < SubcategoryGroup.maxLoadableFiles
+        let canLoadMore = group.hasMoreFiles && group.loadedFileCount < SubcategoryGroup.maxLoadableFiles
         let selectedCategory = manager.selectedInventoryCategory?.category
         let contributorTaskID = selectedCategory.map {
             contributorTaskKey(for: group, category: $0)
@@ -499,7 +498,16 @@ struct CategoryGrowthListView: View {
                     } else {
                         // Growth contributors section
                         if !visibleGrowthContributors.isEmpty {
-                            ForEach(visibleGrowthContributors) { contributor in
+                            ExpandableList(
+                                items: visibleGrowthContributors,
+                                chunkSize: 10,
+                                canLoadMoreFromDB: false,
+                                isLoadingFromDB: false,
+                                onLoadMoreFromDB: {},
+                                remainingCountInDB: 0,
+                                remainingBytesInDB: 0,
+                                maxLoadableCount: SubcategoryGroup.maxLoadableFiles
+                            ) { contributor in
                                 DrilldownGrowthRow(contributor: contributor, onTap: {
                                     onTapItem(contributor.path)
                                 })
@@ -516,47 +524,26 @@ struct CategoryGrowthListView: View {
                         }
 
                         // All files section
-                        ForEach(nonGrowthFiles) { item in
+                        ExpandableList(
+                            items: nonGrowthFiles,
+                            chunkSize: 10,
+                            canLoadMoreFromDB: canLoadMore,
+                            isLoadingFromDB: isLoadingMoreFiles,
+                            onLoadMoreFromDB: {
+                                Task {
+                                    guard let currentGroup = manager.selectedSubcategory else { return }
+                                    isLoadingMoreFiles = true
+                                    _ = await manager.loadMoreFiles(for: currentGroup)
+                                    isLoadingMoreFiles = false
+                                }
+                            },
+                            remainingCountInDB: remainingCount,
+                            remainingBytesInDB: remainingBytes,
+                            maxLoadableCount: SubcategoryGroup.maxLoadableFiles
+                        ) { item in
                             DrilldownFileRow(item: item, onTap: {
                                 onTapItem(item.path)
                             })
-                        }
-
-                        if remainingCount > 0 {
-                            HStack(spacing: 10) {
-                                Image(systemName: "folder.fill")
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 18)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(remainingCount) more files not loaded")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.secondary)
-
-                                    Text("Load more to page in the next batch")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.tertiary)
-                                }
-
-                                Spacer()
-
-                                Text(formattedBytes(remainingBytes))
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .frame(minHeight: 34)
-                            .padding(.horizontal, 6)
-                        }
-
-                        // Load More button
-                        if canLoadMore {
-                            loadMoreButton(totalFiles: group.fileCount)
-                        } else if hasMoreFiles {
-                            // Show "max reached" message if there are more files but we hit the limit
-                            maxFilesReachedView(loadedCount: group.loadedFileCount)
                         }
                     }
                 }
@@ -618,58 +605,6 @@ struct CategoryGrowthListView: View {
             category.rawValue,
             group.id
         ].joined(separator: ":")
-    }
-
-    // MARK: - Load More Button
-
-    private func loadMoreButton(totalFiles: Int) -> some View {
-        Button {
-            Task {
-                // Read the current group from manager at button press time
-                guard let currentGroup = manager.selectedSubcategory else { return }
-                isLoadingMoreFiles = true
-                _ = await manager.loadMoreFiles(for: currentGroup)
-                isLoadingMoreFiles = false
-            }
-        } label: {
-            HStack(spacing: 8) {
-                if isLoadingMoreFiles {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                        .frame(width: 16, height: 16)
-                } else {
-                    Image(systemName: "arrow.down.circle")
-                        .font(.system(size: 14))
-                }
-
-                // Read remaining count from current manager state
-                let remaining = manager.selectedSubcategory.map { totalFiles - $0.loadedFileCount } ?? 0
-                Text("Load more (\(remaining) remaining)")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-        }
-        .buttonStyle(.plain)
-        .disabled(isLoadingMoreFiles)
-        .padding(.horizontal, 6)
-        .padding(.top, 8)
-    }
-
-    // MARK: - Max Files Reached View
-
-    private func maxFilesReachedView(loadedCount: Int) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 12))
-            Text("Showing \(loadedCount) of \(SubcategoryGroup.maxLoadableFiles) max files")
-                .font(.system(size: 11))
-        }
-        .foregroundStyle(.tertiary)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 6)
     }
 
     // MARK: - Actions

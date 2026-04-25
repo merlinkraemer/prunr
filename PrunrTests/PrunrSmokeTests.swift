@@ -198,7 +198,7 @@ final class PrunrSmokeTests: XCTestCase {
 
     func testSubcategoryBreakdownUsesFullCategoryTotals() async throws {
         try await withTemporaryDatabase { _, snapshotId in
-            let entries = (1...25).map { index in
+            let entries = (1...55).map { index in
                 ScanResult(
                     path: "/Users/tester/dev/app/node_modules/pkg-\(index).js",
                     sizeBytes: Int64(index * 1_000)
@@ -213,7 +213,7 @@ final class PrunrSmokeTests: XCTestCase {
             )
 
             let group = try XCTUnwrap(groups.first(where: { $0.subcategory == .nodeModules }))
-            XCTAssertEqual(group.fileCount, 25)
+            XCTAssertEqual(group.fileCount, 55)
             XCTAssertEqual(group.totalBytes, entries.reduce(0) { $0 + $1.sizeBytes })
             XCTAssertEqual(group.topFiles.count, SubcategoryGroup.initialLoadLimit)
         }
@@ -221,7 +221,7 @@ final class PrunrSmokeTests: XCTestCase {
 
     func testLoadMoreFilesUsesStablePagingWithoutDuplicates() async throws {
         try await withTemporaryDatabase { _, snapshotId in
-            let entries = (1...25).reversed().map { index in
+            let entries = (1...55).reversed().map { index in
                 ScanResult(
                     path: "/Users/tester/dev/app/node_modules/pkg-\(String(format: "%02d", index)).js",
                     sizeBytes: 1_000
@@ -238,7 +238,7 @@ final class PrunrSmokeTests: XCTestCase {
 
             XCTAssertEqual(
                 group.topFiles.map { URL(fileURLWithPath: $0.path).lastPathComponent },
-                (1...20).map { String(format: "pkg-%02d.js", $0) }
+                (1...50).map { String(format: "pkg-%02d.js", $0) }
             )
 
             let additionalFiles = await BaselineService.shared.loadMoreSubcategoryFiles(
@@ -252,7 +252,7 @@ final class PrunrSmokeTests: XCTestCase {
 
             XCTAssertEqual(
                 additionalFiles.map { URL(fileURLWithPath: $0.path).lastPathComponent },
-                (21...25).map { String(format: "pkg-%02d.js", $0) }
+                (51...55).map { String(format: "pkg-%02d.js", $0) }
             )
             XCTAssertEqual(
                 Set(group.topFiles.map(\.path)).intersection(Set(additionalFiles.map(\.path))).count,
