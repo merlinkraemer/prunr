@@ -373,7 +373,7 @@ struct MenuBarView: View {
             Group {
                 if manager.isLoading && !manager.isAutoScanning {
                     manualScanLoadingView
-                } else if isBootstrapping {
+                } else if isBootstrapping && !manager.hasDisplayableInventory {
                     initialLoadView
                 } else if manager.noBaseline {
                     setupOnboardingView
@@ -436,6 +436,10 @@ struct MenuBarView: View {
             }
         }
         .task {
+            if manager.hasDisplayableInventory {
+                isBootstrapping = false
+            }
+
             let accessReport = await refreshScanAccessNow()
 
             if !accessReport.isGranted {
@@ -1888,6 +1892,7 @@ struct MenuBarView: View {
     }
 
     private func navigateFromDriveBar(segmentID: String) {
+        guard !manager.isDrillDownTransitionAnimating else { return }
         guard segmentID != outsideScopeSegmentID, segmentID != "other-used" else { return }
         guard let category = GrowthCategory(rawValue: segmentID) else { return }
         guard let item = (manager.growingCategories + manager.stableCategories)

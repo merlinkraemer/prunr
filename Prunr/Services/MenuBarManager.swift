@@ -127,6 +127,9 @@ final class MenuBarManager: NSObject {
     var stableTotalBytes: Int64 {
         stableCategories.reduce(0) { $0 + $1.currentSizeBytes }
     }
+    var hasDisplayableInventory: Bool {
+        !allCategories.isEmpty
+    }
     var reconciliationResult: DiskAccountingResult? = nil // Free-space accounting data
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
     var selectedInventoryCategory: CategoryInventoryItem? = nil // New inventory-based drill-down selection

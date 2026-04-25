@@ -615,6 +615,7 @@ struct CategoryGrowthListView: View {
 
     private func selectCategory(_ item: CategoryInventoryItem) {
         guard isDataReady else { return }
+        guard !manager.isDrillDownTransitionAnimating, activeTransition == nil, pendingTransition == nil else { return }
         contributorPrefetchTask?.cancel()
         contributorPrefetchTask = nil
         let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: item.category)
@@ -698,6 +699,7 @@ struct CategoryGrowthListView: View {
     }
 
     private func selectSubcategory(_ group: SubcategoryGroup, category: GrowthCategory) {
+        guard !manager.isDrillDownTransitionAnimating, activeTransition == nil, pendingTransition == nil else { return }
         contributorPrefetchTask?.cancel()
 
         var transaction = Transaction()
