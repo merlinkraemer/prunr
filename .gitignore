@@ -51,6 +51,7 @@ tmp/e2e-runtime-tree/
 tmp/task*-check/
 tmp/task*-results/
 tmp/classifier-results/
+tmp/monitor/
 *.tmp
 *.log
 default.profraw

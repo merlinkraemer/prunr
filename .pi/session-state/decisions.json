@@ -1,0 +1,23 @@
+[
+  {
+    "decision": "Disable automatic file watcher and silent reconciliation for beta.",
+    "rationale": "The app was consuming high CPU (~100%) at idle due to FSEvents and database writes triggered by the file watcher and silent reconciliation. Disabling these features ensures the app is truly idle (0% CPU) when not in use, addressing the user's concern about high resource usage.",
+    "files_affected": [
+      "Prunr/Services/MenuBarManager.swift"
+    ]
+  },
+  {
+    "decision": "Uninstall NSHostingView when the popover is closed.",
+    "rationale": "Even with the watcher disabled, the NSHostingView for the SwiftUI panel was remaining alive in the window hierarchy, potentially contributing to resource usage or layout cycles. Removing it when the panel closes ensures a clean, minimal idle state.",
+    "files_affected": [
+      "Prunr/Services/MenuBarManager.swift"
+    ]
+  },
+  {
+    "decision": "Improve reliability of hidden scroll indicators in drill-down.",
+    "rationale": "The user reported that the scrollbar was still visible in the file drill-down. The previous implementation only hid indicators on the initial view move. The update adds recursive traversal to find sibling ScrollViews and uses safer configuration checks to ensure scrollbars are hidden even if the view hierarchy changes.",
+    "files_affected": [
+      "Prunr/Helpers/HiddenScrollIndicators.swift"
+    ]
+  }
+]
