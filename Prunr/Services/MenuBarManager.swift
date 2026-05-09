@@ -99,6 +99,10 @@ final class MenuBarManager: NSObject {
     private static let logger = Logger(subsystem: "com.prunr.MenuBarManager", category: "Reconciliation")
     private static let enableSilentFullReconciliation = false
     private static let enableAutomaticFileWatcher = false
+    private static let requiresFullRescanCooldown: TimeInterval = 30 * 60
+    private static let maxPendingRecentChangePaths = 50_000
+    private static let deferredCleanupDelay: TimeInterval = 5 * 60
+    private static let cleanupSkipAfterFullScanWindow: TimeInterval = 30
 
     /// Baseline service for growth tracking
     private let baselineService = BaselineService.shared
@@ -431,9 +435,12 @@ final class MenuBarManager: NSObject {
     private var watchedPaths: [String] = []
     @ObservationIgnored
     nonisolated(unsafe) private var recentChangeTask: Task<Void, Never>?
+    @ObservationIgnored
+    nonisolated(unsafe) private var deferredAutoCleanupTask: Task<Void, Never>?
     private var isInventoryRefreshInProgress = false
     private var pendingRecentChangePaths: Set<URL> = []
     private var pendingRecentChangeRequiresFullRefresh = false
+    private var lastFullScanCompletedAt: Date?
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
     private var isUnderDiskPressure = false
@@ -973,15 +980,8 @@ final class MenuBarManager: NSObject {
         }
 
         if !completedSnapshotsByPath.isEmpty && !wasCancelled {
-            isCleaningUp = true
-            scanProgress = "Cleaning up..."
-            scanCurrentPath = ""
-            scanCurrentPathDisplay = ""
-            scanProgressPercentage = 1.0
-            hasReliableScanProgressEstimate = true
-            await DatabaseCleanupService.shared.performAutoCleanup()
             await growthJournalService.prune(retentionDays: SettingsStore.shared.categoryHistoryRetentionDays)
-            isCleaningUp = false
+            scheduleDeferredAutoCleanup()
         }
 
         let scanWallDuration = Date().timeIntervalSince(startTime)
@@ -1003,6 +1003,7 @@ final class MenuBarManager: NSObject {
         partialScanCategoryTotalsByPathID = [:] // Clear live-fill data after scan completes
         if completedSuccessfully, !wasCancelled {
             lastAutomaticScanAt = completedSnapshotsByPath.values.map(\.createdAt).max() ?? Date()
+            lastFullScanCompletedAt = Date()
             SettingsStore.shared.applyAdaptiveFullScanIntervalIfNeeded(scanDuration: scanWallDuration)
         }
 
@@ -2422,18 +2423,15 @@ final class MenuBarManager: NSObject {
 
     @MainActor
     func recordFileWatcherChangeBatch(_ changeBatch: FSEventsWatcher.ChangeBatch) {
-        let filteredPaths = changeBatch.changedPaths.filter { url in
-            !FSEventsNoiseFilter.shouldIgnore(url.path)
-        }
-
         if changeBatch.requiresFullRescan {
-            pendingRecentChangeRequiresFullRefresh = true
+            queueRequiresFullRescanFallback()
         }
 
-        if !filteredPaths.isEmpty && !shouldIgnoreAutoScanChanges(filteredPaths) {
+        let filteredPaths = filteredRecentChangePaths(from: changeBatch.changedPaths)
+        if !filteredPaths.isEmpty {
             lastFileEventAt = Date()
-            // Always accumulate — never drop events during scan/cleanup.
-            pendingRecentChangePaths.formUnion(filteredPaths.map(\.standardizedFileURL))
+            // Always accumulate — never drop events during scan/cleanup unless safety cap is hit.
+            enqueuePendingRecentChangePaths(filteredPaths, source: "watcher")
         }
 
         guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
@@ -2511,7 +2509,15 @@ final class MenuBarManager: NSObject {
         guard !changedPaths.isEmpty else { return }
         guard !SettingsStore.shared.enabledTrackedPaths.isEmpty else { return }
 
-        pendingRecentChangePaths.formUnion(changedPaths.map(\.standardizedFileURL))
+        let filteredPaths = filteredRecentChangePaths(from: changedPaths)
+        guard !filteredPaths.isEmpty else { return }
+
+        lastFileEventAt = Date()
+        enqueuePendingRecentChangePaths(filteredPaths, source: "scheduler")
+        guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
+            return
+        }
+
         hasPendingRecentChanges = true
         scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
     }
@@ -2607,6 +2613,9 @@ final class MenuBarManager: NSObject {
         if requiresFullRefresh {
             lastDetectedChangeAt = Date()
             guard allowFullRefresh else {
+                pendingRecentChangeRequiresFullRefresh = true
+                hasPendingRecentChanges = true
+                scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
                 return
             }
             await loadInventory(isAutomatic: true)
@@ -2676,6 +2685,98 @@ final class MenuBarManager: NSObject {
         }
     }
 
+    private func filteredRecentChangePaths(from changedPaths: Set<URL>) -> Set<URL> {
+        let noiseFiltered = changedPaths.filter { url in
+            !FSEventsNoiseFilter.shouldIgnore(url.path)
+        }
+        guard !noiseFiltered.isEmpty else { return [] }
+        guard !shouldIgnoreAutoScanChanges(noiseFiltered) else { return [] }
+        return Set(noiseFiltered.map(\.standardizedFileURL))
+    }
+
+    private func isWithinFullRescanCooldown(at now: Date = Date()) -> Bool {
+        guard let lastFullScanCompletedAt else { return false }
+        return now.timeIntervalSince(lastFullScanCompletedAt) < Self.requiresFullRescanCooldown
+    }
+
+    private func promotePendingChangesToFullRefreshIfAllowed(reason: String) -> Bool {
+        let now = Date()
+        guard !isWithinFullRescanCooldown(at: now) else {
+            let elapsed = Int(now.timeIntervalSince(lastFullScanCompletedAt ?? now))
+            Logger.fsEvents.notice("Dropping \(reason, privacy: .public) during full-rescan cooldown (\(elapsed)s)")
+            return false
+        }
+
+        pendingRecentChangeRequiresFullRefresh = true
+        return true
+    }
+
+    private func enqueuePendingRecentChangePaths(_ paths: Set<URL>, source: String) {
+        guard !paths.isEmpty else { return }
+
+        let projectedCount = pendingRecentChangePaths.count + paths.count
+        guard projectedCount <= Self.maxPendingRecentChangePaths else {
+            let promoted = promotePendingChangesToFullRefreshIfAllowed(
+                reason: "pending-path cap overflow from \(source)"
+            )
+            if promoted {
+                Logger.fsEvents.notice(
+                    "Pending recent-change path cap exceeded (\(projectedCount)); escalating once and dropping \(paths.count) paths"
+                )
+            }
+            return
+        }
+
+        pendingRecentChangePaths.formUnion(paths)
+    }
+
+    private func queueRequiresFullRescanFallback() {
+        guard !SettingsStore.shared.enabledTrackedPaths.isEmpty else {
+            _ = promotePendingChangesToFullRefreshIfAllowed(reason: "requiresFullRescan with no enabled paths")
+            return
+        }
+        guard !isWithinFullRescanCooldown() else {
+            let elapsed = Int(Date().timeIntervalSince(lastFullScanCompletedAt ?? Date()))
+            Logger.fsEvents.notice("Dropping requiresFullRescan signal during cooldown (\(elapsed)s since full scan)")
+            return
+        }
+
+        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        let fallbackPaths = Set(watcherURLs(for: trackedPaths))
+        guard !fallbackPaths.isEmpty else {
+            _ = promotePendingChangesToFullRefreshIfAllowed(reason: "requiresFullRescan fallback")
+            return
+        }
+
+        lastFileEventAt = Date()
+        enqueuePendingRecentChangePaths(fallbackPaths, source: "requiresFullRescan")
+    }
+
+    private func scheduleDeferredAutoCleanup() {
+        deferredAutoCleanupTask?.cancel()
+        deferredAutoCleanupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(Int(Self.deferredCleanupDelay * 1000)))
+            guard !Task.isCancelled else { return }
+            await self.runDeferredAutoCleanupIfNeeded()
+        }
+    }
+
+    private func runDeferredAutoCleanupIfNeeded() async {
+        guard !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else {
+            scheduleDeferredAutoCleanup()
+            return
+        }
+        if let lastFullScanCompletedAt,
+           Date().timeIntervalSince(lastFullScanCompletedAt) < Self.cleanupSkipAfterFullScanWindow {
+            return
+        }
+
+        isCleaningUp = true
+        defer { isCleaningUp = false }
+        await DatabaseCleanupService.shared.performAutoCleanup()
+    }
+
     private func beginInventoryRefresh() -> Bool {
         guard !isInventoryRefreshInProgress else { return false }
         isInventoryRefreshInProgress = true
@@ -2716,6 +2817,7 @@ final class MenuBarManager: NSObject {
         updateTimer?.invalidate()
         activityPulseTimer?.invalidate()
         recentChangeTask?.cancel()
+        deferredAutoCleanupTask?.cancel()
         reconciliationTask?.cancel()
         let watcher = fileEventsWatcher
         if let watcher {

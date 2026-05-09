@@ -1,5 +1,22 @@
 # Todo
 
+## Storm fix Phase 1 (2026-05-09)
+
+- [x] Create checkpoint commit before implementation (`27e656b`)
+- [x] Demote `requiresFullRescan` intake with 30-minute cooldown and bounded fallback path queuing
+- [x] Apply shared noise/auto-scan filtering at all recent-change intake points
+- [x] Cap `pendingRecentChangePaths` accumulation at `50_000` with one-time escalation path
+- [x] Remove per-scan synchronous auto-cleanup; defer DB cleanup to delayed background execution
+- [x] Build and run focused tests for recent-change and watcher paths
+
+## Storm fix Phase 1 review (2026-05-09)
+
+- `make build` passed.
+- Focused tests passed:
+- `PrunrSmokeTests/testMenuBarManagerRetainsPendingRefreshWhenWatcherRequiresFullRescan`
+- `PrunrSmokeTests/testRecentChangeRefreshPromotesTrackedRootDirectoryEventToFullScan`
+- `PrunrSmokeTests/testFSEventsNoiseFilterIgnoresSQLiteSidecars`
+
 ## Beta audit triage (2026-04-17)
 
 - Plan moved to [docs/beta-audit-plan.md](/Users/merlinkraemer/dev/projects/prunr/docs/beta-audit-plan.md).
