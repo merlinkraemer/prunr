@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import os from "node:os";
 import process from "node:process";
 
@@ -24,7 +26,11 @@ function parseArgs(argv) {
     intervalSeconds: DEFAULT_INTERVAL_SECONDS,
     samples: null,
     logLookbackMinutes: DEFAULT_LOG_LOOKBACK_MINUTES,
-    json: false
+    json: false,
+    freshnessProbe: false,
+    freshnessTimeoutSeconds: 90,
+    freshnessProbeBytes: 8 * 1024 * 1024,
+    freshnessProbeDir: null
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -41,6 +47,18 @@ function parseArgs(argv) {
       break;
     case "--json":
       options.json = true;
+      break;
+    case "--freshness-probe":
+      options.freshnessProbe = true;
+      break;
+    case "--freshness-timeout":
+      options.freshnessTimeoutSeconds = positiveInteger(argv[++index], "--freshness-timeout");
+      break;
+    case "--freshness-size":
+      options.freshnessProbeBytes = positiveInteger(argv[++index], "--freshness-size");
+      break;
+    case "--freshness-dir":
+      options.freshnessProbeDir = argv[++index];
       break;
     case "--help":
       printHelp();
@@ -77,6 +95,13 @@ Options:
   --samples <count>               Stop after N samples
   --log-lookback-minutes <count>  Initial unified-log lookback (default: ${DEFAULT_LOG_LOOKBACK_MINUTES})
   --json                          Emit one JSON object per sample
+  --freshness-probe               Run a one-shot freshness probe: create a file
+                                  under a tracked path and verify Prunr's
+                                  workingSet/category totals update.
+  --freshness-timeout <seconds>   Probe timeout (default: 90)
+  --freshness-size <bytes>        Probe file size in bytes (default: 8 MB)
+  --freshness-dir <path>          Directory under a tracked path to host the
+                                  probe file (default: \${HOME}/prunr-monitor-probe)
   --help                          Show this help
 `);
 }
@@ -582,8 +607,79 @@ function signedNumber(value) {
   return `${value > 0 ? "+" : ""}${value.toLocaleString()}`;
 }
 
+function workingSetSummary() {
+  const rows = readWorkingSet();
+  return rows[0] ?? null;
+}
+
+async function runFreshnessProbe(options) {
+  const baseline = workingSetSummary();
+  if (!baseline) {
+    console.error("freshness probe: no workingSet rows; run an initial scan first");
+    process.exit(2);
+  }
+  const probeDir = options.freshnessProbeDir
+    ?? path.join(os.homedir(), "prunr-monitor-probe");
+  fs.mkdirSync(probeDir, { recursive: true });
+
+  const probeFile = path.join(
+    probeDir,
+    `freshness-${Date.now()}-${process.pid}.bin`
+  );
+  const probeBytes = options.freshnessProbeBytes;
+
+  console.log(`[probe] baseline rows=${baseline.rowCount} bytes=${baseline.totalBytes} updatedAt=${baseline.updatedAt}`);
+  console.log(`[probe] writing ${probeBytes}B to ${probeFile}`);
+
+  const buf = Buffer.alloc(probeBytes, 0x5a);
+  fs.writeFileSync(probeFile, buf);
+
+  const start = Date.now();
+  const deadline = start + options.freshnessTimeoutSeconds * 1000;
+  let detected = null;
+  while (Date.now() < deadline) {
+    await sleep(2000);
+    const current = workingSetSummary();
+    if (!current) continue;
+    if (current.updatedAt !== baseline.updatedAt
+        && Number(current.totalBytes) >= Number(baseline.totalBytes) + probeBytes) {
+      detected = { observedAt: Date.now(), sample: current };
+      break;
+    }
+  }
+
+  let exitCode = 0;
+  if (detected) {
+    const latencySeconds = Math.round((detected.observedAt - start) / 1000);
+    const byteDelta = Number(detected.sample.totalBytes) - Number(baseline.totalBytes);
+    console.log(
+      `[probe] PASS detected probe within ${latencySeconds}s: rows=${detected.sample.rowCount} bytes=${detected.sample.totalBytes} delta=${byteDelta}`
+    );
+  } else {
+    const final = workingSetSummary();
+    console.error(
+      `[probe] FAIL no working-set update after ${options.freshnessTimeoutSeconds}s; final rows=${final?.rowCount} bytes=${final?.totalBytes} updatedAt=${final?.updatedAt}`
+    );
+    exitCode = 1;
+  }
+
+  try {
+    fs.rmSync(probeFile, { force: true });
+  } catch {
+    // best-effort cleanup
+  }
+
+  process.exit(exitCode);
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+
+  if (options.freshnessProbe) {
+    await runFreshnessProbe(options);
+    return;
+  }
+
   const state = {
     stallSamples: 0,
     rssHistory: [],

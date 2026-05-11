@@ -797,6 +797,26 @@ final class PrunrSmokeTests: XCTestCase {
         )
     }
 
+    func testPrunrInternalPathsCoversActiveDatabaseDirectory() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            guard let dbPath = DatabaseManager.shared.databasePath else {
+                XCTFail("Database path should be set after initialize")
+                return
+            }
+            let dbDir = (dbPath as NSString).deletingLastPathComponent
+
+            XCTAssertTrue(PrunrInternalPaths.isInternalPath(dbPath))
+            XCTAssertTrue(PrunrInternalPaths.isInternalPath(dbPath + "-wal"))
+            XCTAssertTrue(PrunrInternalPaths.isInternalPath(dbPath + "-shm"))
+            XCTAssertTrue(PrunrInternalPaths.isInternalPath((dbDir as NSString).appendingPathComponent("anything.tmp")))
+            XCTAssertFalse(PrunrInternalPaths.isInternalPath("/Users/tester/dev/app/file.txt"))
+
+            // FSEvents noise filter must drop a DB write delivered as an event.
+            XCTAssertTrue(FSEventsNoiseFilter.shouldIgnore(dbPath))
+            XCTAssertTrue(FSEventsNoiseFilter.shouldIgnore(dbPath + "-wal"))
+        }
+    }
+
     func testCleanupCapsSnapshotHistoryByCount() async throws {
         let previousRetention = await MainActor.run { () -> Int in
             let current = SettingsStore.shared.categoryHistoryRetentionDays
