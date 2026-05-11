@@ -1,5 +1,41 @@
 # Todo
 
+## File watcher birdseye review (2026-05-11)
+
+- [x] Review current `FSEventsWatcher`, noise filter, `MenuBarManager` intake, `RecentChangeService`, DB writes, cleanup, startup lifecycle, and docs.
+- [x] Compare current architecture against prior FSEvents storm findings.
+- [x] Identify why simply re-enabling the watcher is still risky.
+- [ ] Design a replacement freshness architecture before flipping `enableAutomaticFileWatcher`.
+
+### Findings
+
+- P0: Freshness is disabled by construction. `MenuBarManager.enableAutomaticFileWatcher` is `false`, while the UI footer refresh only processes pending watcher paths; with no watcher, new files have no event source.
+- P0: The current DB-dir exclusion helper cannot exclude `~/Library/Application Support/Prunr` when the watched root is `~`. The broad home watch still includes Prunr's SQLite DB, WAL, and SHM writes; filtering happens after callback delivery, so the self-feedback storm class remains if the watcher is simply turned back on.
+- P1: File watcher ownership is too shallow and leaky. `FSEventsWatcher` emits raw batches, but `MenuBarManager` owns permission gating, root selection, filtering, debounce, cooldown, escalation, DB refresh scheduling, UI state, and cleanup scheduling. This makes the correctness invariant difficult to test as one unit.
+- P1: The FSEvents callback still allocates and normalizes every delivered path into a `Set<URL>` on the main queue before any cap is applied. Large event bursts can stall the UI even though downstream pending paths and refresh targets are capped.
+- P1: Lifecycle handling is incomplete for a watcher-enabled build. There are no sleep/wake or mount/unmount observers, so wake floods, moved roots, or ejected volumes would flow through the same fragile recent-change path.
+- P2: Current docs overstate the implemented state. `docs/OVERVIEW.md` and `docs/STATE.md` describe FSEvents-triggered automatic scans as implemented, while production code has the watcher disabled.
+
+## Monitor analysis and freshness bug (2026-05-11)
+
+- [x] Stop the active monitor soak in `prunr:2`
+- [x] Summarize focused + soak monitor data
+- [x] Confirm post-init working-set/category timestamps stayed pinned after the initial scan
+- [x] Identify why newly added files do not appear after init scan
+- [x] Identify why categories reload on each menubar open
+- [ ] Fix post-init freshness without reintroducing the FSEvents scan storm
+- [ ] Fix panel-open category reload latency
+- [ ] Verify with a create-file smoke test and repeated panel open/close timing
+
+### Findings
+
+- Monitor coverage: focused phase ran from `2026-05-11T09:03:21Z` to `09:19:43Z`; soak phase ran from `09:19:45Z` to `12:58:43Z`.
+- Initial scan completed once at `2026-05-11T09:04:14.952Z` with `2,402,408` working-set rows and `1,392,361,320,880` bytes.
+- During the soak, `workingSetEntry`, `workingSetCategoryTotal`, and latest snapshot timestamps stayed fixed at `2026-05-11T09:04:14.952Z`; row and byte deltas remained `0`.
+- CPU/RSS were stable after scan: soak average CPU was ~`0.27%`, max `24.3%`; RSS ranged ~`15 MB` to `130 MB`, ending ~`73 MB`.
+- The current app still has `MenuBarManager.enableAutomaticFileWatcher = false`, and the footer refresh button only flushes pending watcher paths. With the watcher disabled, newly added files have no event source and `checkGrowth()` is effectively a no-op.
+- Every panel open installs a new `NSHostingView(rootView: MenuBarView(manager: self))`; `MenuBarView.task` then reruns `loadQuickInventory()`, `checkBaseline()`, `updatePathSize()`, and `loadInventoryFromLatestSnapshot()`. Closing the panel can cancel that DB load; unified logs showed `Swift.CancellationError` from category inventory during this path.
+
 ## Storm fix Phase 1 (2026-05-09)
 
 - [x] Create checkpoint commit before implementation (`27e656b`)
