@@ -97,7 +97,7 @@ final class MenuBarManager: NSObject {
     private let clickDebounceInterval: TimeInterval = 0.1 // 100ms
 
     private static let logger = Logger(subsystem: "com.prunr.MenuBarManager", category: "Reconciliation")
-    private static let enableSilentFullReconciliation = false
+    private static let enableSilentFullReconciliation = true
     private static let enableAutomaticFileWatcher = true
     private static let requiresFullRescanCooldown: TimeInterval = 30 * 60
     private static let maxPendingRecentChangePaths = 50_000
@@ -1138,7 +1138,7 @@ final class MenuBarManager: NSObject {
     /// No spinners, no status text changes — applies corrections as incremental patches.
     func performSilentReconciliation() async {
         guard Self.enableSilentFullReconciliation else {
-            Self.logger.info("Silent full reconciliation skipped for beta safety")
+            Self.logger.info("Silent full reconciliation disabled")
             return
         }
         guard isPermissionConfirmedForProtectedTraversal else { return }
