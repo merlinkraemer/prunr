@@ -446,7 +446,16 @@ final class MenuBarManager: NSObject {
     private var isUnderDiskPressure = false
     private var lastFileEventAt: Date?
     var hasPendingRecentChanges = false
+    /// Set when a watcher batch was classified as dirty (large/dropped/dir-heavy).
+    /// The view treats this as a soft "changes pending" indicator until the next
+    /// reconciliation pass clears it.
+    private(set) var pendingDirtyReason: String?
     var isProcessingRecentChanges = false
+    /// Tracks how many consecutive dirty-root reconciliations have fired without
+    /// a clean window between them. Used to back off the delay between refreshes.
+    private var dirtyRootConsecutiveCount = 0
+    /// Set while a dirty-root refresh is scheduled but has not yet fired.
+    private var dirtyRefreshScheduled = false
     /// True when incremental deltas have been applied since the last full scan snapshot.
     /// Drill-down reads should then prefer the live working set over the stale snapshot.
     private var hasIncrementalDeltasSinceSnapshot = false
@@ -2424,17 +2433,11 @@ final class MenuBarManager: NSObject {
     @MainActor
     func recordFileWatcherChangeBatch(_ changeBatch: FSEventsWatcher.ChangeBatch) {
         if changeBatch.requiresFullRescan {
-            queueRequiresFullRescanFallback()
+            markDirty(reason: "stream-rescan-required")
         }
 
         if let dirtyReason = changeBatch.dirtyReason {
-            Logger.fsEvents.notice(
-                "Watcher batch flagged dirty (\(dirtyReason, privacy: .public)) raw=\(changeBatch.rawEventCount); marking root dirty"
-            )
-            // s4 will replace this with a delayed bounded refresh + backoff. For
-            // now, escalate via the existing fallback so a real root rescan still
-            // catches the change. Path collection is intentionally skipped.
-            queueRequiresFullRescanFallback()
+            markDirty(reason: dirtyReason, rawEventCount: changeBatch.rawEventCount)
         } else {
             let filteredPaths = filteredRecentChangePaths(from: changeBatch.changedPaths)
             if !filteredPaths.isEmpty {
@@ -2449,8 +2452,55 @@ final class MenuBarManager: NSObject {
 
         hasPendingRecentChanges = true
 
-        if !isLoading, !isAutoScanning {
+        if pendingRecentChangeRequiresFullRefresh {
+            scheduleDirtyRootRefresh()
+        } else if !isLoading, !isAutoScanning {
             scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+        }
+    }
+
+    /// Initial delay before the first dirty-root reconciliation pass.
+    private static let dirtyRootInitialDelay: TimeInterval = 15
+    /// Hard upper bound for dirty-root backoff. Reconciliation should still happen
+    /// at least this often when the watcher reports continuous noise.
+    private static let dirtyRootMaxDelay: TimeInterval = 30 * 60
+
+    @MainActor
+    private func markDirty(reason: String, rawEventCount: Int = 0) {
+        let promoted = promotePendingChangesToFullRefreshIfAllowed(
+            reason: reason
+        )
+        if promoted {
+            Logger.fsEvents.notice(
+                "Marking tracked root dirty: reason=\(reason, privacy: .public) raw=\(rawEventCount)"
+            )
+        }
+        // Always update the UI hint, even when the cooldown blocked promotion —
+        // the user-visible "changes pending" signal should reflect the latest
+        // classification regardless of when reconciliation actually runs.
+        pendingDirtyReason = reason
+    }
+
+    @MainActor
+    private func scheduleDirtyRootRefresh() {
+        guard !dirtyRefreshScheduled else { return }
+        let backoff = min(
+            Self.dirtyRootInitialDelay * pow(2, Double(dirtyRootConsecutiveCount)),
+            Self.dirtyRootMaxDelay
+        )
+        dirtyRefreshScheduled = true
+        Logger.fsEvents.notice("Scheduling dirty-root refresh in \(Int(backoff))s (consecutive=\(self.dirtyRootConsecutiveCount))")
+        scheduleRecentChangeRefreshTask(after: backoff)
+    }
+
+    @MainActor
+    func notifyDirtyRefreshCycleCompleted(stillDirty: Bool) {
+        dirtyRefreshScheduled = false
+        if stillDirty {
+            dirtyRootConsecutiveCount += 1
+        } else {
+            dirtyRootConsecutiveCount = 0
+            pendingDirtyReason = nil
         }
     }
 
@@ -2538,6 +2588,9 @@ final class MenuBarManager: NSObject {
             defer {
                 isProcessingRecentChanges = false
                 hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
+                // Backoff bookkeeping: if more events arrived during the cycle,
+                // schedule the next pass with a longer delay. Otherwise reset.
+                notifyDirtyRefreshCycleCompleted(stillDirty: hasPendingRecentChanges)
             }
 
             lastDetectedChangeAt = Date()
