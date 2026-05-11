@@ -461,7 +461,7 @@ struct MenuBarView: View {
             await manager.updatePathSize()
 
             if !manager.noBaseline {
-                await manager.loadInventoryFromLatestSnapshot()
+                await manager.loadInventoryFromLatestSnapshotIfStale()
                 manager.reconcileIfStale()
             }
         }

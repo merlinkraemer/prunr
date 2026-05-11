@@ -1024,12 +1024,33 @@ final class MenuBarManager: NSObject {
         }
     }
 
+    /// Cached-state freshness window used by panel-open. Within this window, the
+    /// panel trusts the in-memory inventory and skips the full DB aggregation.
+    private static let panelOpenInventoryFreshWindow: TimeInterval = 5
+
+    private var lastInventoryFromSnapshotLoadedAt: Date?
+
+    /// Panel-open variant: trusts the in-memory inventory when it is recent
+    /// enough, so opening the popover does not re-aggregate snapshots when the
+    /// data is already fresh.
+    func loadInventoryFromLatestSnapshotIfStale() async {
+        if hasDisplayableInventory,
+           let last = lastInventoryFromSnapshotLoadedAt,
+           Date().timeIntervalSince(last) < Self.panelOpenInventoryFreshWindow {
+            return
+        }
+        await loadInventoryFromLatestSnapshot()
+    }
+
     func loadInventoryFromLatestSnapshot(
         refreshedAt: Date? = nil,
         invalidateSubcategoryCache: Bool = false
     ) async {
         guard beginInventoryRefresh() else { return }
-        defer { endInventoryRefresh() }
+        defer {
+            endInventoryRefresh()
+            lastInventoryFromSnapshotLoadedAt = Date()
+        }
 
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
