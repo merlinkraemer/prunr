@@ -2427,11 +2427,20 @@ final class MenuBarManager: NSObject {
             queueRequiresFullRescanFallback()
         }
 
-        let filteredPaths = filteredRecentChangePaths(from: changeBatch.changedPaths)
-        if !filteredPaths.isEmpty {
-            lastFileEventAt = Date()
-            // Always accumulate — never drop events during scan/cleanup unless safety cap is hit.
-            enqueuePendingRecentChangePaths(filteredPaths, source: "watcher")
+        if let dirtyReason = changeBatch.dirtyReason {
+            Logger.fsEvents.notice(
+                "Watcher batch flagged dirty (\(dirtyReason, privacy: .public)) raw=\(changeBatch.rawEventCount); marking root dirty"
+            )
+            // s4 will replace this with a delayed bounded refresh + backoff. For
+            // now, escalate via the existing fallback so a real root rescan still
+            // catches the change. Path collection is intentionally skipped.
+            queueRequiresFullRescanFallback()
+        } else {
+            let filteredPaths = filteredRecentChangePaths(from: changeBatch.changedPaths)
+            if !filteredPaths.isEmpty {
+                lastFileEventAt = Date()
+                enqueuePendingRecentChangePaths(filteredPaths, source: "watcher")
+            }
         }
 
         guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
@@ -2440,8 +2449,6 @@ final class MenuBarManager: NSObject {
 
         hasPendingRecentChanges = true
 
-        // Only schedule processing when not scanning — events accumulate
-        // and will be flushed after loadInventory completes.
         if !isLoading, !isAutoScanning {
             scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
         }

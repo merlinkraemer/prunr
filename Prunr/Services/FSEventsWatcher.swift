@@ -13,9 +13,38 @@ final class FSEventsWatcher {
     // MARK: - Types
 
     struct ChangeBatch: Sendable {
+        /// Capped set of external file paths. Empty when the batch was classified
+        /// as `dirty` or fully filtered.
         let changedPaths: Set<URL>
+        /// Dropped/kernel-overflow/root-changed signal. Triggers a fallback rescan.
         let requiresFullRescan: Bool
+        /// Set when the batch was too large, directory-heavy, or otherwise unsafe
+        /// to enumerate path-by-path. The downstream consumer should mark the
+        /// tracked root dirty for a delayed reconciliation instead.
+        let dirtyReason: String?
+        /// Raw event count delivered by FSEvents (pre-filter), for diagnostics.
+        let rawEventCount: Int
+
+        init(
+            changedPaths: Set<URL>,
+            requiresFullRescan: Bool,
+            dirtyReason: String? = nil,
+            rawEventCount: Int = 0
+        ) {
+            self.changedPaths = changedPaths
+            self.requiresFullRescan = requiresFullRescan
+            self.dirtyReason = dirtyReason
+            self.rawEventCount = rawEventCount
+        }
     }
+
+    /// Path-count cap before the callback stops collecting paths and flags the
+    /// batch as dirty. Keeps the callback's allocation profile bounded.
+    private static let maxCollectedPaths = 1_024
+    /// Directory-event ratio above which a batch is treated as dirty (bulk move,
+    /// tree creation, etc.). Computed only when over `dirHeavyMinEvents`.
+    private static let dirHeavyMinEvents = 256
+    private static let dirHeavyRatio = 0.5
 
     /// Opaque pointer to FSEventStream from CoreServices.
     private typealias FSEventStreamRef = OpaquePointer
@@ -94,43 +123,86 @@ final class FSEventsWatcher {
         guard let newStream = FSEventStreamCreate(
             kCFAllocatorDefault,
             { (streamRef, clientCallbackInfo, numEvents, eventPaths, eventFlags, eventIds) in
-                Logger.fsEvents.debug("FSEvents callback: \(numEvents) events, fullRescan checking")
-                // Extract the watcher instance from context
                 guard let info = clientCallbackInfo else { return }
 
                 let watcher = Unmanaged<FSEventsWatcher>.fromOpaque(info).takeUnretainedValue()
 
-                // Collect changed paths - need to do this synchronously from callback
-                // FSEvents passes char** (array of C string pointers), not CFString*
                 let pathsArray = eventPaths.assumingMemoryBound(to: UnsafeMutableRawPointer.self)
                 var changedPaths = Set<URL>()
-
                 var requiresFullRescan = false
+                var dirtyReason: String?
+                var dirEventCount = 0
+                var filteredCount = 0
+
+                let droppedFlags =
+                    FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs)
+                    | FSEventStreamEventFlags(kFSEventStreamEventFlagKernelDropped)
+                    | FSEventStreamEventFlags(kFSEventStreamEventFlagUserDropped)
+                    | FSEventStreamEventFlags(kFSEventStreamEventFlagRootChanged)
+                let dirFlag = FSEventStreamEventFlags(kFSEventStreamEventFlagItemIsDir)
 
                 for i in 0..<numEvents {
-                    let pathPtr = pathsArray[i]
-                    // Treat as C string pointer (char*)
-                    let cString = pathPtr.assumingMemoryBound(to: CChar.self)
-                    if let pathStr = String(validatingUTF8: cString) {
-                        let url = URL(fileURLWithPath: pathStr).standardizedFileURL
-                        changedPaths.insert(url)
+                    let flagsForEvent = eventFlags[i]
+                    if flagsForEvent & droppedFlags != 0 {
+                        requiresFullRescan = true
+                        if dirtyReason == nil { dirtyReason = "stream-dropped" }
+                    }
+                    if flagsForEvent & dirFlag != 0 {
+                        dirEventCount += 1
                     }
 
-                    let flags = eventFlags[i]
-                    let droppedFlags =
-                        FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs)
-                        | FSEventStreamEventFlags(kFSEventStreamEventFlagKernelDropped)
-                        | FSEventStreamEventFlags(kFSEventStreamEventFlagUserDropped)
-                        | FSEventStreamEventFlags(kFSEventStreamEventFlagRootChanged)
-                    if flags & droppedFlags != 0 {
-                        requiresFullRescan = true
+                    // Skip path collection once a dirty reason has been set —
+                    // downstream will reconcile the whole root.
+                    if dirtyReason != nil { continue }
+
+                    let pathPtr = pathsArray[i]
+                    let cString = pathPtr.assumingMemoryBound(to: CChar.self)
+                    guard let pathStr = String(validatingUTF8: cString) else { continue }
+
+                    // Cheap prefix-only filter; FSEventsNoiseFilter handles names,
+                    // suffixes, and Prunr-internal paths in one pass.
+                    if FSEventsNoiseFilter.shouldIgnore(pathStr) {
+                        filteredCount += 1
+                        continue
                     }
+
+                    if changedPaths.count >= FSEventsWatcher.maxCollectedPaths {
+                        dirtyReason = "path-cap-exceeded"
+                        changedPaths.removeAll(keepingCapacity: false)
+                        continue
+                    }
+
+                    let url = URL(fileURLWithPath: pathStr).standardizedFileURL
+                    changedPaths.insert(url)
                 }
+
+                // Late dir-heavy check: bulk-move/extract bursts arrive with many
+                // directory events. Past the threshold, prefer a delayed root
+                // refresh over enumerating thousands of paths.
+                if dirtyReason == nil,
+                   numEvents >= FSEventsWatcher.dirHeavyMinEvents,
+                   Double(dirEventCount) / Double(numEvents) >= FSEventsWatcher.dirHeavyRatio {
+                    dirtyReason = "directory-heavy"
+                    changedPaths.removeAll(keepingCapacity: false)
+                }
+
+                let internalOnly = (filteredCount == numEvents) && dirtyReason == nil && !requiresFullRescan
+                if internalOnly {
+                    // Don't even hop to main if the entire batch was noise/internal.
+                    return
+                }
+
+                let rawCount = numEvents
+                let collectedPaths = changedPaths
+                let finalDirty = dirtyReason
+                let finalRescan = requiresFullRescan
 
                 MainActor.assumeIsolated {
                     watcher.emitChangeBatch(
-                        changedPaths,
-                        requiresFullRescan: requiresFullRescan
+                        collectedPaths,
+                        requiresFullRescan: finalRescan,
+                        dirtyReason: finalDirty,
+                        rawEventCount: rawCount
                     )
                 }
             },
@@ -203,15 +275,24 @@ final class FSEventsWatcher {
     // MARK: - Private Methods
 
     /// Emits a single coalesced FSEvents callback to the app.
-    ///
-    /// - Parameters:
-    ///   - paths: Set of URLs that changed
-    ///   - requiresFullRescan: Whether the stream reported dropped/root-change events
-    private func emitChangeBatch(_ paths: Set<URL>, requiresFullRescan: Bool = false) {
+    private func emitChangeBatch(
+        _ paths: Set<URL>,
+        requiresFullRescan: Bool = false,
+        dirtyReason: String? = nil,
+        rawEventCount: Int = 0
+    ) {
         guard isRunning else { return }
-        let running = isRunning
-        Logger.fsEvents.info("emitChangeBatch: \(paths.count) paths, running=\(running)")
-        onChange?(ChangeBatch(changedPaths: paths, requiresFullRescan: requiresFullRescan))
+        if let dirtyReason {
+            Logger.fsEvents.notice("FSEvents batch dirty: reason=\(dirtyReason, privacy: .public) raw=\(rawEventCount)")
+        } else {
+            Logger.fsEvents.debug("FSEvents batch: paths=\(paths.count) raw=\(rawEventCount) rescan=\(requiresFullRescan)")
+        }
+        onChange?(ChangeBatch(
+            changedPaths: paths,
+            requiresFullRescan: requiresFullRescan,
+            dirtyReason: dirtyReason,
+            rawEventCount: rawEventCount
+        ))
     }
 
     // MARK: - Cleanup
