@@ -98,7 +98,7 @@ final class MenuBarManager: NSObject {
 
     private static let logger = Logger(subsystem: "com.prunr.MenuBarManager", category: "Reconciliation")
     private static let enableSilentFullReconciliation = false
-    private static let enableAutomaticFileWatcher = false
+    private static let enableAutomaticFileWatcher = true
     private static let requiresFullRescanCooldown: TimeInterval = 30 * 60
     private static let maxPendingRecentChangePaths = 50_000
     private static let deferredCleanupDelay: TimeInterval = 5 * 60
