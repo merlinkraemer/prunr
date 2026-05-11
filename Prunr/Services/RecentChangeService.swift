@@ -12,9 +12,9 @@ actor RecentChangeService {
 
     private init() {}
 
-    /// App-internal locations that must never feed incremental growth deltas.
+    /// Dev-only build-output fragments excluded as a defense in depth. Prunr's
+    /// real operational state is sourced from `PrunrInternalPaths`.
     private let internalPathFragments: [String] = [
-        "/Library/Application Support/Prunr/",
         "/.build/derivedData/"
     ]
     private static let stagingBatchSize = 1000
@@ -284,6 +284,9 @@ actor RecentChangeService {
     }
 
     private func shouldIgnoreInternalPath(_ path: String) -> Bool {
+        if PrunrInternalPaths.isInternalPath(path) {
+            return true
+        }
         for fragment in internalPathFragments where path.contains(fragment) {
             return true
         }

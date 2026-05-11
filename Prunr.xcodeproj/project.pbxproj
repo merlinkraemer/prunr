@@ -16,6 +16,7 @@
 		3281BD75CCF8244614B7FD63 /* PathManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F36F34441EB516303B2BD52 /* PathManager.swift */; };
 		329C620A6865EABA78C690C7 /* SizeBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F33B39DE84ED14867FAA70 /* SizeBarView.swift */; };
 		32E78179E10D430300BF7E64 /* PermissionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B953D7CD08AC50B0B235D07 /* PermissionsService.swift */; };
+		7A1C0F1E2D5B6F4E8A9B3C01 /* PrunrInternalPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0F1E2D5B6F4E8A9B3C02 /* PrunrInternalPaths.swift */; };
 		3B4467433F47A7142C0854B0 /* TrackedPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC001C18FD4269712CA4509B /* TrackedPath.swift */; };
 		4AC78F0F119F18CB3CE23891 /* CategoryDetectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52D26AD1272CBF1764A7E804 /* CategoryDetectionService.swift */; };
 		4B0B33CD9EAE0386D6E163A6 /* FSEventsWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFA692654D900931A96C796 /* FSEventsWatcher.swift */; };
@@ -115,6 +116,7 @@
 		B471387DC1C177001B18FCD1 /* BaselineService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaselineService.swift; sourceTree = "<group>"; };
 		BC001C18FD4269712CA4509B /* TrackedPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackedPath.swift; sourceTree = "<group>"; };
 		C918D45CF08B646E3ABAE820 /* FSEventsNoiseFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSEventsNoiseFilter.swift; sourceTree = "<group>"; };
+		7A1C0F1E2D5B6F4E8A9B3C02 /* PrunrInternalPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrunrInternalPaths.swift; sourceTree = "<group>"; };
 		CE59D0E4C4CF9EDC7891E253 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		D3B4BF5E009258D8900CB8C5 /* GrowthCategory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthCategory.swift; sourceTree = "<group>"; };
 		D4E1ECC974C4E402965F0B80 /* MenuBarManagerRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarManagerRegressionTests.swift; sourceTree = "<group>"; };
@@ -275,6 +277,7 @@
 				5B0E8371562FF170C5B1E542 /* GrowthJournalService.swift */,
 				08EB343218571F3B97D51611 /* MenuBarManager.swift */,
 				2B953D7CD08AC50B0B235D07 /* PermissionsService.swift */,
+				7A1C0F1E2D5B6F4E8A9B3C02 /* PrunrInternalPaths.swift */,
 				25E6413BC5E09F3DB8AA03F4 /* RecentChangeService.swift */,
 				3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */,
 				682BA88806D93558C3ADEC4A /* StressScanCommand.swift */,
@@ -450,6 +453,7 @@
 				3281BD75CCF8244614B7FD63 /* PathManager.swift in Sources */,
 				32E78179E10D430300BF7E64 /* PermissionsService.swift in Sources */,
 				B6D6AFE7F87E1D2812FD6B2E /* PrunrMenuBar.swift in Sources */,
+				7A1C0F1E2D5B6F4E8A9B3C01 /* PrunrInternalPaths.swift in Sources */,
 				633035A1AE5750C4AAA1FDA5 /* RecentChangeService.swift in Sources */,
 				BBE11586E07D04E351431DBD /* ScanError.swift in Sources */,
 				B34CE7547B6638E67233A027 /* ScanResult.swift in Sources */,

@@ -66,9 +66,9 @@ final class FileScanner {
     private static let traversalStallTimeout: TimeInterval = 30
     private static let watchdogInterval: TimeInterval = 5
 
-    /// App-internal paths to avoid recursive self-observation.
+    /// Dev-only build-output fragments excluded as a defense in depth. Prunr's
+    /// real operational state is sourced from `PrunrInternalPaths`.
     private let internalPathFragments: [String] = [
-        "/Library/Application Support/Prunr/",
         "/.build/derivedData/"
     ]
 
@@ -247,6 +247,10 @@ final class FileScanner {
         let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
 
         if ignoredNames.contains(lowercasedName) {
+            return true
+        }
+
+        if PrunrInternalPaths.isInternalPath(standardizedPath) {
             return true
         }
 

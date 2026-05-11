@@ -9,7 +9,6 @@ enum FSEventsNoiseFilter {
 
     private static let ignoredDirectoryPrefixes: [String] = [
         "Library/Saved Application State/",
-        "Library/Application Support/Prunr/",
         "Library/Caches/com.apple.Safari/",
         "Library/Caches/CloudKit/",
         "Library/Caches/com.apple.nsurlsessiond/",
@@ -41,6 +40,11 @@ enum FSEventsNoiseFilter {
 
     /// Returns `true` if the path should be ignored (it represents noise, not meaningful storage changes).
     static func shouldIgnore(_ path: String) -> Bool {
+        // Prunr's own operational state must never feed accounting or watcher feedback.
+        if PrunrInternalPaths.isInternalPath(path) {
+            return true
+        }
+
         // Fast: check file name
         let lastComponent = (path as NSString).lastPathComponent
         if ignoredFileNames.contains(lastComponent) {

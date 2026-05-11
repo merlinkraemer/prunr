@@ -58,6 +58,7 @@ final class DatabaseManager {
         dbPool = try DatabasePool(path: dbURL.path, configuration: config)
         try runMigrations()
         try clearWorkingSetRefreshStagingSynchronously()
+        PrunrInternalPaths.refreshCache()
     }
 
     func close() throws {
@@ -66,6 +67,7 @@ final class DatabaseManager {
             self.dbPool = nil
         }
         databasePath = nil
+        PrunrInternalPaths.refreshCache()
     }
 
     private func clearWorkingSetRefreshStagingSynchronously(sessionId: String? = nil) throws {

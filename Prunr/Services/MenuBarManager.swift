@@ -2461,29 +2461,7 @@ final class MenuBarManager: NSObject {
     }
 
     private func watcherExcludedRoots() -> [URL] {
-        var excludedRoots = [
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/Prunr", isDirectory: true)
-                .standardizedFileURL
-        ]
-
-        if let dbPath = DatabaseManager.shared.databasePath {
-            excludedRoots.append(
-                URL(fileURLWithPath: dbPath)
-                    .deletingLastPathComponent()
-                    .standardizedFileURL
-            )
-        }
-
-        var uniqueRoots: [URL] = []
-        var seenPaths = Set<String>()
-        for root in excludedRoots {
-            if seenPaths.insert(root.path).inserted {
-                uniqueRoots.append(root)
-            }
-        }
-
-        return uniqueRoots
+        PrunrInternalPaths.directoryURLs()
     }
 
     @MainActor
@@ -2800,11 +2778,7 @@ final class MenuBarManager: NSObject {
     }
 
     private func autoScanIgnoredRoots() -> [URL] {
-        var roots: [URL] = []
-
-        if let dbPath = DatabaseManager.shared.databasePath {
-            roots.append(URL(fileURLWithPath: dbPath).deletingLastPathComponent().standardizedFileURL)
-        }
+        var roots = PrunrInternalPaths.directoryURLs()
 
         let bundleURL = Bundle.main.bundleURL.standardizedFileURL
         roots.append(bundleURL)
