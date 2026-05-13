@@ -1,5 +1,6 @@
 import XCTest
 import GRDB
+import CoreServices
 @testable import Prunr
 
 final class PrunrSmokeTests: XCTestCase {
@@ -1721,6 +1722,73 @@ final class PrunrSmokeTests: XCTestCase {
         await manager.performRecentChangeRefresh(allowFullRefresh: false)
 
         XCTAssertTrue(manager.hasPendingRecentChanges)
+        XCTAssertEqual(manager.lastScheduledRecentChangeRefreshDelay, 15)
+    }
+
+    @MainActor
+    func testMenuBarManagerDirtyRootBackoffIncreasesToCap() {
+        let manager = MenuBarManager()
+
+        manager.recordFileWatcherChangeBatch(
+            FSEventsWatcher.ChangeBatch(
+                changedPaths: [],
+                requiresFullRescan: false,
+                dirtyReason: "directory-heavy",
+                rawEventCount: 300
+            )
+        )
+        XCTAssertEqual(manager.lastScheduledRecentChangeRefreshDelay, 15)
+
+        manager.notifyDirtyRefreshCycleCompleted(stillDirty: true)
+        XCTAssertEqual(manager.lastScheduledRecentChangeRefreshDelay, 30)
+
+        for _ in 0..<10 {
+            manager.notifyDirtyRefreshCycleCompleted(stillDirty: true)
+        }
+        XCTAssertEqual(manager.lastScheduledRecentChangeRefreshDelay, 30 * 60)
+    }
+
+    func testFSEventsWatcherClassifiesDirectoryHeavyAfterInternalFiltering() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let dbPath = try XCTUnwrap(DatabaseManager.shared.databasePath)
+            let internalDirectory = URL(fileURLWithPath: dbPath).deletingLastPathComponent()
+            let dirFlag = FSEventStreamEventFlags(kFSEventStreamEventFlagItemIsDir)
+            let internalPaths = (0..<300).map { index in
+                internalDirectory.appendingPathComponent("internal-\(index)", isDirectory: true).path
+            }
+            let internalFlags = Array(repeating: dirFlag, count: internalPaths.count)
+
+            XCTAssertNil(FSEventsWatcher.classifyEvents(paths: internalPaths, flags: internalFlags))
+
+            let externalPath = FileManager.default.temporaryDirectory
+                .appendingPathComponent("external-\(UUID().uuidString).txt")
+                .path
+            let mixedBatch = FSEventsWatcher.classifyEvents(
+                paths: internalPaths + [externalPath],
+                flags: internalFlags + [FSEventStreamEventFlags(0)]
+            )
+
+            XCTAssertNil(mixedBatch?.dirtyReason)
+            XCTAssertEqual(
+                mixedBatch?.changedPaths,
+                Set([URL(fileURLWithPath: externalPath).standardizedFileURL])
+            )
+        }
+    }
+
+    func testFileScannerSkipsRootLevelInternalFiles() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let dbPath = try XCTUnwrap(DatabaseManager.shared.databasePath)
+            let dbDirectory = URL(fileURLWithPath: dbPath).deletingLastPathComponent()
+            var scannedPaths: [String] = []
+
+            for try await result in FileScanner().scan(dbDirectory, ignoredNames: []) {
+                scannedPaths.append(result.path)
+            }
+
+            XCTAssertFalse(scannedPaths.contains(dbPath))
+            XCTAssertTrue(scannedPaths.allSatisfy { !PrunrInternalPaths.isInternalPath($0) })
+        }
     }
 
     func testWorkingSetCategoryDeltasDeleteZeroTotalsWithoutReadback() async throws {

@@ -45,3 +45,12 @@ Use alongside Console.app filtered to `com.prunr.app` while running the app in D
 - [ ] No duplicate categories
 - [ ] Final state reflects last completed scan
 - [ ] No `DUPLICATE CATEGORIES` in Console
+
+## Alpha freshness gate
+- [ ] Build current tree: `make build`
+- [ ] Run full test suite: `make test`
+- [ ] Launch the current Debug app build and wait for an existing baseline
+- [ ] Run `npm run monitor -- --freshness-probe`
+- [ ] Probe output shows the configured tracked root, working-set byte delta, and category-total byte delta for the same tracked path
+- [ ] Run `npm run monitor -- --samples 5 --interval 5`
+- [ ] Short monitor run shows no repeated full-scan loop, no unexpected category drift, and low idle CPU/RSS

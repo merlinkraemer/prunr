@@ -1,5 +1,27 @@
 # Todo
 
+## Alpha freshness fixes implementation (2026-05-13)
+
+- [x] Create checkpoint commit for the alpha freshness PRD (`fa1e786`)
+- [x] s1: Enforce dirty-root backoff for all full-refresh retry paths
+- [x] s2: Hard-exclude Prunr internal paths from FSEvents classification and file accounting
+- [x] s3: Move stale reconciliation off menu-open view appearance
+- [x] s4: Keep panel-open inventory reads fast and surface pending dirty state
+- [x] s5: Keep Accept Growth as pure DB-local promotion
+- [x] s6: Strengthen freshness monitor probe for configured tracked root and category totals
+- [x] Run build, tests, and monitor-script verification
+- [x] Commit implemented fixes in checkpoints
+
+### Review
+
+- Dirty-root full-refresh work now uses one backoff scheduler, including busy retries, explicit refresh deferrals, and events flushed after scans.
+- FSEvents classification filters Prunr-internal paths before dropped/large/directory-heavy promotion; `FileScanner` also skips internal files reached at the tracked-root file level.
+- Menu opening no longer calls stale reconciliation; `MenuBarManager` owns a background reconciliation backstop scheduled on launch and after completed scans.
+- Panel open trusts displayable inventory instead of expiring after five seconds, and the footer shows a pending-changes state while dirty work waits.
+- Accept Growth snapshots the current working set with `freeBytes = nil`, preserving the DB-local promotion invariant.
+- The monitor freshness probe now derives the active configured root where possible and requires both working-set and category-total byte deltas for the same tracked path.
+- Verification: `make build` passed, `make test` passed with 55 tests, `npm run monitor -- --help` passed, `npm run monitor -- --samples 1 --interval 1` ran successfully but reported that Prunr was not running. The live `--freshness-probe` gate still needs the current app build running.
+
 ## File watcher birdseye review (2026-05-11)
 
 - [x] Review current `FSEventsWatcher`, noise filter, `MenuBarManager` intake, `RecentChangeService`, DB writes, cleanup, startup lifecycle, and docs.

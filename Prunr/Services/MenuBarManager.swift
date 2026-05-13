@@ -436,6 +436,8 @@ final class MenuBarManager: NSObject {
     @ObservationIgnored
     nonisolated(unsafe) private var recentChangeTask: Task<Void, Never>?
     @ObservationIgnored
+    nonisolated(unsafe) private var reconciliationBackstopTask: Task<Void, Never>?
+    @ObservationIgnored
     nonisolated(unsafe) private var deferredAutoCleanupTask: Task<Void, Never>?
     private var isInventoryRefreshInProgress = false
     private var pendingRecentChangePaths: Set<URL> = []
@@ -456,6 +458,8 @@ final class MenuBarManager: NSObject {
     private var dirtyRootConsecutiveCount = 0
     /// Set while a dirty-root refresh is scheduled but has not yet fired.
     private var dirtyRefreshScheduled = false
+    private(set) var lastScheduledRecentChangeRefreshDelay: TimeInterval?
+    private static let reconciliationBusyRetryDelay: TimeInterval = 5 * 60
     /// True when incremental deltas have been applied since the last full scan snapshot.
     /// Drill-down reads should then prefer the live working set over the stale snapshot.
     private var hasIncrementalDeltasSinceSnapshot = false
@@ -1014,29 +1018,21 @@ final class MenuBarManager: NSObject {
             lastAutomaticScanAt = completedSnapshotsByPath.values.map(\.createdAt).max() ?? Date()
             lastFullScanCompletedAt = Date()
             SettingsStore.shared.applyAdaptiveFullScanIntervalIfNeeded(scanDuration: scanWallDuration)
+            scheduleReconciliationBackstop()
         }
 
         await updatePathSize()
 
         // Flush any FSEvents that arrived during the scan
-        if pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty {
-            scheduleRecentChangeRefreshTask(after: 0.5)
-        }
+        schedulePendingRecentChangeRefresh()
     }
-
-    /// Cached-state freshness window used by panel-open. Within this window, the
-    /// panel trusts the in-memory inventory and skips the full DB aggregation.
-    private static let panelOpenInventoryFreshWindow: TimeInterval = 5
 
     private var lastInventoryFromSnapshotLoadedAt: Date?
 
-    /// Panel-open variant: trusts the in-memory inventory when it is recent
-    /// enough, so opening the popover does not re-aggregate snapshots when the
-    /// data is already fresh.
+    /// Panel-open variant: trusts already-displayable inventory so opening the
+    /// popover does not re-aggregate snapshots just because time passed.
     func loadInventoryFromLatestSnapshotIfStale() async {
-        if hasDisplayableInventory,
-           let last = lastInventoryFromSnapshotLoadedAt,
-           Date().timeIntervalSince(last) < Self.panelOpenInventoryFreshWindow {
+        if hasDisplayableInventory {
             return
         }
         await loadInventoryFromLatestSnapshot()
@@ -1099,6 +1095,7 @@ final class MenuBarManager: NSObject {
         isReconciling = false
         await loadInventory(isAutomatic: true)
         lastReconciliationAt = Date()
+        scheduleReconciliationBackstop()
     }
 
     /// Accepts current growth by resetting baselines to the current working set sizes.
@@ -1193,19 +1190,47 @@ final class MenuBarManager: NSObject {
         lastReconciliationAt = Date()
     }
 
-    /// Kicks off silent reconciliation if the last one exceeds the user's configured scan interval.
-    func reconcileIfStale() {
+    private func startSilentReconciliationIfStale() {
         guard Self.enableSilentFullReconciliation else { return }
         guard isPermissionConfirmedForProtectedTraversal else { return }
         guard !noBaseline else { return }
+        guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else {
+            scheduleReconciliationBackstop(minimumDelay: Self.reconciliationBusyRetryDelay)
+            return
+        }
         let staleThreshold = SettingsStore.shared.automaticFullScanInterval
         if let lastReconciliation = lastReconciliationAt ?? lastAutomaticScanAt,
            Date().timeIntervalSince(lastReconciliation) < staleThreshold {
             return
         }
 
+        guard reconciliationTask == nil else { return }
         reconciliationTask = Task { @MainActor in
             await performSilentReconciliation()
+            scheduleReconciliationBackstop()
+        }
+    }
+
+    /// Owns the periodic full-scan backstop independently from menu appearance.
+    private func scheduleReconciliationBackstop(minimumDelay: TimeInterval = 0) {
+        reconciliationBackstopTask?.cancel()
+        reconciliationBackstopTask = nil
+
+        guard Self.enableSilentFullReconciliation else { return }
+        guard isPermissionConfirmedForProtectedTraversal else { return }
+        guard !noBaseline else { return }
+
+        let staleThreshold = SettingsStore.shared.automaticFullScanInterval
+        let referenceDate = lastReconciliationAt ?? lastAutomaticScanAt ?? Date()
+        let delay = max(minimumDelay, staleThreshold - Date().timeIntervalSince(referenceDate))
+
+        reconciliationBackstopTask = Task { @MainActor in
+            defer { reconciliationBackstopTask = nil }
+            if delay > 0 {
+                try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+            }
+            guard !Task.isCancelled else { return }
+            startSilentReconciliationIfStale()
         }
     }
 
@@ -1631,6 +1656,7 @@ final class MenuBarManager: NSObject {
         let accessReport = await PermissionsService.shared.evaluateScanScopeAccessAsync(scanRootURLs: scanRoots)
         isPermissionConfirmedForProtectedTraversal = accessReport.isGranted
         await checkBaseline(trackedPathsOverride: trackedPaths)
+        scheduleReconciliationBackstop()
     }
 
     /// Loads just category totals from the pre-computed workingSetCategoryTotal table.
@@ -2473,11 +2499,8 @@ final class MenuBarManager: NSObject {
 
         hasPendingRecentChanges = true
 
-        if pendingRecentChangeRequiresFullRefresh {
-            scheduleDirtyRootRefresh()
-        } else if !isLoading, !isAutoScanning {
-            scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
-        }
+        guard !isLoading, !isAutoScanning else { return }
+        schedulePendingRecentChangeRefresh()
     }
 
     /// Initial delay before the first dirty-root reconciliation pass.
@@ -2519,6 +2542,7 @@ final class MenuBarManager: NSObject {
         dirtyRefreshScheduled = false
         if stillDirty {
             dirtyRootConsecutiveCount += 1
+            scheduleDirtyRootRefresh()
         } else {
             dirtyRootConsecutiveCount = 0
             pendingDirtyReason = nil
@@ -2575,7 +2599,7 @@ final class MenuBarManager: NSObject {
         }
 
         hasPendingRecentChanges = true
-        scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+        schedulePendingRecentChangeRefresh()
     }
 
     func performRecentChangeRefresh(allowFullRefresh: Bool = true) async {
@@ -2584,7 +2608,7 @@ final class MenuBarManager: NSObject {
             return
         }
         guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning else {
-            scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+            schedulePendingRecentChangeRefresh()
             return
         }
 
@@ -2599,7 +2623,7 @@ final class MenuBarManager: NSObject {
         if pendingRecentChangeRequiresFullRefresh {
             guard allowFullRefresh else {
                 hasPendingRecentChanges = true
-                scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+                scheduleDirtyRootRefresh()
                 return
             }
 
@@ -2674,7 +2698,7 @@ final class MenuBarManager: NSObject {
             guard allowFullRefresh else {
                 pendingRecentChangeRequiresFullRefresh = true
                 hasPendingRecentChanges = true
-                scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+                scheduleDirtyRootRefresh()
                 return
             }
             await loadInventory(isAutomatic: true)
@@ -2734,8 +2758,21 @@ final class MenuBarManager: NSObject {
         isUnderDiskPressure ? pressureRecentChangeDebounce : normalRecentChangeDebounce
     }
 
+    private func schedulePendingRecentChangeRefresh() {
+        guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
+            return
+        }
+
+        if pendingRecentChangeRequiresFullRefresh {
+            scheduleDirtyRootRefresh()
+        } else {
+            scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+        }
+    }
+
     private func scheduleRecentChangeRefreshTask(after delay: TimeInterval) {
         recentChangeTask?.cancel()
+        lastScheduledRecentChangeRefreshDelay = delay
         recentChangeTask = Task { @MainActor in
             defer { recentChangeTask = nil }
             try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
@@ -2872,6 +2909,7 @@ final class MenuBarManager: NSObject {
         updateTimer?.invalidate()
         activityPulseTimer?.invalidate()
         recentChangeTask?.cancel()
+        reconciliationBackstopTask?.cancel()
         deferredAutoCleanupTask?.cancel()
         reconciliationTask?.cancel()
         let watcher = fileEventsWatcher

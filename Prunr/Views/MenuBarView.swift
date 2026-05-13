@@ -462,7 +462,6 @@ struct MenuBarView: View {
 
             if !manager.noBaseline {
                 await manager.loadInventoryFromLatestSnapshotIfStale()
-                manager.reconcileIfStale()
             }
         }
         .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
@@ -1625,6 +1624,21 @@ struct MenuBarView: View {
             .onDisappear {
                 footerBackgroundScanPulse = false
             }
+        } else if manager.pendingDirtyReason != nil || manager.hasPendingRecentChanges {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color.secondary.opacity(0.55))
+                    .frame(width: 5, height: 5)
+                Text("Changes pending")
+                    .foregroundStyle(.secondary)
+                if let relativePhrase {
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(relativePhrase)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.system(size: 11))
         } else if let relativePhrase {
             Text(relativePhrase)
                 .font(.system(size: 11))

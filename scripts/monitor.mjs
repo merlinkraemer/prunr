@@ -10,6 +10,7 @@ const BUNDLE_ID = "com.prunr.app";
 const PROCESS_NAME = "Prunr";
 const APP_SUPPORT_DIR = `${os.homedir()}/Library/Application Support/Prunr`;
 const DB_PATH = `${APP_SUPPORT_DIR}/prunr.db`;
+const MAIN_BASE_PATH_ID = "B9E2C9D6-7A6C-4A8C-9A73-9DBA3DE27B57";
 const EXPECTED_CATEGORY_COUNT = 8;
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_LOG_LOOKBACK_MINUTES = 15;
@@ -101,7 +102,7 @@ Options:
   --freshness-timeout <seconds>   Probe timeout (default: 90)
   --freshness-size <bytes>        Probe file size in bytes (default: 8 MB)
   --freshness-dir <path>          Directory under a tracked path to host the
-                                  probe file (default: \${HOME}/prunr-monitor-probe)
+                                  probe file (default: active configured root)
   --help                          Show this help
 `);
 }
@@ -138,6 +139,7 @@ function readDefaults() {
   const xml = runOptionalCommand("defaults", ["export", BUNDLE_ID, "-"], "");
   return {
     mainBasePath: plistString(xml, "mainBasePath"),
+    trackedPathsData: plistData(xml, "trackedPaths"),
     automaticFullScanIntervalHours: plistInteger(xml, "automaticFullScanIntervalHours"),
     adaptiveFullScanIntervalApplied: plistBool(xml, "adaptiveFullScanIntervalApplied"),
     hasPendingScopeChanges: plistBool(xml, "hasPendingScopeChanges")
@@ -160,6 +162,11 @@ function plistBool(xml, key) {
   if (truePattern.test(xml)) return true;
   if (falsePattern.test(xml)) return false;
   return null;
+}
+
+function plistData(xml, key) {
+  const match = xml.match(new RegExp(`<key>${escapeRegex(key)}</key>\\s*<data>([\\s\\S]*?)<\\/data>`));
+  return match ? match[1].replace(/\s+/g, "") : null;
 }
 
 function decodeXml(value) {
@@ -612,14 +619,110 @@ function workingSetSummary() {
   return rows[0] ?? null;
 }
 
+function workingSetSummaryForTrackedPath(trackedPathId) {
+  const normalized = normalizeUuid(trackedPathId);
+  return readWorkingSet().find((row) => normalizeUuid(row.trackedPathId) === normalized) ?? null;
+}
+
+function categorySummaryForTrackedPath(trackedPathId) {
+  const normalized = normalizeUuid(trackedPathId);
+  const rows = readCategoryTotals().filter((row) => normalizeUuid(row.trackedPathId) === normalized);
+  const totalBytes = rows.reduce((sum, row) => sum + Number(row.totalBytes), 0);
+  const updatedAtDate = rows.reduce((latest, row) => {
+    if (!row.updatedAtDate) return latest;
+    return !latest || row.updatedAtDate > latest ? row.updatedAtDate : latest;
+  }, null);
+
+  return {
+    rowCount: rows.length,
+    totalBytes,
+    updatedAt: updatedAtDate ? updatedAtDate.toISOString() : null,
+    updatedAtDate
+  };
+}
+
+function configuredTrackedPathMap(defaults) {
+  const result = new Map();
+  result.set(normalizeUuid(MAIN_BASE_PATH_ID), defaults.mainBasePath || os.homedir());
+
+  for (const trackedPath of decodeCustomTrackedPaths(defaults.trackedPathsData)) {
+    const id = trackedPath.id;
+    const urlPath = pathFromEncodedURL(trackedPath.url);
+    if (id && urlPath) {
+      result.set(normalizeUuid(id), urlPath);
+    }
+  }
+
+  return result;
+}
+
+function decodeCustomTrackedPaths(dataValue) {
+  if (!dataValue) return [];
+  try {
+    const json = Buffer.from(dataValue, "base64").toString("utf8");
+    const decoded = JSON.parse(json);
+    return Array.isArray(decoded) ? decoded : [];
+  } catch {
+    return [];
+  }
+}
+
+function pathFromEncodedURL(value) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    if (value.startsWith("file://")) {
+      return decodeURIComponent(new URL(value).pathname);
+    }
+    return value;
+  }
+  return null;
+}
+
+function normalizeUuid(value) {
+  return String(value ?? "").toLowerCase();
+}
+
+function deriveFreshnessProbeTarget(options, baseline) {
+  const trackedPathId = baseline.trackedPathId;
+  if (options.freshnessProbeDir) {
+    return {
+      trackedPathId,
+      rootPath: null,
+      probeDir: path.resolve(options.freshnessProbeDir)
+    };
+  }
+
+  const defaults = readDefaults();
+  const pathsById = configuredTrackedPathMap(defaults);
+  const rootPath = pathsById.get(normalizeUuid(trackedPathId));
+  if (!rootPath) {
+    console.error(
+      `freshness probe: cannot derive filesystem root for trackedPathId=${trackedPathId}; pass --freshness-dir under that tracked path`
+    );
+    process.exit(2);
+  }
+
+  return {
+    trackedPathId,
+    rootPath,
+    probeDir: path.join(rootPath, "prunr-monitor-probe")
+  };
+}
+
 async function runFreshnessProbe(options) {
   const baseline = workingSetSummary();
   if (!baseline) {
     console.error("freshness probe: no workingSet rows; run an initial scan first");
     process.exit(2);
   }
-  const probeDir = options.freshnessProbeDir
-    ?? path.join(os.homedir(), "prunr-monitor-probe");
+  const target = deriveFreshnessProbeTarget(options, baseline);
+  const baselineCategory = categorySummaryForTrackedPath(target.trackedPathId);
+  if (baselineCategory.rowCount === 0) {
+    console.error(`freshness probe: no workingSetCategoryTotal rows for trackedPathId=${target.trackedPathId}`);
+    process.exit(2);
+  }
+
+  const probeDir = target.probeDir;
   fs.mkdirSync(probeDir, { recursive: true });
 
   const probeFile = path.join(
@@ -628,7 +731,9 @@ async function runFreshnessProbe(options) {
   );
   const probeBytes = options.freshnessProbeBytes;
 
-  console.log(`[probe] baseline rows=${baseline.rowCount} bytes=${baseline.totalBytes} updatedAt=${baseline.updatedAt}`);
+  console.log(`[probe] trackedPathId=${target.trackedPathId} root=${target.rootPath ?? "(custom --freshness-dir)"}`);
+  console.log(`[probe] baseline working rows=${baseline.rowCount} bytes=${baseline.totalBytes} updatedAt=${baseline.updatedAt}`);
+  console.log(`[probe] baseline categories rows=${baselineCategory.rowCount} bytes=${baselineCategory.totalBytes} updatedAt=${baselineCategory.updatedAt}`);
   console.log(`[probe] writing ${probeBytes}B to ${probeFile}`);
 
   const buf = Buffer.alloc(probeBytes, 0x5a);
@@ -639,11 +744,14 @@ async function runFreshnessProbe(options) {
   let detected = null;
   while (Date.now() < deadline) {
     await sleep(2000);
-    const current = workingSetSummary();
+    const current = workingSetSummaryForTrackedPath(target.trackedPathId);
+    const currentCategory = categorySummaryForTrackedPath(target.trackedPathId);
     if (!current) continue;
-    if (current.updatedAt !== baseline.updatedAt
-        && Number(current.totalBytes) >= Number(baseline.totalBytes) + probeBytes) {
-      detected = { observedAt: Date.now(), sample: current };
+
+    const workingDelta = Number(current.totalBytes) - Number(baseline.totalBytes);
+    const categoryDelta = Number(currentCategory.totalBytes) - Number(baselineCategory.totalBytes);
+    if (workingDelta >= probeBytes && categoryDelta >= probeBytes) {
+      detected = { observedAt: Date.now(), working: current, category: currentCategory };
       break;
     }
   }
@@ -651,14 +759,16 @@ async function runFreshnessProbe(options) {
   let exitCode = 0;
   if (detected) {
     const latencySeconds = Math.round((detected.observedAt - start) / 1000);
-    const byteDelta = Number(detected.sample.totalBytes) - Number(baseline.totalBytes);
+    const workingDelta = Number(detected.working.totalBytes) - Number(baseline.totalBytes);
+    const categoryDelta = Number(detected.category.totalBytes) - Number(baselineCategory.totalBytes);
     console.log(
-      `[probe] PASS detected probe within ${latencySeconds}s: rows=${detected.sample.rowCount} bytes=${detected.sample.totalBytes} delta=${byteDelta}`
+      `[probe] PASS detected probe within ${latencySeconds}s: workingRows=${detected.working.rowCount} workingBytes=${detected.working.totalBytes} workingDelta=${workingDelta} categoryBytes=${detected.category.totalBytes} categoryDelta=${categoryDelta}`
     );
   } else {
-    const final = workingSetSummary();
+    const final = workingSetSummaryForTrackedPath(target.trackedPathId);
+    const finalCategory = categorySummaryForTrackedPath(target.trackedPathId);
     console.error(
-      `[probe] FAIL no working-set update after ${options.freshnessTimeoutSeconds}s; final rows=${final?.rowCount} bytes=${final?.totalBytes} updatedAt=${final?.updatedAt}`
+      `[probe] FAIL no working/category update after ${options.freshnessTimeoutSeconds}s; final working rows=${final?.rowCount} bytes=${final?.totalBytes} updatedAt=${final?.updatedAt}; final categories rows=${finalCategory.rowCount} bytes=${finalCategory.totalBytes} updatedAt=${finalCategory.updatedAt}`
     );
     exitCode = 1;
   }

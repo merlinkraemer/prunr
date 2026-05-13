@@ -67,10 +67,9 @@ actor BaselineService {
     /// Resets the baseline to the current working set sizes, clearing all growth indicators.
     /// Pure DB operation — no filesystem I/O.
     func acceptGrowth(for trackedPath: TrackedPath) async throws {
-        let freeBytes = ScanService.captureVolumeFreeSpace(for: trackedPath.url)
         let newSnapshotId = try await db.createSnapshotFromWorkingSet(
             trackedPathId: trackedPath.id,
-            freeBytes: freeBytes
+            freeBytes: nil
         )
         try await DatabaseCleanupService.shared.aggregateCategoryTotals(for: newSnapshotId)
         try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)

@@ -190,6 +190,7 @@ final class FileScanner {
                         }
 
                     case FTS_F:
+                        guard !PrunrInternalPaths.isInternalPath(path) else { continue }
                         guard let statPointer = entry.pointee.fts_statp else { continue }
                         let stat = statPointer.pointee
                         let sizeBytes = Self.diskUsageBytes(for: stat)
