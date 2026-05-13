@@ -630,6 +630,74 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testStartupCleanupDeletesAbandonedNewerSnapshot() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let completedSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let completedSnapshotId = try XCTUnwrap(completedSnapshot.id)
+            let entries = (1...10).map { index in
+                ScanResult(
+                    path: "/Users/tester/dev/complete/file-\(index).dat",
+                    sizeBytes: Int64(index)
+                )
+            }
+            try await DatabaseManager.shared.addEntries(to: completedSnapshotId, entries: entries)
+            try await DatabaseManager.shared.replaceCategorySnapshots(
+                snapshotId: completedSnapshotId,
+                totals: [.developer: 55]
+            )
+            try await DatabaseManager.shared.replaceSubcategorySnapshots(
+                snapshotId: completedSnapshotId,
+                rows: [
+                    DatabaseManager.StoredSubcategorySnapshot(
+                        category: .developer,
+                        subcategory: .nodeModules,
+                        totalBytes: 55,
+                        fileCount: 10,
+                        topItems: []
+                    )
+                ]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: completedSnapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: completedSnapshot.createdAt
+            )
+
+            let abandonedSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let abandonedSnapshotId = try XCTUnwrap(abandonedSnapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: abandonedSnapshotId,
+                entries: [
+                    ScanResult(path: "/Users/tester/dev/partial/file.dat", sizeBytes: 100)
+                ]
+            )
+            try await DatabaseManager.shared.replaceCategorySnapshots(
+                snapshotId: abandonedSnapshotId,
+                totals: [.developer: 100]
+            )
+            try await DatabaseManager.shared.replaceSubcategorySnapshots(
+                snapshotId: abandonedSnapshotId,
+                rows: [
+                    DatabaseManager.StoredSubcategorySnapshot(
+                        category: .developer,
+                        subcategory: .nodeModules,
+                        totalBytes: 100,
+                        fileCount: 1,
+                        topItems: []
+                    )
+                ]
+            )
+
+            let deleted = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
+
+            XCTAssertEqual(deleted, 1)
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 10)
+            XCTAssertEqual(snapshots.map(\.id), [completedSnapshotId])
+            let completedEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: completedSnapshotId)
+            XCTAssertEqual(completedEntryCount, 10)
+        }
+    }
+
     func testRecentGrowthStoryDisplayLabelUsesGrowthWindow() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let trackedPath = TrackedPath(
