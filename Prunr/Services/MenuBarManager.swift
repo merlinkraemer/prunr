@@ -2479,6 +2479,16 @@ final class MenuBarManager: NSObject {
 
     @MainActor
     func recordFileWatcherChangeBatch(_ changeBatch: FSEventsWatcher.ChangeBatch) {
+        let fullScanIsRunning = isLoading || isAutoScanning || isReconciling
+
+        if fullScanIsRunning,
+           changeBatch.requiresFullRescan || changeBatch.dirtyReason != nil {
+            Logger.fsEvents.notice(
+                "Ignoring dirty FSEvents batch during full scan: reason=\(changeBatch.dirtyReason ?? "stream-rescan-required", privacy: .public) raw=\(changeBatch.rawEventCount)"
+            )
+            return
+        }
+
         if changeBatch.requiresFullRescan {
             markDirty(reason: "stream-rescan-required")
         }
@@ -2499,7 +2509,7 @@ final class MenuBarManager: NSObject {
 
         hasPendingRecentChanges = true
 
-        guard !isLoading, !isAutoScanning else { return }
+        guard !fullScanIsRunning else { return }
         schedulePendingRecentChangeRefresh()
     }
 

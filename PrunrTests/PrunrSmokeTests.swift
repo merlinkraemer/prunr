@@ -1748,6 +1748,25 @@ final class PrunrSmokeTests: XCTestCase {
         XCTAssertEqual(manager.lastScheduledRecentChangeRefreshDelay, 30 * 60)
     }
 
+    @MainActor
+    func testMenuBarManagerIgnoresDirtyWatcherBatchDuringFullScan() {
+        let manager = MenuBarManager()
+        manager.isLoading = true
+
+        manager.recordFileWatcherChangeBatch(
+            FSEventsWatcher.ChangeBatch(
+                changedPaths: [],
+                requiresFullRescan: false,
+                dirtyReason: "directory-heavy",
+                rawEventCount: 300
+            )
+        )
+
+        XCTAssertFalse(manager.hasPendingRecentChanges)
+        XCTAssertNil(manager.pendingDirtyReason)
+        XCTAssertNil(manager.lastScheduledRecentChangeRefreshDelay)
+    }
+
     func testFSEventsWatcherClassifiesDirectoryHeavyAfterInternalFiltering() async throws {
         try await withEmptyTemporaryDatabase { _ in
             let dbPath = try XCTUnwrap(DatabaseManager.shared.databasePath)
