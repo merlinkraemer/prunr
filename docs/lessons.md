@@ -14,3 +14,4 @@
 - Single-file FSEvents updates and removals must not use subtree replacement SQL on a multi-million-row working set. Use exact-row updates first, and make subtree deletion query `paths` by indexed path range before joining `workingSetEntry`.
 - Monitor probes must measure the same bytes the app records. If Prunr stores allocated disk usage, the probe should use allocated blocks and avoid compressible payloads instead of assuming logical file size equals growth.
 - A fast panel-open cache refresh must be identity-preserving. If quick data has the same category totals as the enriched rows already on screen, do not assign a new `allCategories` array or strip growth metadata just because the hosting view was recreated.
+- Do not kill tmux windows by broad session/window index during a live collaboration. Create uniquely named detached monitor windows and only target those exact names/PIDs for cleanup.

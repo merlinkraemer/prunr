@@ -6,7 +6,7 @@
 - [x] Preserve enriched category rows when quick working-set totals have not changed
 - [x] Add a regression test for no-op quick inventory preserving growth state
 - [x] Run focused tests and full app verification
-- [ ] Reset the installed app and start a fresh long-running monitor
+- [x] Reset the installed app and start a fresh long-running monitor
 
 ### Review
 
@@ -14,6 +14,7 @@
 - Quick inventory now leaves `allCategories` untouched when category totals match the already-visible rows. If totals changed, it updates the sizes/adds/removes categories while preserving existing growth stories for matching categories.
 - Regression: `testPanelOpenQuickInventoryPreservesLoadedGrowthRowsWhenTotalsMatch` covers the panel-open no-op path.
 - Verification: focused `xcodebuild test` passed for the two panel-open inventory tests. `make test` passed with 63 tests.
+- Reset/soak: `prunr-reset` rebuilt and reinstalled `/Applications/Prunr.app`, `make launch` started fresh PID `20276`, and tmux window `prunr:2` (`monitor-soak-20260514`) is running `npm run monitor -- --samples 17280 --interval 5` with output in `.monitor/soak-20260514-1530.log`.
 
 ## 24h monitor follow-up fixes (2026-05-14)
 
