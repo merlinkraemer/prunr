@@ -2022,6 +2022,54 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testPanelOpenQuickInventoryPreservesLoadedGrowthRowsWhenTotalsMatch() async throws {
+        let trackedRoot = try createTrackedPathDirectory(named: "PrunrQuickNoop")
+        defer {
+            try? FileManager.default.removeItem(at: trackedRoot)
+        }
+
+        try await withEmptyTemporaryDatabase { _ in
+            try await self.withIsolatedTrackedPathSettings(mainBaseURL: trackedRoot) {
+                let trackedPath = SettingsStore.shared.mainTrackedPath
+                let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPath.id)
+                let snapshotId = try XCTUnwrap(snapshot.id)
+                try await DatabaseManager.shared.addEntries(
+                    to: snapshotId,
+                    entries: [
+                        ScanResult(
+                            path: trackedRoot.appendingPathComponent("project/node_modules/pkg/index.js").path,
+                            sizeBytes: 8 * 1024 * 1024
+                        )
+                    ]
+                )
+                try await DatabaseManager.shared.rebuildWorkingSet(
+                    from: snapshotId,
+                    trackedPathId: trackedPath.id,
+                    updatedAt: snapshot.createdAt
+                )
+
+                try await GrowthJournalService.shared.recordDeltas(
+                    trackedPath: trackedPath,
+                    deltas: [
+                        DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules): 2 * 1024 * 1024
+                    ]
+                )
+
+                let manager = MenuBarManager()
+                await manager.loadInventoryFromLatestSnapshotIfStale()
+                let loadedInventory = manager.allCategories
+                XCTAssertEqual(manager.growingCategories.first?.category, .developer)
+
+                let loadedQuickInventory = await manager.loadQuickInventory()
+
+                XCTAssertTrue(loadedQuickInventory)
+                XCTAssertEqual(manager.allCategories, loadedInventory)
+                XCTAssertEqual(manager.growingCategories.first?.recentGrowthStory?.deltaBytes, 2 * 1024 * 1024)
+            }
+        }
+    }
+
     func testFSEventsWatcherClassifiesDirectoryHeavyAfterInternalFiltering() async throws {
         try await withEmptyTemporaryDatabase { _ in
             let dbPath = try XCTUnwrap(DatabaseManager.shared.databasePath)

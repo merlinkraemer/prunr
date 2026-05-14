@@ -1696,10 +1696,31 @@ final class MenuBarManager: NSObject {
                                   growthTrend: nil, recentGrowthStory: nil)
         }.sorted(by: Self.inventorySortsBefore)
 
-        // All appear as stable initially (no growth stories loaded yet)
-        allCategories = items
+        applyQuickInventory(items)
         noBaseline = false
         return true
+    }
+
+    private func applyQuickInventory(_ items: [CategoryInventoryItem]) {
+        let quickTotalsByCategory = Dictionary(uniqueKeysWithValues: items.map { ($0.category, $0.currentSizeBytes) })
+        let currentTotalsByCategory = Dictionary(uniqueKeysWithValues: allCategories.map { ($0.category, $0.currentSizeBytes) })
+
+        guard quickTotalsByCategory != currentTotalsByCategory else {
+            return
+        }
+
+        let existingItemsByCategory = Dictionary(uniqueKeysWithValues: allCategories.map { ($0.category, $0) })
+        let mergedItems = items.map { item in
+            guard var existing = existingItemsByCategory[item.category] else {
+                return item
+            }
+            existing.currentSizeBytes = item.currentSizeBytes
+            return existing
+        }.sorted(by: Self.inventorySortsBefore)
+
+        withAnimationsDisabled {
+            allCategories = mergedItems
+        }
     }
 
     private func applyInventory(

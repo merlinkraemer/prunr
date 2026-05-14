@@ -1,5 +1,20 @@
 # Todo
 
+## Panel-open category reload fix (2026-05-14)
+
+- [x] Reproduce/root-cause the visible category refresh on panel open
+- [x] Preserve enriched category rows when quick working-set totals have not changed
+- [x] Add a regression test for no-op quick inventory preserving growth state
+- [x] Run focused tests and full app verification
+- [ ] Reset the installed app and start a fresh long-running monitor
+
+### Review
+
+- Root cause: every freshly-created panel hosting view ran `loadQuickInventory()`, which replaced enriched rows with quick stable-only rows even when the working-set totals were identical.
+- Quick inventory now leaves `allCategories` untouched when category totals match the already-visible rows. If totals changed, it updates the sizes/adds/removes categories while preserving existing growth stories for matching categories.
+- Regression: `testPanelOpenQuickInventoryPreservesLoadedGrowthRowsWhenTotalsMatch` covers the panel-open no-op path.
+- Verification: focused `xcodebuild test` passed for the two panel-open inventory tests. `make test` passed with 63 tests.
+
 ## 24h monitor follow-up fixes (2026-05-14)
 
 - [x] Capture soak monitor, live process, DB, and unified log evidence
