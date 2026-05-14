@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -682,6 +683,14 @@ function normalizeUuid(value) {
   return String(value ?? "").toLowerCase();
 }
 
+function allocatedBytesForPath(filePath) {
+  const stats = fs.statSync(filePath);
+  if (Number.isFinite(stats.blocks) && stats.blocks > 0) {
+    return stats.blocks * 512;
+  }
+  return stats.size;
+}
+
 function deriveFreshnessProbeTarget(options, baseline) {
   const trackedPathId = baseline.trackedPathId;
   if (options.freshnessProbeDir) {
@@ -736,8 +745,9 @@ async function runFreshnessProbe(options) {
   console.log(`[probe] baseline categories rows=${baselineCategory.rowCount} bytes=${baselineCategory.totalBytes} updatedAt=${baselineCategory.updatedAt}`);
   console.log(`[probe] writing ${probeBytes}B to ${probeFile}`);
 
-  const buf = Buffer.alloc(probeBytes, 0x5a);
-  fs.writeFileSync(probeFile, buf);
+  fs.writeFileSync(probeFile, randomBytes(probeBytes));
+  const expectedProbeBytes = allocatedBytesForPath(probeFile);
+  console.log(`[probe] allocated ${expectedProbeBytes}B on disk`);
 
   const start = Date.now();
   const deadline = start + options.freshnessTimeoutSeconds * 1000;
@@ -750,7 +760,7 @@ async function runFreshnessProbe(options) {
 
     const workingDelta = Number(current.totalBytes) - Number(baseline.totalBytes);
     const categoryDelta = Number(currentCategory.totalBytes) - Number(baselineCategory.totalBytes);
-    if (workingDelta >= probeBytes && categoryDelta >= probeBytes) {
+    if (workingDelta >= expectedProbeBytes && categoryDelta >= expectedProbeBytes) {
       detected = { observedAt: Date.now(), working: current, category: currentCategory };
       break;
     }

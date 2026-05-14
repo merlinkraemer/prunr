@@ -85,10 +85,9 @@ actor RecentChangeService {
                 let deltas: [DatabaseManager.JournalDeltaKey: Int64]
                 switch target {
                 case .file(let result):
-                    deltas = try await db.replaceWorkingSetSubtree(
+                    deltas = try await db.replaceWorkingSetFile(
                         trackedPathId: trackedPath.id,
-                        rootPath: target.rootPath,
-                        entries: [result],
+                        entry: result,
                         updatedAt: scanTimestamp
                     )
                 case .subtree(let root):
@@ -99,10 +98,9 @@ actor RecentChangeService {
                         updatedAt: scanTimestamp
                     )
                 case .removal:
-                    deltas = try await db.replaceWorkingSetSubtree(
+                    deltas = try await db.removeWorkingSetPathOrSubtree(
                         trackedPathId: trackedPath.id,
                         rootPath: target.rootPath,
-                        entries: [],
                         updatedAt: scanTimestamp
                     )
                 }

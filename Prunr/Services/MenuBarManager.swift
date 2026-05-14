@@ -142,7 +142,7 @@ final class MenuBarManager: NSObject {
 
     /// While true, `reconcileDrillDownSelection()` is skipped so inventory refreshes do not collapse drill-down mid-slide.
     var isDrillDownTransitionAnimating: Bool = false
-    /// Gate for watchers/silent reconciliations touching protected folders.
+    /// Gate for full traversals that touch protected folders.
     var isPermissionConfirmedForProtectedTraversal = false
     /// Most recent paths that failed with permission errors during runtime operations.
     var runtimeBlockedLocations: [String] = []
@@ -272,9 +272,11 @@ final class MenuBarManager: NSObject {
         scanCurrentPathDisplay = displayPath
         scanProgress = "Scanning \(displayPath)"
 
-        // Live category fill-in: merge partial totals from this path into the aggregate.
-        // Only applies when the progress update includes a category snapshot (~every 2s).
-        if let partialTotals = progress.categoryTotals, !partialTotals.isEmpty {
+        // Live category fill-in: merge partial totals from foreground scans into the aggregate.
+        // Background scans keep the last complete inventory visible.
+        if shouldApplyPartialScanInventory,
+           let partialTotals = progress.categoryTotals,
+           !partialTotals.isEmpty {
             applyPartialCategoryTotals(from: trackedPath, totals: partialTotals)
         }
     }
@@ -432,9 +434,10 @@ final class MenuBarManager: NSObject {
     // Event-driven lightweight scan automation
     @ObservationIgnored
     nonisolated(unsafe) private var fileEventsWatcher: FSEventsWatcher?
-    private var watchedPaths: [String] = []
+    private(set) var watchedPaths: [String] = []
     @ObservationIgnored
     nonisolated(unsafe) private var recentChangeTask: Task<Void, Never>?
+    private var recentChangeTaskGeneration = 0
     @ObservationIgnored
     nonisolated(unsafe) private var reconciliationBackstopTask: Task<Void, Never>?
     @ObservationIgnored
@@ -471,6 +474,7 @@ final class MenuBarManager: NSObject {
     var isAcceptingGrowth = false
     var lastAcceptedGrowthAt: Date? = nil
     private var suppressGrowthIndicators = false
+    private var shouldApplyPartialScanInventory = false
 
     // MARK: - Scan Progress AsyncStream
 
@@ -856,8 +860,10 @@ final class MenuBarManager: NSObject {
         noBaseline = false
         filesScanned = 0
         isAnalyzingChanges = false
-        recentChangeTask?.cancel()
-        recentChangeTask = nil
+        if !isProcessingRecentChanges {
+            recentChangeTask?.cancel()
+            recentChangeTask = nil
+        }
         pendingRecentChangePaths.removeAll()
         pendingRecentChangeRequiresFullRefresh = false
         hasPendingRecentChanges = false
@@ -870,6 +876,7 @@ final class MenuBarManager: NSObject {
         scanEstimatedTotalFiles = 0
         hasReliableScanProgressEstimate = false
         partialScanCategoryTotalsByPathID = [:] // Reset live-fill data for this scan session
+        shouldApplyPartialScanInventory = !isAutomatic || !hasDisplayableInventory
 
         // Record scan start time for minimum display duration
         let startTime = Date()
@@ -1014,6 +1021,7 @@ final class MenuBarManager: NSObject {
         isAnalyzingChanges = false
         scanStartTime = nil
         partialScanCategoryTotalsByPathID = [:] // Clear live-fill data after scan completes
+        shouldApplyPartialScanInventory = false
         if completedSuccessfully, !wasCancelled {
             lastAutomaticScanAt = completedSnapshotsByPath.values.map(\.createdAt).max() ?? Date()
             lastFullScanCompletedAt = Date()
@@ -1032,7 +1040,9 @@ final class MenuBarManager: NSObject {
     /// Panel-open variant: trusts already-displayable inventory so opening the
     /// popover does not re-aggregate snapshots just because time passed.
     func loadInventoryFromLatestSnapshotIfStale() async {
-        if hasDisplayableInventory {
+        if hasDisplayableInventory,
+           lastInventoryFromSnapshotLoadedAt != nil,
+           !currentInventorySnapshotIDsByPath.isEmpty {
             return
         }
         await loadInventoryFromLatestSnapshot()
@@ -1574,6 +1584,9 @@ final class MenuBarManager: NSObject {
 
         if hasSnapshots {
             noBaseline = false
+            if lastFullScanCompletedAt == nil {
+                await checkBaseline()
+            }
             return
         }
 
@@ -1646,6 +1659,9 @@ final class MenuBarManager: NSObject {
             }
         }
         noBaseline = !hasAnySnapshot
+        if hasAnySnapshot, lastFullScanCompletedAt == nil {
+            lastFullScanCompletedAt = lastAutomaticScanAt
+        }
         updateMonitoredPathName()
         configureFileWatcherIfNeeded()
     }
@@ -2412,16 +2428,6 @@ final class MenuBarManager: NSObject {
             }
             return
         }
-        guard isPermissionConfirmedForProtectedTraversal else {
-            watchedPaths = []
-            Task { @MainActor in
-                if let watcher = fileEventsWatcher {
-                    watcher.stop()
-                }
-                fileEventsWatcher = nil
-            }
-            return
-        }
         guard !noBaseline else {
             watchedPaths = []
             Task { @MainActor in
@@ -2529,10 +2535,9 @@ final class MenuBarManager: NSObject {
                 "Marking tracked root dirty: reason=\(reason, privacy: .public) raw=\(rawEventCount)"
             )
         }
-        // Always update the UI hint, even when the cooldown blocked promotion —
-        // the user-visible "changes pending" signal should reflect the latest
-        // classification regardless of when reconciliation actually runs.
-        pendingDirtyReason = reason
+        if promoted {
+            pendingDirtyReason = reason
+        }
     }
 
     @MainActor
@@ -2636,6 +2641,10 @@ final class MenuBarManager: NSObject {
                 scheduleDirtyRootRefresh()
                 return
             }
+            if isWithinFullRescanCooldown() {
+                dropPendingFullRefreshDuringCooldown(reason: pendingDirtyReason ?? "dirty-root")
+                return
+            }
 
             pendingRecentChangeRequiresFullRefresh = false
             pendingRecentChangePaths.removeAll()
@@ -2659,6 +2668,9 @@ final class MenuBarManager: NSObject {
         defer {
             isProcessingRecentChanges = false
             hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
+            if hasPendingRecentChanges {
+                schedulePendingRecentChangeRefresh()
+            }
         }
 
         // Route each changed path to the tracked path it falls under
@@ -2711,6 +2723,10 @@ final class MenuBarManager: NSObject {
                 scheduleDirtyRootRefresh()
                 return
             }
+            if isWithinFullRescanCooldown() {
+                dropPendingFullRefreshDuringCooldown(reason: "incremental-refresh-escalation")
+                return
+            }
             await loadInventory(isAutomatic: true)
             return
         }
@@ -2728,6 +2744,8 @@ final class MenuBarManager: NSObject {
                 invalidateSubcategoryCache: false
             )
         }
+
+        hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
     }
 
     /// Creates or accumulates a growth story for incremental deltas.
@@ -2772,6 +2790,7 @@ final class MenuBarManager: NSObject {
         guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
             return
         }
+        guard !isProcessingRecentChanges else { return }
 
         if pendingRecentChangeRequiresFullRefresh {
             scheduleDirtyRootRefresh()
@@ -2781,12 +2800,15 @@ final class MenuBarManager: NSObject {
     }
 
     private func scheduleRecentChangeRefreshTask(after delay: TimeInterval) {
+        recentChangeTaskGeneration += 1
+        let generation = recentChangeTaskGeneration
         recentChangeTask?.cancel()
         lastScheduledRecentChangeRefreshDelay = delay
         recentChangeTask = Task { @MainActor in
-            defer { recentChangeTask = nil }
             try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
             guard !Task.isCancelled else { return }
+            guard recentChangeTaskGeneration == generation else { return }
+            recentChangeTask = nil
             await performRecentChangeRefresh()
         }
     }
@@ -2802,7 +2824,24 @@ final class MenuBarManager: NSObject {
 
     private func isWithinFullRescanCooldown(at now: Date = Date()) -> Bool {
         guard let lastFullScanCompletedAt else { return false }
-        return now.timeIntervalSince(lastFullScanCompletedAt) < Self.requiresFullRescanCooldown
+        let cooldown = max(
+            Self.requiresFullRescanCooldown,
+            SettingsStore.shared.automaticFullScanInterval
+        )
+        return now.timeIntervalSince(lastFullScanCompletedAt) < cooldown
+    }
+
+    private func dropPendingFullRefreshDuringCooldown(reason: String) {
+        Logger.fsEvents.notice(
+            "Deferring full refresh during full-scan cooldown: reason=\(reason, privacy: .public)"
+        )
+        pendingRecentChangeRequiresFullRefresh = false
+        pendingRecentChangePaths.removeAll()
+        hasPendingRecentChanges = false
+        pendingDirtyReason = nil
+        dirtyRefreshScheduled = false
+        dirtyRootConsecutiveCount = 0
+        scheduleReconciliationBackstop()
     }
 
     private func promotePendingChangesToFullRefreshIfAllowed(reason: String) -> Bool {

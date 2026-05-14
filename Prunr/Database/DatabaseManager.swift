@@ -1549,6 +1549,181 @@ extension DatabaseManager {
         }
     }
 
+    func replaceWorkingSetFile(
+        trackedPathId: UUID,
+        entry: ScanResult,
+        updatedAt: Date = Date()
+    ) async throws -> [JournalDeltaKey: Int64] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+        let normalizedPath = Self.normalizePath(entry.path)
+        let newCategory = entry.category
+        let newSubcategory = entry.subcategory
+
+        return try await dbPool.write { db in
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)",
+                arguments: [normalizedPath]
+            )
+
+            guard let pathId: Int64 = try Int64.fetchOne(
+                db,
+                sql: "SELECT id FROM paths WHERE path = ?",
+                arguments: [normalizedPath]
+            ) else {
+                return [:]
+            }
+
+            let oldRow = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT wse.sizeBytes AS sizeBytes,
+                           pc.category AS category,
+                           pc.subcategory AS subcategory
+                    FROM workingSetEntry wse
+                    LEFT JOIN pathClassification pc ON pc.pathId = wse.pathId
+                    WHERE wse.trackedPathId = ? AND wse.pathId = ?
+                    """,
+                arguments: [trackedPathIdString, pathId]
+            )
+
+            var deltasByCategory: [JournalDeltaKey: Int64] = [:]
+            if let oldRow,
+               let oldSizeBytes: Int64 = oldRow["sizeBytes"],
+               let oldRawCategory: String = oldRow["category"],
+               let oldCategory = GrowthCategory(rawValue: oldRawCategory) {
+                let oldRawSubcategory: String = oldRow["subcategory"] ?? ""
+                let oldSubcategory = oldRawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: oldRawSubcategory)
+                deltasByCategory[
+                    JournalDeltaKey(category: oldCategory, subcategory: oldSubcategory),
+                    default: 0
+                ] -= oldSizeBytes
+            }
+
+            deltasByCategory[
+                JournalDeltaKey(category: newCategory, subcategory: newSubcategory),
+                default: 0
+            ] += entry.sizeBytes
+
+            try db.execute(
+                sql: """
+                    INSERT INTO pathClassification (pathId, category, subcategory)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(pathId) DO UPDATE SET
+                        category = excluded.category,
+                        subcategory = excluded.subcategory
+                    """,
+                arguments: [pathId, newCategory.rawValue, newSubcategory?.rawValue ?? ""]
+            )
+
+            try db.execute(
+                sql: """
+                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
+                        sizeBytes = excluded.sizeBytes,
+                        updatedAt = excluded.updatedAt
+                    """,
+                arguments: [trackedPathIdString, pathId, entry.sizeBytes, updatedAt]
+            )
+
+            deltasByCategory = deltasByCategory.filter { $0.value != 0 }
+            try applyWorkingSetCategoryDeltas(
+                deltasByCategory,
+                trackedPathId: trackedPathIdString,
+                updatedAt: updatedAt,
+                db: db
+            )
+            return deltasByCategory
+        }
+    }
+
+    func removeWorkingSetPathOrSubtree(
+        trackedPathId: UUID,
+        rootPath: String,
+        updatedAt: Date = Date()
+    ) async throws -> [JournalDeltaKey: Int64] {
+        if let exactDeltas = try await removeWorkingSetFileIfPresent(
+            trackedPathId: trackedPathId,
+            path: rootPath,
+            updatedAt: updatedAt
+        ) {
+            return exactDeltas
+        }
+
+        return try await replaceWorkingSetSubtree(
+            trackedPathId: trackedPathId,
+            rootPath: rootPath,
+            entries: [],
+            updatedAt: updatedAt
+        )
+    }
+
+    private func removeWorkingSetFileIfPresent(
+        trackedPathId: UUID,
+        path: String,
+        updatedAt: Date
+    ) async throws -> [JournalDeltaKey: Int64]? {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+        let normalizedPath = Self.normalizePath(path)
+
+        return try await dbPool.write { db in
+            guard let oldRow = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT p.id AS pathId,
+                           wse.sizeBytes AS sizeBytes,
+                           pc.category AS category,
+                           pc.subcategory AS subcategory
+                    FROM paths p
+                    JOIN workingSetEntry wse ON wse.pathId = p.id
+                    LEFT JOIN pathClassification pc ON pc.pathId = p.id
+                    WHERE wse.trackedPathId = ? AND p.path = ?
+                    """,
+                arguments: [trackedPathIdString, normalizedPath]
+            ) else {
+                return nil
+            }
+
+            guard let pathId: Int64 = oldRow["pathId"] else {
+                return [:]
+            }
+
+            var deltasByCategory: [JournalDeltaKey: Int64] = [:]
+            if let oldSizeBytes: Int64 = oldRow["sizeBytes"],
+               let oldRawCategory: String = oldRow["category"],
+               let oldCategory = GrowthCategory(rawValue: oldRawCategory) {
+                let oldRawSubcategory: String = oldRow["subcategory"] ?? ""
+                let oldSubcategory = oldRawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: oldRawSubcategory)
+                deltasByCategory[
+                    JournalDeltaKey(category: oldCategory, subcategory: oldSubcategory),
+                    default: 0
+                ] -= oldSizeBytes
+            }
+
+            try db.execute(
+                sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ? AND pathId = ?",
+                arguments: [trackedPathIdString, pathId]
+            )
+
+            deltasByCategory = deltasByCategory.filter { $0.value != 0 }
+            try applyWorkingSetCategoryDeltas(
+                deltasByCategory,
+                trackedPathId: trackedPathIdString,
+                updatedAt: updatedAt,
+                db: db
+            )
+            return deltasByCategory
+        }
+    }
+
     func appendWorkingSetRefreshStaging(
         sessionId: String,
         entries: [ScanResult]
@@ -1633,6 +1808,7 @@ extension DatabaseManager {
         let trackedPathIdString = trackedPathId.uuidString
         let normalizedRoot = Self.normalizePath(rootPath)
         let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
+        let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
 
         return try await dbPool.write { db in
             try db.execute(
@@ -1668,11 +1844,14 @@ extension DatabaseManager {
                             wse.sizeBytes AS sizeBytes,
                             pc.category AS category,
                             pc.subcategory AS subcategory
-                        FROM workingSetEntry wse
-                        JOIN paths p ON p.id = wse.pathId
+                        FROM paths p
+                        CROSS JOIN workingSetEntry wse ON wse.pathId = p.id
                         JOIN pathClassification pc ON pc.pathId = wse.pathId
                         WHERE wse.trackedPathId = ?
-                          AND (p.path = ? OR p.path LIKE ?)
+                          AND (
+                              p.path = ?
+                              OR (p.path >= ? AND p.path < ?)
+                          )
                     ),
                     newRows AS (
                         SELECT path, sizeBytes, category, subcategory
@@ -1703,7 +1882,8 @@ extension DatabaseManager {
                 arguments: [
                     trackedPathIdString,
                     normalizedRoot,
-                    rootPrefix + "%",
+                    rootPrefix,
+                    rootPrefixUpperBound,
                     stagingSessionId
                 ]
             )
@@ -1733,10 +1913,16 @@ extension DatabaseManager {
                       AND pathId IN (
                         SELECT p.id
                         FROM paths p
-                        WHERE p.path = ? OR p.path LIKE ?
+                        WHERE p.path = ?
+                           OR (p.path >= ? AND p.path < ?)
                       )
                     """,
-                arguments: [trackedPathIdString, normalizedRoot, rootPrefix + "%"]
+                arguments: [
+                    trackedPathIdString,
+                    normalizedRoot,
+                    rootPrefix,
+                    rootPrefixUpperBound
+                ]
             )
 
             try db.execute(
@@ -1969,6 +2155,14 @@ extension DatabaseManager {
             return path
         }
         return path.hasSuffix("/") ? String(path.dropLast()) : path
+    }
+
+    private static func pathPrefixUpperBound(_ prefix: String) -> String {
+        let normalizedPrefix = prefix.hasSuffix("/") ? prefix : prefix + "/"
+        if normalizedPrefix == "/" {
+            return "0"
+        }
+        return String(normalizedPrefix.dropLast()) + "0"
     }
 
     private struct ResolvedPathClassification {

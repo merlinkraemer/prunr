@@ -1,5 +1,36 @@
 # Todo
 
+## 24h monitor follow-up fixes (2026-05-14)
+
+- [x] Capture soak monitor, live process, DB, and unified log evidence
+- [x] Fix debounced recent-change refresh cancellation so active incremental work can drain
+- [x] Fix quick-inventory enrichment so growth stories load after panel open
+- [x] Keep background scan partial totals from replacing visible category inventory
+- [x] Gate dirty/full-rescan escalation by the configured full-scan interval
+- [x] Add focused regressions for the changed invariants
+- [x] Run build/tests and live monitor verification
+
+### Current Findings
+
+- The 24h monitor shows repeated unexpected full-scan snapshots before the configured 48h interval, plus current PID `25933` pinned near 100% CPU.
+- Unified logs show many `RecentChanges` `Swift.CancellationError` failures. New watcher events cancel `recentChangeTask` even when it is already executing the refresh, so pending changes can churn instead of draining.
+- Panel open runs `loadQuickInventory()` first, then `loadInventoryFromLatestSnapshotIfStale()` returns early because visible categories already exist. That blocks enrichment and leaves categories looking stable.
+- Background scans apply partial category totals into `allCategories`, so visible categories can temporarily disappear and the drive bar reports the missing bytes as outside scan scope.
+- Dirty FSEvents fallback still allows a full home-directory scan after the short cooldown instead of respecting the configured full-scan interval.
+- The live freshness probe initially failed even while totals advanced because it compared logical file bytes against allocated-byte accounting.
+- The remaining CPU spike after probe cleanup came from removal/directory refresh falling back to `replaceWorkingSetSubtree`, whose old `LIKE` query scanned the full working set.
+
+### Review
+
+- Recent-change debounce now clears the scheduled task before executing the refresh and uses a generation token for stale sleeps. New watcher events no longer cancel an active incremental refresh task.
+- Panel-open inventory enrichment now only short-circuits after a real snapshot inventory load has populated snapshot IDs. Fast quick inventory can still appear immediately, then the richer growth stories load from DB.
+- Background automatic scans no longer publish partial category totals over the existing complete inventory; foreground scans and first empty-state scans still get live category fill-in.
+- Dirty/full-rescan escalation now uses the larger of the short dirty cooldown and the configured automatic full-scan interval. Dropped dirty batches no longer leave `pendingDirtyReason` set, so the footer cannot stick on changes pending.
+- The watcher now arms after a valid baseline even when protected-location probes are blocked; full traversals remain gated separately.
+- File-level updates use exact working-set row replacement, and missing/removal/subtree paths use indexed path-range queries before touching working-set rows. This removes the multi-million-row prefix scan from ordinary file edits and probe cleanup.
+- The monitor freshness probe now writes non-compressible data and compares against the probe file's allocated bytes, matching app accounting.
+- Verification: focused `xcodebuild test` passed for dirty cooldown, panel enrichment, watcher arming, recent-change inventory, and removal range cases. `make test` passed with 62 tests. Live `npm run monitor -- --freshness-probe --freshness-timeout 90` passed in 4s, and the installed app was idle at 0.0% CPU / ~71 MB RSS after probe cleanup. Final `npm run monitor -- --samples 1 --interval 1` reported `status OK`, zero category/working-set drift, and app CPU 0.6% during sample / 0.0% in `ps`.
+
 ## Alpha freshness fixes implementation (2026-05-13)
 
 - [x] Create checkpoint commit for the alpha freshness PRD (`fa1e786`)
