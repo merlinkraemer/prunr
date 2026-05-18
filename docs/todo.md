@@ -1,5 +1,37 @@
 # Todo
 
+## Multi-day soak check (2026-05-18)
+
+- [x] Confirm whether the previous monitor stopped or crashed
+- [x] Check live app CPU/RSS and current DB freshness
+- [x] Run a live freshness probe after the multi-day run
+- [x] Fix monitor next-due calculation for multi-snapshot databases
+- [x] Restart monitor without a finite sample cap
+
+### Findings
+
+- The previous monitor did not crash; it wrote exactly `17,280` samples, matching the `--samples 17280` command. Because sample loops stretched beyond the nominal 5s interval, it covered about 35h and stopped at `2026-05-15T19:47:23Z`.
+- Prunr is still running as PID `39010` after 4 days, idle around 0.0-0.2% CPU with RSS around 49-71 MB during checks.
+- The live DB has snapshot `#3` from `2026-05-18T09:08:16Z`; working-set and category totals are fresh with zero category/working-set drift.
+- `npm run monitor -- --freshness-probe --freshness-timeout 90` passed in 4s after the multi-day run, proving watcher-driven working-set and category updates still work.
+- The monitor's autoscan `next due` display incorrectly used the previous snapshot when one existed, so it reported an overdue time after snapshot `#3`. It now computes due time from the latest snapshot.
+- The stale category warning also treated timestamp-only working-set updates as stale even when category bytes matched working-set bytes exactly. It now only warns when there is actual category/working-set byte drift.
+- Restarted open-ended monitor in tmux window `prunr:3` (`monitor-open-20260518`) with `npm run monitor -- --interval 5`, logging to `.monitor/soak-open-ended-20260518.log`.
+
+## Panel-open category prewarm reload fix (2026-05-18)
+
+- [x] Stop panel-open subcategory prewarm from visibly putting every category row into a loading state
+- [x] Avoid repeating the same initial subcategory prewarm request on every recreated hosting view
+- [x] Add focused regression coverage for repeated prewarm requests
+- [x] Run focused/full verification and update the live monitor setup
+
+### Review
+
+- Top-level category rows no longer use global subcategory warmup to decide row readiness or show row spinners. The list stays enabled while subcategory details warm or load on tap.
+- Recreated hosting views now call `preloadInitialSubcategoryBreakdownsIfNeeded`, which deduplicates the same initial category-set warmup at the manager level.
+- Category taps no longer bounce out just because the global initial warmup is incomplete; they start the specific category load path instead.
+- Verification: focused `testInitialSubcategoryWarmupDoesNotRepeatSameCategorySet` passed. `make test` passed with 64 tests. The fixed build was installed and relaunched over the existing multi-day database.
+
 ## Panel-open category reload fix (2026-05-14)
 
 - [x] Reproduce/root-cause the visible category refresh on panel open

@@ -149,6 +149,7 @@ final class MenuBarManager: NSObject {
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
     var hasCompletedInitialSubcategoryWarmup = false
     private var subcategoryBreakdownCacheGenerationByCategory: [GrowthCategory: UInt64] = [:]
+    private var initialSubcategoryWarmupRequestSignature: String?
     var subcategoryBreakdownLoadingCategories: Set<GrowthCategory> = []
     var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
     var growthContributorCacheGeneration: UInt64 = 0
@@ -1322,6 +1323,20 @@ final class MenuBarManager: NSObject {
         }
     }
 
+    func preloadInitialSubcategoryBreakdownsIfNeeded(for categories: [GrowthCategory]) {
+        guard !hasCompletedInitialSubcategoryWarmup else { return }
+
+        let uniqueCategories = Array(Set(categories)).sorted { $0.rawValue < $1.rawValue }
+        guard !uniqueCategories.isEmpty else { return }
+
+        let signature = "\(growthContributorCacheGeneration):" +
+            uniqueCategories.map(\.rawValue).joined(separator: "|")
+        guard initialSubcategoryWarmupRequestSignature != signature else { return }
+
+        initialSubcategoryWarmupRequestSignature = signature
+        preloadSubcategoryBreakdowns(for: uniqueCategories)
+    }
+
     func loadSubcategoryBreakdown(for category: GrowthCategory) async -> [SubcategoryGroup] {
         if isSubcategoryBreakdownReady(for: category), let cached = subcategoryGroupsByCategory[category] {
             setSubcategoryBreakdownLoading(false, for: category)
@@ -1757,6 +1772,7 @@ final class MenuBarManager: NSObject {
             subcategoryBreakdownCacheGenerationByCategory = [:]
             subcategoryBreakdownLoadingCategories = []
             hasCompletedInitialSubcategoryWarmup = false
+            initialSubcategoryWarmupRequestSignature = nil
         } else {
             let validCategories = Set(allCategories.map(\.category))
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
@@ -1797,6 +1813,7 @@ final class MenuBarManager: NSObject {
             currentGrowthBaselineSnapshotIDsByPath = [:]
             hasIncrementalDeltasSinceSnapshot = false
             liveWorkingSetDrillDownCategories = []
+            initialSubcategoryWarmupRequestSignature = nil
         }
     }
 

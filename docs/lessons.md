@@ -15,3 +15,5 @@
 - Monitor probes must measure the same bytes the app records. If Prunr stores allocated disk usage, the probe should use allocated blocks and avoid compressible payloads instead of assuming logical file size equals growth.
 - A fast panel-open cache refresh must be identity-preserving. If quick data has the same category totals as the enriched rows already on screen, do not assign a new `allCategories` array or strip growth metadata just because the hosting view was recreated.
 - Do not kill tmux windows by broad session/window index during a live collaboration. Create uniquely named detached monitor windows and only target those exact names/PIDs for cleanup.
+- Long-running monitors should either omit `--samples` or set a duration explicitly. A fixed sample count is not a wall-clock guarantee when each sample can take longer than the polling interval.
+- Panel-open performance has two layers: top-level category inventory and row-level subcategory warmup. Fixing top-level row replacement is not enough if warmup state still disables rows or shows spinners on every hosting-view recreation.

@@ -452,7 +452,7 @@ function buildSample(previous, state, options) {
       );
     }
 
-    if (categories.length !== 0 && categoryUpdatedAt && workingSet.updatedAtDate) {
+    if (delta !== 0 && categories.length !== 0 && categoryUpdatedAt && workingSet.updatedAtDate) {
       const lagSeconds = (workingSet.updatedAtDate.getTime() - categoryUpdatedAt.getTime()) / 1000;
       if (lagSeconds > CATEGORY_STALE_WARNING_SECONDS) {
         warnings.push(
@@ -483,11 +483,9 @@ function buildSample(previous, state, options) {
   }
 
   const autoscanHours = defaults.automaticFullScanIntervalHours;
-  const dueAt = previousSnapshot?.createdAtDate && autoscanHours
-    ? new Date(previousSnapshot.createdAtDate.getTime() + autoscanHours * 3600 * 1000)
-    : latestSnapshot?.createdAtDate && autoscanHours
-      ? new Date(latestSnapshot.createdAtDate.getTime() + autoscanHours * 3600 * 1000)
-      : null;
+  const dueAt = latestSnapshot?.createdAtDate && autoscanHours
+    ? new Date(latestSnapshot.createdAtDate.getTime() + autoscanHours * 3600 * 1000)
+    : null;
 
   const topCategories = categories
     .slice(0, 5)

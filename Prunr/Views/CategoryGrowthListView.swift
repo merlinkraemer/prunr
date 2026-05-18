@@ -342,13 +342,10 @@ struct CategoryGrowthListView: View {
                     ScrollView {
                         VStack(spacing: 0) {
                             ForEach(growingCategories) { item in
-                                let isReady = manager.isSubcategoryBreakdownReady(for: item.category)
-                                let isPreparing = !manager.hasCompletedInitialSubcategoryWarmup &&
-                                    manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
-                                    isNavigationReady: manager.hasCompletedInitialSubcategoryWarmup || isReady,
-                                    isPreparing: isPreparing,
+                                    isNavigationReady: true,
+                                    isPreparing: false,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     highlightedSegmentID: $highlightedSegmentID,
                                     onTap: { selectCategory(item) }
@@ -357,13 +354,10 @@ struct CategoryGrowthListView: View {
                             }
 
                             ForEach(stableCategories) { item in
-                                let isReady = manager.isSubcategoryBreakdownReady(for: item.category)
-                                let isPreparing = !manager.hasCompletedInitialSubcategoryWarmup &&
-                                    manager.isSubcategoryBreakdownLoading(for: item.category)
                                 CategoryInventoryRow(
                                     item: item,
-                                    isNavigationReady: manager.hasCompletedInitialSubcategoryWarmup || isReady,
-                                    isPreparing: isPreparing,
+                                    isNavigationReady: true,
+                                    isPreparing: false,
                                     isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
                                     highlightedSegmentID: $highlightedSegmentID,
                                     onTap: { selectCategory(item) }
@@ -620,11 +614,6 @@ struct CategoryGrowthListView: View {
         contributorPrefetchTask = nil
         let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: item.category)
 
-        guard manager.hasCompletedInitialSubcategoryWarmup || !needsSubcategoryLoad else {
-            manager.preloadSubcategoryBreakdowns(for: [item.category])
-            return
-        }
-
         subcategoryLoadTask?.cancel()
         let token = UUID()
         subcategoryLoadToken = token
@@ -770,7 +759,7 @@ struct CategoryGrowthListView: View {
             return
         }
 
-        manager.preloadSubcategoryBreakdowns(for: categories)
+        manager.preloadInitialSubcategoryBreakdownsIfNeeded(for: categories)
     }
 
     private func updateStartupWarmupStateIfNeeded() {
