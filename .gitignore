@@ -37,6 +37,11 @@ fastlane/test_output
 .idea/
 .vscode/
 .cursor/
+.agents/
+.claude/
+.pi/
+.planning/
+.monitor/
 
 ## Logs
 *.log
@@ -80,6 +85,7 @@ xcuserdata/
 build/
 dist/
 Releases/
+Prunr.app/
 *.o
 *.o.*
 default.profraw

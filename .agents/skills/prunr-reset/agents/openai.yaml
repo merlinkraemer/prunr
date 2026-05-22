@@ -1,4 +1,0 @@
-interface:
-  display_name: "Prunr Reset"
-  short_description: "Wipe the local app install and state, then rebuild and reinstall"
-  default_prompt: "Remove the installed Prunr app, clear its local caches and Application Support state, rebuild it, and reinstall it to /Applications for fresh testing."
