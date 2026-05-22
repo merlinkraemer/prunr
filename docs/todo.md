@@ -496,6 +496,7 @@ Status at 2026-04-25: build green, 50 tests pass, CI configured. Idle CPU fixed 
 - The staged app is universal `arm64` + `x86_64`, locally ad-hoc signed with hardened runtime (`adhoc,runtime`), and `codesign --verify --deep --strict` passes.
 - Distribution blocker: this machine does not have a `Developer ID Application` identity, only `Apple Development: Merlin Krämer (R9PT23U593)`. `spctl --assess --type execute` rejects the local artifact, so external tester shipping still needs Developer ID signing and notarization.
 - Detailed release notes and manual smoke checklist are in [alpha-release-20260522.md](/Users/merlinkraemer/dev/projects/prunr/docs/alpha-release-20260522.md).
+- Follow-up fix during release prep: the old open-ended tmux monitor had exited on a transient SQLite `database is locked` read. `scripts/monitor.mjs` now reports failed samples and keeps running in open-ended mode.
 
 ## Scan indicator fix
 

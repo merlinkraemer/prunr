@@ -814,17 +814,30 @@ async function main() {
   let sampleCount = 0;
 
   while (true) {
-    const sample = buildSample(previous, state, options);
-    if (options.json) {
-      const serializable = { ...sample };
-      delete serializable.categoryMap;
-      console.log(JSON.stringify(serializable));
-    } else {
-      printSample(sample);
+    try {
+      const sample = buildSample(previous, state, options);
+      if (options.json) {
+        const serializable = { ...sample };
+        delete serializable.categoryMap;
+        console.log(JSON.stringify(serializable));
+      } else {
+        printSample(sample);
+      }
+
+      previous = sample;
+      sampleCount += 1;
+    } catch (error) {
+      if (options.samples) {
+        throw error;
+      }
+      const message = `sample failed at ${new Date().toISOString()}: ${error.message}`;
+      if (options.json) {
+        console.log(JSON.stringify({ at: new Date().toISOString(), warnings: [message] }));
+      } else {
+        console.error(`warn      ${message}`);
+      }
     }
 
-    previous = sample;
-    sampleCount += 1;
     if (options.samples && sampleCount >= options.samples) break;
     await sleep(options.intervalSeconds * 1000);
   }
