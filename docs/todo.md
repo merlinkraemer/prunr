@@ -483,6 +483,33 @@ Status at 2026-04-25: build green, 50 tests pass, CI configured. Idle CPU fixed 
 - [x] Write alpha release notes and manual tester checklist
 - [x] Commit release-prep docs/metadata changes if tracked changes are produced
 
+## Alpha notarized release packaging (2026-05-22)
+
+- [x] Inspect Xcode-exported `Releases/Prunr.app`
+- [x] Package notarized export with stable release filename
+- [x] Update release docs with final artifact and verification results
+- [x] Preserve or clean local Xcode export side effects before committing
+- [x] Run final monitor/build metadata verification
+- [x] Commit release packaging metadata
+- [x] Create local git release tag
+
+## Alpha notarized release packaging review
+
+- Xcode export source: `Releases/Prunr.app`.
+- Export verification passed:
+- `codesign --verify --deep --strict Releases/Prunr.app`
+- `spctl --assess --type execute --verbose=4 Releases/Prunr.app` returned `accepted` with `source=Notarized Developer ID`
+- `xcrun stapler validate Releases/Prunr.app` passed
+- The app is Developer ID signed by `Developer ID Application: Merlin Krämer (PM5QWB5426)`, has hardened runtime enabled, has a stapled notarization ticket, and is universal `arm64` + `x86_64`.
+- Packaged final zip: `dist/releases/v0.1.3-alpha.1/Prunr-0.1.3-alpha.1-build2-macos.zip`.
+- Packaged matching dSYM zip: `dist/releases/v0.1.3-alpha.1/Prunr-0.1.3-alpha.1-build2-dSYM.zip`.
+- Final app SHA-256: `c85c146a3e8489d55345e1342493daad4aaf326d0de06f237adfb1705d3206ca`.
+- Final dSYM SHA-256: `c8c84017da8b3ca21578d69eb4b95baa7bb9f5df9b485bd25a12e27919931c01`.
+- `Releases/` is ignored as a local Xcode export folder; the already-tracked root `Prunr.app` was replaced with the notarized export for release parity.
+- `project.yml` now pins `DEVELOPMENT_TEAM = PM5QWB5426` so regenerated Xcode projects preserve the signing team.
+- First `make test` after pinning the team failed because only the app target was team-signed while the unit-test bundle remained ad-hoc. The test target now uses the same signing team, and the rerun passed with 64 tests and 0 failures.
+- Final monitor sample passed: CPU `0.2%`, RSS `37.3 MB`, category-vs-working-set delta `0.00 B`, status `OK`.
+
 ## Alpha packaging prep review
 
 - Branch state before release prep: `feat/beta-polish-7-10-11` at `cac7668`, with only the pre-existing untracked `.agents/skills/grill-me/`.

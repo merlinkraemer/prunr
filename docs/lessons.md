@@ -19,3 +19,4 @@
 - Panel-open performance has two layers: top-level category inventory and row-level subcategory warmup. Fixing top-level row replacement is not enough if warmup state still disables rows or shows spinners on every hosting-view recreation.
 - Long-running monitors must treat transient SQLite read failures as failed samples, not fatal process errors. App tests, probes, or scans can briefly lock the database, and the monitor should keep soaking after reporting that sample.
 - For Mac alpha packaging, do not rely on a post-build `codesign --options runtime` step alone. Xcode Organizer reads the archive's project build settings, so `ENABLE_HARDENED_RUNTIME = YES` must live in the generated project source (`project.yml`) before archiving.
+- If the app target gets a concrete macOS development team for release archives, the XCTest target needs the same team or test loading can fail with a Team ID mismatch between the host app and test bundle.

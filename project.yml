@@ -26,7 +26,7 @@ targets:
         CURRENT_PROJECT_VERSION: "2"
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)
+        DEVELOPMENT_TEAM: PM5QWB5426
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_PREVIEWS: YES
         GENERATE_INFOPLIST_FILE: YES
@@ -53,6 +53,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.prunr.app.tests
         PRODUCT_NAME: PrunrTests
         SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: PM5QWB5426
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:

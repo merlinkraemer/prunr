@@ -79,6 +79,7 @@ xcuserdata/
 # Build artifacts
 build/
 dist/
+Releases/
 *.o
 *.o.*
 default.profraw
