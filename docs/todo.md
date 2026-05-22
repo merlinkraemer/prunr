@@ -497,6 +497,7 @@ Status at 2026-04-25: build green, 50 tests pass, CI configured. Idle CPU fixed 
 - Distribution blocker: this machine does not have a `Developer ID Application` identity, only `Apple Development: Merlin Krämer (R9PT23U593)`. `spctl --assess --type execute` rejects the local artifact, so external tester shipping still needs Developer ID signing and notarization.
 - Detailed release notes and manual smoke checklist are in [alpha-release-20260522.md](/Users/merlinkraemer/dev/projects/prunr/docs/alpha-release-20260522.md).
 - Follow-up fix during release prep: the old open-ended tmux monitor had exited on a transient SQLite `database is locked` read. `scripts/monitor.mjs` now reports failed samples and keeps running in open-ended mode.
+- Xcode Organizer direct distribution initially reported that Hardened Runtime was not enabled. The project now sets `ENABLE_HARDENED_RUNTIME = YES` through `project.yml`, and a regenerated Release build verifies with code-sign flags `adhoc,runtime`.
 
 ## Scan indicator fix
 

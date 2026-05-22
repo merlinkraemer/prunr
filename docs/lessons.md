@@ -18,3 +18,4 @@
 - Long-running monitors should either omit `--samples` or set a duration explicitly. A fixed sample count is not a wall-clock guarantee when each sample can take longer than the polling interval.
 - Panel-open performance has two layers: top-level category inventory and row-level subcategory warmup. Fixing top-level row replacement is not enough if warmup state still disables rows or shows spinners on every hosting-view recreation.
 - Long-running monitors must treat transient SQLite read failures as failed samples, not fatal process errors. App tests, probes, or scans can briefly lock the database, and the monitor should keep soaking after reporting that sample.
+- For Mac alpha packaging, do not rely on a post-build `codesign --options runtime` step alone. Xcode Organizer reads the archive's project build settings, so `ENABLE_HARDENED_RUNTIME = YES` must live in the generated project source (`project.yml`) before archiving.
