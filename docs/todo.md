@@ -472,6 +472,31 @@ Status at 2026-04-25: build green, 50 tests pass, CI configured. Idle CPU fixed 
 
 ## Test suite expansion
 
+## Alpha packaging prep (2026-05-22)
+
+- [x] Confirm branch/worktree state before release prep
+- [x] Run full XCTest suite
+- [x] Capture final live monitor sample and freshness probe
+- [x] Build a clean Release app artifact
+- [x] Inspect package metadata, signing, hardened runtime, and entitlements
+- [x] Create a distributable alpha zip from the Release app
+- [x] Write alpha release notes and manual tester checklist
+- [x] Commit release-prep docs/metadata changes if tracked changes are produced
+
+## Alpha packaging prep review
+
+- Branch state before release prep: `feat/beta-polish-7-10-11` at `cac7668`, with only the pre-existing untracked `.agents/skills/grill-me/`.
+- `make test` passed with 64 tests and 0 failures.
+- The first freshness probe was invalid because Prunr was not running when it wrote the probe file. After relaunch, the monitor reported process alive, CPU `0.2%`, RSS `66.9 MB`, category-vs-working-set delta `0.00 B`, and status `OK`.
+- The rerun freshness probe passed in 20s with matching working/category growth deltas.
+- Clean Release build passed from a fresh `.build/releaseDerivedData` path.
+- Created local alpha artifacts under `dist/alpha-20260522/`:
+- `Prunr-0.1.3-alpha.1-build2-cac7668-macos-unnotarized.zip`
+- `Prunr-0.1.3-alpha.1-build2-cac7668-dSYM.zip`
+- The staged app is universal `arm64` + `x86_64`, locally ad-hoc signed with hardened runtime (`adhoc,runtime`), and `codesign --verify --deep --strict` passes.
+- Distribution blocker: this machine does not have a `Developer ID Application` identity, only `Apple Development: Merlin Krämer (R9PT23U593)`. `spctl --assess --type execute` rejects the local artifact, so external tester shipping still needs Developer ID signing and notarization.
+- Detailed release notes and manual smoke checklist are in [alpha-release-20260522.md](/Users/merlinkraemer/dev/projects/prunr/docs/alpha-release-20260522.md).
+
 ## Scan indicator fix
 
 - [x] Commit the current checkpoint before changing runtime behavior
