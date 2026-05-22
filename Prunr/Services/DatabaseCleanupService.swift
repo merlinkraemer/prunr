@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import OSLog
 
 /// Service for automatic database cleanup and maintenance
 /// Runs automatically after scans with sensible defaults
@@ -50,6 +51,7 @@ actor DatabaseCleanupService {
 
     private let db = DatabaseManager.shared
     private var isStartupMaintenanceRunning = false
+    private let logger = Logger(subsystem: "com.prunr.app", category: "DatabaseCleanup")
 
     private init() {}
 
@@ -103,7 +105,7 @@ actor DatabaseCleanupService {
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
             }
         } catch {
-            print("[DatabaseCleanupService] Auto-cleanup failed: \(error.localizedDescription)")
+            logger.error("Auto-cleanup failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -155,16 +157,61 @@ actor DatabaseCleanupService {
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
             }
         } catch {
-            print("[DatabaseCleanupService] Startup maintenance failed: \(error.localizedDescription)")
+            logger.error("Startup maintenance failed: \(error.localizedDescription, privacy: .public)")
         }
 
         UserDefaults.standard.set(appVersion, forKey: Self.appVersionKey)
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.startupCleanupTimestampKey)
     }
 
+    /// Deletes snapshots left behind by process death during a full scan.
+    ///
+    /// Normal scan failures are cleaned up by ScanService, but a killed process cannot
+    /// run that handler. Completed scans rebuild the working set with the snapshot
+    /// timestamp; abandoned snapshots are newer than the live working set.
+    @discardableResult
+    func cleanupAbandonedSnapshots() async throws -> Int {
+        guard let dbPool = db.dbPool else { return 0 }
+
+        return try await dbPool.write { db in
+            let snapshotIDs = try Int64.fetchAll(
+                db,
+                sql: """
+                    SELECT s.id
+                    FROM snapshot s
+                    JOIN (
+                        SELECT trackedPathId, MAX(updatedAt) AS latestWorkingSetUpdate
+                        FROM workingSetEntry
+                        GROUP BY trackedPathId
+                    ) ws ON ws.trackedPathId = s.trackedPathId
+                    WHERE s.trackedPathId != ''
+                      AND s.createdAt > ws.latestWorkingSetUpdate
+                    """
+            )
+
+            guard !snapshotIDs.isEmpty else { return 0 }
+
+            let chunkSize = 500
+            var deleted = 0
+            for startIndex in stride(from: 0, to: snapshotIDs.count, by: chunkSize) {
+                let endIndex = min(startIndex + chunkSize, snapshotIDs.count)
+                let chunk = Array(snapshotIDs[startIndex..<endIndex])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+                try db.execute(
+                    sql: "DELETE FROM snapshot WHERE id IN (\(placeholders))",
+                    arguments: StatementArguments(chunk)
+                )
+                deleted += chunk.count
+            }
+
+            return deleted
+        }
+    }
+
     /// Performs an explicit one-shot maintenance pass and forces WAL checkpoint + VACUUM.
     func compactDatabaseNow() async throws -> MaintenanceReport {
         let before = databaseFileSizes()
+        _ = try await cleanupAbandonedSnapshots()
         let backfilled = try await backfillRecentCategorySnapshots()
         let backfilledSubcategories = try await backfillRecentSubcategorySnapshots()
         try await aggregateCategoryTotalsForOldSnapshots()

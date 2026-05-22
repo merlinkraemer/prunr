@@ -1,12 +1,14 @@
 import Foundation
 import SwiftUI
 import ServiceManagement
+import OSLog
 
 /// Observable settings store managing user preferences via UserDefaults
 @MainActor
 @Observable
 final class SettingsStore {
     static let shared = SettingsStore()
+    private static let logger = Logger(subsystem: "com.prunr.app", category: "Settings")
 
     static let defaultScanIgnoreNames: Set<String> = [
         ".DS_Store",
@@ -426,7 +428,7 @@ final class SettingsStore {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            print("[SettingsStore] Failed to update launch at login: \(error)")
+            Self.logger.error("Failed to update launch at login: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

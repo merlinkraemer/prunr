@@ -56,4 +56,16 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             [.applications, .downloads]
         )
     }
+
+    func testInitialSubcategoryWarmupDoesNotRepeatSameCategorySet() {
+        let manager = MenuBarManager()
+
+        manager.preloadInitialSubcategoryBreakdownsIfNeeded(for: [.developer, .downloads])
+        XCTAssertEqual(manager.subcategoryBreakdownLoadingCategories, [.developer, .downloads])
+
+        manager.subcategoryBreakdownLoadingCategories = []
+        manager.preloadInitialSubcategoryBreakdownsIfNeeded(for: [.downloads, .developer])
+
+        XCTAssertTrue(manager.subcategoryBreakdownLoadingCategories.isEmpty)
+    }
 }

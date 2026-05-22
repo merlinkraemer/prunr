@@ -274,21 +274,11 @@ private struct GeneralSettingsTab: View {
 
             Divider()
 
-            VStack(spacing: 6) {
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 28, height: 28)
-
-                Text("Prunr")
-                    .font(.system(size: 13, weight: .semibold))
-
-                Text(appVersionText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            Text(appVersionText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
         }
         .confirmationDialog(
             "Delete all snapshots?",
@@ -639,7 +629,7 @@ private struct ScanRulesSettingsTab: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            List {
+            Form {
                 Section {
                     Text("Use rules to control what gets scanned: stop expanding large folders, or ignore names entirely.")
                         .font(.caption)
@@ -733,7 +723,7 @@ private struct ScanRulesSettingsTab: View {
                     }
                 }
             }
-            .listStyle(.inset)
+            .formStyle(.grouped)
             .hiddenScrollIndicators()
             .disabled(isScanInProgress)
         }

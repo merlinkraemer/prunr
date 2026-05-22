@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import os from "node:os";
 import process from "node:process";
 
@@ -8,6 +11,7 @@ const BUNDLE_ID = "com.prunr.app";
 const PROCESS_NAME = "Prunr";
 const APP_SUPPORT_DIR = `${os.homedir()}/Library/Application Support/Prunr`;
 const DB_PATH = `${APP_SUPPORT_DIR}/prunr.db`;
+const MAIN_BASE_PATH_ID = "B9E2C9D6-7A6C-4A8C-9A73-9DBA3DE27B57";
 const EXPECTED_CATEGORY_COUNT = 8;
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_LOG_LOOKBACK_MINUTES = 15;
@@ -24,7 +28,11 @@ function parseArgs(argv) {
     intervalSeconds: DEFAULT_INTERVAL_SECONDS,
     samples: null,
     logLookbackMinutes: DEFAULT_LOG_LOOKBACK_MINUTES,
-    json: false
+    json: false,
+    freshnessProbe: false,
+    freshnessTimeoutSeconds: 90,
+    freshnessProbeBytes: 8 * 1024 * 1024,
+    freshnessProbeDir: null
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -41,6 +49,18 @@ function parseArgs(argv) {
       break;
     case "--json":
       options.json = true;
+      break;
+    case "--freshness-probe":
+      options.freshnessProbe = true;
+      break;
+    case "--freshness-timeout":
+      options.freshnessTimeoutSeconds = positiveInteger(argv[++index], "--freshness-timeout");
+      break;
+    case "--freshness-size":
+      options.freshnessProbeBytes = positiveInteger(argv[++index], "--freshness-size");
+      break;
+    case "--freshness-dir":
+      options.freshnessProbeDir = argv[++index];
       break;
     case "--help":
       printHelp();
@@ -77,6 +97,13 @@ Options:
   --samples <count>               Stop after N samples
   --log-lookback-minutes <count>  Initial unified-log lookback (default: ${DEFAULT_LOG_LOOKBACK_MINUTES})
   --json                          Emit one JSON object per sample
+  --freshness-probe               Run a one-shot freshness probe: create a file
+                                  under a tracked path and verify Prunr's
+                                  workingSet/category totals update.
+  --freshness-timeout <seconds>   Probe timeout (default: 90)
+  --freshness-size <bytes>        Probe file size in bytes (default: 8 MB)
+  --freshness-dir <path>          Directory under a tracked path to host the
+                                  probe file (default: active configured root)
   --help                          Show this help
 `);
 }
@@ -113,6 +140,7 @@ function readDefaults() {
   const xml = runOptionalCommand("defaults", ["export", BUNDLE_ID, "-"], "");
   return {
     mainBasePath: plistString(xml, "mainBasePath"),
+    trackedPathsData: plistData(xml, "trackedPaths"),
     automaticFullScanIntervalHours: plistInteger(xml, "automaticFullScanIntervalHours"),
     adaptiveFullScanIntervalApplied: plistBool(xml, "adaptiveFullScanIntervalApplied"),
     hasPendingScopeChanges: plistBool(xml, "hasPendingScopeChanges")
@@ -135,6 +163,11 @@ function plistBool(xml, key) {
   if (truePattern.test(xml)) return true;
   if (falsePattern.test(xml)) return false;
   return null;
+}
+
+function plistData(xml, key) {
+  const match = xml.match(new RegExp(`<key>${escapeRegex(key)}</key>\\s*<data>([\\s\\S]*?)<\\/data>`));
+  return match ? match[1].replace(/\s+/g, "") : null;
 }
 
 function decodeXml(value) {
@@ -419,7 +452,7 @@ function buildSample(previous, state, options) {
       );
     }
 
-    if (categories.length !== 0 && categoryUpdatedAt && workingSet.updatedAtDate) {
+    if (delta !== 0 && categories.length !== 0 && categoryUpdatedAt && workingSet.updatedAtDate) {
       const lagSeconds = (workingSet.updatedAtDate.getTime() - categoryUpdatedAt.getTime()) / 1000;
       if (lagSeconds > CATEGORY_STALE_WARNING_SECONDS) {
         warnings.push(
@@ -450,11 +483,9 @@ function buildSample(previous, state, options) {
   }
 
   const autoscanHours = defaults.automaticFullScanIntervalHours;
-  const dueAt = previousSnapshot?.createdAtDate && autoscanHours
-    ? new Date(previousSnapshot.createdAtDate.getTime() + autoscanHours * 3600 * 1000)
-    : latestSnapshot?.createdAtDate && autoscanHours
-      ? new Date(latestSnapshot.createdAtDate.getTime() + autoscanHours * 3600 * 1000)
-      : null;
+  const dueAt = latestSnapshot?.createdAtDate && autoscanHours
+    ? new Date(latestSnapshot.createdAtDate.getTime() + autoscanHours * 3600 * 1000)
+    : null;
 
   const topCategories = categories
     .slice(0, 5)
@@ -582,8 +613,191 @@ function signedNumber(value) {
   return `${value > 0 ? "+" : ""}${value.toLocaleString()}`;
 }
 
+function workingSetSummary() {
+  const rows = readWorkingSet();
+  return rows[0] ?? null;
+}
+
+function workingSetSummaryForTrackedPath(trackedPathId) {
+  const normalized = normalizeUuid(trackedPathId);
+  return readWorkingSet().find((row) => normalizeUuid(row.trackedPathId) === normalized) ?? null;
+}
+
+function categorySummaryForTrackedPath(trackedPathId) {
+  const normalized = normalizeUuid(trackedPathId);
+  const rows = readCategoryTotals().filter((row) => normalizeUuid(row.trackedPathId) === normalized);
+  const totalBytes = rows.reduce((sum, row) => sum + Number(row.totalBytes), 0);
+  const updatedAtDate = rows.reduce((latest, row) => {
+    if (!row.updatedAtDate) return latest;
+    return !latest || row.updatedAtDate > latest ? row.updatedAtDate : latest;
+  }, null);
+
+  return {
+    rowCount: rows.length,
+    totalBytes,
+    updatedAt: updatedAtDate ? updatedAtDate.toISOString() : null,
+    updatedAtDate
+  };
+}
+
+function configuredTrackedPathMap(defaults) {
+  const result = new Map();
+  result.set(normalizeUuid(MAIN_BASE_PATH_ID), defaults.mainBasePath || os.homedir());
+
+  for (const trackedPath of decodeCustomTrackedPaths(defaults.trackedPathsData)) {
+    const id = trackedPath.id;
+    const urlPath = pathFromEncodedURL(trackedPath.url);
+    if (id && urlPath) {
+      result.set(normalizeUuid(id), urlPath);
+    }
+  }
+
+  return result;
+}
+
+function decodeCustomTrackedPaths(dataValue) {
+  if (!dataValue) return [];
+  try {
+    const json = Buffer.from(dataValue, "base64").toString("utf8");
+    const decoded = JSON.parse(json);
+    return Array.isArray(decoded) ? decoded : [];
+  } catch {
+    return [];
+  }
+}
+
+function pathFromEncodedURL(value) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    if (value.startsWith("file://")) {
+      return decodeURIComponent(new URL(value).pathname);
+    }
+    return value;
+  }
+  return null;
+}
+
+function normalizeUuid(value) {
+  return String(value ?? "").toLowerCase();
+}
+
+function allocatedBytesForPath(filePath) {
+  const stats = fs.statSync(filePath);
+  if (Number.isFinite(stats.blocks) && stats.blocks > 0) {
+    return stats.blocks * 512;
+  }
+  return stats.size;
+}
+
+function deriveFreshnessProbeTarget(options, baseline) {
+  const trackedPathId = baseline.trackedPathId;
+  if (options.freshnessProbeDir) {
+    return {
+      trackedPathId,
+      rootPath: null,
+      probeDir: path.resolve(options.freshnessProbeDir)
+    };
+  }
+
+  const defaults = readDefaults();
+  const pathsById = configuredTrackedPathMap(defaults);
+  const rootPath = pathsById.get(normalizeUuid(trackedPathId));
+  if (!rootPath) {
+    console.error(
+      `freshness probe: cannot derive filesystem root for trackedPathId=${trackedPathId}; pass --freshness-dir under that tracked path`
+    );
+    process.exit(2);
+  }
+
+  return {
+    trackedPathId,
+    rootPath,
+    probeDir: path.join(rootPath, "prunr-monitor-probe")
+  };
+}
+
+async function runFreshnessProbe(options) {
+  const baseline = workingSetSummary();
+  if (!baseline) {
+    console.error("freshness probe: no workingSet rows; run an initial scan first");
+    process.exit(2);
+  }
+  const target = deriveFreshnessProbeTarget(options, baseline);
+  const baselineCategory = categorySummaryForTrackedPath(target.trackedPathId);
+  if (baselineCategory.rowCount === 0) {
+    console.error(`freshness probe: no workingSetCategoryTotal rows for trackedPathId=${target.trackedPathId}`);
+    process.exit(2);
+  }
+
+  const probeDir = target.probeDir;
+  fs.mkdirSync(probeDir, { recursive: true });
+
+  const probeFile = path.join(
+    probeDir,
+    `freshness-${Date.now()}-${process.pid}.bin`
+  );
+  const probeBytes = options.freshnessProbeBytes;
+
+  console.log(`[probe] trackedPathId=${target.trackedPathId} root=${target.rootPath ?? "(custom --freshness-dir)"}`);
+  console.log(`[probe] baseline working rows=${baseline.rowCount} bytes=${baseline.totalBytes} updatedAt=${baseline.updatedAt}`);
+  console.log(`[probe] baseline categories rows=${baselineCategory.rowCount} bytes=${baselineCategory.totalBytes} updatedAt=${baselineCategory.updatedAt}`);
+  console.log(`[probe] writing ${probeBytes}B to ${probeFile}`);
+
+  fs.writeFileSync(probeFile, randomBytes(probeBytes));
+  const expectedProbeBytes = allocatedBytesForPath(probeFile);
+  console.log(`[probe] allocated ${expectedProbeBytes}B on disk`);
+
+  const start = Date.now();
+  const deadline = start + options.freshnessTimeoutSeconds * 1000;
+  let detected = null;
+  while (Date.now() < deadline) {
+    await sleep(2000);
+    const current = workingSetSummaryForTrackedPath(target.trackedPathId);
+    const currentCategory = categorySummaryForTrackedPath(target.trackedPathId);
+    if (!current) continue;
+
+    const workingDelta = Number(current.totalBytes) - Number(baseline.totalBytes);
+    const categoryDelta = Number(currentCategory.totalBytes) - Number(baselineCategory.totalBytes);
+    if (workingDelta >= expectedProbeBytes && categoryDelta >= expectedProbeBytes) {
+      detected = { observedAt: Date.now(), working: current, category: currentCategory };
+      break;
+    }
+  }
+
+  let exitCode = 0;
+  if (detected) {
+    const latencySeconds = Math.round((detected.observedAt - start) / 1000);
+    const workingDelta = Number(detected.working.totalBytes) - Number(baseline.totalBytes);
+    const categoryDelta = Number(detected.category.totalBytes) - Number(baselineCategory.totalBytes);
+    console.log(
+      `[probe] PASS detected probe within ${latencySeconds}s: workingRows=${detected.working.rowCount} workingBytes=${detected.working.totalBytes} workingDelta=${workingDelta} categoryBytes=${detected.category.totalBytes} categoryDelta=${categoryDelta}`
+    );
+  } else {
+    const final = workingSetSummaryForTrackedPath(target.trackedPathId);
+    const finalCategory = categorySummaryForTrackedPath(target.trackedPathId);
+    console.error(
+      `[probe] FAIL no working/category update after ${options.freshnessTimeoutSeconds}s; final working rows=${final?.rowCount} bytes=${final?.totalBytes} updatedAt=${final?.updatedAt}; final categories rows=${finalCategory.rowCount} bytes=${finalCategory.totalBytes} updatedAt=${finalCategory.updatedAt}`
+    );
+    exitCode = 1;
+  }
+
+  try {
+    fs.rmSync(probeFile, { force: true });
+  } catch {
+    // best-effort cleanup
+  }
+
+  process.exit(exitCode);
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+
+  if (options.freshnessProbe) {
+    await runFreshnessProbe(options);
+    return;
+  }
+
   const state = {
     stallSamples: 0,
     rssHistory: [],
@@ -600,17 +814,30 @@ async function main() {
   let sampleCount = 0;
 
   while (true) {
-    const sample = buildSample(previous, state, options);
-    if (options.json) {
-      const serializable = { ...sample };
-      delete serializable.categoryMap;
-      console.log(JSON.stringify(serializable));
-    } else {
-      printSample(sample);
+    try {
+      const sample = buildSample(previous, state, options);
+      if (options.json) {
+        const serializable = { ...sample };
+        delete serializable.categoryMap;
+        console.log(JSON.stringify(serializable));
+      } else {
+        printSample(sample);
+      }
+
+      previous = sample;
+      sampleCount += 1;
+    } catch (error) {
+      if (options.samples) {
+        throw error;
+      }
+      const message = `sample failed at ${new Date().toISOString()}: ${error.message}`;
+      if (options.json) {
+        console.log(JSON.stringify({ at: new Date().toISOString(), warnings: [message] }));
+      } else {
+        console.error(`warn      ${message}`);
+      }
     }
 
-    previous = sample;
-    sampleCount += 1;
     if (options.samples && sampleCount >= options.samples) break;
     await sleep(options.intervalSeconds * 1000);
   }

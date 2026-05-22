@@ -3,6 +3,63 @@ import GRDB
 @testable import Prunr
 
 final class BaselineServiceRegressionTests: PrunrTestCase {
+    func testAcceptGrowthPromotesWorkingSetWithoutFilesystemFreeSpace() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let trackedPath = TrackedPath(
+                id: trackedPathId,
+                url: URL(fileURLWithPath: "/Users/tester/dev", isDirectory: true),
+                displayName: "dev"
+            )
+            let liveFile = trackedPath.url.appendingPathComponent("app/.build/output.bin")
+
+            _ = try await DatabaseManager.shared.replaceWorkingSetSubtree(
+                trackedPathId: trackedPathId,
+                rootPath: trackedPath.url.path,
+                entries: [
+                    ScanResult(path: liveFile.path, sizeBytes: 128_000)
+                ]
+            )
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [.init(category: .developer, subcategory: .buildArtifacts): 128_000],
+                at: Date()
+            )
+
+            try await BaselineService.shared.acceptGrowth(for: trackedPath)
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let state = try await dbPool.read { db in
+                let snapshotCount = try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM snapshot WHERE trackedPathId = ?",
+                    arguments: [trackedPathId.uuidString]
+                ) ?? 0
+                let freeBytesCount = try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM snapshot WHERE trackedPathId = ? AND freeBytes IS NOT NULL",
+                    arguments: [trackedPathId.uuidString]
+                ) ?? 0
+                let snapshotBytes = try Int64.fetchOne(
+                    db,
+                    sql: """
+                        SELECT COALESCE(SUM(se.sizeBytes), 0)
+                        FROM snapshotEntry se
+                        JOIN snapshot s ON s.id = se.snapshotId
+                        WHERE s.trackedPathId = ?
+                        """,
+                    arguments: [trackedPathId.uuidString]
+                ) ?? 0
+                let journalCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM growthJournalBucket") ?? 0
+                return (snapshotCount, freeBytesCount, snapshotBytes, journalCount)
+            }
+
+            XCTAssertEqual(state.0, 1)
+            XCTAssertEqual(state.1, 0)
+            XCTAssertEqual(state.2, 128_000)
+            XCTAssertEqual(state.3, 0)
+        }
+    }
+
     func testFirstBaselineClearsStaleRealtimeStateForTrackedPath() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrBaselineFresh")

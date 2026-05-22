@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import OSLog
 
 actor RecentChangeService {
     static let shared = RecentChangeService()
@@ -7,12 +8,13 @@ actor RecentChangeService {
     private let scanner = FileScanner()
     private let db = DatabaseManager.shared
     private let growthJournalService = GrowthJournalService.shared
+    private let logger = Logger(subsystem: "com.prunr.app", category: "RecentChanges")
 
     private init() {}
 
-    /// App-internal locations that must never feed incremental growth deltas.
+    /// Dev-only build-output fragments excluded as a defense in depth. Prunr's
+    /// real operational state is sourced from `PrunrInternalPaths`.
     private let internalPathFragments: [String] = [
-        "/Library/Application Support/Prunr/",
         "/.build/derivedData/"
     ]
     private static let stagingBatchSize = 1000
@@ -48,7 +50,7 @@ actor RecentChangeService {
             let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
             guard !snapshots.isEmpty else { return .noChanges }
         } catch {
-            print("[RecentChangeService] Failed checking snapshot history: \(error)")
+            logger.error("Failed checking snapshot history: \(error.localizedDescription, privacy: .public)")
             return .noChanges
         }
 
@@ -83,10 +85,9 @@ actor RecentChangeService {
                 let deltas: [DatabaseManager.JournalDeltaKey: Int64]
                 switch target {
                 case .file(let result):
-                    deltas = try await db.replaceWorkingSetSubtree(
+                    deltas = try await db.replaceWorkingSetFile(
                         trackedPathId: trackedPath.id,
-                        rootPath: target.rootPath,
-                        entries: [result],
+                        entry: result,
                         updatedAt: scanTimestamp
                     )
                 case .subtree(let root):
@@ -97,10 +98,9 @@ actor RecentChangeService {
                         updatedAt: scanTimestamp
                     )
                 case .removal:
-                    deltas = try await db.replaceWorkingSetSubtree(
+                    deltas = try await db.removeWorkingSetPathOrSubtree(
                         trackedPathId: trackedPath.id,
                         rootPath: target.rootPath,
-                        entries: [],
                         updatedAt: scanTimestamp
                     )
                 }
@@ -108,7 +108,7 @@ actor RecentChangeService {
                     mergedDeltas[key, default: 0] += delta
                 }
             } catch {
-                print("[RecentChangeService] Failed refreshing target \(target.rootPath): \(error)")
+                logger.error("Failed refreshing target \(target.rootPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -122,7 +122,7 @@ actor RecentChangeService {
             )
             return .updated(deltas: mergedDeltas)
         } catch {
-            print("[RecentChangeService] Failed recording journal deltas: \(error)")
+            logger.error("Failed recording journal deltas: \(error.localizedDescription, privacy: .public)")
             return .noChanges
         }
     }
@@ -282,6 +282,9 @@ actor RecentChangeService {
     }
 
     private func shouldIgnoreInternalPath(_ path: String) -> Bool {
+        if PrunrInternalPaths.isInternalPath(path) {
+            return true
+        }
         for fragment in internalPathFragments where path.contains(fragment) {
             return true
         }

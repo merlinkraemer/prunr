@@ -79,7 +79,7 @@ final class DropdownPanel: NSPanel {
 
 @MainActor
 @Observable
-final class MenuBarManager: NSObject, NSPopoverDelegate {
+final class MenuBarManager: NSObject {
     private static func inventorySortsBefore(_ lhs: CategoryInventoryItem, _ rhs: CategoryInventoryItem) -> Bool {
         if lhs.currentSizeBytes == rhs.currentSizeBytes {
             return lhs.category.displayName.localizedStandardCompare(rhs.category.displayName) == .orderedAscending
@@ -88,7 +88,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private var statusItem: NSStatusItem?
-    var popover: NSPopover?
     var panel: DropdownPanel?
     var isPopoverShown = false
     var usePanel = true // Use panel instead of popover for native dropdown look
@@ -98,6 +97,12 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     private let clickDebounceInterval: TimeInterval = 0.1 // 100ms
 
     private static let logger = Logger(subsystem: "com.prunr.MenuBarManager", category: "Reconciliation")
+    private static let enableSilentFullReconciliation = true
+    private static let enableAutomaticFileWatcher = true
+    private static let requiresFullRescanCooldown: TimeInterval = 30 * 60
+    private static let maxPendingRecentChangePaths = 50_000
+    private static let deferredCleanupDelay: TimeInterval = 5 * 60
+    private static let cleanupSkipAfterFullScanWindow: TimeInterval = 30
 
     /// Baseline service for growth tracking
     private let baselineService = BaselineService.shared
@@ -126,6 +131,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var stableTotalBytes: Int64 {
         stableCategories.reduce(0) { $0 + $1.currentSizeBytes }
     }
+    var hasDisplayableInventory: Bool {
+        !allCategories.isEmpty
+    }
     var reconciliationResult: DiskAccountingResult? = nil // Free-space accounting data
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
     var selectedInventoryCategory: CategoryInventoryItem? = nil // New inventory-based drill-down selection
@@ -134,13 +142,14 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// While true, `reconcileDrillDownSelection()` is skipped so inventory refreshes do not collapse drill-down mid-slide.
     var isDrillDownTransitionAnimating: Bool = false
-    /// Gate for watchers/silent reconciliations touching protected folders.
+    /// Gate for full traversals that touch protected folders.
     var isPermissionConfirmedForProtectedTraversal = false
     /// Most recent paths that failed with permission errors during runtime operations.
     var runtimeBlockedLocations: [String] = []
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
     var hasCompletedInitialSubcategoryWarmup = false
     private var subcategoryBreakdownCacheGenerationByCategory: [GrowthCategory: UInt64] = [:]
+    private var initialSubcategoryWarmupRequestSignature: String?
     var subcategoryBreakdownLoadingCategories: Set<GrowthCategory> = []
     var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
     var growthContributorCacheGeneration: UInt64 = 0
@@ -264,9 +273,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanCurrentPathDisplay = displayPath
         scanProgress = "Scanning \(displayPath)"
 
-        // Live category fill-in: merge partial totals from this path into the aggregate.
-        // Only applies when the progress update includes a category snapshot (~every 2s).
-        if let partialTotals = progress.categoryTotals, !partialTotals.isEmpty {
+        // Live category fill-in: merge partial totals from foreground scans into the aggregate.
+        // Background scans keep the last complete inventory visible.
+        if shouldApplyPartialScanInventory,
+           let partialTotals = progress.categoryTotals,
+           !partialTotals.isEmpty {
             applyPartialCategoryTotals(from: trackedPath, totals: partialTotals)
         }
     }
@@ -424,18 +435,35 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     // Event-driven lightweight scan automation
     @ObservationIgnored
     nonisolated(unsafe) private var fileEventsWatcher: FSEventsWatcher?
-    private var watchedPaths: [String] = []
+    private(set) var watchedPaths: [String] = []
     @ObservationIgnored
     nonisolated(unsafe) private var recentChangeTask: Task<Void, Never>?
+    private var recentChangeTaskGeneration = 0
+    @ObservationIgnored
+    nonisolated(unsafe) private var reconciliationBackstopTask: Task<Void, Never>?
+    @ObservationIgnored
+    nonisolated(unsafe) private var deferredAutoCleanupTask: Task<Void, Never>?
     private var isInventoryRefreshInProgress = false
     private var pendingRecentChangePaths: Set<URL> = []
     private var pendingRecentChangeRequiresFullRefresh = false
+    private var lastFullScanCompletedAt: Date?
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
     private var isUnderDiskPressure = false
     private var lastFileEventAt: Date?
     var hasPendingRecentChanges = false
+    /// Set when a watcher batch was classified as dirty (large/dropped/dir-heavy).
+    /// The view treats this as a soft "changes pending" indicator until the next
+    /// reconciliation pass clears it.
+    private(set) var pendingDirtyReason: String?
     var isProcessingRecentChanges = false
+    /// Tracks how many consecutive dirty-root reconciliations have fired without
+    /// a clean window between them. Used to back off the delay between refreshes.
+    private var dirtyRootConsecutiveCount = 0
+    /// Set while a dirty-root refresh is scheduled but has not yet fired.
+    private var dirtyRefreshScheduled = false
+    private(set) var lastScheduledRecentChangeRefreshDelay: TimeInterval?
+    private static let reconciliationBusyRetryDelay: TimeInterval = 5 * 60
     /// True when incremental deltas have been applied since the last full scan snapshot.
     /// Drill-down reads should then prefer the live working set over the stale snapshot.
     private var hasIncrementalDeltasSinceSnapshot = false
@@ -447,6 +475,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     var isAcceptingGrowth = false
     var lastAcceptedGrowthAt: Date? = nil
     private var suppressGrowthIndicators = false
+    private var shouldApplyPartialScanInventory = false
 
     // MARK: - Scan Progress AsyncStream
 
@@ -548,22 +577,15 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             button.alphaValue = 1.0
         }
 
-        // Configure popover (fallback)
-        popover = NSPopover()
-        popover?.contentSize = NSSize(width: 320, height: 480)
-        popover?.behavior = .transient
-        popover?.delegate = self
-        popover?.contentViewController = NSHostingController(rootView: MenuBarView(manager: self))
-
-        // Configure panel for native dropdown look (no arrow)
-        let panelContent = NSHostingView(rootView: MenuBarView(manager: self))
-        panelContent.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
-
-        panel = DropdownPanel(contentView: panelContent) { [weak self] in
+        // Panel uses a placeholder NSView — NSHostingView<MenuBarView> is created
+        // lazily in togglePopover() on first show. This prevents the SwiftUI view tree
+        // from being alive in the hidden NSPanel, which reduces CA display cycle overhead.
+        let placeholder = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        panel = DropdownPanel(contentView: placeholder) { [weak self] in
             self?.isPopoverShown = false
-            // Reset auto-close suspension state when panel closes via focus loss
             self?.panelAutoCloseSuspensionCount = 0
             self?.panel?.closesOnResignKey = true
+            self?.uninstallPanelHostingView()
         }
     }
 
@@ -636,52 +658,42 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
     }
 
-    @objc private func openSettings() {
+    @objc func openSettings() {
         // Close popover if open
-        if let popover = popover, popover.isShown {
-            popover.performClose(nil)
+        if let panel = panel, panel.isVisible {
+            panel.orderOut(nil)
             isPopoverShown = false
+            uninstallPanelHostingView()
         }
 
-        // Small delay to ensure popover is fully closed
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        // Open settings window programmatically.
+        // Since we don't use SwiftUI's Settings scene (to avoid creating an NSHostingView
+        // that participates in the CA display cycle), we create the settings window on demand.
+        // We're already on the main thread (@MainActor), so no dispatch needed.
 
-            // Bring Settings window to front immediately - ISS-024
-            // Use a very short delay (50ms) to let window creation complete
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                NSApp.activate()
-
-                // Find settings window by title
-                if let settingsWindow = NSApp.windows.first(where: {
-                    $0.title.contains("Settings")
-                }) {
-                    // Ensure window behavior is correct
-                    settingsWindow.hidesOnDeactivate = false
-
-                    // Temporarily elevate window level to bring to front
-                    let originalLevel = settingsWindow.level
-                    settingsWindow.level = .floating
-                    settingsWindow.makeKeyAndOrderFront(nil)
-                    settingsWindow.orderFrontRegardless()
-
-                    // Reset to normal level immediately after focusing (no delay)
-                    settingsWindow.level = originalLevel
-                } else {
-                    // If window not found yet, try once more with a longer delay
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        NSApp.activate()
-                        if let settingsWindow = NSApp.windows.first(where: { $0.title.contains("Settings") }) {
-                            settingsWindow.hidesOnDeactivate = false
-                            settingsWindow.level = .floating
-                            settingsWindow.makeKeyAndOrderFront(nil)
-                            settingsWindow.orderFrontRegardless()
-                            settingsWindow.level = .normal
-                        }
-                    }
-                }
-            }
+        // Check if settings window already exists
+        if let existing = NSApp.windows.first(where: { $0.title.contains("Prunr Settings") }) {
+            NSApp.activate()
+            existing.makeKeyAndOrderFront(nil)
+            existing.orderFrontRegardless()
+            return
         }
+
+        let settingsView = SettingsView()
+        let hostingController = NSHostingController(rootView: settingsView)
+        hostingController.title = "Prunr Settings"
+
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Prunr Settings"
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.isReleasedWhenClosed = true
+        window.setFrame(NSRect(x: 0, y: 0, width: 400, height: 350), display: true)
+        window.center()
+        window.hidesOnDeactivate = false
+
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     @objc private func resetBaseline() {
@@ -695,7 +707,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             try await baselineService.resetBaseline()
             await refreshAfterBaselineReset()
         } catch {
-            print("[MenuBarManager] Failed to reset baseline: \(error)")
+            Self.logger.error("Failed to reset baseline: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -849,8 +861,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         noBaseline = false
         filesScanned = 0
         isAnalyzingChanges = false
-        recentChangeTask?.cancel()
-        recentChangeTask = nil
+        if !isProcessingRecentChanges {
+            recentChangeTask?.cancel()
+            recentChangeTask = nil
+        }
         pendingRecentChangePaths.removeAll()
         pendingRecentChangeRequiresFullRefresh = false
         hasPendingRecentChanges = false
@@ -863,6 +877,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         scanEstimatedTotalFiles = 0
         hasReliableScanProgressEstimate = false
         partialScanCategoryTotalsByPathID = [:] // Reset live-fill data for this scan session
+        shouldApplyPartialScanInventory = !isAutomatic || !hasDisplayableInventory
 
         // Record scan start time for minimum display duration
         let startTime = Date()
@@ -926,10 +941,6 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             completedSuccessfully = true
             configureFileWatcherIfNeeded()
 
-            // Flush any FSEvents that accumulated during the scan so they're
-            // processed promptly rather than sitting in the coalescing queue.
-            fileEventsWatcher?.flush()
-
             let snapshotTimestamp = aggregation.latestSnapshotDate ?? Date()
             if !growingCategories.isEmpty {
                 lastDetectedChangeAt = snapshotTimestamp
@@ -972,7 +983,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                     errorMessage = "Permission denied: \(path)"
                 }
             } else {
-                print("[MenuBarManager] Error loading inventory: \(error)")
+                Self.logger.error("Error loading inventory: \(error.localizedDescription, privacy: .public)")
                 if !isAutomatic {
                     errorMessage = "Scan failed: \(error.localizedDescription)"
                 }
@@ -990,15 +1001,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         }
 
         if !completedSnapshotsByPath.isEmpty && !wasCancelled {
-            isCleaningUp = true
-            scanProgress = "Cleaning up..."
-            scanCurrentPath = ""
-            scanCurrentPathDisplay = ""
-            scanProgressPercentage = 1.0
-            hasReliableScanProgressEstimate = true
-            await DatabaseCleanupService.shared.performAutoCleanup()
             await growthJournalService.prune(retentionDays: SettingsStore.shared.categoryHistoryRetentionDays)
-            isCleaningUp = false
+            scheduleDeferredAutoCleanup()
         }
 
         let scanWallDuration = Date().timeIntervalSince(startTime)
@@ -1018,17 +1022,31 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isAnalyzingChanges = false
         scanStartTime = nil
         partialScanCategoryTotalsByPathID = [:] // Clear live-fill data after scan completes
+        shouldApplyPartialScanInventory = false
         if completedSuccessfully, !wasCancelled {
             lastAutomaticScanAt = completedSnapshotsByPath.values.map(\.createdAt).max() ?? Date()
+            lastFullScanCompletedAt = Date()
             SettingsStore.shared.applyAdaptiveFullScanIntervalIfNeeded(scanDuration: scanWallDuration)
+            scheduleReconciliationBackstop()
         }
 
         await updatePathSize()
 
         // Flush any FSEvents that arrived during the scan
-        if pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty {
-            scheduleRecentChangeRefreshTask(after: 0.5)
+        schedulePendingRecentChangeRefresh()
+    }
+
+    private var lastInventoryFromSnapshotLoadedAt: Date?
+
+    /// Panel-open variant: trusts already-displayable inventory so opening the
+    /// popover does not re-aggregate snapshots just because time passed.
+    func loadInventoryFromLatestSnapshotIfStale() async {
+        if hasDisplayableInventory,
+           lastInventoryFromSnapshotLoadedAt != nil,
+           !currentInventorySnapshotIDsByPath.isEmpty {
+            return
         }
+        await loadInventoryFromLatestSnapshot()
     }
 
     func loadInventoryFromLatestSnapshot(
@@ -1036,7 +1054,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         invalidateSubcategoryCache: Bool = false
     ) async {
         guard beginInventoryRefresh() else { return }
-        defer { endInventoryRefresh() }
+        defer {
+            endInventoryRefresh()
+            lastInventoryFromSnapshotLoadedAt = Date()
+        }
 
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
@@ -1085,6 +1106,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isReconciling = false
         await loadInventory(isAutomatic: true)
         lastReconciliationAt = Date()
+        scheduleReconciliationBackstop()
     }
 
     /// Accepts current growth by resetting baselines to the current working set sizes.
@@ -1144,6 +1166,10 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     /// Silently reconciles the working set against a fresh full scan.
     /// No spinners, no status text changes — applies corrections as incremental patches.
     func performSilentReconciliation() async {
+        guard Self.enableSilentFullReconciliation else {
+            Self.logger.info("Silent full reconciliation disabled")
+            return
+        }
         guard isPermissionConfirmedForProtectedTraversal else { return }
         guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else { return }
         isReconciling = true
@@ -1175,18 +1201,47 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         lastReconciliationAt = Date()
     }
 
-    /// Kicks off silent reconciliation if the last one exceeds the user's configured scan interval.
-    func reconcileIfStale() {
+    private func startSilentReconciliationIfStale() {
+        guard Self.enableSilentFullReconciliation else { return }
         guard isPermissionConfirmedForProtectedTraversal else { return }
         guard !noBaseline else { return }
+        guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else {
+            scheduleReconciliationBackstop(minimumDelay: Self.reconciliationBusyRetryDelay)
+            return
+        }
         let staleThreshold = SettingsStore.shared.automaticFullScanInterval
         if let lastReconciliation = lastReconciliationAt ?? lastAutomaticScanAt,
            Date().timeIntervalSince(lastReconciliation) < staleThreshold {
             return
         }
 
+        guard reconciliationTask == nil else { return }
         reconciliationTask = Task { @MainActor in
             await performSilentReconciliation()
+            scheduleReconciliationBackstop()
+        }
+    }
+
+    /// Owns the periodic full-scan backstop independently from menu appearance.
+    private func scheduleReconciliationBackstop(minimumDelay: TimeInterval = 0) {
+        reconciliationBackstopTask?.cancel()
+        reconciliationBackstopTask = nil
+
+        guard Self.enableSilentFullReconciliation else { return }
+        guard isPermissionConfirmedForProtectedTraversal else { return }
+        guard !noBaseline else { return }
+
+        let staleThreshold = SettingsStore.shared.automaticFullScanInterval
+        let referenceDate = lastReconciliationAt ?? lastAutomaticScanAt ?? Date()
+        let delay = max(minimumDelay, staleThreshold - Date().timeIntervalSince(referenceDate))
+
+        reconciliationBackstopTask = Task { @MainActor in
+            defer { reconciliationBackstopTask = nil }
+            if delay > 0 {
+                try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+            }
+            guard !Task.isCancelled else { return }
+            startSilentReconciliationIfStale()
         }
     }
 
@@ -1266,6 +1321,20 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 _ = await loadSubcategoryBreakdown(for: category)
             }
         }
+    }
+
+    func preloadInitialSubcategoryBreakdownsIfNeeded(for categories: [GrowthCategory]) {
+        guard !hasCompletedInitialSubcategoryWarmup else { return }
+
+        let uniqueCategories = Array(Set(categories)).sorted { $0.rawValue < $1.rawValue }
+        guard !uniqueCategories.isEmpty else { return }
+
+        let signature = "\(growthContributorCacheGeneration):" +
+            uniqueCategories.map(\.rawValue).joined(separator: "|")
+        guard initialSubcategoryWarmupRequestSignature != signature else { return }
+
+        initialSubcategoryWarmupRequestSignature = signature
+        preloadSubcategoryBreakdowns(for: uniqueCategories)
     }
 
     func loadSubcategoryBreakdown(for category: GrowthCategory) async -> [SubcategoryGroup] {
@@ -1530,6 +1599,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         if hasSnapshots {
             noBaseline = false
+            if lastFullScanCompletedAt == nil {
+                await checkBaseline()
+            }
             return
         }
 
@@ -1564,6 +1636,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     /// Stops the current scan
     func stopScan() async {
+        reconciliationTask?.cancel()
+        reconciliationTask = nil
+        isReconciling = false
         await ScanService.shared.cancelScan()
         scanProgress = "Stopping..."
 
@@ -1599,6 +1674,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             }
         }
         noBaseline = !hasAnySnapshot
+        if hasAnySnapshot, lastFullScanCompletedAt == nil {
+            lastFullScanCompletedAt = lastAutomaticScanAt
+        }
         updateMonitoredPathName()
         configureFileWatcherIfNeeded()
     }
@@ -1609,6 +1687,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         let accessReport = await PermissionsService.shared.evaluateScanScopeAccessAsync(scanRootURLs: scanRoots)
         isPermissionConfirmedForProtectedTraversal = accessReport.isGranted
         await checkBaseline(trackedPathsOverride: trackedPaths)
+        scheduleReconciliationBackstop()
     }
 
     /// Loads just category totals from the pre-computed workingSetCategoryTotal table.
@@ -1632,10 +1711,31 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                                   growthTrend: nil, recentGrowthStory: nil)
         }.sorted(by: Self.inventorySortsBefore)
 
-        // All appear as stable initially (no growth stories loaded yet)
-        allCategories = items
+        applyQuickInventory(items)
         noBaseline = false
         return true
+    }
+
+    private func applyQuickInventory(_ items: [CategoryInventoryItem]) {
+        let quickTotalsByCategory = Dictionary(uniqueKeysWithValues: items.map { ($0.category, $0.currentSizeBytes) })
+        let currentTotalsByCategory = Dictionary(uniqueKeysWithValues: allCategories.map { ($0.category, $0.currentSizeBytes) })
+
+        guard quickTotalsByCategory != currentTotalsByCategory else {
+            return
+        }
+
+        let existingItemsByCategory = Dictionary(uniqueKeysWithValues: allCategories.map { ($0.category, $0) })
+        let mergedItems = items.map { item in
+            guard var existing = existingItemsByCategory[item.category] else {
+                return item
+            }
+            existing.currentSizeBytes = item.currentSizeBytes
+            return existing
+        }.sorted(by: Self.inventorySortsBefore)
+
+        withAnimationsDisabled {
+            allCategories = mergedItems
+        }
     }
 
     private func applyInventory(
@@ -1672,6 +1772,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             subcategoryBreakdownCacheGenerationByCategory = [:]
             subcategoryBreakdownLoadingCategories = []
             hasCompletedInitialSubcategoryWarmup = false
+            initialSubcategoryWarmupRequestSignature = nil
         } else {
             let validCategories = Set(allCategories.map(\.category))
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
@@ -1712,6 +1813,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             currentGrowthBaselineSnapshotIDsByPath = [:]
             hasIncrementalDeltasSinceSnapshot = false
             liveWorkingSetDrillDownCategories = []
+            initialSubcategoryWarmupRequestSignature = nil
         }
     }
 
@@ -1906,46 +2008,66 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         togglePopover()
     }
 
+    /// Tracks whether the panel's SwiftUI hosting view has been installed.
+    private var panelHostingViewInstalled = false
+
+    private func uninstallPanelHostingView() {
+        guard panelHostingViewInstalled else { return }
+        panelHostingViewInstalled = false
+
+        let placeholder = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        if let visualEffectView = panel?.contentView as? NSVisualEffectView {
+            visualEffectView.subviews.forEach { $0.removeFromSuperview() }
+            visualEffectView.addSubview(placeholder)
+        } else {
+            panel?.contentView = placeholder
+        }
+    }
+
     @objc private func togglePopover() {
         guard let button = statusItem?.button else {
             return
         }
 
         if let panel = panel, panel.isVisible {
-            // Panel is shown, close it
             panel.orderOut(nil)
             isPopoverShown = false
-
-            // Reset auto-close suspension state when manually closing
             panelAutoCloseSuspensionCount = 0
             panel.closesOnResignKey = true
+            uninstallPanelHostingView()
         } else {
-            // Panel is not shown, show it
             guard let buttonWindow = button.window,
                   buttonWindow.screen != nil else {
                 return
             }
 
-            // Ensure auto-close is enabled when opening
+            // Lazily install the SwiftUI hosting view on first show.
+            // This defers MenuBarView creation until the user opens the panel,
+            // preventing continuous CA layout passes while the panel is hidden.
+            if !panelHostingViewInstalled {
+                panelHostingViewInstalled = true
+                let panelContent = NSHostingView(rootView: MenuBarView(manager: self))
+                panelContent.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
+                if let visualEffectView = panel?.contentView as? NSVisualEffectView {
+                    visualEffectView.subviews.forEach { $0.removeFromSuperview() }
+                    visualEffectView.addSubview(panelContent)
+                } else {
+                    panel?.contentView = panelContent
+                }
+            }
+
             panelAutoCloseSuspensionCount = 0
             panel?.closesOnResignKey = true
 
-            // Activate app to ensure panel comes to front
             NSApp.activate()
 
-            // Get button frame in screen coordinates
             let buttonFrameInWindow = button.convert(button.bounds, to: nil)
             let buttonFrameInScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
 
-            // Position panel below the button, aligned to right edge
             let panelWidth: CGFloat = 320
             let panelHeight: CGFloat = 480
 
-            // Right-align panel with button
             let panelX = buttonFrameInScreen.origin.x + buttonFrameInScreen.size.width - panelWidth
-
-            // Position below menu bar (button bottom is at top of screen area)
-            // Menu bar is at the top of screenFrame, button is below it
             let panelY = buttonFrameInScreen.origin.y - panelHeight - 5
 
             let panelFrame = NSRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight)
@@ -2123,9 +2245,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             if let panel = panel, panel.isVisible {
                 panel.orderOut(nil)
             }
-            // Also close popover for legacy support
-            popover?.performClose(nil)
             isPopoverShown = false
+            uninstallPanelHostingView()
 
             // Reset auto-close suspension state when manually closing
             panelAutoCloseSuspensionCount = 0
@@ -2316,41 +2437,26 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 try "Test config file".data(using: .utf8)?.write(to: configFile)
             }
 
-            print("[MenuBarManager] Created \(Double(totalCreated) / 1024.0 / 1024.0) MB of test data")
-            print("[MenuBarManager] Categories: Library/Caches, Downloads, node_modules, .Trash, other")
-            print("[MenuBarManager] Big file: 105 MB file in Downloads (tests >= 100MB threshold)")
-            print("[MenuBarManager] Boundary test projects: 7 projects with comprehensive boundary folders")
-            print("[MenuBarManager]   - project_js: .git, node_modules, src")
-            print("[MenuBarManager]   - project_py: .git, .venv, venv, src")
-            print("[MenuBarManager]   - project_rust: .git, target, src")
-            print("[MenuBarManager]   - project_ios: .git, DerivedData, .swiftpm, Pods, src")
-            print("[MenuBarManager]   - project_build: .git, build, .build, src")
-            print("[MenuBarManager]   - project_deps: .git, vendor, third_party, src")
-            print("[MenuBarManager]   - project_cache: .git, .cache, Cache, src")
+            Self.logger.info("Created \(Double(totalCreated) / 1024.0 / 1024.0) MB of test data")
+            Self.logger.info("Categories: Library/Caches, Downloads, node_modules, .Trash, other")
+            Self.logger.info("Big file: 105 MB file in Downloads (tests >= 100MB threshold)")
+            Self.logger.info("Boundary test projects: 7 projects with comprehensive boundary folders")
+            Self.logger.info("  - project_js: .git, node_modules, src")
+            Self.logger.info("  - project_py: .git, .venv, venv, src")
+            Self.logger.info("  - project_rust: .git, target, src")
+            Self.logger.info("  - project_ios: .git, DerivedData, .swiftpm, Pods, src")
+            Self.logger.info("  - project_build: .git, build, .build, src")
+            Self.logger.info("  - project_deps: .git, vendor, third_party, src")
+            Self.logger.info("  - project_cache: .git, .cache, Cache, src")
 
         } catch {
-            print("[MenuBarManager] Failed to create test data: \(error)")
+            Self.logger.error("Failed to create test data: \(error.localizedDescription, privacy: .public)")
         }
     }
     #endif
 
-    // MARK: - NSPopoverDelegate
-
-    func popoverDidClose(_ notification: Notification) {
-        if isPopoverShown {
-            isPopoverShown = false
-        }
-    }
-
-    func popoverWillClose(_ notification: Notification) {
-        // Early state sync for better reliability (ISS-013)
-        if isPopoverShown {
-            isPopoverShown = false
-        }
-    }
-
     private func configureFileWatcherIfNeeded() {
-        guard isPermissionConfirmedForProtectedTraversal else {
+        guard Self.enableAutomaticFileWatcher else {
             watchedPaths = []
             Task { @MainActor in
                 if let watcher = fileEventsWatcher {
@@ -2409,11 +2515,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         let watcher = FSEventsWatcher(pathsToWatch: urls, coalescingInterval: 1.0)
         watcher.setOnChange { [weak self] changeBatch in
-            RunLoop.main.perform {
-                MainActor.assumeIsolated {
-                    self?.recordFileWatcherChangeBatch(changeBatch)
-                }
-            }
+            self?.recordFileWatcherChangeBatch(changeBatch)
         }
         fileEventsWatcher = watcher
         watcher.start()
@@ -2421,18 +2523,28 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
     @MainActor
     func recordFileWatcherChangeBatch(_ changeBatch: FSEventsWatcher.ChangeBatch) {
-        let filteredPaths = changeBatch.changedPaths.filter { url in
-            !FSEventsNoiseFilter.shouldIgnore(url.path)
+        let fullScanIsRunning = isLoading || isAutoScanning || isReconciling
+
+        if fullScanIsRunning,
+           changeBatch.requiresFullRescan || changeBatch.dirtyReason != nil {
+            Logger.fsEvents.notice(
+                "Ignoring dirty FSEvents batch during full scan: reason=\(changeBatch.dirtyReason ?? "stream-rescan-required", privacy: .public) raw=\(changeBatch.rawEventCount)"
+            )
+            return
         }
 
         if changeBatch.requiresFullRescan {
-            pendingRecentChangeRequiresFullRefresh = true
+            markDirty(reason: "stream-rescan-required")
         }
 
-        if !filteredPaths.isEmpty && !shouldIgnoreAutoScanChanges(filteredPaths) {
-            lastFileEventAt = Date()
-            // Always accumulate — never drop events during scan/cleanup.
-            pendingRecentChangePaths.formUnion(filteredPaths.map(\.standardizedFileURL))
+        if let dirtyReason = changeBatch.dirtyReason {
+            markDirty(reason: dirtyReason, rawEventCount: changeBatch.rawEventCount)
+        } else {
+            let filteredPaths = filteredRecentChangePaths(from: changeBatch.changedPaths)
+            if !filteredPaths.isEmpty {
+                lastFileEventAt = Date()
+                enqueuePendingRecentChangePaths(filteredPaths, source: "watcher")
+            }
         }
 
         guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
@@ -2441,10 +2553,52 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
 
         hasPendingRecentChanges = true
 
-        // Only schedule processing when not scanning — events accumulate
-        // and will be flushed after loadInventory completes.
-        if !isLoading, !isAutoScanning {
-            scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+        guard !fullScanIsRunning else { return }
+        schedulePendingRecentChangeRefresh()
+    }
+
+    /// Initial delay before the first dirty-root reconciliation pass.
+    private static let dirtyRootInitialDelay: TimeInterval = 15
+    /// Hard upper bound for dirty-root backoff. Reconciliation should still happen
+    /// at least this often when the watcher reports continuous noise.
+    private static let dirtyRootMaxDelay: TimeInterval = 30 * 60
+
+    @MainActor
+    private func markDirty(reason: String, rawEventCount: Int = 0) {
+        let promoted = promotePendingChangesToFullRefreshIfAllowed(
+            reason: reason
+        )
+        if promoted {
+            Logger.fsEvents.notice(
+                "Marking tracked root dirty: reason=\(reason, privacy: .public) raw=\(rawEventCount)"
+            )
+        }
+        if promoted {
+            pendingDirtyReason = reason
+        }
+    }
+
+    @MainActor
+    private func scheduleDirtyRootRefresh() {
+        guard !dirtyRefreshScheduled else { return }
+        let backoff = min(
+            Self.dirtyRootInitialDelay * pow(2, Double(dirtyRootConsecutiveCount)),
+            Self.dirtyRootMaxDelay
+        )
+        dirtyRefreshScheduled = true
+        Logger.fsEvents.notice("Scheduling dirty-root refresh in \(Int(backoff))s (consecutive=\(self.dirtyRootConsecutiveCount))")
+        scheduleRecentChangeRefreshTask(after: backoff)
+    }
+
+    @MainActor
+    func notifyDirtyRefreshCycleCompleted(stillDirty: Bool) {
+        dirtyRefreshScheduled = false
+        if stillDirty {
+            dirtyRootConsecutiveCount += 1
+            scheduleDirtyRootRefresh()
+        } else {
+            dirtyRootConsecutiveCount = 0
+            pendingDirtyReason = nil
         }
     }
 
@@ -2452,10 +2606,22 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         trackedPaths
             .filter { shouldAutoWatchTrackedPath($0) }
             .map(\.url.standardizedFileURL)
+            .filter { candidate in
+                let candidatePath = candidate.path
+                return !watcherExcludedRoots().contains { excludedRoot in
+                    let excludedPath = excludedRoot.path
+                    return candidatePath == excludedPath || candidatePath.hasPrefix(excludedPath + "/")
+                }
+            }
+    }
+
+    private func watcherExcludedRoots() -> [URL] {
+        PrunrInternalPaths.directoryURLs()
     }
 
     @MainActor
     private func armFileWatcherBeforeFullScanIfNeeded(for trackedPaths: [TrackedPath]) async {
+        guard Self.enableAutomaticFileWatcher else { return }
         guard isPermissionConfirmedForProtectedTraversal else { return }
 
         let urls = watcherURLs(for: trackedPaths)
@@ -2476,9 +2642,17 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         guard !changedPaths.isEmpty else { return }
         guard !SettingsStore.shared.enabledTrackedPaths.isEmpty else { return }
 
-        pendingRecentChangePaths.formUnion(changedPaths.map(\.standardizedFileURL))
+        let filteredPaths = filteredRecentChangePaths(from: changedPaths)
+        guard !filteredPaths.isEmpty else { return }
+
+        lastFileEventAt = Date()
+        enqueuePendingRecentChangePaths(filteredPaths, source: "scheduler")
+        guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
+            return
+        }
+
         hasPendingRecentChanges = true
-        scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+        schedulePendingRecentChangeRefresh()
     }
 
     func performRecentChangeRefresh(allowFullRefresh: Bool = true) async {
@@ -2487,7 +2661,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             return
         }
         guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning else {
-            scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+            schedulePendingRecentChangeRefresh()
             return
         }
 
@@ -2502,7 +2676,11 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         if pendingRecentChangeRequiresFullRefresh {
             guard allowFullRefresh else {
                 hasPendingRecentChanges = true
-                scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+                scheduleDirtyRootRefresh()
+                return
+            }
+            if isWithinFullRescanCooldown() {
+                dropPendingFullRefreshDuringCooldown(reason: pendingDirtyReason ?? "dirty-root")
                 return
             }
 
@@ -2512,6 +2690,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
             defer {
                 isProcessingRecentChanges = false
                 hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
+                // Backoff bookkeeping: if more events arrived during the cycle,
+                // schedule the next pass with a longer delay. Otherwise reset.
+                notifyDirtyRefreshCycleCompleted(stillDirty: hasPendingRecentChanges)
             }
 
             lastDetectedChangeAt = Date()
@@ -2525,6 +2706,9 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         defer {
             isProcessingRecentChanges = false
             hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
+            if hasPendingRecentChanges {
+                schedulePendingRecentChangeRefresh()
+            }
         }
 
         // Route each changed path to the tracked path it falls under
@@ -2572,6 +2756,13 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         if requiresFullRefresh {
             lastDetectedChangeAt = Date()
             guard allowFullRefresh else {
+                pendingRecentChangeRequiresFullRefresh = true
+                hasPendingRecentChanges = true
+                scheduleDirtyRootRefresh()
+                return
+            }
+            if isWithinFullRescanCooldown() {
+                dropPendingFullRefreshDuringCooldown(reason: "incremental-refresh-escalation")
                 return
             }
             await loadInventory(isAutomatic: true)
@@ -2591,6 +2782,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
                 invalidateSubcategoryCache: false
             )
         }
+
+        hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
     }
 
     /// Creates or accumulates a growth story for incremental deltas.
@@ -2631,14 +2824,140 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         isUnderDiskPressure ? pressureRecentChangeDebounce : normalRecentChangeDebounce
     }
 
+    private func schedulePendingRecentChangeRefresh() {
+        guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
+            return
+        }
+        guard !isProcessingRecentChanges else { return }
+
+        if pendingRecentChangeRequiresFullRefresh {
+            scheduleDirtyRootRefresh()
+        } else {
+            scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+        }
+    }
+
     private func scheduleRecentChangeRefreshTask(after delay: TimeInterval) {
+        recentChangeTaskGeneration += 1
+        let generation = recentChangeTaskGeneration
         recentChangeTask?.cancel()
+        lastScheduledRecentChangeRefreshDelay = delay
         recentChangeTask = Task { @MainActor in
-            defer { recentChangeTask = nil }
             try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
             guard !Task.isCancelled else { return }
+            guard recentChangeTaskGeneration == generation else { return }
+            recentChangeTask = nil
             await performRecentChangeRefresh()
         }
+    }
+
+    private func filteredRecentChangePaths(from changedPaths: Set<URL>) -> Set<URL> {
+        let noiseFiltered = changedPaths.filter { url in
+            !FSEventsNoiseFilter.shouldIgnore(url.path)
+        }
+        guard !noiseFiltered.isEmpty else { return [] }
+        guard !shouldIgnoreAutoScanChanges(noiseFiltered) else { return [] }
+        return Set(noiseFiltered.map(\.standardizedFileURL))
+    }
+
+    private func isWithinFullRescanCooldown(at now: Date = Date()) -> Bool {
+        guard let lastFullScanCompletedAt else { return false }
+        let cooldown = max(
+            Self.requiresFullRescanCooldown,
+            SettingsStore.shared.automaticFullScanInterval
+        )
+        return now.timeIntervalSince(lastFullScanCompletedAt) < cooldown
+    }
+
+    private func dropPendingFullRefreshDuringCooldown(reason: String) {
+        Logger.fsEvents.notice(
+            "Deferring full refresh during full-scan cooldown: reason=\(reason, privacy: .public)"
+        )
+        pendingRecentChangeRequiresFullRefresh = false
+        pendingRecentChangePaths.removeAll()
+        hasPendingRecentChanges = false
+        pendingDirtyReason = nil
+        dirtyRefreshScheduled = false
+        dirtyRootConsecutiveCount = 0
+        scheduleReconciliationBackstop()
+    }
+
+    private func promotePendingChangesToFullRefreshIfAllowed(reason: String) -> Bool {
+        let now = Date()
+        guard !isWithinFullRescanCooldown(at: now) else {
+            let elapsed = Int(now.timeIntervalSince(lastFullScanCompletedAt ?? now))
+            Logger.fsEvents.notice("Dropping \(reason, privacy: .public) during full-rescan cooldown (\(elapsed)s)")
+            return false
+        }
+
+        pendingRecentChangeRequiresFullRefresh = true
+        return true
+    }
+
+    private func enqueuePendingRecentChangePaths(_ paths: Set<URL>, source: String) {
+        guard !paths.isEmpty else { return }
+
+        let projectedCount = pendingRecentChangePaths.count + paths.count
+        guard projectedCount <= Self.maxPendingRecentChangePaths else {
+            let promoted = promotePendingChangesToFullRefreshIfAllowed(
+                reason: "pending-path cap overflow from \(source)"
+            )
+            if promoted {
+                Logger.fsEvents.notice(
+                    "Pending recent-change path cap exceeded (\(projectedCount)); escalating once and dropping \(paths.count) paths"
+                )
+            }
+            return
+        }
+
+        pendingRecentChangePaths.formUnion(paths)
+    }
+
+    private func queueRequiresFullRescanFallback() {
+        guard !SettingsStore.shared.enabledTrackedPaths.isEmpty else {
+            _ = promotePendingChangesToFullRefreshIfAllowed(reason: "requiresFullRescan with no enabled paths")
+            return
+        }
+        guard !isWithinFullRescanCooldown() else {
+            let elapsed = Int(Date().timeIntervalSince(lastFullScanCompletedAt ?? Date()))
+            Logger.fsEvents.notice("Dropping requiresFullRescan signal during cooldown (\(elapsed)s since full scan)")
+            return
+        }
+
+        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        let fallbackPaths = Set(watcherURLs(for: trackedPaths))
+        guard !fallbackPaths.isEmpty else {
+            _ = promotePendingChangesToFullRefreshIfAllowed(reason: "requiresFullRescan fallback")
+            return
+        }
+
+        lastFileEventAt = Date()
+        enqueuePendingRecentChangePaths(fallbackPaths, source: "requiresFullRescan")
+    }
+
+    private func scheduleDeferredAutoCleanup() {
+        deferredAutoCleanupTask?.cancel()
+        deferredAutoCleanupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(Int(Self.deferredCleanupDelay * 1000)))
+            guard !Task.isCancelled else { return }
+            await self.runDeferredAutoCleanupIfNeeded()
+        }
+    }
+
+    private func runDeferredAutoCleanupIfNeeded() async {
+        guard !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else {
+            scheduleDeferredAutoCleanup()
+            return
+        }
+        if let lastFullScanCompletedAt,
+           Date().timeIntervalSince(lastFullScanCompletedAt) < Self.cleanupSkipAfterFullScanWindow {
+            return
+        }
+
+        isCleaningUp = true
+        defer { isCleaningUp = false }
+        await DatabaseCleanupService.shared.performAutoCleanup()
     }
 
     private func beginInventoryRefresh() -> Bool {
@@ -2664,11 +2983,7 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
     }
 
     private func autoScanIgnoredRoots() -> [URL] {
-        var roots: [URL] = []
-
-        if let dbPath = DatabaseManager.shared.databasePath {
-            roots.append(URL(fileURLWithPath: dbPath).deletingLastPathComponent().standardizedFileURL)
-        }
+        var roots = PrunrInternalPaths.directoryURLs()
 
         let bundleURL = Bundle.main.bundleURL.standardizedFileURL
         roots.append(bundleURL)
@@ -2681,6 +2996,8 @@ final class MenuBarManager: NSObject, NSPopoverDelegate {
         updateTimer?.invalidate()
         activityPulseTimer?.invalidate()
         recentChangeTask?.cancel()
+        reconciliationBackstopTask?.cancel()
+        deferredAutoCleanupTask?.cancel()
         reconciliationTask?.cancel()
         let watcher = fileEventsWatcher
         if let watcher {

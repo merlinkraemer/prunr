@@ -9,7 +9,6 @@ private func menuBarViewDirectoryExists(at url: URL) -> Bool {
 struct MenuBarView: View {
     @Bindable var manager: MenuBarManager
 
-    @Environment(\.openSettings) private var openSettings
     @State private var settingsStore = SettingsStore.shared
     @State private var settingsHover = false
     @State private var refreshHover = false
@@ -326,8 +325,9 @@ struct MenuBarView: View {
         // Paths tab is tag 1 in SettingsView
         UserDefaults.standard.set(1, forKey: "settingsSelectedTab")
 
-        // Use openSettings environment action
-        openSettings()
+        // Use manager's programmatic settings opener (SwiftUI \.openSettings is
+        // unavailable because we use a pure AppKit entry point without a Settings scene).
+        manager.openSettings()
 
         // Ensure Settings window is focused immediately - ISS-024
         // Same improved logic as MenuBarManager.openSettings with faster 50ms delay
@@ -373,7 +373,7 @@ struct MenuBarView: View {
             Group {
                 if manager.isLoading && !manager.isAutoScanning {
                     manualScanLoadingView
-                } else if isBootstrapping {
+                } else if isBootstrapping && !manager.hasDisplayableInventory {
                     initialLoadView
                 } else if manager.noBaseline {
                     setupOnboardingView
@@ -436,6 +436,10 @@ struct MenuBarView: View {
             }
         }
         .task {
+            if manager.hasDisplayableInventory {
+                isBootstrapping = false
+            }
+
             let accessReport = await refreshScanAccessNow()
 
             if !accessReport.isGranted {
@@ -457,8 +461,7 @@ struct MenuBarView: View {
             await manager.updatePathSize()
 
             if !manager.noBaseline {
-                await manager.loadInventoryFromLatestSnapshot()
-                manager.reconcileIfStale()
+                await manager.loadInventoryFromLatestSnapshotIfStale()
             }
         }
         .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
@@ -1252,12 +1255,17 @@ struct MenuBarView: View {
                 }
                 if activeHeaderTransition == nil {
                     displayedHeader = currentHeaderScreen
+                } else {
+                    synchronizeVisibleHeaderToCurrent()
                 }
             }
             .onChange(of: geometry.size.width) { _, newWidth in
                 guard newWidth > 0 else { return }
                 headerWidth = newWidth
             }
+        }
+        .onDisappear {
+            synchronizeVisibleHeaderToCurrent()
         }
         .background {
             ZStack {
@@ -1616,6 +1624,21 @@ struct MenuBarView: View {
             .onDisappear {
                 footerBackgroundScanPulse = false
             }
+        } else if manager.pendingDirtyReason != nil || manager.hasPendingRecentChanges {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color.secondary.opacity(0.55))
+                    .frame(width: 5, height: 5)
+                Text("Changes pending")
+                    .foregroundStyle(.secondary)
+                if let relativePhrase {
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(relativePhrase)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.system(size: 11))
         } else if let relativePhrase {
             Text(relativePhrase)
                 .font(.system(size: 11))
@@ -1857,7 +1880,7 @@ struct MenuBarView: View {
     // MARK: - Helper Methods
 
     private var canNavigateBackFromDrilldown: Bool {
-        manager.isDrilledDown && manager.selectedInventoryCategory != nil
+        manager.isDrilledDown && manager.selectedInventoryCategory != nil && !manager.isDrillDownTransitionAnimating
     }
 
     private func navigateBackFromDrilldown() {
@@ -1883,6 +1906,7 @@ struct MenuBarView: View {
     }
 
     private func navigateFromDriveBar(segmentID: String) {
+        guard !manager.isDrillDownTransitionAnimating else { return }
         guard segmentID != outsideScopeSegmentID, segmentID != "other-used" else { return }
         guard let category = GrowthCategory(rawValue: segmentID) else { return }
         guard let item = (manager.growingCategories + manager.stableCategories)
@@ -1895,13 +1919,17 @@ struct MenuBarView: View {
             : groups.first(where: { $0.subcategory == nil }) ?? groups.first
         let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
 
+        // For categories without subcategories that need async loading, defer
+        // drilling down so we can transition directly from main → files.
+        let shouldDrillDownImmediately = !needsSubcategoryLoad || category.supportsSubcategories
+
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             highlightedStorageSegmentID = segmentID
             manager.selectedInventoryCategory = item
             manager.selectedSubcategory = selectedSubcategory
-            manager.isDrilledDown = true
+            manager.isDrilledDown = shouldDrillDownImmediately
             manager.isSubcategoryDrillDown = isSubcategoryDrillDown
         }
 
@@ -1918,6 +1946,9 @@ struct MenuBarView: View {
             withTransaction(transaction) {
                 manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
                 manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
+                // Transition from main directly to files now that the single
+                // group is known, avoiding a visible intermediate subcategory step.
+                manager.isDrilledDown = true
             }
         }
     }
