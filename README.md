@@ -9,3 +9,5 @@ macOS menu bar utility for seeing what is growing on disk.
 Current version: `0.1.3-alpha.2`
 
 Status: signed and notarized alpha build, ready for external tester feedback.
+
+License: source-visible during alpha. See [LICENSE](/Users/merlinkraemer/dev/projects/prunr/LICENSE:1).
