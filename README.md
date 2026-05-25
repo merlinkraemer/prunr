@@ -6,6 +6,6 @@
 
 macOS menu bar utility for seeing what is growing on disk.
 
-Current version: `0.1.3-alpha.1`
+Current version: `0.1.3-alpha.2`
 
 Status: signed and notarized alpha build, ready for external tester feedback.

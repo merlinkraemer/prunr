@@ -33,7 +33,7 @@ STRESS_MUTATE_BYTES ?= 1048576
 
 E2E_FILE_COUNT ?= 5000
 
-.PHONY: all build install-app run dev launch clean clean-build reset-dev-state help doctor test open logs stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean e2e e2e-runtime
+.PHONY: all build install-app run dev launch clean clean-build reset-dev-state help doctor test open logs release stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean e2e e2e-runtime
 
 all: help
 
@@ -41,6 +41,7 @@ help:
 	@echo "$(BLUE)Prunr - Terminal Development Commands$(NC)"
 	@echo ""
 	@echo "$(GREEN)make build$(NC)    - Build the app"
+	@echo "$(GREEN)make release$(NC)  - Build, export, notarize, staple, and package a release"
 	@echo "$(GREEN)make run$(NC)      - Kill existing instance, build, and run"
 	@echo "$(GREEN)make dev$(NC)      - Kill, reset app state, clean local build artifacts, rebuild, and run"
 	@echo "$(GREEN)make clean$(NC)    - Clean build directory"
@@ -68,6 +69,11 @@ build:
 		-derivedDataPath $(DERIVED_DATA) \
 		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES)
 	@echo "$(GREEN)Build complete!$(NC)"
+
+release:
+	@test -n "$(VERSION)" || (echo "usage: make release VERSION=x.y.z BUILD=N"; exit 1)
+	@test -n "$(BUILD)" || (echo "usage: make release VERSION=x.y.z BUILD=N"; exit 1)
+	exec bash scripts/release.sh "$(VERSION)" "$(BUILD)"
 
 run: kill install-app launch
 

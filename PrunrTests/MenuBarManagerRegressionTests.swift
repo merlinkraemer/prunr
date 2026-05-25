@@ -3,6 +3,12 @@ import XCTest
 
 @MainActor
 final class MenuBarManagerRegressionTests: PrunrTestCase {
+    func testAppDelegateKeepsMenuBarAppAliveAfterLastWindowCloses() {
+        let delegate = AppDelegate()
+
+        XCTAssertFalse(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))
+    }
+
     func testEqualSizeCategoriesRemainDeterministicallySortedByName() {
         let manager = MenuBarManager()
         manager.allCategories = [

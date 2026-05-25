@@ -112,6 +112,9 @@ final class MenuBarManager: NSObject {
     /// Right-click menu
     private var contextMenu: NSMenu?
     private var panelAutoCloseSuspensionCount = 0
+    @ObservationIgnored
+    private var checkForUpdatesHandler: (() -> Void)?
+    var isUpdaterAvailable = false
 
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
 
@@ -614,6 +617,14 @@ final class MenuBarManager: NSObject {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
+        let checkForUpdatesItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(checkForUpdates),
+            keyEquivalent: ""
+        )
+        checkForUpdatesItem.target = self
+        menu.addItem(checkForUpdatesItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // Quit Prunr
@@ -694,6 +705,22 @@ final class MenuBarManager: NSObject {
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+    }
+
+    func configureUpdater(checkForUpdatesHandler: @escaping () -> Void) {
+        self.checkForUpdatesHandler = checkForUpdatesHandler
+        isUpdaterAvailable = true
+        contextMenu?.item(withTitle: "Check for Updates…")?.isEnabled = true
+    }
+
+    func disableUpdater() {
+        checkForUpdatesHandler = nil
+        isUpdaterAvailable = false
+        contextMenu?.item(withTitle: "Check for Updates…")?.isEnabled = false
+    }
+
+    @objc func checkForUpdates() {
+        checkForUpdatesHandler?()
     }
 
     @objc private func resetBaseline() {
