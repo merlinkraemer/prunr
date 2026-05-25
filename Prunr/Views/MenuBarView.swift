@@ -11,6 +11,7 @@ struct MenuBarView: View {
 
     @State private var settingsStore = SettingsStore.shared
     @State private var settingsHover = false
+    @State private var updatesHover = false
     @State private var refreshHover = false
     @State private var hasRequiredScanAccess: Bool? = nil
     @State private var blockedScanAccessLocations: [String] = []
@@ -361,6 +362,13 @@ struct MenuBarView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func closePopoverAndCheckForUpdates() {
+        manager.closePopover()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            manager.checkForUpdates()
         }
     }
 
@@ -1557,6 +1565,31 @@ struct MenuBarView: View {
                 .help("Refresh recent changes")
 
                 Spacer()
+
+                if manager.isUpdaterAvailable {
+                    Button {
+                        closePopoverAndCheckForUpdates()
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 13))
+                            .frame(width: 26, height: 26)
+                            .background(
+                                Circle()
+                                    .fill(updatesHover ? Color.gray.opacity(0.12) : Color.clear)
+                            )
+                            .foregroundStyle(.primary)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Check for updates")
+                    .accessibilityHint("Check for newer Prunr releases")
+                    .onHover { hovering in
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            updatesHover = hovering
+                        }
+                    }
+                    .help("Check for Updates…")
+                }
 
                 Button {
                     closePopoverAndOpenSettings()

@@ -9,6 +9,9 @@ options:
 packages:
   GRDB:
     path: LocalPackages/GRDB.swift
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.7.1"
 
 targets:
   Prunr:
@@ -23,7 +26,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.prunr.app
         PRODUCT_NAME: Prunr
         MARKETING_VERSION: "0.1.3"
-        CURRENT_PROJECT_VERSION: "2"
+        CURRENT_PROJECT_VERSION: "3"
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: PM5QWB5426
@@ -33,8 +36,13 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026"
         INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
+        INFOPLIST_KEY_SUEnableInstallerLauncherService: YES
+        INFOPLIST_KEY_SUFeedURL: "https://merlinkraemer.github.io/prunr/appcast.xml"
+        INFOPLIST_KEY_SUPublicEDKey: ""
     dependencies:
       - package: GRDB
+      - package: Sparkle
+        product: Sparkle
     entitlements:
       path: Prunr/Prunr.entitlements
       properties:

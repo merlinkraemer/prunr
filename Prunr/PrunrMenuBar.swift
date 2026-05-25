@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import Sparkle
 
 // MARK: - Pure AppKit Entry Point
 //
@@ -20,6 +21,9 @@ import Darwin
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBarManager = MenuBarManager()
+    private var updaterController: SPUStandardUpdaterController?
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Handle headless CLI commands (stress-scan, e2e, etc.)
@@ -28,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         NSApp.setActivationPolicy(.accessory)
+        configureUpdaterIfPossible()
 
         do {
             try DatabaseManager.shared.initialize()
@@ -46,6 +51,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Quit")
             alert.runModal()
             NSApp.terminate(nil)
+        }
+    }
+
+    private func configureUpdaterIfPossible() {
+        let feedURL = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String
+        let publicKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
+
+        guard let feedURL, !feedURL.isEmpty, let publicKey, !publicKey.isEmpty else {
+            menuBarManager.disableUpdater()
+            return
+        }
+
+        let updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+        self.updaterController = updaterController
+        menuBarManager.configureUpdater { [updaterController] in
+            updaterController.checkForUpdates(nil)
         }
     }
 }
