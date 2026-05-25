@@ -45,8 +45,17 @@
 ## Merge And Test
 
 - [x] Confirm `main` is an ancestor of `feat/beta-polish-7-10-11`
-- [ ] Fast-forward `main` to the feature branch
-- [ ] Push `main`
-- [ ] Move GitHub Pages source from `feat/beta-polish-7-10-11:/docs` to `main:/docs`
-- [ ] Verify Pages build and public appcast URL from `main`
-- [ ] Run post-merge verification on the codebase
+- [x] Fast-forward `main` to the feature branch
+- [x] Push `main`
+- [x] Move GitHub Pages source from `feat/beta-polish-7-10-11:/docs` to `main:/docs`
+- [x] Verify Pages build and public appcast URL from `main`
+- [x] Run post-merge verification on the codebase
+
+## Merge And Test Review
+
+- `origin/main` had advanced independently with merge commit `1de48a8`, so the updater work was rebased onto that head before push instead of overwriting remote history.
+- `main` now includes the missing updater commits at `3632c3c`, with `cb75401` carrying the actual release/update-path implementation on top of current remote main.
+- `make test` passed after the rebase with `65` tests green.
+- `bash -n scripts/release.sh` passed after the rebase.
+- GitHub Pages now serves from `main:/docs`, and `https://merlinkraemer.github.io/prunr/appcast.xml` returns `HTTP 200`.
+- Current limitation remains unchanged: the appcast is live, but in-app updating stays dormant until `SUPublicEDKey` is populated and the appcast includes a signed Sparkle enclosure for a published release.
