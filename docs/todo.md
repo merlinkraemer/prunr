@@ -26,3 +26,18 @@
 - Full release notarization was not run here because the working tree is intentionally dirty and the script enforces a clean tree before touching version numbers or notarization.
 - Sparkle is wired but intentionally dormant until `SUPublicEDKey` is populated; the updater button stays hidden and the context-menu action stays disabled until that key exists at runtime.
 - `scripts/release.sh` keeps remote mutation opt-in via `CREATE_RELEASE_COMMIT=1`, `CREATE_RELEASE_TAG=1`, and `PUBLISH_GITHUB_RELEASE=1` to match the repo rule against automatic pushes.
+
+## Public Repo Readiness
+
+- [x] Add minimal alpha-period source-visible license
+- [x] Confirm no tracked secrets or private keys in current tree
+- [x] Confirm no tracked env files, signing exports, or local app bundles in current tree
+- [x] Note public-history caveat for old bundled app artifacts
+- [x] Flip repository visibility to public with `gh`
+
+## Public Repo Review
+
+- Added `LICENSE` with an all-rights-reserved alpha source-visibility notice and linked it from `README.md`.
+- Current-tree scan found no tracked `.env`, signing keys, provisioning profiles, notarization passwords, or other credential material.
+- Historical commits still contain `Prunr.app` bundle artifacts from prior alpha packaging work. No secrets were found in those revisions, but the artifacts themselves will be publicly visible unless history is rewritten later.
+- `gh repo view` now reports `isPrivate: false` for `https://github.com/merlinkraemer/prunr`.
