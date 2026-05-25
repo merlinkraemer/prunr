@@ -41,3 +41,12 @@
 - Current-tree scan found no tracked `.env`, signing keys, provisioning profiles, notarization passwords, or other credential material.
 - Historical commits still contain `Prunr.app` bundle artifacts from prior alpha packaging work. No secrets were found in those revisions, but the artifacts themselves will be publicly visible unless history is rewritten later.
 - `gh repo view` now reports `isPrivate: false` for `https://github.com/merlinkraemer/prunr`.
+
+## Merge And Test
+
+- [x] Confirm `main` is an ancestor of `feat/beta-polish-7-10-11`
+- [ ] Fast-forward `main` to the feature branch
+- [ ] Push `main`
+- [ ] Move GitHub Pages source from `feat/beta-polish-7-10-11:/docs` to `main:/docs`
+- [ ] Verify Pages build and public appcast URL from `main`
+- [ ] Run post-merge verification on the codebase
