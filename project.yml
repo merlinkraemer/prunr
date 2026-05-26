@@ -31,6 +31,8 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSHumanReadableCopyright: "Copyright © 2026"
         SUFeedURL: https://merlinkraemer.github.io/prunr/appcast.xml
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
         SUEnableInstallerLauncherService: true
         SUPublicEDKey: wLRwLHzdujt8cigHTP7q5gSXSkfZGbhQI8HO1F4FLXo=
     settings:

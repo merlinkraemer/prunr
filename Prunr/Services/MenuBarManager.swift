@@ -115,6 +115,10 @@ final class MenuBarManager: NSObject {
     private var panelAutoCloseSuspensionCount = 0
     @ObservationIgnored
     private var checkForUpdatesHandler: ((Any?) -> Void)?
+    @ObservationIgnored
+    private var checkForUpdatesInBackgroundHandler: (() -> Void)?
+    private static let sparkleLastCheckTimeKey = "SULastCheckTime"
+    private static let panelOpenUpdateCheckCooldown: TimeInterval = 60 * 60
     var isUpdaterAvailable = false
     var isUpdateAvailable = false
     private(set) var availableUpdateShortVersion: String?
@@ -728,8 +732,12 @@ final class MenuBarManager: NSObject {
         window.orderFrontRegardless()
     }
 
-    func configureUpdater(checkForUpdates: @escaping (Any?) -> Void) {
+    func configureUpdater(
+        checkForUpdates: @escaping (Any?) -> Void,
+        checkForUpdatesInBackground: (() -> Void)? = nil
+    ) {
         checkForUpdatesHandler = checkForUpdates
+        checkForUpdatesInBackgroundHandler = checkForUpdatesInBackground
         isUpdaterAvailable = true
         checkForUpdatesMenuItem?.isEnabled = true
         notifyUpdateNotAvailable()
@@ -737,6 +745,7 @@ final class MenuBarManager: NSObject {
 
     func disableUpdater() {
         checkForUpdatesHandler = nil
+        checkForUpdatesInBackgroundHandler = nil
         isUpdaterAvailable = false
         isUpdateAvailable = false
         availableUpdateShortVersion = nil
@@ -2175,7 +2184,23 @@ final class MenuBarManager: NSObject {
             panel?.setFrame(panelFrame, display: true)
             panel?.makeKeyAndOrderFront(nil)
             isPopoverShown = true
+            maybeCheckForUpdatesInBackgroundWhenOpeningPanel()
         }
+    }
+
+    private func maybeCheckForUpdatesInBackgroundWhenOpeningPanel() {
+        guard isUpdaterAvailable, !isUpdateAvailable,
+              let checkForUpdatesInBackgroundHandler else {
+            return
+        }
+
+        let lastCheck = UserDefaults.standard.object(forKey: Self.sparkleLastCheckTimeKey) as? Date
+        if let lastCheck,
+           Date().timeIntervalSince(lastCheck) < Self.panelOpenUpdateCheckCooldown {
+            return
+        }
+
+        checkForUpdatesInBackgroundHandler()
     }
 
     /// Updates free space only if it's been more than 2 seconds since the last update

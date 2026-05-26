@@ -1607,7 +1607,7 @@ struct MenuBarView: View {
                 Button {
                     manager.checkForUpdates()
                 } label: {
-                    Text("Update available · \(manager.availableUpdateShortVersion ?? "new version")")
+                    Text("Update available")
                         .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)

@@ -73,9 +73,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             userDriverDelegate: nil
         )
         self.updaterController = updaterController
-        menuBarManager.configureUpdater { [updaterController] sender in
-            updaterController.checkForUpdates(sender)
-        }
+        menuBarManager.configureUpdater(
+            checkForUpdates: { [updaterController] sender in
+                updaterController.checkForUpdates(sender)
+            },
+            checkForUpdatesInBackground: { [updaterController] in
+                updaterController.updater.checkForUpdatesInBackground()
+            }
+        )
     }
 }
 
