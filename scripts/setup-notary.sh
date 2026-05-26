@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROFILE="${NOTARY_PROFILE:-prunr-notary}"
+PROFILE="${NOTARY_PROFILE:-prunr-notary-api}"
 TEAM_ID="${NOTARY_TEAM_ID:-PM5QWB5426}"
 
 cat <<'EOF'

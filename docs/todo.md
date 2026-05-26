@@ -68,6 +68,6 @@
 - [x] s4: Settings “Check for Updates…” button
 - [x] s5: Release artifacts for `0.1.5-alpha.0` and `0.1.5-alpha.1` (Developer ID signed; **not notarized** — `prunr-notary` profile missing on this machine)
 - [x] s6: Pushed to `main`, tags + GitHub Releases published, appcast at `raw.githubusercontent.com/merlinkraemer/prunr/main/docs/appcast.xml`
-- [ ] s7: Manual E2E — install `0.1.5-alpha.0`, run app, “Check for Updates…” → should offer `0.1.5-alpha.1`
-- [ ] Fix GitHub Pages deploy (added `docs/.nojekyll`; build still errored — feed moved to raw URL)
-- [ ] Configure `prunr-notary` and re-run `make release` for notarized builds before external testers
+- [x] Configure notary profile `prunr-notary-api` (App Store Connect API key)
+- [x] Notarized release `0.1.5-alpha.2` build 3 published
+- [ ] s7: Manual E2E — install older build, verify Sparkle update to `0.1.5-alpha.2`
