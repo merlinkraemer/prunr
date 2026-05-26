@@ -6,6 +6,7 @@ BUILD="${2:-}"
 
 if [[ -z "$VERSION" || -z "$BUILD" ]]; then
   echo "usage: bash scripts/release.sh <version> <build>" >&2
+  echo "note: BUILD (CFBundleVersion / sparkle:version) must always increase across releases." >&2
   exit 1
 fi
 
