@@ -1,7 +1,7 @@
 # Sparkle Update Activation
 
 **Date:** 2026-05-26
-**Status:** draft
+**Status:** in-progress
 
 ## Problem
 
