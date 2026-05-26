@@ -1,12 +1,24 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss
-  version="2.0"
-  xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
-  xmlns:dc="http://purl.org/dc/elements/1.1/">
-  <channel>
-    <title>Prunr Appcast</title>
-    <link>https://github.com/merlinkraemer/prunr/releases</link>
-    <description>Prunr release feed</description>
-    <language>en</language>
-  </channel>
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Prunr</title>
+        <item>
+            <title>0.1.5-alpha.1</title>
+            <pubDate>Tue, 26 May 2026 18:18:50 +0700</pubDate>
+            <link>https://github.com/merlinkraemer/prunr/releases/tag/v0.1.5-alpha.1</link>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.1.5-alpha.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/merlinkraemer/prunr/releases/download/v0.1.5-alpha.1/Prunr-0.1.5-alpha.1-build2-macos.zip" length="10041528" type="application/octet-stream" sparkle:edSignature="9cbtAhv78iwEQU/TaBWDUdUOPJHEtvkxYNWwbbnfOFUuhMJg3G1+VJMa2kAoEdtTcavLExsvm+MBJ/Y/GQkPAA=="/>
+        </item>
+        <item>
+            <title>0.1.5-alpha.0</title>
+            <pubDate>Tue, 26 May 2026 18:16:44 +0700</pubDate>
+            <link>https://github.com/merlinkraemer/prunr/releases/tag/v0.1.5-alpha.0</link>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>0.1.5-alpha.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/merlinkraemer/prunr/releases/download/v0.1.5-alpha.0/Prunr-0.1.5-alpha.0-build1-macos.zip" length="10041576" type="application/octet-stream" sparkle:edSignature="c3B4dzjRNUjRUSZgryiNBTmuYkiVEQlX6p6tJ0lZqlj71uQ2q9ugZcKPP5bZ8we6mO9rEZmdHP7+YvVmxRvGBA=="/>
+        </item>
+    </channel>
 </rss>

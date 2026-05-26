@@ -120,7 +120,7 @@ update_appcast_if_available() {
     "$appcast_tool" \
       --download-url-prefix "https://github.com/merlinkraemer/prunr/releases/download/v$VERSION/" \
       --link "https://github.com/merlinkraemer/prunr/releases/tag/v$VERSION" \
-      --versions "$DIST_DIR"
+      "$DIST_DIR"
 
     local generated_appcast="$DIST_DIR/appcast.xml"
     if [[ -f "$generated_appcast" ]]; then
