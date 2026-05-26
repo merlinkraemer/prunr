@@ -59,3 +59,15 @@
 - `bash -n scripts/release.sh` passed after the rebase.
 - GitHub Pages now serves from `main:/docs`, and `https://merlinkraemer.github.io/prunr/appcast.xml` returns `HTTP 200`.
 - Current limitation remains unchanged: the appcast is live, but in-app updating stays dormant until `SUPublicEDKey` is populated and the appcast includes a signed Sparkle enclosure for a published release.
+
+## Sparkle Activation (2026-05-26)
+
+- [x] s1: Fix Sparkle Info.plist embedding via xcodegen `info.properties`
+- [x] s2: Generate ed25519 keys; public key in `project.yml`
+- [x] s3: Updater UI active (panel ↓, context menu, Settings section)
+- [x] s4: Settings “Check for Updates…” button
+- [x] s5: Release artifacts for `0.1.5-alpha.0` and `0.1.5-alpha.1` (Developer ID signed; **not notarized** — `prunr-notary` profile missing on this machine)
+- [x] s6: Pushed to `main`, tags + GitHub Releases published, appcast at `raw.githubusercontent.com/merlinkraemer/prunr/main/docs/appcast.xml`
+- [ ] s7: Manual E2E — install `0.1.5-alpha.0`, run app, “Check for Updates…” → should offer `0.1.5-alpha.1`
+- [ ] Fix GitHub Pages deploy (added `docs/.nojekyll`; build still errored — feed moved to raw URL)
+- [ ] Configure `prunr-notary` and re-run `make release` for notarized builds before external testers
