@@ -86,6 +86,7 @@ build/
 dist/
 Releases/
 Prunr.app/
+Prunr/Info.plist
 *.o
 *.o.*
 default.profraw

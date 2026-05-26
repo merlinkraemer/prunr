@@ -21,6 +21,18 @@ targets:
       - path: Prunr
         excludes:
           - LegacyViews/**
+          - Info.plist
+    info:
+      path: Prunr/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: "Copyright © 2026"
+        SUFeedURL: https://merlinkraemer.github.io/prunr/appcast.xml
+        SUEnableInstallerLauncherService: true
+        SUPublicEDKey: wLRwLHzdujt8cigHTP7q5gSXSkfZGbhQI8HO1F4FLXo=
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.prunr.app
@@ -32,13 +44,6 @@ targets:
         DEVELOPMENT_TEAM: PM5QWB5426
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_PREVIEWS: YES
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
-        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026"
-        INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
-        INFOPLIST_KEY_SUEnableInstallerLauncherService: YES
-        INFOPLIST_KEY_SUFeedURL: "https://merlinkraemer.github.io/prunr/appcast.xml"
-        INFOPLIST_KEY_SUPublicEDKey: ""
     dependencies:
       - package: GRDB
       - package: Sparkle

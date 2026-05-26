@@ -498,13 +498,7 @@
 				DEVELOPMENT_TEAM = PM5QWB5426;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026";
-				INFOPLIST_KEY_SUEnableInstallerLauncherService = YES;
-				INFOPLIST_KEY_SUFeedURL = "https://merlinkraemer.github.io/prunr/appcast.xml";
-				INFOPLIST_KEY_SUPublicEDKey = "";
+				INFOPLIST_FILE = Prunr/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -668,13 +662,7 @@
 				DEVELOPMENT_TEAM = PM5QWB5426;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026";
-				INFOPLIST_KEY_SUEnableInstallerLauncherService = YES;
-				INFOPLIST_KEY_SUFeedURL = "https://merlinkraemer.github.io/prunr/appcast.xml";
-				INFOPLIST_KEY_SUPublicEDKey = "";
+				INFOPLIST_FILE = Prunr/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

@@ -90,6 +90,19 @@ private struct GeneralSettingsTab: View {
                         .toggleStyle(.switch)
                 }
 
+                if MenuBarManager.shared?.isUpdaterAvailable == true {
+                    Section("Updates") {
+                        Button("Check for Updates…") {
+                            MenuBarManager.shared?.checkForUpdates()
+                        }
+                        .buttonStyle(.bordered)
+
+                        Text("Prunr checks GitHub for newer releases and installs them in place.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Permissions") {
                     HStack {
                         Image(systemName: hasRequiredScanAccess ? "checkmark.circle.fill" : "shield.fill")
