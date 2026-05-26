@@ -95,7 +95,9 @@ maybe_publish_github_release() {
   )
 
   if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-    release_args+=(--verify-tag)
+    if git ls-remote --exit-code origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+      release_args+=(--verify-tag)
+    fi
   fi
 
   gh "${release_args[@]}"
