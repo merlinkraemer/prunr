@@ -30,7 +30,7 @@ targets:
         LSApplicationCategoryType: public.app-category.utilities
         LSMinimumSystemVersion: "14.0"
         NSHumanReadableCopyright: "Copyright © 2026"
-        SUFeedURL: https://raw.githubusercontent.com/merlinkraemer/prunr/main/docs/appcast.xml
+        SUFeedURL: https://merlinkraemer.github.io/prunr/appcast.xml
         SUEnableInstallerLauncherService: true
         SUPublicEDKey: wLRwLHzdujt8cigHTP7q5gSXSkfZGbhQI8HO1F4FLXo=
     settings:
