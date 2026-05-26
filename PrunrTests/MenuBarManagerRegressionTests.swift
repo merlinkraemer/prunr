@@ -74,4 +74,32 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
 
         XCTAssertTrue(manager.subcategoryBreakdownLoadingCategories.isEmpty)
     }
+
+    func testUpdateBannerVisibilityTracksDismissedVersion() {
+        let manager = MenuBarManager()
+        manager.isUpdaterAvailable = true
+
+        manager.notifyUpdateAvailable(shortVersion: "9.9.9-test", buildVersion: "1")
+        XCTAssertTrue(manager.showsUpdateAvailableBanner)
+
+        manager.dismissUpdateBanner()
+        XCTAssertFalse(manager.showsUpdateAvailableBanner)
+
+        manager.notifyUpdateAvailable(shortVersion: "9.9.9-test", buildVersion: "2")
+        XCTAssertTrue(manager.showsUpdateAvailableBanner)
+
+        manager.notifyUpdateNotAvailable()
+        XCTAssertFalse(manager.showsUpdateAvailableBanner)
+    }
+
+    func testUpdateBannerHiddenWhenAlreadyOnOfferedVersion() {
+        let manager = MenuBarManager()
+        manager.isUpdaterAvailable = true
+
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+
+        manager.notifyUpdateAvailable(shortVersion: short, buildVersion: build)
+        XCTAssertFalse(manager.showsUpdateAvailableBanner)
+    }
 }

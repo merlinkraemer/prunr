@@ -11,7 +11,6 @@ struct MenuBarView: View {
 
     @State private var settingsStore = SettingsStore.shared
     @State private var settingsHover = false
-    @State private var updatesHover = false
     @State private var refreshHover = false
     @State private var hasRequiredScanAccess: Bool? = nil
     @State private var blockedScanAccessLocations: [String] = []
@@ -362,13 +361,6 @@ struct MenuBarView: View {
                     }
                 }
             }
-        }
-    }
-
-    private func closePopoverAndCheckForUpdates() {
-        manager.closePopover()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            manager.checkForUpdates()
         }
     }
 
@@ -1566,31 +1558,6 @@ struct MenuBarView: View {
 
                 Spacer()
 
-                if manager.isUpdaterAvailable {
-                    Button {
-                        closePopoverAndCheckForUpdates()
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.system(size: 13))
-                            .frame(width: 26, height: 26)
-                            .background(
-                                Circle()
-                                    .fill(updatesHover ? Color.gray.opacity(0.12) : Color.clear)
-                            )
-                            .foregroundStyle(.primary)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Check for updates")
-                    .accessibilityHint("Check for newer Prunr releases")
-                    .onHover { hovering in
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            updatesHover = hovering
-                        }
-                    }
-                    .help("Check for Updates…")
-                }
-
                 Button {
                     closePopoverAndOpenSettings()
                 } label: {
@@ -1631,7 +1598,33 @@ struct MenuBarView: View {
             return nil
         }()
 
-        if manager.isBackgroundFullScanRunning {
+        if manager.showsUpdateAvailableBanner {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.blue)
+                    .frame(width: 5, height: 5)
+
+                Button {
+                    manager.checkForUpdates()
+                } label: {
+                    Text("Update available · \(manager.availableUpdateShortVersion ?? "new version")")
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    manager.dismissUpdateBanner()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14, height: 14)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss update notice")
+            }
+            .font(.system(size: 11))
+        } else if manager.isBackgroundFullScanRunning {
             HStack(spacing: 6) {
                 Circle()
                     .fill(Color.secondary.opacity(footerBackgroundScanPulse ? 0.78 : 0.42))

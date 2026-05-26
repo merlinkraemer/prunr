@@ -22,6 +22,7 @@ import Sparkle
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBarManager = MenuBarManager()
     private var updaterController: SPUStandardUpdaterController?
+    private var sparkleUpdateObserver: SparkleUpdateObserver?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
@@ -63,14 +64,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        let sparkleUpdateObserver = SparkleUpdateObserver(menuBarManager: menuBarManager)
+        self.sparkleUpdateObserver = sparkleUpdateObserver
+
         let updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
-            updaterDelegate: nil,
+            updaterDelegate: sparkleUpdateObserver,
             userDriverDelegate: nil
         )
         self.updaterController = updaterController
-        menuBarManager.configureUpdater { [updaterController] in
-            updaterController.checkForUpdates(nil)
+        menuBarManager.configureUpdater { [updaterController] sender in
+            updaterController.checkForUpdates(sender)
         }
     }
 }

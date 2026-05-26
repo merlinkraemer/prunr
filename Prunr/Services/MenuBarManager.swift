@@ -111,10 +111,27 @@ final class MenuBarManager: NSObject {
 
     /// Right-click menu
     private var contextMenu: NSMenu?
+    private weak var checkForUpdatesMenuItem: NSMenuItem?
     private var panelAutoCloseSuspensionCount = 0
     @ObservationIgnored
-    private var checkForUpdatesHandler: (() -> Void)?
+    private var checkForUpdatesHandler: ((Any?) -> Void)?
     var isUpdaterAvailable = false
+    var isUpdateAvailable = false
+    private(set) var availableUpdateShortVersion: String?
+    private var dismissedUpdateBannerToken: String?
+
+    private static let dismissedUpdateBannerTokenKey = "dismissedUpdateBannerToken"
+
+    var showsUpdateAvailableBanner: Bool {
+        guard isUpdaterAvailable, isUpdateAvailable,
+              let version = availableUpdateShortVersion,
+              let build = availableUpdateBuildVersion else {
+            return false
+        }
+        return dismissedUpdateBannerToken != updateBannerToken(shortVersion: version, buildVersion: build)
+    }
+
+    private var availableUpdateBuildVersion: String?
 
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
 
@@ -562,6 +579,9 @@ final class MenuBarManager: NSObject {
         Self.shared = self
         setupMenuBar()
         setupContextMenu()
+        dismissedUpdateBannerToken = UserDefaults.standard.string(
+            forKey: Self.dismissedUpdateBannerTokenKey
+        )
         updateFreeSpace()
 
         // Start continuous updates (ISS-042)
@@ -624,6 +644,7 @@ final class MenuBarManager: NSObject {
         )
         checkForUpdatesItem.target = self
         menu.addItem(checkForUpdatesItem)
+        checkForUpdatesMenuItem = checkForUpdatesItem
 
         menu.addItem(NSMenuItem.separator())
 
@@ -707,20 +728,72 @@ final class MenuBarManager: NSObject {
         window.orderFrontRegardless()
     }
 
-    func configureUpdater(checkForUpdatesHandler: @escaping () -> Void) {
-        self.checkForUpdatesHandler = checkForUpdatesHandler
+    func configureUpdater(checkForUpdates: @escaping (Any?) -> Void) {
+        checkForUpdatesHandler = checkForUpdates
         isUpdaterAvailable = true
-        contextMenu?.item(withTitle: "Check for Updates…")?.isEnabled = true
+        checkForUpdatesMenuItem?.isEnabled = true
+        notifyUpdateNotAvailable()
     }
 
     func disableUpdater() {
         checkForUpdatesHandler = nil
         isUpdaterAvailable = false
-        contextMenu?.item(withTitle: "Check for Updates…")?.isEnabled = false
+        isUpdateAvailable = false
+        availableUpdateShortVersion = nil
+        checkForUpdatesMenuItem?.isEnabled = false
+    }
+
+    func notifyUpdateAvailable(shortVersion: String, buildVersion: String) {
+        guard !isAlreadyOnOrNewerThanUpdate(shortVersion: shortVersion, buildVersion: buildVersion) else {
+            notifyUpdateNotAvailable()
+            return
+        }
+        availableUpdateShortVersion = shortVersion
+        availableUpdateBuildVersion = buildVersion
+        isUpdateAvailable = true
+    }
+
+    func notifyUpdateNotAvailable() {
+        isUpdateAvailable = false
+        availableUpdateShortVersion = nil
+        availableUpdateBuildVersion = nil
+        dismissedUpdateBannerToken = nil
+        UserDefaults.standard.removeObject(forKey: Self.dismissedUpdateBannerTokenKey)
+    }
+
+    private func isAlreadyOnOrNewerThanUpdate(shortVersion: String, buildVersion: String) -> Bool {
+        let currentShort = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let currentBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+
+        guard currentShort == shortVersion else { return false }
+
+        guard let offeredBuild = Int(buildVersion), let installedBuild = Int(currentBuild) else {
+            return true
+        }
+        return installedBuild >= offeredBuild
+    }
+
+    func dismissUpdateBanner() {
+        guard let shortVersion = availableUpdateShortVersion,
+              let buildVersion = availableUpdateBuildVersion else { return }
+        let token = updateBannerToken(shortVersion: shortVersion, buildVersion: buildVersion)
+        dismissedUpdateBannerToken = token
+        UserDefaults.standard.set(token, forKey: Self.dismissedUpdateBannerTokenKey)
+    }
+
+    private func updateBannerToken(shortVersion: String, buildVersion: String) -> String {
+        "\(shortVersion)|\(buildVersion)"
     }
 
     @objc func checkForUpdates() {
-        checkForUpdatesHandler?()
+        guard let checkForUpdatesHandler else { return }
+
+        if let panel, panel.isVisible {
+            closePopover()
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        checkForUpdatesHandler(statusItem?.button)
     }
 
     @objc private func resetBaseline() {
