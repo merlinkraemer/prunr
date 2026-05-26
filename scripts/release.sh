@@ -78,6 +78,16 @@ maybe_create_release_tag() {
   git tag "v$VERSION" "$RELEASE_REF"
 }
 
+release_notes_file() {
+  local notes_file="$ROOT_DIR/.build/release-notes-v$VERSION.md"
+  mkdir -p "$ROOT_DIR/.build"
+  sed \
+    -e "s/{{VERSION}}/$VERSION/g" \
+    -e "s/{{BUILD}}/$BUILD/g" \
+    "$ROOT_DIR/scripts/release-notes.md.tpl" > "$notes_file"
+  printf '%s' "$notes_file"
+}
+
 maybe_publish_github_release() {
   if [[ "$PUBLISH_GITHUB_RELEASE" != "1" ]]; then
     return
@@ -90,9 +100,8 @@ maybe_publish_github_release() {
     "$USER_ZIP_PATH"
     "$DSYM_ZIP_PATH"
     "$CHECKSUM_PATH"
-    --draft
-    --generate-notes
-    --target "$RELEASE_REF"
+    --title "Prunr $VERSION"
+    --notes-file "$(release_notes_file)"
   )
 
   if git rev-parse "v$VERSION" >/dev/null 2>&1; then
