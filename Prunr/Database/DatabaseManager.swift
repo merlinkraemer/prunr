@@ -1280,7 +1280,9 @@ extension DatabaseManager {
             throw DatabaseError.notInitialized
         }
 
-        let rows = try await dbPool.read { db in
+        // Extract Sendable values inside the read closure — `Row` is not Sendable,
+        // so returning `[Row]` from the async read fails strict concurrency checks.
+        let rows: [(subcategory: String, totalBytes: Int64, fileCount: Int)] = try await dbPool.read { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -1296,17 +1298,23 @@ extension DatabaseManager {
                     ORDER BY totalBytes DESC, pc.subcategory ASC
                     """,
                 arguments: [snapshotId, category.rawValue]
-            )
+            ).map { row in
+                (
+                    subcategory: row["subcategory"] ?? "",
+                    totalBytes: row["totalBytes"] ?? 0,
+                    fileCount: row["fileCount"] ?? 0
+                )
+            }
         }
 
         var groups: [SubcategoryGroup] = []
         groups.reserveCapacity(rows.count)
 
         for row in rows {
-            let rawSubcategory: String = row["subcategory"] ?? ""
+            let rawSubcategory = row.subcategory
             let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
-            let totalBytes: Int64 = row["totalBytes"] ?? 0
-            let fileCount: Int = row["fileCount"] ?? 0
+            let totalBytes = row.totalBytes
+            let fileCount = row.fileCount
 
             let topEntries = try await fetchSnapshotEntriesByClassification(
                 snapshotId: snapshotId,
@@ -1338,7 +1346,9 @@ extension DatabaseManager {
         }
 
         let trackedPathIdString = trackedPathId.uuidString
-        let rows = try await dbPool.read { db in
+        // Extract Sendable values inside the read closure — `Row` is not Sendable,
+        // so returning `[Row]` from the async read fails strict concurrency checks.
+        let rows: [(subcategory: String, totalBytes: Int64, fileCount: Int)] = try await dbPool.read { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -1354,17 +1364,23 @@ extension DatabaseManager {
                     ORDER BY totalBytes DESC, pc.subcategory ASC
                     """,
                 arguments: [trackedPathIdString, category.rawValue]
-            )
+            ).map { row in
+                (
+                    subcategory: row["subcategory"] ?? "",
+                    totalBytes: row["totalBytes"] ?? 0,
+                    fileCount: row["fileCount"] ?? 0
+                )
+            }
         }
 
         var groups: [SubcategoryGroup] = []
         groups.reserveCapacity(rows.count)
 
         for row in rows {
-            let rawSubcategory: String = row["subcategory"] ?? ""
+            let rawSubcategory = row.subcategory
             let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
-            let totalBytes: Int64 = row["totalBytes"] ?? 0
-            let fileCount: Int = row["fileCount"] ?? 0
+            let totalBytes = row.totalBytes
+            let fileCount = row.fileCount
 
             let topEntries = try await fetchWorkingSetEntriesByClassification(
                 trackedPathId: trackedPathId,
