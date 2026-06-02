@@ -37,7 +37,8 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
             XCTAssertEqual(restoredSnapshotId, goodSnapshotId)
 
             let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
-            let rows = try await dbPool.read { db in
+            // Extract Sendable values inside the closure — `Row` is not Sendable.
+            let rows: [(path: String, sizeBytes: Int64)] = try await dbPool.read { db in
                 try Row.fetchAll(
                     db,
                     sql: """
@@ -48,12 +49,14 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
                         ORDER BY p.path
                         """,
                     arguments: [trackedPathId.uuidString]
-                )
+                ).map { row in
+                    (path: row["path"] ?? "", sizeBytes: row["sizeBytes"] ?? 0)
+                }
             }
 
             XCTAssertEqual(rows.count, 1)
-            let restoredPath: String? = rows.first?["path"]
-            let restoredSize: Int64? = rows.first?["sizeBytes"]
+            let restoredPath: String? = rows.first?.path
+            let restoredSize: Int64? = rows.first?.sizeBytes
             XCTAssertEqual(restoredPath, "/tmp/prunr/old.txt")
             XCTAssertEqual(restoredSize, 100)
         }
