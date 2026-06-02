@@ -114,6 +114,55 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
+    /// Regression: a full scan must not double-count growth the realtime watcher
+    /// already recorded. Both the incremental refresh and `createBaseline` write
+    /// to the growth journal, and the journal accumulates — so without the full
+    /// scan reclaiming its own window, the same growth lands twice and the
+    /// displayed total roughly doubles every reconciliation cycle.
+    func testReconciliationFullScanDoesNotDoubleCountRealtimeGrowth() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrDoubleCount")
+            defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+            let file = tempDirectory.appendingPathComponent("blob.bin")
+            let initialBytes = 2_048
+            let growthBytes = 3 * 1_024 * 1_024
+            try Data(repeating: 0xAB, count: initialBytes).write(to: file)
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+
+            // 1) First baseline (S0) — establishes the reference; no journal yet.
+            _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+
+            // 2) File grows on disk; the realtime watcher records the delta into the
+            //    journal (simulated here via recordDeltas, as RecentChangeService does).
+            //    In reality this lands well after the baseline snapshot; the +120s
+            //    stamp models that (the real reconciliation gap is hours).
+            try Data(repeating: 0xAB, count: initialBytes + growthBytes).write(to: file)
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [.init(category: .other, subcategory: nil): Int64(growthBytes)],
+                at: Date().addingTimeInterval(120)
+            )
+
+            // 3) Reconciliation full scan (S1) — sees the same grown file and records
+            //    the snapshot delta (S0 -> S1) into the journal as well.
+            _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+
+            // 4) Displayed growth must equal the ACTUAL growth, not 2x.
+            let stories = await GrowthJournalService.shared.recentGrowthStories(
+                trackedPath: trackedPath,
+                retentionDays: 30
+            )
+            let total = stories[.other]?.deltaBytes ?? 0
+            XCTAssertEqual(
+                total,
+                Int64(growthBytes),
+                "growth should be counted once; got \(total) bytes vs expected \(growthBytes)"
+            )
+        }
+    }
+
     func testSingleSnapshotInventorySurfacesRealtimeGrowthStory() async throws {
         try await withTemporaryDatabase { trackedPathId, snapshotId in
             let trackedPath = TrackedPath(

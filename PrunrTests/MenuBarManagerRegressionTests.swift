@@ -102,4 +102,86 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         manager.notifyUpdateAvailable(shortVersion: short, buildVersion: build)
         XCTAssertFalse(manager.showsUpdateAvailableBanner)
     }
+
+    // MARK: - Realtime watch-set home clamping
+
+    private let home = URL(fileURLWithPath: "/Users/tester")
+
+    func testWatchPathInsideHomeIsWatchedAsIs() {
+        let scope = home.appendingPathComponent("Downloads")
+        XCTAssertEqual(
+            MenuBarManager.clampWatchURLs(for: [scope], home: home).map(\.path),
+            [scope.path]
+        )
+    }
+
+    func testRootScopeClampsToHome() {
+        XCTAssertEqual(
+            MenuBarManager.clampWatchURLs(for: [URL(fileURLWithPath: "/")], home: home).map(\.path),
+            [home.path]
+        )
+    }
+
+    func testHomeAncestorScopeClampsToHome() {
+        // /Users is an ancestor of /Users/tester → clamp up to home.
+        XCTAssertEqual(
+            MenuBarManager.clampWatchURLs(for: [URL(fileURLWithPath: "/Users")], home: home).map(\.path),
+            [home.path]
+        )
+    }
+
+    func testDisjointBoundedScopeIsWatchedAsIs() {
+        // An explicitly-added scope outside home (ext. volume, /Library, a temp dir)
+        // is bounded and realistic — keep watching it as before. Only ancestors of
+        // home get clamped, so these pass through untouched.
+        let scopes = [URL(fileURLWithPath: "/Library"), URL(fileURLWithPath: "/Users/someoneelse")]
+        let result = MenuBarManager.clampWatchURLs(for: scopes, home: home).map(\.path)
+        XCTAssertEqual(Set(result), Set(scopes.map(\.path)))
+    }
+
+    func testHomeItselfIsWatched() {
+        XCTAssertEqual(
+            MenuBarManager.clampWatchURLs(for: [home], home: home).map(\.path),
+            [home.path]
+        )
+    }
+
+    func testNestedScopesDedupeToOutermostRoot() {
+        // Root collapses everything under home into a single home watch root.
+        let result = MenuBarManager.clampWatchURLs(
+            for: [
+                URL(fileURLWithPath: "/"),
+                home.appendingPathComponent("Downloads"),
+                home.appendingPathComponent("Library/Caches")
+            ],
+            home: home
+        )
+        XCTAssertEqual(result.map(\.path), [home.path])
+    }
+
+    func testSiblingHomeSubfoldersAreKeptSeparate() {
+        let downloads = home.appendingPathComponent("Downloads")
+        let developer = home.appendingPathComponent("Developer")
+        let result = MenuBarManager.clampWatchURLs(for: [downloads, developer], home: home).map(\.path)
+        XCTAssertEqual(Set(result), Set([downloads.path, developer.path]))
+        XCTAssertEqual(result.count, 2)
+    }
+
+    func testMixedHomeAndDisjointScopesKeepsBoth() {
+        // A home subfolder and a bounded out-of-home scope are both watched.
+        let downloads = home.appendingPathComponent("Downloads")
+        let library = URL(fileURLWithPath: "/Library")
+        let result = MenuBarManager.clampWatchURLs(for: [downloads, library], home: home).map(\.path)
+        XCTAssertEqual(Set(result), Set([downloads.path, library.path]))
+    }
+
+    func testRootScopeAlongsideDisjointScopeClampsRootButKeepsDisjoint() {
+        // `/` clamps to home; an explicit /Volumes scope stays watched separately.
+        let external = URL(fileURLWithPath: "/Volumes/External")
+        let result = MenuBarManager.clampWatchURLs(
+            for: [URL(fileURLWithPath: "/"), external],
+            home: home
+        ).map(\.path)
+        XCTAssertEqual(Set(result), Set([home.path, external.path]))
+    }
 }

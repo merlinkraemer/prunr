@@ -179,6 +179,9 @@ final class MenuBarManager: NSObject {
     var growthContributorCacheGeneration: UInt64 = 0
     private var currentInventorySnapshotIDsByPath: [UUID: Int64] = [:]
     private var currentGrowthBaselineSnapshotIDsByPath: [UUID: Int64] = [:]
+    /// "Since" anchor for accumulated growth — the baseline snapshot date.
+    /// Re-anchors to ~now after Accept/Reset. Nil when no baseline exists.
+    var growthBaselineDate: Date?
     @ObservationIgnored
     private var subcategoryBreakdownLoadTasks: [GrowthCategory: Task<SubcategoryBreakdownLoadResult, Never>] = [:]
     var monitoredPathName: String = ""
@@ -394,13 +397,61 @@ final class MenuBarManager: NSObject {
         return effective
     }
 
-    private func shouldAutoWatchTrackedPath(_ path: TrackedPath) -> Bool {
-        let standardized = path.url.standardizedFileURL
-        // Don't watch root — too noisy and not a realistic use case
-        if standardized.path == "/" {
-            return false
+    /// Watching an ancestor-of-home scope like `/` in realtime is a noise/CPU
+    /// firehose (`/System`, `/private/var`, …), which is why whole-drive scope
+    /// historically got *no* realtime tracking and silently looked "stable".
+    /// Since essentially all user-driven growth lives under `~`, we instead clamp
+    /// such broad scopes down to the home directory:
+    ///   - inside home              → watch the path itself
+    ///   - ancestor of home (`/`)   → clamp up to home
+    ///   - disjoint bounded scope   → watch as-is (explicit choice: ext. volume,
+    ///     `/Library`, a temp dir — realistic and not a firehose)
+    private func realtimeWatchURLs(for trackedPaths: [TrackedPath]) -> [URL] {
+        Self.clampWatchURLs(
+            for: trackedPaths.map(\.url),
+            home: URL(fileURLWithPath: NSHomeDirectory())
+        )
+    }
+
+    /// Pure home-clamping transform behind `realtimeWatchURLs`. Injectable `home`
+    /// keeps it deterministically testable.
+    nonisolated static func clampWatchURLs(for trackedURLs: [URL], home: URL) -> [URL] {
+        let clamped: [URL] = trackedURLs.map { candidate in
+            let standardized = candidate.standardizedFileURL
+            // Ancestor of home (and not inside it) → clamp down to home so we get
+            // realtime coverage of the meaningful portion without the system firehose.
+            if !pathIsContained(standardized, within: home),
+               pathIsContained(home, within: standardized) {
+                return home.standardizedFileURL
+            }
+            // Inside home, or a disjoint bounded scope → watch as-is.
+            return standardized
         }
-        return true
+        return dedupedWatchRoots(clamped)
+    }
+
+    /// True when `inner` is `outer` or nested beneath it.
+    nonisolated static func pathIsContained(_ inner: URL, within outer: URL) -> Bool {
+        let innerPath = inner.standardizedFileURL.path
+        let outerPath = outer.standardizedFileURL.path
+        if innerPath == outerPath { return true }
+        let prefix = outerPath == "/" ? "/" : outerPath + "/"
+        return innerPath.hasPrefix(prefix)
+    }
+
+    /// Removes exact duplicates and any root nested under another root in the set,
+    /// so we never start overlapping FSEvents streams.
+    nonisolated static func dedupedWatchRoots(_ urls: [URL]) -> [URL] {
+        var roots: [URL] = []
+        for url in urls {
+            let standardized = url.standardizedFileURL
+            if roots.contains(where: { pathIsContained(standardized, within: $0) }) {
+                continue   // already covered by an ancestor already in the set
+            }
+            roots.removeAll { pathIsContained($0, within: standardized) }
+            roots.append(standardized)
+        }
+        return roots
     }
 
     var isLoading = false {
@@ -460,6 +511,18 @@ final class MenuBarManager: NSObject {
     @ObservationIgnored
     nonisolated(unsafe) private var fileEventsWatcher: FSEventsWatcher?
     private(set) var watchedPaths: [String] = []
+
+    /// Whether growth can actually be detected for the current scope.
+    /// False only when a baseline exists but nothing is watched in realtime AND
+    /// periodic reconciliation is gated off (e.g. whole-drive `/` scope without
+    /// Full Disk Access) — the case that silently looks "stable" when it's broken.
+    var isGrowthTrackingActive: Bool {
+        if noBaseline { return true }                       // no growth to track yet
+        if !watchedPaths.isEmpty { return true }            // realtime FSEvents watching
+        if isPermissionConfirmedForProtectedTraversal { return true } // periodic reconciliation
+        return false
+    }
+
     @ObservationIgnored
     nonisolated(unsafe) private var recentChangeTask: Task<Void, Never>?
     private var recentChangeTaskGeneration = 0
@@ -632,6 +695,17 @@ final class MenuBarManager: NSObject {
         menu.addItem(NSMenuItem.separator())
         #endif
 
+        // Open Scan Folder in Finder
+        let openScanPathItem = NSMenuItem(
+            title: "Open Scan Folder in Finder",
+            action: #selector(openScanPathInFinder),
+            keyEquivalent: ""
+        )
+        openScanPathItem.target = self
+        menu.addItem(openScanPathItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // Settings...
         let settingsItem = NSMenuItem(
             title: "Settings...",
@@ -692,6 +766,14 @@ final class MenuBarManager: NSObject {
     private func showContextMenu() {
         guard let menu = contextMenu, let button = statusItem?.button else { return }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+    }
+
+    @objc private func openScanPathInFinder() {
+        let urls = SettingsStore.shared.enabledTrackedPaths.map { $0.url }
+        guard !urls.isEmpty else { return }
+        for url in urls {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     @objc func openSettings() {
@@ -1032,6 +1114,7 @@ final class MenuBarManager: NSObject {
                 aggregation.inventory,
                 snapshotIDsByPath: aggregation.latestSnapshotIdsByPath,
                 growthBaselineSnapshotIDsByPath: aggregation.baselineSnapshotIdsByPath,
+                baselineDate: aggregation.baselineSnapshotDate,
                 invalidateSubcategoryCache: true
             )
 
@@ -1067,6 +1150,7 @@ final class MenuBarManager: NSObject {
                 invalidateGrowthContributorCache()
                 currentInventorySnapshotIDsByPath = [:]
                 currentGrowthBaselineSnapshotIDsByPath = [:]
+                growthBaselineDate = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let baselineError = error as? BaselineService.BaselineError,
@@ -1077,6 +1161,7 @@ final class MenuBarManager: NSObject {
                 invalidateGrowthContributorCache()
                 currentInventorySnapshotIDsByPath = [:]
                 currentGrowthBaselineSnapshotIDsByPath = [:]
+                growthBaselineDate = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
             } else if let scanError = error as? ScanError, case .cancelled = scanError {
@@ -1193,6 +1278,7 @@ final class MenuBarManager: NSObject {
             aggregation.inventory,
             snapshotIDsByPath: aggregation.latestSnapshotIdsByPath,
             growthBaselineSnapshotIDsByPath: aggregation.baselineSnapshotIdsByPath,
+            baselineDate: aggregation.baselineSnapshotDate,
             invalidateSubcategoryCache: invalidateSubcategoryCache
                 || snapshotIDsSignature(aggregation.latestSnapshotIdsByPath)
                     != snapshotIDsSignature(currentInventorySnapshotIDsByPath)
@@ -1851,6 +1937,7 @@ final class MenuBarManager: NSObject {
         _ inventory: [CategoryInventoryItem],
         snapshotIDsByPath: [UUID: Int64],
         growthBaselineSnapshotIDsByPath: [UUID: Int64],
+        baselineDate: Date?,
         invalidateSubcategoryCache: Bool
     ) {
         let previousSnapshotSignature = snapshotIDsSignature(currentInventorySnapshotIDsByPath)
@@ -1874,6 +1961,7 @@ final class MenuBarManager: NSObject {
         allCategories = visibleInventory
         currentInventorySnapshotIDsByPath = snapshotIDsByPath
         currentGrowthBaselineSnapshotIDsByPath = growthBaselineSnapshotIDsByPath
+        growthBaselineDate = baselineDate
 
         if shouldInvalidateSubcategoryCache {
             cancelSubcategoryBreakdownLoads()
@@ -1920,6 +2008,7 @@ final class MenuBarManager: NSObject {
             reconciliationResult = nil
             currentInventorySnapshotIDsByPath = [:]
             currentGrowthBaselineSnapshotIDsByPath = [:]
+            growthBaselineDate = nil
             hasIncrementalDeltasSinceSnapshot = false
             liveWorkingSetDrillDownCategories = []
             initialSubcategoryWarmupRequestSignature = nil
@@ -2603,9 +2692,7 @@ final class MenuBarManager: NSObject {
         }
 
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-        let urls = enabledPaths
-            .filter { shouldAutoWatchTrackedPath($0) }
-            .map(\.url.standardizedFileURL)
+        let urls = watcherURLs(for: enabledPaths)
         let watchedSignature = urls.map(\.path)
 
         if watchedSignature == watchedPaths {
@@ -2728,9 +2815,7 @@ final class MenuBarManager: NSObject {
     }
 
     private func watcherURLs(for trackedPaths: [TrackedPath]) -> [URL] {
-        trackedPaths
-            .filter { shouldAutoWatchTrackedPath($0) }
-            .map(\.url.standardizedFileURL)
+        realtimeWatchURLs(for: trackedPaths)
             .filter { candidate in
                 let candidatePath = candidate.path
                 return !watcherExcludedRoots().contains { excludedRoot in

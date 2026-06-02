@@ -17,6 +17,9 @@ actor BaselineService {
         let latestSnapshotIdsByPath: [UUID: Int64]
         let baselineSnapshotIdsByPath: [UUID: Int64]
         let latestSnapshotDate: Date?
+        /// Earliest baseline-snapshot date across enabled paths — the "since"
+        /// anchor for accumulated growth. Resets to ~now after Accept/Reset.
+        let baselineSnapshotDate: Date?
     }
 
     // MARK: - Types
@@ -138,6 +141,18 @@ actor BaselineService {
         // no calculateDeltas call and no journal recording, so first-scan cost is
         // scan + insert only, with no expensive diff computation.
         if let previousSnapshotId {
+            // The realtime watcher has been recording provisional deltas into the
+            // journal since the previous snapshot. The snapshot delta below measures
+            // the same window authoritatively, so reclaim those provisional buckets
+            // first — otherwise both writers accumulate and growth double-counts
+            // every reconciliation cycle. Buckets at/under the previous snapshot's
+            // time (earlier authoritative deltas) are preserved.
+            if let previousSnapshotDate = previousSnapshots.first?.createdAt {
+                try await db.deleteGrowthJournalBuckets(
+                    trackedPathId: trackedPath.id,
+                    newerThan: previousSnapshotDate
+                )
+            }
             let deltas = try await db.calculateDeltas(beforeId: previousSnapshotId, afterId: snapshotId)
             if !deltas.isEmpty {
                 var deltasByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
@@ -1002,6 +1017,7 @@ actor BaselineService {
         var latestSnapshotIdsByPath: [UUID: Int64] = [:]
         var baselineSnapshotIdsByPath: [UUID: Int64] = [:]
         var latestSnapshotDate: Date?
+        var baselineSnapshotDate: Date?
 
         for trackedPath in trackedPaths {
             do {
@@ -1019,8 +1035,16 @@ actor BaselineService {
                     // the current snapshot so that working-set changes (files added
                     // or grown since the initial scan) are detected as growth even
                     // before a second snapshot is taken.
-                    baselineSnapshotIdsByPath[trackedPath.id] =
-                        comparison.baselineSnapshotId ?? comparison.currentSnapshotId
+                    let baselineId = comparison.baselineSnapshotId ?? comparison.currentSnapshotId
+                    baselineSnapshotIdsByPath[trackedPath.id] = baselineId
+
+                    // Track the earliest baseline date across paths — the "since"
+                    // anchor for accumulated growth.
+                    if let baselineDate = try await db.fetchSnapshotCreatedAt(snapshotId: baselineId) {
+                        if baselineSnapshotDate == nil || baselineDate < baselineSnapshotDate! {
+                            baselineSnapshotDate = baselineDate
+                        }
+                    }
                 }
             } catch {
                 logger.error("Error resolving snapshots for \(trackedPath.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -1047,7 +1071,8 @@ actor BaselineService {
             inventory: inventory,
             latestSnapshotIdsByPath: latestSnapshotIdsByPath,
             baselineSnapshotIdsByPath: baselineSnapshotIdsByPath,
-            latestSnapshotDate: latestSnapshotDate
+            latestSnapshotDate: latestSnapshotDate,
+            baselineSnapshotDate: baselineSnapshotDate
         )
     }
 

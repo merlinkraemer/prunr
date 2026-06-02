@@ -561,6 +561,23 @@ extension DatabaseManager {
         }
     }
 
+    /// Deletes journal buckets strictly newer than `date` for a tracked path.
+    /// Used by a full scan to reclaim the provisional realtime deltas covering its
+    /// window before recording the authoritative snapshot delta — preventing the
+    /// realtime and snapshot writers from double-counting the same growth.
+    func deleteGrowthJournalBuckets(trackedPathId: UUID, newerThan date: Date) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.write { db in
+            try db.execute(
+                sql: "DELETE FROM growthJournalBucket WHERE trackedPathId = ? AND bucketStart > ?",
+                arguments: [trackedPathId.uuidString, date]
+            )
+        }
+    }
+
     /// Adds a single entry to a snapshot (for testing/debugging)
     /// - Parameters:
     ///   - snapshotId: The snapshot ID to add the entry to
@@ -765,6 +782,17 @@ extension DatabaseManager {
             }
 
             return try request.fetchAll(db)
+        }
+    }
+
+    /// Fetches the creation date for a single snapshot id.
+    func fetchSnapshotCreatedAt(snapshotId: Int64) async throws -> Date? {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try Snapshot.filter(Snapshot.Columns.id == snapshotId).fetchOne(db)?.createdAt
         }
     }
 
