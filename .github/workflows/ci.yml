@@ -59,7 +59,7 @@ jobs:
         run: xcodegen generate
 
       - name: Build
-        run: make build
+        run: make build XCODE_EXTRA_FLAGS="CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="
 
       - name: Test
-        run: make test
+        run: make test XCODE_EXTRA_FLAGS="CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="

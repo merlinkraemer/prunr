@@ -12,6 +12,10 @@ XCODE_APP ?= /Applications/Xcode.app
 XCODE_DEVELOPER_DIR ?= $(XCODE_APP)/Contents/Developer
 XCODEBUILD = env DEVELOPER_DIR="$(XCODE_DEVELOPER_DIR)" xcodebuild
 
+# Extra xcodebuild settings appended to build/test. CI sets this to disable
+# code signing (the build/test runner has no certs); empty for local dev.
+XCODE_EXTRA_FLAGS ?=
+
 # Colors for output
 BLUE = \033[0;34m
 GREEN = \033[0;32m
@@ -67,7 +71,8 @@ build:
 		-scheme $(SCHEME) \
 		-configuration $(CONFIG) \
 		-derivedDataPath $(DERIVED_DATA) \
-		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES)
+		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES) \
+		$(XCODE_EXTRA_FLAGS)
 	@echo "$(GREEN)Build complete!$(NC)"
 
 release:
@@ -156,6 +161,7 @@ test:
 		-configuration $(CONFIG) \
 		-derivedDataPath $(DERIVED_DATA) \
 		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES) \
+		$(XCODE_EXTRA_FLAGS) \
 		> "$$output_file" 2>&1; \
 	status=$$?; \
 	cat "$$output_file"; \
