@@ -698,7 +698,7 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
-    func testRecentGrowthStoryDisplayLabelUsesGrowthWindow() async throws {
+    func testRecentGrowthStorySumsAllDeltasSinceBaseline() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let trackedPath = TrackedPath(
                 id: trackedPathId,
@@ -708,8 +708,10 @@ final class PrunrSmokeTests: XCTestCase {
             let growthBytes = Int64(300 * 1024 * 1024)
             let deltaKey = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil)
 
-            let firstBucket = Date().addingTimeInterval(-180)
-            let secondBucket = firstBucket.addingTimeInterval(60)
+            // Two buckets spread over time — and one well outside any 24h window
+            // to prove growth accumulates until reset, not just for the last day.
+            let firstBucket = Date().addingTimeInterval(-3 * 24 * 60 * 60)
+            let secondBucket = Date().addingTimeInterval(-60)
 
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
@@ -727,7 +729,10 @@ final class PrunrSmokeTests: XCTestCase {
                 retentionDays: 7
             )
 
-            XCTAssertEqual(stories[.developer]?.displayLabel, "2m")
+            // Cumulative total = both buckets, regardless of age within retention.
+            XCTAssertEqual(stories[.developer]?.deltaBytes, growthBytes * 2)
+            let story = try XCTUnwrap(stories[.developer])
+            XCTAssertLessThan(story.startedAt, story.endedAt)
         }
     }
 

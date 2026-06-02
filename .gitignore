@@ -119,3 +119,9 @@ Thumbs.db
 .idea/
 puremac_analysis/
 dusk_analysis/
+
+# Local scratch / working notes
+context.md
+progress.md
+s1-canvas-result.md
+s2-primitives-result.md

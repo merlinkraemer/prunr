@@ -6,7 +6,6 @@ actor GrowthJournalService {
 
     private let db = DatabaseManager.shared
     private let recentStoryThresholdBytes: Int64 = 1 * 1024 * 1024
-    private let recentStoryWindow: TimeInterval = 24 * 60 * 60
     private let logger = Logger(subsystem: "com.prunr.app", category: "GrowthJournal")
 
     private init() {}
@@ -86,6 +85,13 @@ actor GrowthJournalService {
         }
     }
 
+    /// Builds one cumulative growth story per category from the retained journal.
+    ///
+    /// The journal is cleared on Accept/Reset (`BaselineService.acceptGrowth`),
+    /// so every retained bucket represents growth since the current baseline.
+    /// Growth is therefore the **sum of all positive deltas** per category —
+    /// not a single recent burst — with the time anchor surfaced separately as
+    /// the baseline date in the UI.
     private func buildStories(
         from buckets: [GrowthJournalBucket],
         now: Date,
@@ -100,91 +106,24 @@ actor GrowthJournalService {
                 .filter { $0.deltaBytes > 0 }
                 .sorted { $0.bucketStart < $1.bucketStart }
 
-            guard !positiveBuckets.isEmpty else { continue }
+            guard let first = positiveBuckets.first, let last = positiveBuckets.last else { continue }
 
-            let segments = buildSegments(from: positiveBuckets)
-            let recentSegments = segments.filter { now.timeIntervalSince($0.endedAt) <= recentStoryWindow }
+            let total = positiveBuckets.reduce(Int64(0)) { $0 + $1.deltaBytes }
+            guard total >= recentStoryThresholdBytes else { continue }
 
-            guard let bestSegment = recentSegments.max(by: {
-                score(segment: $0, now: now, retentionWindow: retentionWindow)
-                < score(segment: $1, now: now, retentionWindow: retentionWindow)
-            }) else {
-                continue
-            }
-
-            guard bestSegment.deltaBytes >= recentStoryThresholdBytes else { continue }
-
-            let duration = max(60, bestSegment.endedAt.timeIntervalSince(bestSegment.startedAt) + 60)
+            let duration = max(60, last.bucketStart.timeIntervalSince(first.bucketStart) + 60)
             result[category] = RecentGrowthStory(
                 category: category,
                 subcategory: nil,
-                deltaBytes: bestSegment.deltaBytes,
-                startedAt: bestSegment.startedAt,
-                endedAt: bestSegment.endedAt,
+                deltaBytes: total,
+                startedAt: first.bucketStart,
+                endedAt: last.bucketStart,
                 duration: duration,
-                displayLabel: formattedDuration(duration)
+                displayLabel: ""
             )
         }
 
         return result
-    }
-
-    private func buildSegments(from buckets: [GrowthJournalBucket]) -> [GrowthSegment] {
-        guard let first = buckets.first else { return [] }
-
-        var segments: [GrowthSegment] = []
-        var current = GrowthSegment(
-            startedAt: first.bucketStart,
-            endedAt: first.bucketStart,
-            deltaBytes: first.deltaBytes
-        )
-
-        for bucket in buckets.dropFirst() {
-            let gap = bucket.bucketStart.timeIntervalSince(current.endedAt)
-            if gap <= 3 * 60 {
-                current.endedAt = bucket.bucketStart
-                current.deltaBytes += bucket.deltaBytes
-            } else {
-                segments.append(current)
-                current = GrowthSegment(
-                    startedAt: bucket.bucketStart,
-                    endedAt: bucket.bucketStart,
-                    deltaBytes: bucket.deltaBytes
-                )
-            }
-        }
-
-        segments.append(current)
-        return segments
-    }
-
-    private func score(segment: GrowthSegment, now: Date, retentionWindow: TimeInterval) -> Double {
-        let age = max(0, now.timeIntervalSince(segment.endedAt))
-        let recencyWeight: Double
-        if age <= 24 * 60 * 60 {
-            recencyWeight = 1.0
-        } else {
-            let decayWindow = max(60, retentionWindow - 24 * 60 * 60)
-            let progress = min(1.0, (age - 24 * 60 * 60) / decayWindow)
-            recencyWeight = 1.0 - (0.65 * progress)
-        }
-
-        return Double(segment.deltaBytes) * recencyWeight
-    }
-
-    private func formattedDuration(_ duration: TimeInterval) -> String {
-        let roundedMinutes = max(1, Int((duration / 60).rounded()))
-        if roundedMinutes < 60 {
-            return "\(roundedMinutes)m"
-        }
-
-        let roundedHours = Int((duration / 3600).rounded())
-        if roundedHours < 24 {
-            return "\(max(1, roundedHours))h"
-        }
-
-        let roundedDays = Int((duration / (24 * 3600)).rounded())
-        return "\(max(1, roundedDays))d"
     }
 
     private func floorToMinute(_ date: Date) -> Date {
@@ -192,10 +131,4 @@ actor GrowthJournalService {
         let floored = floor(timeInterval / 60.0) * 60.0
         return Date(timeIntervalSinceReferenceDate: floored)
     }
-}
-
-private struct GrowthSegment {
-    var startedAt: Date
-    var endedAt: Date
-    var deltaBytes: Int64
 }

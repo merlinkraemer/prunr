@@ -907,7 +907,7 @@ private struct CategoryInventoryRow: View, Equatable {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("+\(formattedBytes(story.deltaBytes)) · \(story.displayLabel)")
+                        Text("+\(formattedBytes(story.deltaBytes))")
                     }
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.orange)

@@ -422,7 +422,7 @@ struct MenuBarView: View {
         .onChange(of: manager.lastAcceptedGrowthAt) { _, acceptedAt in
             guard acceptedAt != nil else { return }
             acceptedGrowthFeedbackTask?.cancel()
-            withAnimation(.snappy(duration: 0.22, extraBounce: 0)) {
+            withAnimation(.snappy(duration: 0.32, extraBounce: 0)) {
                 justAcceptedGrowth = true
             }
             acceptedGrowthFeedbackTask = Task {
@@ -1101,26 +1101,28 @@ struct MenuBarView: View {
         max(0, manager.usedBytes - trackedInventoryBytes)
     }
 
+    // Outside-scan-scope total now lives in the footer status line, so the
+    // category list no longer carries a pinned supplemental row for it.
     private var supplementalInventoryItems: [SupplementalInventoryItem] {
-        guard outsideScanScopeBytes > 0 else {
-            return []
-        }
-
-        return [
-            SupplementalInventoryItem(
-                id: outsideScopeSegmentID,
-                title: "Outside Scan Scope",
-                icon: "square.dashed",
-                currentSizeBytes: outsideScanScopeBytes,
-                badgeText: "Not scanned"
-            )
-        ]
+        []
     }
 
     private var overallGrowthBytes: Int64 {
         manager.growingCategories.reduce(Int64(0)) { partial, item in
             partial + (item.recentGrowthStory?.deltaBytes ?? 0)
         }
+    }
+
+    /// "Since" anchor shown next to growth — "today" when the baseline was set
+    /// today, otherwise a short date like "Jun 1".
+    private var baselineSinceLabel: String? {
+        guard let date = manager.growthBaselineDate else { return nil }
+        if Calendar.current.isDateInToday(date) {
+            return "today"
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter.string(from: date)
     }
 
     private var currentHeaderScreen: HeaderScreen {
@@ -1360,49 +1362,72 @@ struct MenuBarView: View {
     }
 
     @State private var justAcceptedGrowth = false
+    @State private var growthPillHovered = false
 
     private var overviewHeader: some View {
         ZStack {
-            if overallGrowthBytes > 0 {
-                HStack(spacing: 8) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("+\(formattedBytes(overallGrowthBytes))")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    }
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 8)
-                    .frame(height: 22)
-                    .background(Capsule().fill(Color.orange.opacity(0.12)))
-
+            if overallGrowthBytes > 0 && !justAcceptedGrowth {
+                HStack(spacing: 6) {
                     Button {
+                        // Drive the morph optimistically off the click — the green
+                        // pill IS the feedback. The actual re-baseline runs in the
+                        // background; schedule the settle-to-Stable here so it never
+                        // depends on when the async accept finishes.
+                        withAnimation(.snappy(duration: 0.32, extraBounce: 0)) {
+                            justAcceptedGrowth = true
+                        }
+                        acceptedGrowthFeedbackTask?.cancel()
+                        acceptedGrowthFeedbackTask = Task {
+                            try? await Task.sleep(for: .seconds(1.8))
+                            guard !Task.isCancelled else { return }
+                            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
+                                justAcceptedGrowth = false
+                            }
+                        }
                         Task { await manager.acceptGrowth() }
                     } label: {
-                        HStack(spacing: 0) {
-                            if manager.isAcceptingGrowth {
-                                ProgressView()
-                                    .controlSize(.mini)
-                                    .scaleEffect(0.7)
-                                    .frame(width: 12, height: 12)
-                                    .padding(.trailing, 5)
+                        ZStack {
+                            // Growth state — also the width floor: the pill never
+                            // shrinks below the GB label even when "Reset" is shorter.
+                            HStack(spacing: 5) {
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("+\(formattedBytes(overallGrowthBytes))")
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             }
-                            Text(manager.isAcceptingGrowth ? "Setting Baseline" : "Dismiss")
-                                .font(.system(size: 10, weight: .semibold))
+                            .opacity(growthPillHovered ? 0 : 1)
+
+                            // Reset state (hover) — if wider than GB, it wins.
+                            HStack(spacing: 5) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("Reset")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .opacity(growthPillHovered ? 1 : 0)
                         }
-                        .foregroundStyle(manager.isAcceptingGrowth ? .secondary : .secondary)
+                        .foregroundStyle(.orange)
                         .padding(.horizontal, 8)
                         .frame(height: 22)
-                        .background(
-                            Capsule()
-                                .fill(Color.primary.opacity(manager.isAcceptingGrowth ? 0.08 : 0.05))
-                        )
+                        .background(Capsule().fill(Color.orange.opacity(growthPillHovered ? 0.18 : 0.12)))
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .disabled(manager.isAcceptingGrowth)
-                    .help("Clear the current growth indicators now and save the current sizes as the new baseline")
+                    .fixedSize()
+                    .onHover { growthPillHovered = $0 }
+                    .help("Reset growth: save the current sizes as the new baseline and start tracking from now")
+
+                    if let since = baselineSinceLabel {
+                        Text("since \(since)")
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundStyle(.tertiary)
+                            .fixedSize()
+                    }
                 }
                 .frame(height: 40, alignment: .center)
+                .animation(.snappy(duration: 0.16), value: growthPillHovered)
+                .transition(.opacity)
             } else if justAcceptedGrowth {
                 Text("Set as New Baseline!")
                     .font(.system(size: 10, weight: .semibold))
@@ -1410,8 +1435,7 @@ struct MenuBarView: View {
                     .padding(.horizontal, 8)
                     .frame(height: 22)
                     .background(Capsule().fill(Color.green.opacity(0.12)))
-                    .transition(.asymmetric(insertion: .scale(scale: 0.92).combined(with: .opacity),
-                                            removal: .opacity))
+                    .transition(.opacity)
             } else {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark")
@@ -1422,12 +1446,8 @@ struct MenuBarView: View {
                 .foregroundStyle(.green)
                 .padding(.horizontal, 6)
                 .frame(height: 22, alignment: .center)
-                .background(
-                    Capsule()
-                        .fill(Color.green.opacity(0.12))
-                )
-                .transition(.asymmetric(insertion: .scale(scale: 0.92).combined(with: .opacity),
-                                        removal: .opacity))
+                .background(Capsule().fill(Color.green.opacity(0.12)))
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -1588,16 +1608,6 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var footerStatusText: some View {
-        let relativePhrase: String? = {
-            if let lastChange = manager.lastDetectedChangeAt {
-                return relativeTime(from: lastChange)
-            }
-            if let lastScan = manager.lastAutomaticScanAt {
-                return relativeTime(from: lastScan)
-            }
-            return nil
-        }()
-
         if manager.showsUpdateAvailableBanner {
             HStack(spacing: 8) {
                 Circle()
@@ -1624,6 +1634,18 @@ struct MenuBarView: View {
                 .accessibilityLabel("Dismiss update notice")
             }
             .font(.system(size: 11))
+        } else if !manager.isGrowthTrackingActive {
+            // Broken state: the engine can't see changes. Speak up loudly —
+            // otherwise this looks identical to a quiet, healthy drive.
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.orange)
+                Text("Not tracking — needs Full Disk Access")
+                    .foregroundStyle(.orange)
+            }
+            .font(.system(size: 11))
+            .help("Growth can't be detected for this scope. Grant Full Disk Access in Settings so Prunr can track changes.")
         } else if manager.isBackgroundFullScanRunning {
             HStack(spacing: 6) {
                 Circle()
@@ -1633,12 +1655,6 @@ struct MenuBarView: View {
                 Text("Refreshing")
                     .foregroundStyle(.secondary)
                     .opacity(footerBackgroundScanPulse ? 0.96 : 0.72)
-                if let relativePhrase {
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                    Text(relativePhrase)
-                        .foregroundStyle(.tertiary)
-                }
             }
             .font(.system(size: 11))
             .onAppear {
@@ -1657,29 +1673,25 @@ struct MenuBarView: View {
                     .frame(width: 5, height: 5)
                 Text("Changes pending")
                     .foregroundStyle(.secondary)
-                if let relativePhrase {
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                    Text(relativePhrase)
-                        .foregroundStyle(.tertiary)
-                }
             }
             .font(.system(size: 11))
-        } else if let relativePhrase {
-            Text(relativePhrase)
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
         } else {
-            Text("No changes detected")
+            // Healthy default: no nags. Show how much of the drive sits outside
+            // the scan scope — the standing context that nags temporarily replace.
+            if outsideScanScopeBytes > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.dashed")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                    Text("\(formattedBytes(outsideScanScopeBytes)) outside scan scope")
+                        .foregroundStyle(.tertiary)
+                }
                 .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
+                .help("Storage outside your scan scope isn't tracked. Add it as a scan path to include it.")
+            } else {
+                Color.clear.frame(height: 1)
+            }
         }
-    }
-
-    private func relativeTime(from date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func primaryActionButton(
