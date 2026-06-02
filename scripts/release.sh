@@ -45,6 +45,20 @@ else
   NOTARY_AUTH_ARGS=(--keychain-profile "$NOTARY_PROFILE")
 fi
 
+# Archive signing: locally, automatic signing resolves a Mac Development cert for
+# the build phase. CI keychains only carry the Developer ID Application cert, so
+# when ARCHIVE_SIGN_IDENTITY is set we sign the whole archive manually with it
+# (correct for Developer ID distribution). Unset → unchanged local behavior.
+ARCHIVE_SIGNING_ARGS=()
+if [[ -n "${ARCHIVE_SIGN_IDENTITY:-}" ]]; then
+  ARCHIVE_SIGNING_ARGS=(
+    CODE_SIGN_STYLE=Manual
+    "CODE_SIGN_IDENTITY=$ARCHIVE_SIGN_IDENTITY"
+    "DEVELOPMENT_TEAM=$TEAM_ID"
+    PROVISIONING_PROFILE_SPECIFIER=
+  )
+fi
+
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "missing required command: $1" >&2
@@ -159,7 +173,7 @@ update_appcast_if_available() {
 
   if [[ -x "$appcast_tool" ]]; then
     "$appcast_tool" \
-      "${ed_key_args[@]}" \
+      ${ed_key_args[@]+"${ed_key_args[@]}"} \
       --download-url-prefix "https://github.com/merlinkraemer/prunr/releases/download/v$VERSION/" \
       --link "https://github.com/merlinkraemer/prunr/releases/tag/v$VERSION" \
       "$DIST_DIR"
@@ -221,7 +235,8 @@ xcodebuild archive \
   -configuration Release \
   -archivePath "$ARCHIVE_PATH" \
   -derivedDataPath "$DERIVED_DATA" \
-  -clonedSourcePackagesDirPath "$SOURCE_PACKAGES"
+  -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
+  ${ARCHIVE_SIGNING_ARGS[@]+"${ARCHIVE_SIGNING_ARGS[@]}"}
 
 xcodebuild -exportArchive \
   -archivePath "$ARCHIVE_PATH" \

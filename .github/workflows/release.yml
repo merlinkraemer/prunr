@@ -112,6 +112,7 @@ jobs:
           NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
           SPARKLE_BIN_DIR: ${{ runner.temp }}/sparkle/bin
           SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle_ed_key
+          ARCHIVE_SIGN_IDENTITY: "Developer ID Application"
           CREATE_RELEASE_COMMIT: "1"
           CREATE_RELEASE_TAG: "1"
           PUSH_RELEASE: "1"
