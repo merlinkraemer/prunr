@@ -33,6 +33,17 @@ PUBLISH_GITHUB_RELEASE="${PUBLISH_GITHUB_RELEASE:-0}"
 CREATE_RELEASE_COMMIT="${CREATE_RELEASE_COMMIT:-0}"
 CREATE_RELEASE_TAG="${CREATE_RELEASE_TAG:-0}"
 RELEASE_REF="${RELEASE_REF:-$(git rev-parse HEAD)}"
+RELEASE_BRANCH="${RELEASE_BRANCH:-main}"
+PUSH_RELEASE="${PUSH_RELEASE:-0}"
+
+# Notary auth: prefer an App Store Connect API key (CI-friendly, no keychain
+# profile) when NOTARY_KEY/NOTARY_KEY_ID/NOTARY_ISSUER are all set; otherwise
+# fall back to the local keychain profile so on-machine releases are unchanged.
+if [[ -n "${NOTARY_KEY:-}" && -n "${NOTARY_KEY_ID:-}" && -n "${NOTARY_ISSUER:-}" ]]; then
+  NOTARY_AUTH_ARGS=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+else
+  NOTARY_AUTH_ARGS=(--keychain-profile "$NOTARY_PROFILE")
+fi
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -88,6 +99,17 @@ release_notes_file() {
   printf '%s' "$notes_file"
 }
 
+maybe_push_release() {
+  if [[ "$PUSH_RELEASE" != "1" ]]; then
+    return
+  fi
+
+  git push origin "HEAD:$RELEASE_BRANCH"
+  if [[ "$CREATE_RELEASE_TAG" == "1" ]]; then
+    git push origin "v$VERSION"
+  fi
+}
+
 maybe_publish_github_release() {
   if [[ "$PUBLISH_GITHUB_RELEASE" != "1" ]]; then
     return
@@ -128,8 +150,16 @@ update_appcast_if_available() {
     sign_tool="$sparkle_bin_dir/sign_update"
   fi
 
+  # On CI the EdDSA signing key lives in a file (from a secret) rather than the
+  # local keychain; pass it explicitly when SPARKLE_ED_KEY_FILE is set.
+  local ed_key_args=()
+  if [[ -n "${SPARKLE_ED_KEY_FILE:-}" ]]; then
+    ed_key_args=(--ed-key-file "$SPARKLE_ED_KEY_FILE")
+  fi
+
   if [[ -x "$appcast_tool" ]]; then
     "$appcast_tool" \
+      "${ed_key_args[@]}" \
       --download-url-prefix "https://github.com/merlinkraemer/prunr/releases/download/v$VERSION/" \
       --link "https://github.com/merlinkraemer/prunr/releases/tag/v$VERSION" \
       "$DIST_DIR"
@@ -168,8 +198,8 @@ if [[ ! -f "$EXPORT_OPTIONS_PLIST" ]]; then
   exit 1
 fi
 
-if ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
-  echo "notary profile '$NOTARY_PROFILE' is not configured or inaccessible" >&2
+if ! xcrun notarytool history "${NOTARY_AUTH_ARGS[@]}" >/dev/null 2>&1; then
+  echo "notary credentials are not configured or inaccessible" >&2
   exit 1
 fi
 
@@ -206,7 +236,7 @@ fi
 ditto -c -k --keepParent "$EXPORT_APP_PATH" "$SUBMIT_ZIP_PATH"
 
 xcrun notarytool submit "$SUBMIT_ZIP_PATH" \
-  --keychain-profile "$NOTARY_PROFILE" \
+  "${NOTARY_AUTH_ARGS[@]}" \
   --wait
 
 xcrun stapler staple "$EXPORT_APP_PATH"
@@ -231,6 +261,7 @@ fi
 update_appcast_if_available
 maybe_create_release_commit
 maybe_create_release_tag
+maybe_push_release
 maybe_publish_github_release
 
 cat <<EOF

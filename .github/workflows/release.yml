@@ -1,0 +1,130 @@
+name: Release
+
+# Cuts a signed, notarized alpha build entirely on GitHub's runners and ships it
+# to testers: bumps the version, archives + codesigns, notarizes via Apple,
+# staples, regenerates the Sparkle appcast, commits the bump + appcast to main,
+# tags it, and publishes the GitHub Release the updater downloads from.
+#
+# Triggered manually (UI "Run workflow") or by the `/ship-alpha` skill via
+# `gh workflow run`. Never auto-fires on push, so no accidental releases.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Marketing version (e.g. 0.1.5-alpha.6)"
+        required: true
+        type: string
+      build:
+        description: "Build number — must strictly increase (e.g. 7)"
+        required: true
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, Notarize & Publish
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      SPARKLE_VERSION: "2.6.4"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          if [[ ! "${{ inputs.build }}" =~ ^[0-9]+$ ]]; then
+            echo "build must be a positive integer" >&2
+            exit 1
+          fi
+          current_build="$(perl -ne 'print $1 if /CURRENT_PROJECT_VERSION: "(\d+)"/' project.yml)"
+          if [[ -n "$current_build" && "${{ inputs.build }}" -le "$current_build" ]]; then
+            echo "build ${{ inputs.build }} must be greater than current build $current_build" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code origin "refs/tags/v${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "tag v${{ inputs.version }} already exists on origin" >&2
+            exit 1
+          fi
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Import Developer ID signing certificate
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          CERT_PATH="$RUNNER_TEMP/developer-id.p12"
+
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$MACOS_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PW" "$KEYCHAIN_PATH" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          rm -f "$CERT_PATH"
+
+          echo "Signing identities available:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Prepare notary API key
+        env:
+          NOTARY_API_KEY_P8_BASE64: ${{ secrets.NOTARY_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          echo "$NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
+
+      - name: Prepare Sparkle tools and signing key
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/sparkle.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_ed_key"
+          test -x "$RUNNER_TEMP/sparkle/bin/generate_appcast"
+          test -x "$RUNNER_TEMP/sparkle/bin/sign_update"
+
+      - name: Run release
+        env:
+          NOTARY_KEY: ${{ runner.temp }}/notary-key.p8
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
+          SPARKLE_BIN_DIR: ${{ runner.temp }}/sparkle/bin
+          SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle_ed_key
+          CREATE_RELEASE_COMMIT: "1"
+          CREATE_RELEASE_TAG: "1"
+          PUSH_RELEASE: "1"
+          PUBLISH_GITHUB_RELEASE: "1"
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          bash scripts/release.sh "${{ inputs.version }}" "${{ inputs.build }}"
+
+      - name: Cleanup secrets
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/sparkle_ed_key" || true
+          security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" 2>/dev/null || true

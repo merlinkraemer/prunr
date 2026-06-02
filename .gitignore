@@ -38,7 +38,8 @@ fastlane/test_output
 .vscode/
 .cursor/
 .agents/
-.claude/
+.claude/*
+!.claude/skills/
 .pi/
 .planning/
 .monitor/
@@ -119,6 +120,11 @@ Thumbs.db
 .idea/
 puremac_analysis/
 dusk_analysis/
+
+# Signing material — never commit private keys / certs
+appleDev/
+*.p12
+*.p8
 
 # Local scratch / working notes
 context.md
