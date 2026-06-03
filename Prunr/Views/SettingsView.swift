@@ -64,6 +64,7 @@ private struct GeneralSettingsTab: View {
     @State private var showDeleteSnapshotsConfirmation = false
     @State private var showingSavedNotice = false
     @State private var compactedNotice = ""
+    @State private var diagnosticsNotice = ""
     @State private var hasRequiredScanAccess = false
     @State private var blockedScanAccessLocations: [String] = []
     @State private var permissionRefreshTask: Task<Void, Never>? = nil
@@ -271,6 +272,25 @@ private struct GeneralSettingsTab: View {
                         Text(compactedNotice)
                             .font(.caption)
                             .foregroundStyle(compactedNotice.hasPrefix("Compaction failed") ? .red : .green)
+                    }
+
+                    Button {
+                        let url = MenuBarManager.shared?.generateDiagnosticsReport()
+                        diagnosticsNotice = url != nil
+                            ? "Report saved and revealed in Finder. Send it over to help diagnose CPU issues."
+                            : "Could not write diagnostics report."
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "stethoscope")
+                            Text("Generate Diagnostics Report")
+                        }
+                    }
+                    .disabled(isResetting)
+
+                    if !diagnosticsNotice.isEmpty {
+                        Text(diagnosticsNotice)
+                            .font(.caption)
+                            .foregroundStyle(diagnosticsNotice.hasPrefix("Could not") ? .red : .secondary)
                     }
 
                     if showingSavedNotice {

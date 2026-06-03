@@ -512,6 +512,13 @@ final class MenuBarManager: NSObject {
     nonisolated(unsafe) private var fileEventsWatcher: FSEventsWatcher?
     private(set) var watchedPaths: [String] = []
 
+    /// Rolling diagnostics recorder — surfaces sustained FSEvents/refresh churn
+    /// and CPU that the "constant CPU" alpha report points at. Appends periodic
+    /// summaries to `~/Library/Logs/Prunr/diagnostics.log`; the tester can hand us
+    /// that file from Settings → Troubleshooting → Generate Diagnostics Report.
+    @ObservationIgnored
+    private let perfMeter = DiagnosticsReporter.shared
+
     /// Whether growth can actually be detected for the current scope.
     /// False only when a baseline exists but nothing is watched in realtime AND
     /// periodic reconciliation is gated off (e.g. whole-drive `/` scope without
@@ -653,6 +660,33 @@ final class MenuBarManager: NSObject {
 
         // Start continuous updates (ISS-042)
         startRealtimeUpdates()
+
+        // Begin rolling CPU/activity diagnostics (written to the on-disk log).
+        perfMeter.start()
+    }
+
+    /// Captures current app state, appends a fresh diagnostics snapshot to the
+    /// log file, and reveals it in Finder so the tester can send it over.
+    /// Returns the log file URL (nil if writing failed).
+    @discardableResult
+    func generateDiagnosticsReport() -> URL? {
+        let context = DiagnosticsAppContext(
+            scopePaths: SettingsStore.shared.enabledTrackedPaths.map { $0.url.path },
+            enabledPathCount: enabledPathCount,
+            watchedPathCount: watchedPaths.count,
+            protectedTraversalConfirmed: isPermissionConfirmedForProtectedTraversal,
+            usedBytes: usedBytes,
+            totalBytes: totalBytes,
+            freeBytes: freeBytes,
+            categoryCount: allCategories.count,
+            growingCount: growingCategories.count,
+            stableCount: stableCategories.count,
+            fullScanRunning: isLoading || isAutoScanning || isReconciling,
+            pendingRecentChanges: hasPendingRecentChanges,
+            noBaseline: noBaseline,
+            lastFullScanCompletedAt: lastFullScanCompletedAt
+        )
+        return perfMeter.generateReport(context: context)
     }
 
     private func setupMenuBar() {
@@ -1088,10 +1122,15 @@ final class MenuBarManager: NSObject {
             await armFileWatcherBeforeFullScanIfNeeded(for: enabledPaths)
 
             // First, take a new snapshot
-            completedSnapshotsByPath = try await createBaselines(
-                for: enabledPaths,
-                progressCallback: progressCallback
-            )
+            completedSnapshotsByPath = try await Perf.measure(
+                "full-scan",
+                detail: "paths=\(enabledPaths.count) automatic=\(isAutomatic)"
+            ) {
+                try await createBaselines(
+                    for: enabledPaths,
+                    progressCallback: progressCallback
+                )
+            }
 
             // Briefly show real 100% only when scan is actually complete.
             scanProgressPercentage = 1.0
@@ -1262,7 +1301,9 @@ final class MenuBarManager: NSObject {
             return
         }
 
-        let aggregation = await baselineService.getInventoryWithTrends(trackedPaths: enabledPaths)
+        let aggregation = await Perf.measure("inventory-aggregation", detail: "paths=\(enabledPaths.count)") {
+            await baselineService.getInventoryWithTrends(trackedPaths: enabledPaths)
+        }
         guard !aggregation.latestSnapshotIdsByPath.isEmpty else {
             noBaseline = true
             clearInventoryState()
@@ -1284,10 +1325,12 @@ final class MenuBarManager: NSObject {
                     != snapshotIDsSignature(currentInventorySnapshotIDsByPath)
         )
 
-        reconciliationResult = await baselineService.getDiskAccounting(
-            trackedPaths: enabledPaths,
-            primaryTrackedPath: trackedPath
-        )
+        reconciliationResult = await Perf.measure("disk-accounting") {
+            await baselineService.getDiskAccounting(
+                trackedPaths: enabledPaths,
+                primaryTrackedPath: trackedPath
+            )
+        }
 
         updateMonitoredPathName()
     }
@@ -2749,15 +2792,23 @@ final class MenuBarManager: NSObject {
             markDirty(reason: "stream-rescan-required")
         }
 
+        var filteredPathCount = 0
         if let dirtyReason = changeBatch.dirtyReason {
             markDirty(reason: dirtyReason, rawEventCount: changeBatch.rawEventCount)
         } else {
             let filteredPaths = filteredRecentChangePaths(from: changeBatch.changedPaths)
+            filteredPathCount = filteredPaths.count
             if !filteredPaths.isEmpty {
                 lastFileEventAt = Date()
                 enqueuePendingRecentChangePaths(filteredPaths, source: "watcher")
             }
         }
+
+        perfMeter.recordBatch(
+            rawEvents: changeBatch.rawEventCount,
+            filteredPaths: filteredPathCount,
+            dirty: changeBatch.requiresFullRescan || changeBatch.dirtyReason != nil
+        )
 
         guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
             return
@@ -2943,27 +2994,32 @@ final class MenuBarManager: NSObject {
             }
         }
 
+        perfMeter.recordIncrementalRefresh(targets: changedPaths.count)
+
         var allDeltas: [DatabaseManager.JournalDeltaKey: Int64] = [:]
         var hadUpdate = false
         var requiresFullRefresh = false
 
-        for (_, entry) in pathsByTrackedPath {
-            let result = await recentChangeService.refreshChangedPaths(entry.urls, trackedPath: entry.trackedPath)
-            switch result {
-            case .updated(let deltas):
-                hadUpdate = true
-                for (key, delta) in deltas where delta != 0 {
-                    allDeltas[key, default: 0] += delta
+        await Perf.measure("incremental-refresh", detail: "paths=\(changedPaths.count) roots=\(pathsByTrackedPath.count)") {
+            for (_, entry) in pathsByTrackedPath {
+                let result = await recentChangeService.refreshChangedPaths(entry.urls, trackedPath: entry.trackedPath)
+                switch result {
+                case .updated(let deltas):
+                    hadUpdate = true
+                    for (key, delta) in deltas where delta != 0 {
+                        allDeltas[key, default: 0] += delta
+                    }
+                case .needsFullScan:
+                    hadUpdate = true
+                    requiresFullRefresh = true
+                case .noChanges:
+                    break
                 }
-            case .needsFullScan:
-                hadUpdate = true
-                requiresFullRefresh = true
-            case .noChanges:
-                break
             }
         }
 
         if requiresFullRefresh {
+            perfMeter.recordFullScanEscalation()
             lastDetectedChangeAt = Date()
             guard allowFullRefresh else {
                 pendingRecentChangeRequiresFullRefresh = true
