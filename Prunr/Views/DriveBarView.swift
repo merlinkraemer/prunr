@@ -178,24 +178,21 @@ struct DriveBarView: View {
             return []
         }
 
-        var remainingUsed = usedBytes
-        var rendered: [DriveBarSegment] = []
+        // Show every positive category segment so the bar always mirrors the
+        // category list. `renderedSegments` normalizes the fractions, so this
+        // stays correct even when the summed category bytes exceed the volume's
+        // reported `usedBytes` — hardlinks, APFS clones, and firmlinked roots can
+        // legitimately over-count vs. statfs. The old greedy clamp subtracted
+        // each segment from a `usedBytes` budget and dropped everything once the
+        // budget hit zero, which collapsed the bar to one or two blobs whenever
+        // categories over-counted, while the list still showed all categories.
+        var rendered = positiveSegments
 
-        for segment in positiveSegments {
-            guard remainingUsed > 0 else { break }
-            let clampedBytes = min(segment.bytes, remainingUsed)
-            guard clampedBytes > 0 else { continue }
-
-            rendered.append(
-                DriveBarSegment(
-                    id: segment.id,
-                    bytes: clampedBytes,
-                    color: segment.color
-                )
-            )
-            remainingUsed -= clampedBytes
-        }
-
+        // Only surface the synthetic "other used" filler when the volume genuinely
+        // has more used space than we have categorized. When categories over-count
+        // (remainingUsed <= 0) there is nothing left to fill.
+        let categorizedBytes = positiveSegments.reduce(Int64(0)) { $0 + $1.bytes }
+        let remainingUsed = usedBytes - categorizedBytes
         if remainingUsed > 0 {
             rendered.append(
                 DriveBarSegment(
