@@ -1113,16 +1113,21 @@ struct MenuBarView: View {
         }
     }
 
-    /// "Since" anchor shown next to growth — "today" when the baseline was set
-    /// today, otherwise a short date like "Jun 1".
+    /// "Since" anchor shown next to growth — a relative duration since the
+    /// baseline was set, e.g. "just now", "12 minutes ago", "3 hours ago",
+    /// "5 days ago".
     private var baselineSinceLabel: String? {
         guard let date = manager.growthBaselineDate else { return nil }
-        if Calendar.current.isDateInToday(date) {
-            return "today"
+        let elapsed = max(0, Date().timeIntervalSince(date))
+
+        func unit(_ value: Int, _ singular: String) -> String {
+            "\(value) \(singular)\(value == 1 ? "" : "s") ago"
         }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        return formatter.string(from: date)
+
+        if elapsed < 60 { return "just now" }
+        if elapsed < 3600 { return unit(Int(elapsed / 60), "minute") }
+        if elapsed < 86_400 { return unit(Int(elapsed / 3600), "hour") }
+        return unit(Int(elapsed / 86_400), "day")
     }
 
     private var currentHeaderScreen: HeaderScreen {
