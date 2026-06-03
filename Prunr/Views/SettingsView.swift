@@ -9,40 +9,42 @@ struct SettingsView: View {
     @State private var isApplyingScopeChanges = false
 
     var body: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                if scanService.isScanning {
-                    HStack(spacing: 8) {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Text("Scan running — scope and rules are locked until it finishes.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.gray.opacity(0.08))
+        // TabView must be the root view here (not nested in a VStack/ZStack) so
+        // AppKit renders it as the native macOS tab bar instead of collapsing to
+        // a plain segmented control. The scan banner and applying overlay are
+        // attached as modifiers to preserve that styling.
+        TabView(selection: $selectedTab) {
+            GeneralSettingsTab(settingsStore: settingsStore)
+                .tabItem { Label("General", systemImage: "gear") }
+                .tag(0)
+
+            ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
+                .tabItem { Label("Scan Scope", systemImage: "folder") }
+                .tag(1)
+
+            ScanRulesSettingsTab(settingsStore: settingsStore)
+                .tabItem { Label("Scan Rules", systemImage: "line.3.horizontal.decrease.circle") }
+                .tag(2)
+        }
+        .frame(width: 520, height: 480)
+        .disabled(isApplyingScopeChanges)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if scanService.isScanning {
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Text("Scan running — scope and rules are locked until it finishes.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
                 }
-
-                TabView(selection: $selectedTab) {
-                    GeneralSettingsTab(settingsStore: settingsStore)
-                        .tabItem { Label("General", systemImage: "gear") }
-                        .tag(0)
-
-                    ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
-                        .tabItem { Label("Scan Scope", systemImage: "folder") }
-                        .tag(1)
-
-                    ScanRulesSettingsTab(settingsStore: settingsStore)
-                        .tabItem { Label("Scan Rules", systemImage: "line.3.horizontal.decrease.circle") }
-                        .tag(2)
-                }
-                .disabled(isApplyingScopeChanges)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.gray.opacity(0.08))
             }
-            .frame(width: 520, height: 480)
-
+        }
+        .overlay {
             if isApplyingScopeChanges {
                 Color.black.opacity(0.12)
                     .ignoresSafeArea()
