@@ -818,34 +818,11 @@ final class MenuBarManager: NSObject {
             uninstallPanelHostingView()
         }
 
-        // Open settings window programmatically.
-        // Since we don't use SwiftUI's Settings scene (to avoid creating an NSHostingView
-        // that participates in the CA display cycle), we create the settings window on demand.
-        // We're already on the main thread (@MainActor), so no dispatch needed.
-
-        // Check if settings window already exists
-        if let existing = NSApp.windows.first(where: { $0.title.contains("Prunr Settings") }) {
-            NSApp.activate()
-            existing.makeKeyAndOrderFront(nil)
-            existing.orderFrontRegardless()
-            return
-        }
-
-        let settingsView = SettingsView()
-        let hostingController = NSHostingController(rootView: settingsView)
-        hostingController.title = "Prunr Settings"
-
-        let window = NSWindow(contentViewController: hostingController)
-        window.title = "Prunr Settings"
-        window.styleMask = [.titled, .closable, .miniaturizable]
-        window.isReleasedWhenClosed = true
-        window.setFrame(NSRect(x: 0, y: 0, width: 400, height: 350), display: true)
-        window.center()
-        window.hidesOnDeactivate = false
-
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
+        // Open the settings window on demand. We avoid SwiftUI's Settings scene
+        // (it creates hosting views that drive idle CA layout passes — bug #9);
+        // SettingsWindowController builds a pure-AppKit window whose tab bar is a
+        // native NSToolbar. We're already on the main thread (@MainActor).
+        SettingsWindowController.shared.show()
     }
 
     func configureUpdater(

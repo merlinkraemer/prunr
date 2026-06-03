@@ -1,30 +1,75 @@
 import SwiftUI
 import AppKit
 
-/// Settings window for Prunr with tabbed interface
+/// One settings pane. The tab bar itself is a native `NSToolbar` (preference
+/// style, big icons) driven by `SettingsWindowController`; this enum is the
+/// shared source of truth for the panes and their toolbar items.
+enum SettingsTab: Int, CaseIterable {
+    case general
+    case scanScope
+    case scanRules
+
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .scanScope: return "Scan Scope"
+        case .scanRules: return "Scan Rules"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general: return "gear"
+        case .scanScope: return "folder"
+        case .scanRules: return "line.3.horizontal.decrease.circle"
+        }
+    }
+
+    var toolbarIdentifier: NSToolbarItem.Identifier {
+        NSToolbarItem.Identifier("settings.tab.\(rawValue)")
+    }
+
+    static func from(toolbarIdentifier identifier: NSToolbarItem.Identifier) -> SettingsTab? {
+        allCases.first { $0.toolbarIdentifier == identifier }
+    }
+}
+
+/// Tracks the selected settings pane. The `NSToolbar` writes to it (AppKit) and
+/// `SettingsView` observes it (SwiftUI), so the SwiftUI tree stays alive across
+/// tab switches and per-pane state (e.g. pending scope changes) is preserved.
+@MainActor
+@Observable
+final class SettingsSelectionModel {
+    var tab: SettingsTab {
+        didSet { UserDefaults.standard.set(tab.rawValue, forKey: "settingsSelectedTab") }
+    }
+
+    init() {
+        let raw = UserDefaults.standard.integer(forKey: "settingsSelectedTab")
+        tab = SettingsTab(rawValue: raw) ?? .general
+    }
+}
+
+/// Content for the currently-selected settings pane. The tab bar lives on the
+/// window's `NSToolbar` (see `SettingsWindowController`), not in here, so we get
+/// the native System-Settings-style icon tab bar without a SwiftUI `Settings`
+/// scene (which would reintroduce the idle-layout hosting views from bug #9).
 struct SettingsView: View {
     @State private var settingsStore = SettingsStore.shared
     @State private var scanService = ScanService.shared
-    @State private var selectedTab = UserDefaults.standard.integer(forKey: "settingsSelectedTab")
+    let selection: SettingsSelectionModel
     @State private var isApplyingScopeChanges = false
 
     var body: some View {
-        // TabView must be the root view here (not nested in a VStack/ZStack) so
-        // AppKit renders it as the native macOS tab bar instead of collapsing to
-        // a plain segmented control. The scan banner and applying overlay are
-        // attached as modifiers to preserve that styling.
-        TabView(selection: $selectedTab) {
-            GeneralSettingsTab(settingsStore: settingsStore)
-                .tabItem { Label("General", systemImage: "gear") }
-                .tag(0)
-
-            ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
-                .tabItem { Label("Scan Scope", systemImage: "folder") }
-                .tag(1)
-
-            ScanRulesSettingsTab(settingsStore: settingsStore)
-                .tabItem { Label("Scan Rules", systemImage: "line.3.horizontal.decrease.circle") }
-                .tag(2)
+        Group {
+            switch selection.tab {
+            case .general:
+                GeneralSettingsTab(settingsStore: settingsStore)
+            case .scanScope:
+                ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
+            case .scanRules:
+                ScanRulesSettingsTab(settingsStore: settingsStore)
+            }
         }
         .frame(width: 520, height: 480)
         .disabled(isApplyingScopeChanges)
@@ -766,5 +811,5 @@ private struct ScanRulesSettingsTab: View {
 }
 
 #Preview {
-    SettingsView()
+    SettingsView(selection: SettingsSelectionModel())
 }
