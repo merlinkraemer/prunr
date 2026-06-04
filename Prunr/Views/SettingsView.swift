@@ -105,7 +105,6 @@ private struct GeneralSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
     @State private var baselineService = BaselineService.shared
     @State private var permissionsService = PermissionsService.shared
-    @State private var scanService = ScanService.shared
     @State private var isResetting = false
     @State private var isCompactingDatabase = false
     @State private var showDeleteSnapshotsConfirmation = false
@@ -122,14 +121,6 @@ private struct GeneralSettingsTab: View {
         return "Version \(short) (\(build))"
     }
 
-    private var hasEnabledScanPath: Bool {
-        !settingsStore.enabledTrackedPaths.isEmpty
-    }
-
-    private var isScanInProgress: Bool {
-        scanService.isScanning
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             Form {
@@ -144,10 +135,6 @@ private struct GeneralSettingsTab: View {
                             MenuBarManager.shared?.checkForUpdates()
                         }
                         .buttonStyle(.bordered)
-
-                        Text("Prunr checks GitHub for newer releases and installs them in place.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -172,16 +159,12 @@ private struct GeneralSettingsTab: View {
                         .buttonStyle(.borderedProminent)
                     }
 
-                    Text("Prunr checks the folders you selected plus protected locations inside them. Open Privacy Settings only if macOS blocks part of that scope.")
+                    Text("Prunr only needs access to the folders in your scan scope. Open Privacy Settings if macOS blocks part of it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Section("Scanning") {
-                    Text("Prunr tracks file changes in real time. A periodic full rescan ensures long-term accuracy.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
                     HStack {
                         Text("Periodic full rescan")
                             .font(.system(size: 13))
@@ -209,11 +192,13 @@ private struct GeneralSettingsTab: View {
                     }
 
                     if settingsStore.adaptiveFullScanIntervalApplied && !settingsStore.automaticFullScanIntervalUserTouched {
-                        Text("Interval was set from your first full scan. Pick a preset above to use a fixed schedule instead.")
+                        Text("This interval was chosen automatically from how long your first scan took. Pick a preset above for a fixed schedule.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                }
 
+                Section("Data") {
                     HStack {
                         Text("Category history")
                             .font(.system(size: 13))
@@ -230,59 +215,6 @@ private struct GeneralSettingsTab: View {
                         .pickerStyle(.menu)
                         .frame(width: 120)
                     }
-
-                    Button {
-                        MenuBarManager.shared?.showPopover()
-                        Task {
-                            await MenuBarManager.shared?.loadInventory()
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            if isScanInProgress {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                            }
-                            Text("Scan Now")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isScanInProgress || !hasEnabledScanPath)
-
-                    if isScanInProgress, let manager = MenuBarManager.shared {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ProgressView(value: max(0.0, min(1.0, manager.scanProgressPercentage)))
-                                .tint(.blue)
-
-                            Text("Scanning — \(Int(manager.scanProgressPercentage * 100))%")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    if !hasEnabledScanPath {
-                        Text("Enable at least one scan path in Scan Scope first.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Troubleshooting") {
-                    Button(role: .destructive) {
-                        showDeleteSnapshotsConfirmation = true
-                    } label: {
-                        HStack(spacing: 8) {
-                            if isResetting {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Image(systemName: "trash")
-                            }
-                            Text("Delete All Snapshots")
-                        }
-                    }
-                    .disabled(isResetting)
 
                     Button {
                         isCompactingDatabase = true
@@ -321,6 +253,29 @@ private struct GeneralSettingsTab: View {
                             .foregroundStyle(compactedNotice.hasPrefix("Compaction failed") ? .red : .green)
                     }
 
+                    Button(role: .destructive) {
+                        showDeleteSnapshotsConfirmation = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isResetting {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "trash")
+                            }
+                            Text("Delete All Snapshots")
+                        }
+                    }
+                    .disabled(isResetting)
+
+                    if showingSavedNotice {
+                        Label("Snapshots deleted", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                Section("Troubleshooting") {
                     Button {
                         let url = MenuBarManager.shared?.generateDiagnosticsReport()
                         diagnosticsNotice = url != nil
@@ -338,12 +293,6 @@ private struct GeneralSettingsTab: View {
                         Text(diagnosticsNotice)
                             .font(.caption)
                             .foregroundStyle(diagnosticsNotice.hasPrefix("Could not") ? .red : .secondary)
-                    }
-
-                    if showingSavedNotice {
-                        Label("Snapshots deleted", systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.green)
                     }
                 }
             }
@@ -432,6 +381,7 @@ private struct ScanScopeSettingsTab: View {
     @State private var showApplyConfirmation = false
     @State private var showingAppliedNotice = false
     @State private var applyStatusText = ""
+    @State private var showOtherCommonPaths = false
 
     private var isScanInProgress: Bool {
         scanService.isScanning
@@ -450,17 +400,17 @@ private struct ScanScopeSettingsTab: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                    GroupBox("Primary Scan Folder") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            if isScanInProgress {
-                                Label("Scan is running. Scope controls are temporarily locked.", systemImage: "lock.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                        GroupBox("Primary Scan Folder") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                if isScanInProgress {
+                                    Label("Scan is running. Scope controls are temporarily locked.", systemImage: "lock.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
 
-                            HStack(spacing: 10) {
-                                Image(systemName: "externaldrive.fill")
-                                    .foregroundStyle(.blue)
+                                HStack(spacing: 10) {
+                                    Image(systemName: "externaldrive.fill")
+                                        .foregroundStyle(.blue)
 
                                     Text(settingsStore.mainBasePath)
                                         .font(.system(size: 12, design: .monospaced))
@@ -494,19 +444,24 @@ private struct ScanScopeSettingsTab: View {
                             .padding(.top, 4)
                         }
 
-                        GroupBox("Other Common Paths") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                if optionalCommonPaths.isEmpty {
-                                    Text("No other common paths found on this machine.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    ForEach(optionalCommonPaths) { path in
-                                        commonPathToggle(for: path)
+                        GroupBox {
+                            DisclosureGroup(isExpanded: $showOtherCommonPaths) {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    if optionalCommonPaths.isEmpty {
+                                        Text("No other common paths found on this machine.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        ForEach(optionalCommonPaths) { path in
+                                            commonPathToggle(for: path)
+                                        }
                                     }
                                 }
+                                .padding(.top, 4)
+                            } label: {
+                                Text("Other Common Paths")
+                                    .font(.system(size: 13, weight: .semibold))
                             }
-                            .padding(.top, 4)
                         }
                     }
                     .padding()
@@ -766,11 +721,9 @@ private struct ScanRulesSettingsTab: View {
                 }
 
                 Section("Ignore Names") {
-                    ForEach(Array(SettingsStore.defaultScanIgnoreNames).sorted(), id: \.self) { name in
-                        Label(name, systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 13, design: .monospaced))
-                    }
+                    Text("Always ignored: \(SettingsStore.defaultScanIgnoreNames.sorted().joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     ForEach(settingsStore.customScanIgnores, id: \.self) { name in
                         HStack {
