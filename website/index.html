@@ -20,6 +20,48 @@
   @keyframes revealIn { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
   .reveal { animation: revealIn 0.28s cubic-bezier(.4,0,.2,1); }
 
+  /* Signup: fixed slot — no layout shift between button, form, success. */
+  .signup-root {
+    position: relative;
+    width: 100%;
+    max-width: 466px;
+    min-height: 82px; /* 54px row + error reserve */
+    display: grid;
+  }
+  .signup-layer {
+    grid-area: 1 / 1;
+    align-self: start;
+    width: 100%;
+    transition:
+      opacity 0.26s cubic-bezier(.4,0,.2,1),
+      transform 0.26s cubic-bezier(.4,0,.2,1),
+      visibility 0.26s step-end;
+  }
+  .signup-layer--in {
+    opacity: 1;
+    transform: none;
+    visibility: visible;
+    pointer-events: auto;
+  }
+  .signup-layer--out {
+    opacity: 0;
+    transform: scale(0.985) translateY(3px);
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .signup-layer--cta.signup-layer--out { transform: scale(0.97); }
+  .signup-layer--form { transform-origin: left center; }
+  .signup-success {
+    display: inline-flex;
+    align-items: center;
+    gap: 11px;
+    background: var(--accent-soft);
+    border-radius: var(--radius-pill);
+    padding: 12px 22px 12px 14px;
+    box-shadow: var(--shadow-hairline);
+    min-height: 54px;
+  }
+
   /* Mobile-only line break inside the hero headline. */
   .m-br { display: none; }
 
@@ -47,36 +89,96 @@
 
   @media (prefers-reduced-motion: reduce) {
     .emoji-bug, .emoji-leaf, .popover-open { animation: none; }
+    .signup-layer { transition: none; }
+    .signup-layer--out { opacity: 0; transform: none; }
   }
 
-  /* ---- Mobile: single scrolling column, menubar → screenshot → hero → footer ---- */
+  /* Mobile-only app icon above hero headline. */
+  .hero-mobile-logo { display: none; }
+  .footer-contact { display: none; }
+  .footer-github { display: none; }
+  .footer-contact-label {
+    font-family: var(--font-body); font-weight: 500; font-size: 13px;
+    color: var(--body-color); opacity: 0.45;
+  }
+
+  /* ---- Tablet: text stacks below; menubar + screenshot stay desktop-style ---- */
+  @media (max-width: 1100px) and (min-width: 821px) {
+    html, body { overflow: auto; height: auto; }
+    .v2-page {
+      height: auto !important; min-height: 100vh; overflow: visible !important;
+    }
+    .v2-page > div:not(.site-menubar):not(.hero-mobile-logo) {
+      height: auto !important; min-height: 100vh;
+      display: flex !important; flex-direction: column !important;
+    }
+    .hero-main {
+      flex: 1 !important;
+      align-items: flex-start !important;
+      min-height: 0 !important;
+      /* Clear absolute popover: top offset + rendered image height + gap */
+      margin-top: calc(34px + clamp(300px, 30vw, 380px) * 1034 / 814 + 32px) !important;
+      padding: 0 56px 40px !important;
+    }
+    .site-footer { flex: none !important; margin-top: auto !important; }
+    .hero-subtitle p { max-width: none !important; }
+    .hero-cta {
+      display: flex !important; justify-content: center !important;
+      width: 100% !important;
+    }
+    .hero-cta > div { margin-left: auto !important; margin-right: auto !important; }
+  }
+
+  /* ---- Mobile: full reflow — menubar + screenshot become document flow ---- */
   @media (max-width: 820px) {
     html, body { overflow: auto; height: auto; }
     .v2-page {
       height: auto !important; min-height: 100vh; overflow: visible !important;
       display: flex !important; flex-direction: column !important;
     }
-    /* Flatten the inner column so menubar / hero / screenshot / footer reorder freely. */
-    .v2-page > div:not(.site-menubar) { display: contents !important; }
-    .site-nav { display: none !important; }            /* logo moves to footer */
-    /* Mobile order: footer-as-header → hero → menubar → screenshot. */
-    .hero-main { order: 1; padding: 120px 22px 0 !important; }
-    .site-menubar {
-      order: 2; position: static !important; width: 100% !important; margin-top: 60px !important;
-    }
-    /* Spread the items edge-to-edge so they fill the bar (no right-clustering). */
-    .mb-items { width: 100% !important; justify-content: space-between !important; }
+    .v2-page > div:not(.site-menubar):not(.hero-mobile-logo) { display: contents !important; }
+    .hero-main { display: contents !important; }
+    .hero-body { display: contents !important; }
+    .site-menubar { position: static !important; width: 100% !important; }
     .popover-open {
-      order: 3; position: static !important; right: auto !important; top: auto !important;
-      width: 96vw !important; max-width: 600px !important; max-height: none !important;
-      margin: 12px auto 16px !important;
+      position: static !important; right: auto !important; top: auto !important;
+      width: min(96vw, 600px) !important; max-height: none !important;
+      margin: 12px auto 0 !important;
     }
+    .hero-subtitle p { max-width: none !important; }
+    .hero-cta {
+      display: flex !important; flex-direction: column !important;
+      align-items: center !important; justify-content: center !important;
+      width: 100% !important;
+    }
+    .hero-cta .signup-root { margin-top: 0 !important; margin-inline: auto !important; }
+    .hero-cta .signup-layer--cta { display: flex !important; justify-content: center !important; }
+    .site-nav { display: none !important; }
+    .hero-mobile-logo {
+      display: block !important;
+      order: 0;
+      padding: 28px 22px 0 !important;
+      margin: 0 !important;
+    }
+    .hero-main h1 {
+      order: 1;
+      margin: clamp(140px, 24vh, 220px) 0 0 !important;
+      padding: 0 22px !important;
+    }
+    .hero-subtitle { order: 2; padding: 16px 22px 0 !important; }
+    .hero-subtitle p { margin-top: 0 !important; }
+    .site-menubar { order: 3; margin-top: 48px !important; justify-content: flex-end !important; }
+    .mb-items { gap: 22px !important; flex-shrink: 0 !important; }
+    .popover-open { order: 4; }
+    .hero-cta { order: 5; padding: 16px 22px 48px !important; }
+    .site-footer { order: 6; justify-content: center !important; padding: 0 22px 32px !important; }
+    .footer-logo { display: none !important; }
+    .footer-github { display: none !important; }
+    .footer-handle { display: none !important; }
+    .footer-contact { display: inline-flex !important; align-items: center; gap: 6px; }
     .hero-main h1 { font-size: clamp(44px, 13vw, 56px) !important; }
     .hero-main h1 span { white-space: normal !important; }
     .m-br { display: inline !important; }
-    /* Footer rides at the top as a header: logo left, links right. */
-    .site-footer { order: 0; justify-content: space-between !important; padding: 18px 22px 0 !important; }
-    .footer-logo { display: inline-flex !important; }
   }
 </style>
 </head>

@@ -17,9 +17,15 @@
   function Wordmark({ size = 27 }) {
     return (
       <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-        <img src="assets/prunr-icon-128.png" alt="Prunr" style={{ width: size, height: size, borderRadius: size * 0.225 }} />
+        <AppIcon size={size} />
         <span style={{ fontFamily: "var(--font-heading)", fontWeight: 700, fontSize: size * 0.8, letterSpacing: "var(--tracking-heading)", color: "var(--heading-color)" }}>Prunr</span>
       </span>
+    );
+  }
+
+  function AppIcon({ size = 27 }) {
+    return (
+      <img src="assets/prunr-icon-128.png" alt="" style={{ width: size, height: size, borderRadius: size * 0.225, display: "block" }} />
     );
   }
 
@@ -156,9 +162,8 @@
 
     if (status === "done") {
       return (
-        <div style={{ marginTop: 32, maxWidth: 466 }}>
-          <div className="reveal" style={{ display: "inline-flex", alignItems: "center", gap: 11, background: "var(--accent-soft)", borderRadius: "var(--radius-pill)",
-            padding: "12px 22px 12px 14px", boxShadow: "var(--shadow-hairline)" }}>
+        <div className="signup-root reveal" style={{ marginTop: 32 }}>
+          <div className="signup-success">
             <span style={{ flex: "none", width: 24, height: 24, borderRadius: "50%", background: "var(--theme-accent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="check" size={14} color="var(--theme-accent-ink)" />
             </span>
@@ -174,10 +179,11 @@
     const ring = hasError
       ? `inset 0 0 0 1.5px ${ERR}`
       : (focus ? "inset 0 0 0 1.5px var(--theme-accent), var(--focus-ring)" : "inset 0 0 0 1px var(--border)");
+    const layer = (on) => "signup-layer " + (on ? "signup-layer--in" : "signup-layer--out");
 
     return (
-      <div style={{ marginTop: 32, minHeight: 54 }}>
-        {!open ? (
+      <div className="signup-root" style={{ marginTop: 32 }}>
+        <div className={layer(!open) + " signup-layer--cta"} aria-hidden={open}>
           <span className="cta-nudge" style={{ display: "inline-block" }}>
             <Button variant="primary" type="button" onClick={() => setOpen(true)}
               style={{ height: 54, padding: "0 30px", fontSize: 16 }}
@@ -185,31 +191,33 @@
               Join the alpha
             </Button>
           </span>
-        ) : (
-          <div className="reveal" style={{ maxWidth: 466 }}>
-            <form onSubmit={submit} noValidate style={{ display: "flex", gap: 10 }}>
-              <input ref={inputRef} type="email" placeholder="you@example.com" value={email}
-                aria-invalid={hasError} aria-describedby="signup-error"
-                disabled={status === "loading"}
-                onChange={(e) => { setEmail(e.target.value); if (hasError) setError(""); }}
-                onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
-                style={{ flex: 1, minWidth: 0, height: 54, padding: "0 22px", borderRadius: "var(--radius-pill)",
-                  border: "none", outline: "none", background: "var(--card)", boxShadow: ring,
-                  fontFamily: "var(--font-body)", fontWeight: 500, fontSize: 15.5, color: "var(--body-color)",
-                  transition: "box-shadow var(--dur-fast) var(--ease)" }} />
-              <Button variant="primary" type="submit" disabled={status === "loading"}
-                style={{ flex: "none", height: 54, padding: "0 24px", fontSize: 15.5, opacity: status === "loading" ? 0.7 : 1 }}
-                iconRight={status === "loading" ? null : <Icon name="arrow-right" size={17} />}>
-                {status === "loading" ? "Joining…" : "Join"}
-              </Button>
-            </form>
-            <div id="signup-error" role="alert" aria-live="polite"
-              style={{ height: 20, marginTop: 8, paddingLeft: 22, fontFamily: "var(--font-body)", fontWeight: 500,
-                fontSize: 13.5, color: ERR, opacity: hasError ? 1 : 0, transition: "opacity var(--dur-fast) var(--ease)" }}>
-              {error || " "}
-            </div>
+        </div>
+
+        <div className={layer(open) + " signup-layer--form"} aria-hidden={!open}>
+          <form onSubmit={submit} noValidate style={{ display: "flex", gap: 10 }}>
+            <input ref={inputRef} type="email" placeholder="you@example.com" value={email}
+              aria-invalid={hasError} aria-describedby="signup-error"
+              disabled={status === "loading" || !open}
+              tabIndex={open ? 0 : -1}
+              onChange={(e) => { setEmail(e.target.value); if (hasError) setError(""); }}
+              onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+              style={{ flex: 1, minWidth: 0, height: 54, padding: "0 22px", borderRadius: "var(--radius-pill)",
+                border: "none", outline: "none", background: "var(--card)", boxShadow: ring,
+                fontFamily: "var(--font-body)", fontWeight: 500, fontSize: 15.5, color: "var(--body-color)",
+                transition: "box-shadow var(--dur-fast) var(--ease)" }} />
+            <Button variant="primary" type="submit" disabled={status === "loading" || !open}
+              tabIndex={open ? 0 : -1}
+              style={{ flex: "none", height: 54, padding: "0 24px", fontSize: 15.5, opacity: status === "loading" ? 0.7 : 1 }}
+              iconRight={status === "loading" ? null : <Icon name="arrow-right" size={17} />}>
+              {status === "loading" ? "Joining…" : "Join"}
+            </Button>
+          </form>
+          <div id="signup-error" role="alert" aria-live="polite"
+            style={{ height: 20, marginTop: 8, paddingLeft: 22, fontFamily: "var(--font-body)", fontWeight: 500,
+              fontSize: 13.5, color: ERR, opacity: hasError ? 1 : 0, transition: "opacity var(--dur-fast) var(--ease)" }}>
+            {error || " "}
           </div>
-        )}
+        </div>
       </div>
     );
   }
@@ -218,18 +226,22 @@
     return (
       <main className="hero-main" style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", maxWidth: 1240, width: "100%", margin: "0 auto", padding: "0 56px 40px" }}>
         {/* Left — headline + subline + button */}
-        <div style={{ maxWidth: 660 }}>
+        <div className="hero-body" style={{ maxWidth: 660 }}>
           <h1 style={{ fontFamily: "var(--font-heading)", fontWeight: 700, fontSize: "clamp(40px, 5vw, 64px)", lineHeight: 1.07, letterSpacing: "var(--tracking-heading)", color: "var(--heading-color)", margin: 0 }}>
             <span style={{ display: "block", whiteSpace: "nowrap" }}>Who ate <span className="emoji-bug" style={{ display: "inline-block" }}>🐛</span><br className="m-br" /> my storage?</span>
             <span style={{ display: "block", whiteSpace: "nowrap" }}>Prunr <span className="emoji-leaf" style={{ display: "inline-block" }}>🍃</span><br className="m-br" /> keeps track.</span>
           </h1>
 
-          <p style={{ fontFamily: "var(--font-body)", fontWeight: 500, fontSize: "clamp(15px, 1.4vw, 18px)", lineHeight: 1.5, color: "var(--body-color)", margin: "20px 0 0", maxWidth: 460 }}>
-            I got tired of wondering where my storage went,<br />
-            so I built a menubar app that remembers.
-          </p>
+          <div className="hero-subtitle">
+            <p style={{ fontFamily: "var(--font-body)", fontWeight: 500, fontSize: "clamp(15px, 1.4vw, 18px)", lineHeight: 1.5, color: "var(--body-color)", margin: "20px 0 0", maxWidth: 460 }}>
+              I got tired of wondering where my storage went,<br />
+              so I built a menubar app that remembers.
+            </p>
+          </div>
 
-          <Signup />
+          <div className="hero-cta">
+            <Signup />
+          </div>
         </div>
       </main>
     );
@@ -247,17 +259,26 @@
     const link = { display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none",
       fontFamily: "var(--font-body)", fontWeight: 500, fontSize: 13, color: "var(--body-color)", opacity: 0.45,
       transition: "opacity var(--dur-fast) var(--ease)" };
+    const onLinkEnter = (e) => (e.currentTarget.style.opacity = "0.85");
+    const onLinkLeave = (e) => (e.currentTarget.style.opacity = "0.45");
     return (
       <footer className="site-footer" style={{ flex: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 22, padding: "0 34px 18px" }}>
         <span className="footer-logo" style={{ display: "none", marginRight: "auto" }}><Wordmark size={22} /></span>
-        <a href="https://github.com/merlinkraemer/prunr" target="_blank" rel="noopener noreferrer" style={link}
-          onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")} onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.45")}>
+        <a className="footer-github" href="https://github.com/merlinkraemer/prunr" target="_blank" rel="noopener noreferrer" style={link}
+          onMouseEnter={onLinkEnter} onMouseLeave={onLinkLeave}>
           <GitHubIcon /> /prunr
         </a>
-        <a href="https://merlins-internet.com" target="_blank" rel="noopener noreferrer" style={link}
-          onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")} onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.45")}>
+        <a className="footer-handle" href="https://merlins-internet.com" target="_blank" rel="noopener noreferrer" style={link}
+          onMouseEnter={onLinkEnter} onMouseLeave={onLinkLeave}>
           @merlinkraemer
         </a>
+        <span className="footer-contact">
+          <span className="footer-contact-label">contact me?</span>
+          <a href="https://merlins-internet.com" target="_blank" rel="noopener noreferrer" style={link}
+            onMouseEnter={onLinkEnter} onMouseLeave={onLinkLeave}>
+            @merlinkraemer
+          </a>
+        </span>
       </footer>
     );
   }
@@ -266,6 +287,9 @@
     return (
       <div className="v2-page" style={{ height: "100vh", position: "relative", overflow: "hidden", background: "var(--bg)" }}>
         <MenuBar />
+        <div className="hero-mobile-logo" aria-hidden="true">
+          <AppIcon size={48} />
+        </div>
         <div style={{ height: "100%", paddingTop: 28, display: "flex", flexDirection: "column" }}>
           <Nav />
           {/* Popover hangs open from the "447.9 GB" indicator — coupled to the menubar.
