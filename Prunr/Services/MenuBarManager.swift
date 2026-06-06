@@ -9,34 +9,59 @@ final class DropdownPanel: NSPanel {
     var closesOnResignKey = true
     private var onClose: (() -> Void)?
 
+    /// The glass background container. On macOS 26 this is an `NSGlassEffectView`
+    /// (Liquid Glass); on older systems an `NSVisualEffectView`. Swap content via
+    /// `setContent(_:)` rather than touching subviews directly.
+    private let glassContainer: NSView
+
     init(contentView: NSView, onClose: @escaping () -> Void) {
         self.onClose = onClose
 
+        let frame = NSRect(x: 0, y: 0, width: 320, height: 480)
+        contentView.frame = frame
+        contentView.autoresizingMask = [.width, .height]
+
+        // Background: Liquid Glass on macOS 26 (matches native Sound/Wi-Fi menu
+        // refraction + blur), falling back to the `.menu` material on older macOS.
+        if #available(macOS 26.0, *) {
+            let glassView = NSGlassEffectView(frame: frame)
+            glassView.cornerRadius = 16
+            glassView.contentView = contentView
+            // Clip the glass + its content to the rounded shape; without this the
+            // view's square backing shows non-rounded corners on light backgrounds.
+            glassView.wantsLayer = true
+            glassView.layer?.cornerRadius = 16
+            glassView.layer?.cornerCurve = .continuous
+            glassView.layer?.masksToBounds = true
+            self.glassContainer = glassView
+        } else {
+            let visualEffectView = NSVisualEffectView(frame: frame)
+            visualEffectView.blendingMode = .behindWindow
+            visualEffectView.material = .menu
+            visualEffectView.state = .active
+            visualEffectView.wantsLayer = true
+            visualEffectView.layer?.cornerRadius = 16
+            visualEffectView.layer?.cornerCurve = .continuous
+            visualEffectView.layer?.masksToBounds = true
+            visualEffectView.layer?.borderWidth = 0.5
+            visualEffectView.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+            visualEffectView.addSubview(contentView)
+            self.glassContainer = visualEffectView
+        }
+
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 480),
-            styleMask: [.nonactivatingPanel, .borderless, .hudWindow],
+            contentRect: frame,
+            styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
         )
 
-        // Create visual effect view for glass background
-        let visualEffectView = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
-        visualEffectView.blendingMode = .behindWindow
-        visualEffectView.material = .popover
-        visualEffectView.state = .active
-        visualEffectView.wantsLayer = true
-        visualEffectView.layer?.cornerRadius = 14
-        visualEffectView.layer?.masksToBounds = true
-
-        // Add content as subview
-        contentView.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
-        visualEffectView.addSubview(contentView)
-
-        self.contentView = visualEffectView
+        self.contentView = glassContainer
         self.isFloatingPanel = true
         self.level = .statusBar
         self.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         self.isMovableByWindowBackground = false
+        self.isOpaque = false
         self.backgroundColor = .clear
         self.hasShadow = true
 
@@ -57,6 +82,19 @@ final class DropdownPanel: NSPanel {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    /// Swaps the panel's inner content, handling both the Liquid Glass
+    /// (`NSGlassEffectView.contentView`) and legacy (subview) backgrounds.
+    func setContent(_ view: NSView) {
+        view.frame = glassContainer.bounds
+        view.autoresizingMask = [.width, .height]
+        if #available(macOS 26.0, *), let glass = glassContainer as? NSGlassEffectView {
+            glass.contentView = view
+        } else {
+            glassContainer.subviews.forEach { $0.removeFromSuperview() }
+            glassContainer.addSubview(view)
+        }
     }
 
     @objc private func windowDidResignKey(_ notification: Notification) {
@@ -2234,12 +2272,7 @@ final class MenuBarManager: NSObject {
         panelHostingViewInstalled = false
 
         let placeholder = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
-        if let visualEffectView = panel?.contentView as? NSVisualEffectView {
-            visualEffectView.subviews.forEach { $0.removeFromSuperview() }
-            visualEffectView.addSubview(placeholder)
-        } else {
-            panel?.contentView = placeholder
-        }
+        panel?.setContent(placeholder)
     }
 
     @objc private func togglePopover() {
@@ -2266,12 +2299,12 @@ final class MenuBarManager: NSObject {
                 panelHostingViewInstalled = true
                 let panelContent = NSHostingView(rootView: MenuBarView(manager: self))
                 panelContent.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
-                if let visualEffectView = panel?.contentView as? NSVisualEffectView {
-                    visualEffectView.subviews.forEach { $0.removeFromSuperview() }
-                    visualEffectView.addSubview(panelContent)
-                } else {
-                    panel?.contentView = panelContent
-                }
+                // Keep the hosting view transparent so the glass shows through;
+                // otherwise the SwiftUI backing flattens the blur/refraction.
+                panelContent.wantsLayer = true
+                panelContent.layer?.backgroundColor = .clear
+                panelContent.layer?.isOpaque = false
+                panel?.setContent(panelContent)
             }
 
             panelAutoCloseSuspensionCount = 0
