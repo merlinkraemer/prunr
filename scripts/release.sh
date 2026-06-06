@@ -191,18 +191,27 @@ update_appcast_if_available() {
   fi
 
   if [[ -x "$appcast_tool" ]]; then
+    # generate_appcast aborts if it finds two archives with the same bundle
+    # version (it would see both the Sparkle zip and the installer DMG). Sparkle
+    # only updates from the zip, so scan a directory holding just the zip; the
+    # DMG stays in DIST_DIR for the GitHub release but out of the appcast.
+    local appcast_src
+    appcast_src="$(mktemp -d)"
+    cp "$USER_ZIP_PATH" "$appcast_src/"
+
     "$appcast_tool" \
       ${ed_key_args[@]+"${ed_key_args[@]}"} \
       --download-url-prefix "https://github.com/merlinkraemer/prunr/releases/download/v$VERSION/" \
       --link "https://github.com/merlinkraemer/prunr/releases/tag/v$VERSION" \
-      "$DIST_DIR"
+      "$appcast_src"
 
-    local generated_appcast="$DIST_DIR/appcast.xml"
+    local generated_appcast="$appcast_src/appcast.xml"
     if [[ -f "$generated_appcast" ]]; then
       cp "$generated_appcast" "$APPCAST_PATH"
     else
       warn "generate_appcast completed without producing $generated_appcast"
     fi
+    rm -rf "$appcast_src"
     return
   fi
 
@@ -280,10 +289,21 @@ spctl --assess --type execute --verbose=4 "$EXPORT_APP_PATH"
 xcrun stapler validate "$EXPORT_APP_PATH"
 
 # Build the installer DMG (stapled app → drag-to-Applications layout).
+# Always sign the DMG with the Developer ID Application cert (present both
+# locally and in the CI keychain) — notarization below requires it.
 create_dmg "$EXPORT_APP_PATH" "$DMG_PATH"
-if [[ -n "${ARCHIVE_SIGN_IDENTITY:-}" ]]; then
-  codesign -s "$ARCHIVE_SIGN_IDENTITY" --timestamp "$DMG_PATH"
-fi
+codesign -s "${ARCHIVE_SIGN_IDENTITY:-Developer ID Application}" --timestamp "$DMG_PATH"
+
+# Notarize the DMG itself. The app inside is already notarized+stapled, but a
+# downloaded DMG carries the quarantine flag and Gatekeeper checks the container
+# on first mount — a signed-but-unnotarized DMG triggers the "cannot be opened"
+# dialog. Notarizing + stapling the DMG makes it open cleanly offline.
+xcrun notarytool submit "$DMG_PATH" \
+  "${NOTARY_AUTH_ARGS[@]}" \
+  --wait
+xcrun stapler staple "$DMG_PATH"
+xcrun stapler validate "$DMG_PATH"
+spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_PATH"
 
 ditto -c -k --keepParent "$EXPORT_APP_PATH" "$USER_ZIP_PATH"
 
