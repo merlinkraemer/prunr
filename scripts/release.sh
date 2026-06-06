@@ -151,24 +151,80 @@ maybe_publish_github_release() {
   gh "${release_args[@]}"
 }
 
+# Build a .icns from the app icon set (filenames already follow the iconset
+# convention) for use as the DMG's volume icon. Echoes the path on success,
+# nothing on failure. Caller is responsible for cleanup.
+make_volume_icns() {
+  local src="$ROOT_DIR/Prunr/Assets.xcassets/AppIcon.appiconset"
+  local set_dir icns
+  set_dir="$(mktemp -d)/AppIcon.iconset"
+  mkdir -p "$set_dir"
+  cp "$src"/icon_*.png "$set_dir"/ 2>/dev/null || return 0
+  icns="$(mktemp -u).icns"
+  if iconutil -c icns "$set_dir" -o "$icns" 2>/dev/null; then
+    echo "$icns"
+  fi
+  rm -rf "$(dirname "$set_dir")"
+}
+
 create_dmg() {
   local app_src="$1"
   local out_dmg="$2"
-  local staging
+  local app_name
+  app_name="$(basename "$app_src")"
+
+  local staging icns rw_dmg mnt
   staging="$(mktemp -d)"
   # Use ditto, not cp -r: cp mangles symlinks and strips the extended attributes
   # that code signatures rely on, which invalidates every nested binary's signature
   # and makes the DMG fail notarization ("signature of the binary is invalid").
-  ditto "$app_src" "$staging/$(basename "$app_src")"
-  ln -s /Applications "$staging/Applications"
-  hdiutil create \
-    -volname "Prunr" \
-    -srcfolder "$staging" \
-    -ov \
-    -format UDZO \
-    -imagekey zlib-level=9 \
-    "$out_dmg"
-  rm -rf "$staging"
+  ditto "$app_src" "$staging/$app_name"
+
+  icns="$(make_volume_icns)"
+  [[ -n "$icns" ]] && cp "$icns" "$staging/.VolumeIcon.icns"
+
+  # Build a read-write image first so we can set the volume icon and arrange the
+  # window, then convert to a compressed read-only DMG. (A bare UDZO straight
+  # from a srcfolder has no volume icon and no window layout — the Applications
+  # alias renders without its folder icon.)
+  rw_dmg="$(mktemp -u).dmg"
+  hdiutil create -volname "Prunr" -srcfolder "$staging" -ov -format UDRW "$rw_dmg" >/dev/null
+  mnt="$(mktemp -d)"
+  hdiutil attach "$rw_dmg" -nobrowse -noautoopen -mountpoint "$mnt" >/dev/null
+
+  ln -s /Applications "$mnt/Applications"
+  # Mark the volume as having a custom icon (reads .VolumeIcon.icns at the root).
+  [[ -n "$icns" ]] && SetFile -a C "$mnt" 2>/dev/null || true
+
+  # Arrange the window: icon view, drag-to-Applications layout. Best-effort —
+  # Finder AppleEvents can fail on headless CI, and a missing layout must never
+  # break a release. The volume icon and Applications alias are set regardless.
+  osascript >/dev/null 2>&1 <<OSA || warn "DMG window layout step skipped (Finder automation unavailable)"
+tell application "Finder"
+  tell disk "Prunr"
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set the bounds of container window to {200, 120, 740, 500}
+    set vopts to the icon view options of container window
+    set arrangement of vopts to not arranged
+    set icon size of vopts to 128
+    set position of item "$app_name" of container window to {150, 190}
+    set position of item "Applications" of container window to {390, 190}
+    update without registering applications
+    close
+  end tell
+end tell
+OSA
+
+  sync
+  hdiutil detach "$mnt" >/dev/null
+  hdiutil convert "$rw_dmg" -format UDZO -imagekey zlib-level=9 -o "$out_dmg" >/dev/null
+
+  rm -rf "$staging" "$mnt"
+  rm -f "$rw_dmg"
+  [[ -n "$icns" ]] && rm -f "$icns"
 }
 
 update_appcast_if_available() {
