@@ -156,7 +156,10 @@ create_dmg() {
   local out_dmg="$2"
   local staging
   staging="$(mktemp -d)"
-  cp -r "$app_src" "$staging/"
+  # Use ditto, not cp -r: cp mangles symlinks and strips the extended attributes
+  # that code signatures rely on, which invalidates every nested binary's signature
+  # and makes the DMG fail notarization ("signature of the binary is invalid").
+  ditto "$app_src" "$staging/$(basename "$app_src")"
   ln -s /Applications "$staging/Applications"
   hdiutil create \
     -volname "Prunr" \
