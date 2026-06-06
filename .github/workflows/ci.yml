@@ -46,7 +46,9 @@ jobs:
 
   build-and-test:
     name: Build And Test
-    runs-on: macos-15
+    # Xcode 26 SDK required: MenuBarManager uses NSGlassEffectView (Liquid Glass),
+    # which is absent from the macos-15 (Xcode 16.4 / SDK 15.5) runner.
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Checkout
