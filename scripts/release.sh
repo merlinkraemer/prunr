@@ -22,6 +22,7 @@ SUBMIT_ZIP_PATH="$ARCHIVE_DIR/$SCHEME-submit.zip"
 DIST_DIR="$ROOT_DIR/dist/releases/v$VERSION"
 USER_ZIP_PATH="$DIST_DIR/$SCHEME-$VERSION-build$BUILD-macos.zip"
 DSYM_ZIP_PATH="$DIST_DIR/$SCHEME-$VERSION-build$BUILD-dSYM.zip"
+DMG_PATH="$DIST_DIR/$SCHEME-$VERSION-build$BUILD-macos.dmg"
 CHECKSUM_PATH="$DIST_DIR/SHA256SUMS.txt"
 DERIVED_DATA="$ROOT_DIR/.build/release-derived"
 SOURCE_PACKAGES="$ROOT_DIR/.build/sourcePackages"
@@ -133,6 +134,7 @@ maybe_publish_github_release() {
 
   local release_args=(
     release create "v$VERSION"
+    "$DMG_PATH"
     "$USER_ZIP_PATH"
     "$DSYM_ZIP_PATH"
     "$CHECKSUM_PATH"
@@ -147,6 +149,23 @@ maybe_publish_github_release() {
   fi
 
   gh "${release_args[@]}"
+}
+
+create_dmg() {
+  local app_src="$1"
+  local out_dmg="$2"
+  local staging
+  staging="$(mktemp -d)"
+  cp -r "$app_src" "$staging/"
+  ln -s /Applications "$staging/Applications"
+  hdiutil create \
+    -volname "Prunr" \
+    -srcfolder "$staging" \
+    -ov \
+    -format UDZO \
+    -imagekey zlib-level=9 \
+    "$out_dmg"
+  rm -rf "$staging"
 }
 
 update_appcast_if_available() {
@@ -204,6 +223,7 @@ require_command codesign
 require_command spctl
 require_command ditto
 require_command shasum
+require_command hdiutil
 
 require_clean_tree
 
@@ -259,6 +279,12 @@ codesign --verify --deep --strict --verbose=2 "$EXPORT_APP_PATH"
 spctl --assess --type execute --verbose=4 "$EXPORT_APP_PATH"
 xcrun stapler validate "$EXPORT_APP_PATH"
 
+# Build the installer DMG (stapled app → drag-to-Applications layout).
+create_dmg "$EXPORT_APP_PATH" "$DMG_PATH"
+if [[ -n "${ARCHIVE_SIGN_IDENTITY:-}" ]]; then
+  codesign -s "$ARCHIVE_SIGN_IDENTITY" --timestamp "$DMG_PATH"
+fi
+
 ditto -c -k --keepParent "$EXPORT_APP_PATH" "$USER_ZIP_PATH"
 
 DSYM_PATH="$ARCHIVE_PATH/dSYMs/$SCHEME.app.dSYM"
@@ -270,7 +296,7 @@ fi
 
 (
   cd "$DIST_DIR"
-  shasum -a 256 ./*.zip > "$CHECKSUM_PATH"
+  shasum -a 256 ./*.zip ./*.dmg > "$CHECKSUM_PATH"
 )
 
 update_appcast_if_available
@@ -282,6 +308,7 @@ maybe_publish_github_release
 cat <<EOF
 release prepared:
   app: $EXPORT_APP_PATH
+  dmg: $DMG_PATH
   zip: $USER_ZIP_PATH
   dSYM: $DSYM_ZIP_PATH
   checksums: $CHECKSUM_PATH

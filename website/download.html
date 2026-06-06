@@ -14,78 +14,69 @@
     display: flex; align-items: center; justify-content: center; padding: 40px 22px;
   }
   .wrap { max-width: 420px; width: 100%; text-align: center; }
-  .icon { width: 64px; height: 64px; border-radius: 14px; margin: 0 auto 20px; display: block; }
-  h1 {
-    font-family: var(--font-heading); font-weight: 700; font-size: 28px;
-    letter-spacing: var(--tracking-heading); color: var(--heading-color); margin: 0 0 10px;
+  .app-id {
+    display: flex; align-items: center; justify-content: center;
+    gap: 14px; margin: 0 auto 20px;
   }
-  p { font-size: 15px; line-height: 1.55; margin: 0 0 24px; color: var(--body-color); }
+  .icon { width: 72px; height: 72px; border-radius: 16px; flex-shrink: 0; }
+  .logotype {
+    font-family: var(--font-heading); font-weight: 700; font-size: 36px;
+    color: var(--heading-color); letter-spacing: var(--tracking-heading);
+  }
+  .meta { font-size: 14px; opacity: 0.5; margin: 0 0 28px; }
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
     height: 52px; padding: 0 28px; border-radius: var(--radius-pill);
     background: var(--theme-accent); color: var(--theme-accent-ink);
     font-family: var(--font-body); font-weight: 600; font-size: 16px;
-    text-decoration: none; border: none; cursor: pointer;
-    box-shadow: var(--shadow-hairline);
+    text-decoration: none; cursor: pointer;
+    box-shadow: var(--shadow-hairline); transition: opacity 0.15s;
   }
-  .btn:disabled { opacity: 0.55; cursor: wait; }
-  .steps {
-    margin-top: 32px; text-align: left; font-size: 14px; line-height: 1.5;
-    color: var(--body-color); opacity: 0.85;
-  }
-  .steps ol { margin: 0; padding-left: 20px; }
-  .steps li + li { margin-top: 8px; }
-  .err { color: #d92d20; font-size: 14px; margin-top: 16px; }
-  .ver { margin-top: 20px; font-size: 13px; opacity: 0.45; }
+  .btn.loading { opacity: 0.4; pointer-events: none; }
+  .build { margin-top: 14px; font-size: 13px; opacity: 0.38; }
+  .err { color: #d92d20; font-size: 14px; margin-top: 14px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <img class="icon" src="assets/favicon.png" alt="" width="64" height="64" />
-  <h1>Download Prunr</h1>
-  <p>Mac only &middot; signed &amp; notarized &middot; free during alpha</p>
-  <a id="dl" class="btn" href="#" hidden>Download for Mac</a>
-  <button id="loading" class="btn" type="button" disabled>Finding latest build…</button>
-  <p id="err" class="err" hidden></p>
-  <div class="steps">
-    <ol>
-      <li>Open the zip and drag <strong>Prunr</strong> into Applications.</li>
-      <li>First launch: right-click the app &rarr; <strong>Open</strong> (macOS security).</li>
-      <li>Updates install automatically after that.</li>
-    </ol>
+  <div class="app-id">
+    <img class="icon" src="assets/favicon.png" alt="" width="72" height="72" />
+    <span class="logotype">Prunr</span>
   </div>
-  <p id="ver" class="ver" hidden></p>
+  <p class="meta">Mac only &middot; signed &amp; notarized &middot; free during alpha</p>
+  <a id="dl" class="btn loading" href="#">Download Prunr</a>
+  <p id="build" class="build" hidden></p>
+  <p id="err" class="err" hidden></p>
 </div>
 <script>
 (function () {
-  const REPO = "merlinkraemer/prunr";
-  const dl = document.getElementById("dl");
-  const loading = document.getElementById("loading");
-  const err = document.getElementById("err");
-  const ver = document.getElementById("ver");
+  var REPO = "merlinkraemer/prunr";
+  var dl = document.getElementById("dl");
+  var build = document.getElementById("build");
+  var err = document.getElementById("err");
 
   fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
     headers: { Accept: "application/vnd.github+json" },
   })
-    .then(function (r) { if (!r.ok) throw new Error("release lookup failed"); return r.json(); })
+    .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
     .then(function (rel) {
-      const asset = (rel.assets || []).find(function (a) {
-        return /-macos\.zip$/i.test(a.name) && !/dsym/i.test(a.name);
+      var asset = (rel.assets || []).find(function (a) {
+        return /-macos\.dmg$/i.test(a.name);
       });
-      if (!asset) throw new Error("no macOS build found");
+      if (!asset) throw new Error();
       dl.href = asset.browser_download_url;
-      dl.hidden = false;
-      loading.hidden = true;
-      ver.textContent = rel.name || rel.tag_name || "";
-      ver.hidden = !ver.textContent;
+      dl.classList.remove("loading");
+      var m = asset.name.match(/build(\d+)/i);
+      var parts = [];
+      if (rel.tag_name || rel.name) parts.push(rel.tag_name || rel.name);
+      if (m) parts.push("build " + m[1]);
+      if (parts.length) { build.textContent = parts.join(" · "); build.hidden = false; }
     })
     .catch(function () {
-      loading.hidden = true;
-      err.hidden = false;
-      err.textContent = "Couldn\u2019t find a download right now. Try again in a minute or email @merlinkraemer.";
       dl.href = "https://github.com/" + REPO + "/releases/latest";
-      dl.textContent = "View releases on GitHub";
-      dl.hidden = false;
+      dl.classList.remove("loading");
+      err.textContent = "Couldn’t find a download — view releases on GitHub.";
+      err.hidden = false;
     });
 })();
 </script>
