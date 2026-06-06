@@ -60,9 +60,9 @@
   })
     .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
     .then(function (rel) {
-      var asset = (rel.assets || []).find(function (a) {
-        return /-macos\.dmg$/i.test(a.name);
-      });
+      var assets = rel.assets || [];
+      var asset = assets.find(function (a) { return /-macos\.dmg$/i.test(a.name); })
+               || assets.find(function (a) { return /-macos\.zip$/i.test(a.name) && !/dsym/i.test(a.name); });
       if (!asset) throw new Error();
       dl.href = asset.browser_download_url;
       dl.classList.remove("loading");
