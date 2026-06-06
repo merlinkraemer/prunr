@@ -42,6 +42,9 @@ Sender must be a [verified sender](https://app.brevo.com/senders) in Brevo.
 | `BREVO_SENDER_EMAIL` | `hello@merlins-internet.com` | yes |
 | `BREVO_SENDER_NAME` | `Merlin` | optional |
 | `DOWNLOAD_PAGE_URL` | `https://merlinkraemer.github.io/prunr/download.html` | optional (default above) |
+| `NOTIFY_EMAIL` | `merlinkraemer@gmail.com` | optional (default above) |
+
+Owner notifications go to `NOTIFY_EMAIL` on each **new** signup (not re-submits).
 
 Add via CLI:
 

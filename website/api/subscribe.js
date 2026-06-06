@@ -7,6 +7,7 @@
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const DEFAULT_DOWNLOAD_URL = "https://merlinkraemer.github.io/prunr/download.html";
+const DEFAULT_NOTIFY_EMAIL = "merlinkraemer@gmail.com";
 
 const ALLOWED_ORIGINS = new Set([
   "https://merlinkraemer.github.io",
@@ -53,6 +54,25 @@ async function addContact(apiKey, listId, email) {
   return { ok: false, status: r.status, data };
 }
 
+function senderConfig() {
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  if (!senderEmail) return null;
+  return { name: process.env.BREVO_SENDER_NAME || "Merlin", email: senderEmail };
+}
+
+async function sendBrevoEmail(apiKey, payload) {
+  const r = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: brevoHeaders(apiKey),
+    body: JSON.stringify(payload),
+  });
+  if (r.ok) return;
+  let data = {};
+  try { data = await r.json(); } catch (_) {}
+  console.error("Brevo email error", r.status, data);
+  throw new Error("email send failed");
+}
+
 async function sendWelcomeEmail(apiKey, email) {
   const templateId = Number(process.env.BREVO_WELCOME_TEMPLATE_ID || 0);
   if (!templateId) {
@@ -60,32 +80,37 @@ async function sendWelcomeEmail(apiKey, email) {
     return;
   }
 
-  const senderEmail = process.env.BREVO_SENDER_EMAIL;
-  if (!senderEmail) {
+  const sender = senderConfig();
+  if (!sender) {
     console.error("BREVO_SENDER_EMAIL is not set — cannot send welcome email");
     return;
   }
 
   const downloadUrl = process.env.DOWNLOAD_PAGE_URL || DEFAULT_DOWNLOAD_URL;
-  const senderName = process.env.BREVO_SENDER_NAME || "Merlin";
-
-  const r = await fetch("https://api.brevo.com/v3/smtp/email", {
-    method: "POST",
-    headers: brevoHeaders(apiKey),
-    body: JSON.stringify({
-      sender: { name: senderName, email: senderEmail },
-      to: [{ email }],
-      templateId,
-      params: { DOWNLOAD_URL: downloadUrl },
-    }),
+  await sendBrevoEmail(apiKey, {
+    sender,
+    to: [{ email }],
+    templateId,
+    params: { DOWNLOAD_URL: downloadUrl },
   });
+}
 
-  if (r.ok) return;
+async function sendOwnerNotification(apiKey, signupEmail) {
+  const notifyEmail = process.env.NOTIFY_EMAIL || DEFAULT_NOTIFY_EMAIL;
+  const sender = senderConfig();
+  if (!sender) {
+    console.error("BREVO_SENDER_EMAIL is not set — cannot send owner notification");
+    return;
+  }
 
-  let data = {};
-  try { data = await r.json(); } catch (_) {}
-  console.error("Brevo welcome email error", r.status, data);
-  throw new Error("welcome email failed");
+  const when = new Date().toISOString();
+  await sendBrevoEmail(apiKey, {
+    sender,
+    to: [{ email: notifyEmail }],
+    subject: `Prunr alpha signup: ${signupEmail}`,
+    textContent: `New alpha signup\n\nEmail: ${signupEmail}\nTime: ${when}\n`,
+    htmlContent: `<p>New alpha signup</p><p><strong>Email:</strong> ${signupEmail}<br><strong>Time:</strong> ${when}</p>`,
+  });
 }
 
 export default async function handler(req, res) {
@@ -127,8 +152,15 @@ export default async function handler(req, res) {
     try {
       await sendWelcomeEmail(apiKey, email);
     } catch (err) {
-      // Contact is saved — don’t fail signup if email delivery hiccups.
       console.error("Welcome email failed after contact add", err);
+    }
+
+    if (!contact.duplicate) {
+      try {
+        await sendOwnerNotification(apiKey, email);
+      } catch (err) {
+        console.error("Owner notification failed after contact add", err);
+      }
     }
 
     return res.status(contact.duplicate ? 409 : 200).json({ ok: true, duplicate: contact.duplicate });
