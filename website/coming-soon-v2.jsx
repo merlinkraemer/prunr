@@ -168,7 +168,7 @@
               <Icon name="check" size={14} color="var(--theme-accent-ink)" />
             </span>
             <span style={{ fontFamily: "var(--font-body)", fontWeight: 600, fontSize: 15, color: "var(--heading-color)" }}>
-              You&rsquo;re on the list &mdash; we&rsquo;ll send a download link.
+              Check your email &mdash; download link and install steps are on the way.
             </span>
           </div>
         </div>

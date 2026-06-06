@@ -1,11 +1,12 @@
-// Vercel serverless function — adds an email to a Brevo contact list.
-// The Brevo API key is a server-side secret, read from the BREVO_API_KEY env var.
-// It must never be exposed to the client.
+// Vercel serverless function — adds an email to a Brevo contact list and sends
+// a welcome email with the alpha download link (transactional template).
 //
-// Brevo note: disable "Authorized IPs" in Brevo security settings for serverless
-// (Vercel egress IPs are dynamic). https://app.brevo.com/security/authorised_ips
+// Brevo note: disable "Authorized IPs" for serverless egress.
+// Setup: docs/brevo-welcome-email.md
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const DEFAULT_DOWNLOAD_URL = "https://merlinkraemer.github.io/prunr/download.html";
 
 const ALLOWED_ORIGINS = new Set([
   "https://merlinkraemer.github.io",
@@ -17,6 +18,74 @@ function pickOrigin(req) {
   const origin = req.headers.origin;
   if (origin && ALLOWED_ORIGINS.has(origin)) return origin;
   return "https://merlinkraemer.github.io";
+}
+
+function brevoHeaders(apiKey) {
+  return {
+    "api-key": apiKey,
+    "content-type": "application/json",
+    accept: "application/json",
+  };
+}
+
+async function addContact(apiKey, listId, email) {
+  const r = await fetch("https://api.brevo.com/v3/contacts", {
+    method: "POST",
+    headers: brevoHeaders(apiKey),
+    body: JSON.stringify({ email, listIds: [listId], updateEnabled: true }),
+  });
+
+  if (r.ok) return { ok: true, duplicate: false };
+
+  let data = {};
+  try { data = await r.json(); } catch (_) {}
+
+  if (r.status === 400 && data.code === "duplicate_parameter") {
+    return { ok: true, duplicate: true };
+  }
+
+  if (r.status === 401 && data.code === "unauthorized") {
+    console.error("Brevo rejected request — disable Authorized IPs:", data.message);
+  } else {
+    console.error("Brevo contact error", r.status, data);
+  }
+
+  return { ok: false, status: r.status, data };
+}
+
+async function sendWelcomeEmail(apiKey, email) {
+  const templateId = Number(process.env.BREVO_WELCOME_TEMPLATE_ID || 0);
+  if (!templateId) {
+    console.info("Welcome email skipped — BREVO_WELCOME_TEMPLATE_ID not set");
+    return;
+  }
+
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  if (!senderEmail) {
+    console.error("BREVO_SENDER_EMAIL is not set — cannot send welcome email");
+    return;
+  }
+
+  const downloadUrl = process.env.DOWNLOAD_PAGE_URL || DEFAULT_DOWNLOAD_URL;
+  const senderName = process.env.BREVO_SENDER_NAME || "Merlin";
+
+  const r = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: brevoHeaders(apiKey),
+    body: JSON.stringify({
+      sender: { name: senderName, email: senderEmail },
+      to: [{ email }],
+      templateId,
+      params: { DOWNLOAD_URL: downloadUrl },
+    }),
+  });
+
+  if (r.ok) return;
+
+  let data = {};
+  try { data = await r.json(); } catch (_) {}
+  console.error("Brevo welcome email error", r.status, data);
+  throw new Error("welcome email failed");
 }
 
 export default async function handler(req, res) {
@@ -39,7 +108,6 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Server is not configured." });
   }
 
-  // Vercel parses JSON bodies automatically; fall back to manual parse just in case.
   let body = req.body;
   if (typeof body === "string") {
     try { body = JSON.parse(body); } catch (_) { body = {}; }
@@ -51,35 +119,21 @@ export default async function handler(req, res) {
   }
 
   try {
-    const r = await fetch("https://api.brevo.com/v3/contacts", {
-      method: "POST",
-      headers: {
-        "api-key": apiKey,
-        "content-type": "application/json",
-        accept: "application/json",
-      },
-      body: JSON.stringify({ email, listIds: [listId], updateEnabled: true }),
-    });
-
-    if (r.ok) return res.status(200).json({ ok: true });
-
-    let data = {};
-    try { data = await r.json(); } catch (_) {}
-
-    // Already a contact — treat as success so the user sees the confirmation.
-    if (r.status === 400 && data.code === "duplicate_parameter") {
-      return res.status(409).json({ ok: true, duplicate: true });
+    const contact = await addContact(apiKey, listId, email);
+    if (!contact.ok) {
+      return res.status(502).json({ error: "Couldn’t reach the signup service. Please try again." });
     }
 
-    if (r.status === 401 && data.code === "unauthorized") {
-      console.error("Brevo rejected request — disable Authorized IPs:", data.message);
-    } else {
-      console.error("Brevo error", r.status, data);
+    try {
+      await sendWelcomeEmail(apiKey, email);
+    } catch (err) {
+      // Contact is saved — don’t fail signup if email delivery hiccups.
+      console.error("Welcome email failed after contact add", err);
     }
 
-    return res.status(502).json({ error: "Couldn’t reach the signup service. Please try again." });
+    return res.status(contact.duplicate ? 409 : 200).json({ ok: true, duplicate: contact.duplicate });
   } catch (err) {
-    console.error("Brevo request failed", err);
+    console.error("Subscribe failed", err);
     return res.status(502).json({ error: "Couldn’t reach the signup service. Please try again." });
   }
 }

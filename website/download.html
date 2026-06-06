@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Download Prunr</title>
+<link rel="icon" href="assets/favicon.png" type="image/png" />
+<link rel="stylesheet" href="_ds/prunr-design-system-225e080c-0cd9-4949-9a22-e33560758b1f/styles.css" />
+<style>
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: var(--font-body); color: var(--body-color); background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; justify-content: center; padding: 40px 22px;
+  }
+  .wrap { max-width: 420px; width: 100%; text-align: center; }
+  .icon { width: 64px; height: 64px; border-radius: 14px; margin: 0 auto 20px; display: block; }
+  h1 {
+    font-family: var(--font-heading); font-weight: 700; font-size: 28px;
+    letter-spacing: var(--tracking-heading); color: var(--heading-color); margin: 0 0 10px;
+  }
+  p { font-size: 15px; line-height: 1.55; margin: 0 0 24px; color: var(--body-color); }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: 52px; padding: 0 28px; border-radius: var(--radius-pill);
+    background: var(--theme-accent); color: var(--theme-accent-ink);
+    font-family: var(--font-body); font-weight: 600; font-size: 16px;
+    text-decoration: none; border: none; cursor: pointer;
+    box-shadow: var(--shadow-hairline);
+  }
+  .btn:disabled { opacity: 0.55; cursor: wait; }
+  .steps {
+    margin-top: 32px; text-align: left; font-size: 14px; line-height: 1.5;
+    color: var(--body-color); opacity: 0.85;
+  }
+  .steps ol { margin: 0; padding-left: 20px; }
+  .steps li + li { margin-top: 8px; }
+  .err { color: #d92d20; font-size: 14px; margin-top: 16px; }
+  .ver { margin-top: 20px; font-size: 13px; opacity: 0.45; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <img class="icon" src="assets/favicon.png" alt="" width="64" height="64" />
+  <h1>Download Prunr</h1>
+  <p>Mac only &middot; signed &amp; notarized &middot; free during alpha</p>
+  <a id="dl" class="btn" href="#" hidden>Download for Mac</a>
+  <button id="loading" class="btn" type="button" disabled>Finding latest build…</button>
+  <p id="err" class="err" hidden></p>
+  <div class="steps">
+    <ol>
+      <li>Open the zip and drag <strong>Prunr</strong> into Applications.</li>
+      <li>First launch: right-click the app &rarr; <strong>Open</strong> (macOS security).</li>
+      <li>Updates install automatically after that.</li>
+    </ol>
+  </div>
+  <p id="ver" class="ver" hidden></p>
+</div>
+<script>
+(function () {
+  const REPO = "merlinkraemer/prunr";
+  const dl = document.getElementById("dl");
+  const loading = document.getElementById("loading");
+  const err = document.getElementById("err");
+  const ver = document.getElementById("ver");
+
+  fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
+    headers: { Accept: "application/vnd.github+json" },
+  })
+    .then(function (r) { if (!r.ok) throw new Error("release lookup failed"); return r.json(); })
+    .then(function (rel) {
+      const asset = (rel.assets || []).find(function (a) {
+        return /-macos\.zip$/i.test(a.name) && !/dsym/i.test(a.name);
+      });
+      if (!asset) throw new Error("no macOS build found");
+      dl.href = asset.browser_download_url;
+      dl.hidden = false;
+      loading.hidden = true;
+      ver.textContent = rel.name || rel.tag_name || "";
+      ver.hidden = !ver.textContent;
+    })
+    .catch(function () {
+      loading.hidden = true;
+      err.hidden = false;
+      err.textContent = "Couldn\u2019t find a download right now. Try again in a minute or email @merlinkraemer.";
+      dl.href = "https://github.com/" + REPO + "/releases/latest";
+      dl.textContent = "View releases on GitHub";
+      dl.hidden = false;
+    });
+})();
+</script>
+</body>
+</html>
