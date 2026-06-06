@@ -30,7 +30,9 @@ permissions:
 jobs:
   release:
     name: Build, Notarize & Publish
-    runs-on: macos-15
+    # macos-26 ships Xcode 26 / macOS 26 SDK, required for NSGlassEffectView
+    # (Liquid Glass). The app still deploys to macOS 14 via #available guards.
+    runs-on: macos-26
     timeout-minutes: 60
     env:
       SPARKLE_VERSION: "2.6.4"
@@ -39,6 +41,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          # macos-26's default Xcode is already 26, but pin the newest installed
+          # 26.x explicitly so the macOS 26 SDK (NSGlassEffectView) is guaranteed.
+          xc="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -n "$xc" ]]; then
+            sudo xcode-select -s "$xc"
+          fi
+          xcodebuild -version
+          echo "SDK: $(xcrun --sdk macosx --show-sdk-version)"
 
       - name: Validate inputs
         run: |
