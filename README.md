@@ -1,13 +1,16 @@
 <p align="center">
-  <img src="Prunr/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width="128" height="128" alt="Prunr app icon">
+  <img width="369" height="144" alt="prunr-wordmark-white" src="https://github.com/user-attachments/assets/5824496a-9942-4cad-a769-2f834498f23d" />
 </p>
+
 
 # Prunr
 
 macOS menu bar utility for seeing what is growing on disk.
 
-Current version: `0.1.3-alpha.2`
+currently in open alpha - install from releases or download via https://merlinkraemer.github.io/prunr/
 
-Status: signed and notarized alpha build, ready for external tester feedback.
+
+<img width="814" height="1034" alt="image" src="https://github.com/user-attachments/assets/e807917f-d0d9-4ba9-bc39-54bb4c473329" />
+
 
 License: source-visible during alpha. See [LICENSE](/Users/merlinkraemer/dev/projects/prunr/LICENSE:1).
