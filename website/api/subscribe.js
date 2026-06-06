@@ -1,15 +1,29 @@
 // Vercel serverless function — adds an email to a Brevo contact list.
 // The Brevo API key is a server-side secret, read from the BREVO_API_KEY env var.
 // It must never be exposed to the client.
+//
+// Brevo note: disable "Authorized IPs" in Brevo security settings for serverless
+// (Vercel egress IPs are dynamic). https://app.brevo.com/security/authorised_ips
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const ALLOWED_ORIGIN = "https://merlinkraemer.github.io";
+const ALLOWED_ORIGINS = new Set([
+  "https://merlinkraemer.github.io",
+  "http://localhost:5173",
+  "http://localhost:5174",
+]);
+
+function pickOrigin(req) {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) return origin;
+  return "https://merlinkraemer.github.io";
+}
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
+  res.setHeader("Access-Control-Allow-Origin", pickOrigin(req));
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Vary", "Origin");
 
   if (req.method === "OPTIONS") return res.status(204).end();
 
@@ -57,7 +71,12 @@ export default async function handler(req, res) {
       return res.status(409).json({ ok: true, duplicate: true });
     }
 
-    console.error("Brevo error", r.status, data);
+    if (r.status === 401 && data.code === "unauthorized") {
+      console.error("Brevo rejected request — disable Authorized IPs:", data.message);
+    } else {
+      console.error("Brevo error", r.status, data);
+    }
+
     return res.status(502).json({ error: "Couldn’t reach the signup service. Please try again." });
   } catch (err) {
     console.error("Brevo request failed", err);
