@@ -39,7 +39,7 @@ Sender must be a [verified sender](https://app.brevo.com/senders) in Brevo.
 | `BREVO_API_KEY` | *(already set)* | yes |
 | `BREVO_LIST_ID` | `6` | yes |
 | `BREVO_WELCOME_TEMPLATE_ID` | `12` | yes (after template exists) |
-| `BREVO_SENDER_EMAIL` | `hello@merlins-internet.com` | yes |
+| `BREVO_SENDER_EMAIL` | `helloo@merlins-internet.com` | yes |
 | `BREVO_SENDER_NAME` | `Merlin` | optional |
 | `DOWNLOAD_PAGE_URL` | `https://merlinkraemer.github.io/prunr/download.html` | optional (default above) |
 | `NOTIFY_EMAIL` | `merlinkraemer@gmail.com` | optional (default above) |
