@@ -1,0 +1,12 @@
+/* ============================================================
+   Prunr Design System — global entry point
+   ------------------------------------------------------------
+   Consumers link THIS file. It is an @import manifest only;
+   every token + @font-face the system ships is reachable below.
+   ============================================================ */
+
+@import url("tokens/fonts.css");
+@import url("tokens/colors.css");
+@import url("tokens/typography.css");
+@import url("tokens/spacing.css");
+@import url("tokens/app.css");

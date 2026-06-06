@@ -1,0 +1,58 @@
+/* ============================================================
+   Prunr — Color tokens (marketing / web brand)
+   ------------------------------------------------------------
+   Core principle: accent-tinted neutrals. There is no pure black.
+   Headings and body text mix a little of the theme accent into a
+   near-neutral, so the whole page reads as one quiet, warm system.
+   A single swappable --theme-accent drives buttons, links & focus.
+   ============================================================ */
+
+:root {
+  /* — Raw neutrals ———————————————————————————————— */
+  --text: #111111;            /* strongest ink                       */
+  --text-secondary: #555555;  /* secondary copy                      */
+  --bg: #fafaf8;              /* warm off-white page                 */
+  --card: #ffffff;            /* pure-white surfaces on warm page    */
+  --border: #e5e5e3;          /* hairline borders                    */
+  --placeholder: #e8e8e4;     /* image / block placeholder           */
+  --placeholder-hi: #f1f1ec;  /* lighter placeholder / skeleton      */
+
+  /* — Accents ————————————————————————————————————————
+     The leaf-green logo is the brand. Green is the friendly PRIMARY
+     accent (buttons, links, focus). Blue is kept as a quiet secondary
+     mark — used sparingly so the product never reads "big-tech". */
+  --theme-accent: #1aa055;    /* leaf green — PRIMARY ui accent (swappable) */
+  --theme-accent-ink: #ffffff;/* text on the accent fill             */
+  --accent: #2a6ef5;          /* royal blue — secondary mark, used rarely  */
+  --theme-bg: #eef0ee;        /* warm-neutral wash                   */
+  --page-bg: color-mix(in srgb, var(--theme-bg) 50%, #fff);
+
+  /* — Signature: accent-tinted ink ——————————————————— */
+  --heading-color: color-mix(in srgb, var(--theme-accent) 7%, #111111);
+  --body-color:    color-mix(in srgb, var(--theme-accent) 14%, #4a4a48);
+  --muted-color:   color-mix(in srgb, var(--theme-accent) 12%, #7a7a76);
+
+  /* — Accent tints (derived) ————————————————————————— */
+  --accent-soft:  color-mix(in srgb, var(--theme-accent) 13%, #fff);
+  --accent-line:  color-mix(in srgb, var(--theme-accent) 30%, #fff);
+  --accent-hover: color-mix(in srgb, var(--theme-accent) 88%, #000);
+
+  /* — Pastel tint palette ————————————————————————————
+     Soft, friendly card/section washes (à la a solo-dev project),
+     each paired with a deep ink for legible headings on the tint.
+     Loosely echo the app's category colors. */
+  --tint-leaf:     #e7f3ea;   --ink-leaf:     #2b6b45;
+  --tint-teal:     #e4f1f2;   --ink-teal:     #2a6d70;
+  --tint-blue:     #e9f0fa;   --ink-blue:     #2f5f9e;
+  --tint-amber:    #faf0de;   --ink-amber:    #8a5a23;
+  --tint-lavender: #eeedfb;   --ink-lavender: #4a4a93;
+  --tint-rose:     #f8eaf0;   --ink-rose:     #8a4a68;
+
+  /* — Semantic status (shared with app) ——————————————— */
+  --good: #1f9d57;            /* freed space / healthy               */
+  --warn: #e8861a;            /* growth / approaching full           */
+  --bad:  #e23b32;            /* heavy growth / nearly full          */
+
+  /* — Focus ring ——————————————————————————————————— */
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--theme-accent) 14%, transparent);
+}

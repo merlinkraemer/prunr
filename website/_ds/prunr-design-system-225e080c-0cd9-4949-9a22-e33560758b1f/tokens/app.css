@@ -1,0 +1,64 @@
+/* ============================================================
+   Prunr — macOS app palette
+   ------------------------------------------------------------
+   The native menu-bar app does NOT use the marketing-web accent.
+   It leans on macOS system colors + a fixed category palette.
+   Growth semantics: RED = growth (space consumed, bad),
+   GREEN = shrinkage (space freed, good).
+   ============================================================ */
+
+:root {
+  /* — macOS system colors (light) ——————————————————— */
+  --sys-red: #ff3b30;
+  --sys-orange: #ff9500;
+  --sys-yellow: #ffcc00;
+  --sys-green: #34c759;
+  --sys-teal: #30b0c7;
+  --sys-blue: #007aff;
+  --sys-indigo: #5856d6;
+  --sys-purple: #af52de;
+  --sys-pink: #ff2d55;
+  --sys-brown: #a2845e;
+  --sys-gray: #8e8e93;
+
+  /* — App surfaces (light vibrancy) —————————————————— */
+  --app-bg: #ececec;                 /* window background           */
+  --app-panel: #ffffff;              /* popover panel               */
+  --app-control: #f5f5f7;            /* control / card fill         */
+  --app-separator: rgba(0, 0, 0, 0.10);
+  --app-text: #1d1d1f;               /* primary label               */
+  --app-text-secondary: rgba(60, 60, 67, 0.6);   /* secondary label */
+  --app-text-tertiary: rgba(60, 60, 67, 0.3);    /* tertiary label  */
+  --app-hover: rgba(120, 120, 128, 0.10);         /* row hover       */
+
+  /* — Category palette (maps to GrowthCategory.color) —— */
+  --cat-developer: var(--sys-orange);
+  --cat-audio: var(--sys-purple);
+  --cat-applications: var(--sys-indigo);
+  --cat-media: var(--sys-pink);
+  --cat-downloads: var(--sys-blue);
+  --cat-caches: var(--sys-teal);
+  --cat-trash: var(--sys-red);
+  --cat-other: var(--sys-brown);
+
+  /* — Drive / growth semantics ——————————————————————— */
+  --disk-ok: var(--sys-green);       /* < 70% used                  */
+  --disk-warn: var(--sys-orange);    /* 70–90% used                 */
+  --disk-full: var(--sys-red);       /* >= 90% used                 */
+  --growth-up: var(--sys-red);       /* growth BAR = grew = bad     */
+  --growth-down: var(--sys-green);   /* growth BAR = shrank = good  */
+  --growth-delta: var(--sys-orange); /* row "+X" delta (as in app)  */
+
+  /* — Dark "liquid glass" popover (real app is dark) ———
+     Base is kept fairly opaque so the panel still reads as solid
+     dark glass when backdrop-filter is unavailable (thumbnail
+     capture / html-to-image). The live blur adds the glass sheen. */
+  --glass-dark-bg: rgba(28, 29, 34, 0.97);
+  --glass-dark-blur: saturate(180%) blur(34px);  /* @kind other */
+  --glass-dark-border: rgba(255, 255, 255, 0.10);
+  --glass-dark-sep: rgba(255, 255, 255, 0.08);
+  --glass-dark-text: rgba(255, 255, 255, 0.95);
+  --glass-dark-text-secondary: rgba(235, 235, 245, 0.6);
+  --glass-dark-text-tertiary: rgba(235, 235, 245, 0.3);
+  --glass-dark-hover: rgba(255, 255, 255, 0.07);
+}

@@ -1,0 +1,45 @@
+/* ============================================================
+   Prunr — Typography tokens
+   ------------------------------------------------------------
+   Three-font split by role:
+     • Manrope      → headings  (600 / 700, tracking -0.035em)
+     • General Sans → body      (default 500, line-height 1.55)
+     • SF / system  → UI chrome, numerals, app surfaces
+   ============================================================ */
+
+:root {
+  /* — Families ———————————————————————————————————— */
+  --font-heading: "Manrope", "SF Pro Display", -apple-system, system-ui, sans-serif;
+  --font-body: "General Sans", "SF Pro Text", -apple-system, system-ui, sans-serif;
+  --font-ui: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
+
+  /* — Type scale (px) ————————————————————————————— */
+  --fs-hero: 76px;      /* h1 hero                             */
+  --fs-h1: 50px;        /* section heading (large)             */
+  --fs-h2: 42px;        /* section heading                     */
+  --fs-h3: 38px;        /* sub-heading (large)                 */
+  --fs-h4: 32px;        /* sub-heading                         */
+  --fs-subtitle: 22px;  /* lead / subtitle                     */
+  --fs-lg: 18px;        /* large CTA / lead body               */
+  --fs-body: 16px;      /* default body                        */
+  --fs-cta: 15px;       /* buttons                             */
+  --fs-sm: 14px;        /* small UI                            */
+  --fs-nav: 13px;       /* nav / captions                      */
+
+  /* — Weights —————————————————————————————————————— */
+  --fw-body: 500;        /* @kind other */
+  --fw-medium: 600;      /* @kind other */
+  --fw-heading: 600;     /* @kind other */
+  --fw-bold: 700;        /* @kind other */
+
+  /* — Tracking & leading ——————————————————————————— */
+  --tracking-heading: -0.035em;  /* tight, premium                 */
+  --tracking-tight: -0.02em;
+  --lh-heading: 1.12;    /* @kind other */
+  --lh-body: 1.55;       /* @kind other */
+
+  /* — Composed roles ——————————————————————————————— */
+  --heading-style: var(--fw-heading) var(--fs-h2) / var(--lh-heading) var(--font-heading);
+  --body-style: var(--fw-body) var(--fs-body) / var(--lh-body) var(--font-body);
+}

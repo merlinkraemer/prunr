@@ -1,0 +1,25 @@
+/* ============================================================
+   Prunr — Web fonts
+   ------------------------------------------------------------
+   Heading : Manrope      (variable, 200–800) — Google Fonts / Fontsource
+   Body    : General Sans (400–700)           — Fontshare
+   System  : -apple-system / SF Pro stack     — used inside app UI
+
+   NOTE: General Sans is hosted by Fontshare (free, but not a
+   self-hosted binary in this repo). Manrope is pulled from the
+   Fontsource CDN as a variable woff2. If you need fully offline,
+   self-hosted binaries, drop the .woff2 files into /assets/fonts
+   and repoint the src urls below.
+   ============================================================ */
+
+/* General Sans — Fontshare hosted stylesheet (declares its own @font-face) */
+@import url("https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap");
+
+/* Manrope — variable weight axis, Fontsource CDN */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("https://cdn.jsdelivr.net/fontsource/fonts/manrope:vf@latest/latin-wght-normal.woff2") format("woff2-variations");
+}

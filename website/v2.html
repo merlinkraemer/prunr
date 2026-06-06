@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prunr — coming soon (v2)</title>
+<link rel="stylesheet" href="_ds/prunr-design-system-225e080c-0cd9-4949-9a22-e33560758b1f/styles.css" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="_ds/prunr-design-system-225e080c-0cd9-4949-9a22-e33560758b1f/_ds_bundle.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    font-family: var(--font-body); color: var(--body-color); -webkit-font-smoothing: antialiased;
+    background: var(--bg);
+  }
+  * { box-sizing: border-box; }
+  @keyframes revealIn { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+  .reveal { animation: revealIn 0.28s cubic-bezier(.4,0,.2,1); }
+
+  /* Mobile-only line break inside the hero headline. */
+  .m-br { display: none; }
+
+  /* CTA: small lift on hover (glare disabled). */
+  .ds-glare { display: none; }
+  .cta-nudge { display: inline-block; transition: transform .2s var(--ease); }
+  .cta-nudge:hover { transform: translateY(-2px); }
+
+  /* Popover drops open from the menubar. */
+  @keyframes popoverOpen { from { opacity: 0; transform: translateY(-10px) scale(.985); } to { opacity: 1; transform: none; } }
+  .popover-open { animation: popoverOpen 0.32s cubic-bezier(.4,0,.2,1); transform-origin: top right; }
+
+  /* Hero emojis: very subtle idle motion. */
+  @keyframes bugWiggle {
+    0%, 90%, 100% { transform: rotate(0) translateX(0); }
+    93% { transform: rotate(-7deg) translateX(-1px); }
+    96% { transform: rotate(5deg) translateX(1px); }
+  }
+  @keyframes leafSway {
+    0%, 100% { transform: rotate(-3deg); }
+    50% { transform: rotate(3deg); }
+  }
+  .emoji-bug { animation: bugWiggle 5s ease-in-out infinite; transform-origin: 50% 80%; }
+  .emoji-leaf { animation: leafSway 4.5s ease-in-out infinite; transform-origin: 50% 90%; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .emoji-bug, .emoji-leaf, .popover-open { animation: none; }
+  }
+
+  /* ---- Mobile: single scrolling column, menubar → screenshot → hero → footer ---- */
+  @media (max-width: 820px) {
+    html, body { overflow: auto; height: auto; }
+    .v2-page {
+      height: auto !important; min-height: 100vh; overflow: visible !important;
+      display: flex !important; flex-direction: column !important;
+    }
+    /* Flatten the inner column so menubar / hero / screenshot / footer reorder freely. */
+    .v2-page > div:not(.site-menubar) { display: contents !important; }
+    .site-nav { display: none !important; }            /* logo moves to footer */
+    /* Mobile order: footer-as-header → hero → menubar → screenshot. */
+    .hero-main { order: 1; padding: 120px 22px 0 !important; }
+    .site-menubar {
+      order: 2; position: static !important; width: 100% !important; margin-top: 60px !important;
+    }
+    /* Spread the items edge-to-edge so they fill the bar (no right-clustering). */
+    .mb-items { width: 100% !important; justify-content: space-between !important; }
+    .popover-open {
+      order: 3; position: static !important; right: auto !important; top: auto !important;
+      width: 96vw !important; max-width: 600px !important; max-height: none !important;
+      margin: 12px auto 16px !important;
+    }
+    .hero-main h1 { font-size: clamp(44px, 13vw, 56px) !important; }
+    .hero-main h1 span { white-space: normal !important; }
+    .m-br { display: inline !important; }
+    /* Footer rides at the top as a header: logo left, links right. */
+    .site-footer { order: 0; justify-content: space-between !important; padding: 18px 22px 0 !important; }
+    .footer-logo { display: inline-flex !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="coming-soon-v2.jsx"></script>
+<script type="text/babel">
+  (function mount() {
+    if (!window.PrunrComingSoonV2 || !window.PrunrDesignSystem_225e08) { setTimeout(mount, 60); return; }
+    ReactDOM.createRoot(document.getElementById("root")).render(<window.PrunrComingSoonV2.Page />);
+  })();
+</script>
+</body>
+</html>
