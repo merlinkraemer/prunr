@@ -138,6 +138,8 @@ final class MenuBarManager: NSObject {
     private static let enableSilentFullReconciliation = true
     private static let enableAutomaticFileWatcher = true
     private static let requiresFullRescanCooldown: TimeInterval = 30 * 60
+    private static let failedFullScanInitialBackoff: TimeInterval = 60
+    private static let failedFullScanMaximumBackoff: TimeInterval = 30 * 60
     private static let maxPendingRecentChangePaths = 50_000
     private static let deferredCleanupDelay: TimeInterval = 5 * 60
     private static let cleanupSkipAfterFullScanWindow: TimeInterval = 30
@@ -579,6 +581,8 @@ final class MenuBarManager: NSObject {
     private var pendingRecentChangePaths: Set<URL> = []
     private var pendingRecentChangeRequiresFullRefresh = false
     private var lastFullScanCompletedAt: Date?
+    private var lastFullScanAttemptAt: Date?
+    private var consecutiveFailedFullScans = 0
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
     private var isUnderDiskPressure = false
@@ -651,6 +655,8 @@ final class MenuBarManager: NSObject {
 
     // Silent background reconciliation
     private var lastReconciliationAt: Date?
+    private var lastReconciliationAttemptAt: Date?
+    private var consecutiveFailedReconciliations = 0
     private var isReconciling = false
     @ObservationIgnored
     nonisolated(unsafe) private var reconciliationTask: Task<Void, Never>?
@@ -708,6 +714,11 @@ final class MenuBarManager: NSObject {
     /// Returns the log file URL (nil if writing failed).
     @discardableResult
     func generateDiagnosticsReport() -> URL? {
+        generateDiagnosticsReport(revealInFinder: true)
+    }
+
+    @discardableResult
+    private func generateDiagnosticsReport(revealInFinder: Bool) -> URL? {
         let context = DiagnosticsAppContext(
             scopePaths: SettingsStore.shared.enabledTrackedPaths.map { $0.url.path },
             enabledPathCount: enabledPathCount,
@@ -724,7 +735,12 @@ final class MenuBarManager: NSObject {
             noBaseline: noBaseline,
             lastFullScanCompletedAt: lastFullScanCompletedAt
         )
-        return perfMeter.generateReport(context: context)
+        return perfMeter.generateReport(context: context, revealInFinder: revealInFinder)
+    }
+
+    func prepareDiagnosticsAttachment() -> Data? {
+        guard generateDiagnosticsReport(revealInFinder: false) != nil else { return nil }
+        return perfMeter.attachmentData()
     }
 
     private func setupMenuBar() {
@@ -754,19 +770,6 @@ final class MenuBarManager: NSObject {
     private func setupContextMenu() {
         let menu = NSMenu()
 
-        #if DEBUG
-        // Create Test Data (Debug only)
-        let createDataItem = NSMenuItem(
-            title: "Create Test Data",
-            action: #selector(createTestDataAction),
-            keyEquivalent: ""
-        )
-        createDataItem.target = self
-        menu.addItem(createDataItem)
-
-        menu.addItem(NSMenuItem.separator())
-        #endif
-
         // Open Scan Folder in Finder
         let openScanPathItem = NSMenuItem(
             title: "Open Scan Folder in Finder",
@@ -786,6 +789,18 @@ final class MenuBarManager: NSObject {
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
+
+        let troubleshootingMenu = NSMenu(title: "Troubleshooting")
+        let feedbackItem = NSMenuItem(
+            title: "Send Feedback…",
+            action: #selector(openFeedback),
+            keyEquivalent: ""
+        )
+        feedbackItem.target = self
+        troubleshootingMenu.addItem(feedbackItem)
+        let troubleshootingItem = NSMenuItem(title: "Troubleshooting", action: nil, keyEquivalent: "")
+        troubleshootingItem.submenu = troubleshootingMenu
+        menu.addItem(troubleshootingItem)
 
         let checkForUpdatesItem = NSMenuItem(
             title: "Check for Updates…",
@@ -861,6 +876,10 @@ final class MenuBarManager: NSObject {
         // SettingsWindowController builds a pure-AppKit window whose tab bar is a
         // native NSToolbar. We're already on the main thread (@MainActor).
         SettingsWindowController.shared.show()
+    }
+
+    @objc private func openFeedback() {
+        SettingsWindowController.shared.showFeedback()
     }
 
     func configureUpdater(
@@ -1025,47 +1044,59 @@ final class MenuBarManager: NSObject {
         for trackedPaths: [TrackedPath],
         progressCallback: @escaping (TrackedPath, ScanService.ScanProgress) -> Void
     ) async throws -> [UUID: Snapshot] {
-        // Reset any leftover cancellation state from a previous scan before starting.
-        await ScanService.shared.resetCancellationForNewBatch()
-
         // `effectiveTrackedPaths` already deduplicates nested paths, so all paths in
         // `trackedPaths` are independent (no path is a subpath of another). Each gets
         // its own snapshot, so there are no DB write conflicts — safe to scan in parallel.
-        guard trackedPaths.count > 1 else {
-            // Single path: run inline (no task group overhead)
-            var snapshotsByPath: [UUID: Snapshot] = [:]
-            if let trackedPath = trackedPaths.first {
-                scanProgress = "Scanning \(trackedPath.displayName)..."
-                scanCurrentPath = trackedPath.url.path
-                scanCurrentPathDisplay = "."
-                let snapshot = try await baselineService.createBaseline(
-                    trackedPath: trackedPath,
-                    progress: { progress in progressCallback(trackedPath, progress) }
-                )
-                snapshotsByPath[trackedPath.id] = snapshot
-            }
-            return snapshotsByPath
-        }
+        recordFullScanAttempt()
 
-        // Multiple independent paths: scan concurrently via TaskGroup.
-        // Any thrown error cancels the group (and all remaining scans) immediately.
-        return try await withThrowingTaskGroup(of: (UUID, Snapshot).self) { group in
-            for trackedPath in trackedPaths {
-                let capturedPath = trackedPath
-                group.addTask {
-                    let snapshot = try await self.baselineService.createBaseline(
-                        trackedPath: capturedPath,
-                        progress: { progress in progressCallback(capturedPath, progress) }
+        do {
+            let snapshotsByPath: [UUID: Snapshot]
+            if trackedPaths.count <= 1 {
+                // Single path: run inline (no task group overhead)
+                var snapshots: [UUID: Snapshot] = [:]
+                if let trackedPath = trackedPaths.first {
+                    scanProgress = "Scanning \(trackedPath.displayName)..."
+                    scanCurrentPath = trackedPath.url.path
+                    scanCurrentPathDisplay = "."
+                    let snapshot = try await baselineService.createBaseline(
+                        trackedPath: trackedPath,
+                        progress: { progress in progressCallback(trackedPath, progress) }
                     )
-                    return (capturedPath.id, snapshot)
+                    snapshots[trackedPath.id] = snapshot
+                }
+                snapshotsByPath = snapshots
+            } else {
+                // Multiple independent paths: scan concurrently via TaskGroup.
+                // Any thrown error cancels the group (and all remaining scans) immediately.
+                snapshotsByPath = try await withThrowingTaskGroup(of: (UUID, Snapshot).self) { group in
+                    for trackedPath in trackedPaths {
+                        let capturedPath = trackedPath
+                        group.addTask {
+                            let snapshot = try await self.baselineService.createBaseline(
+                                trackedPath: capturedPath,
+                                progress: { progress in progressCallback(capturedPath, progress) }
+                            )
+                            return (capturedPath.id, snapshot)
+                        }
+                    }
+
+                    var snapshots: [UUID: Snapshot] = [:]
+                    for try await (pathId, snapshot) in group {
+                        snapshots[pathId] = snapshot
+                    }
+                    return snapshots
                 }
             }
 
-            var snapshotsByPath: [UUID: Snapshot] = [:]
-            for try await (pathId, snapshot) in group {
-                snapshotsByPath[pathId] = snapshot
-            }
+            recordFullScanSuccess()
             return snapshotsByPath
+        } catch {
+            if !isScanCancellation(error) {
+                recordFullScanFailure(error)
+            } else {
+                recordFullScanCancellation()
+            }
+            throw error
         }
     }
 
@@ -1273,8 +1304,9 @@ final class MenuBarManager: NSObject {
         shouldApplyPartialScanInventory = false
         if completedSuccessfully, !wasCancelled {
             lastAutomaticScanAt = completedSnapshotsByPath.values.map(\.createdAt).max() ?? Date()
-            lastFullScanCompletedAt = Date()
             SettingsStore.shared.applyAdaptiveFullScanIntervalIfNeeded(scanDuration: scanWallDuration)
+        }
+        if !wasCancelled {
             scheduleReconciliationBackstop()
         }
 
@@ -1434,9 +1466,13 @@ final class MenuBarManager: NSObject {
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         guard !enabledPaths.isEmpty else { return }
 
+        recordReconciliationAttempt()
         do {
             _ = try await createBaselines(for: enabledPaths) { _, _ in }
         } catch {
+            if !isScanCancellation(error) {
+                recordReconciliationFailure()
+            }
             if let scanError = error as? ScanError, case .permissionDenied(let path) = scanError {
                 let label = URL(fileURLWithPath: path).lastPathComponent
                 runtimeBlockedLocations = [label.isEmpty ? path : label]
@@ -1448,10 +1484,10 @@ final class MenuBarManager: NSObject {
         }
 
         guard !Task.isCancelled else { return }
+        recordReconciliationSuccess()
 
         // Silently reload inventory from the new snapshot — no invalidation
         await loadInventoryFromLatestSnapshot(refreshedAt: Date())
-        lastReconciliationAt = Date()
     }
 
     private func startSilentReconciliationIfStale() {
@@ -1462,9 +1498,7 @@ final class MenuBarManager: NSObject {
             scheduleReconciliationBackstop(minimumDelay: Self.reconciliationBusyRetryDelay)
             return
         }
-        let staleThreshold = SettingsStore.shared.automaticFullScanInterval
-        if let lastReconciliation = lastReconciliationAt ?? lastAutomaticScanAt,
-           Date().timeIntervalSince(lastReconciliation) < staleThreshold {
+        if reconciliationBackstopDelay() > 0 {
             return
         }
 
@@ -1484,9 +1518,7 @@ final class MenuBarManager: NSObject {
         guard isPermissionConfirmedForProtectedTraversal else { return }
         guard !noBaseline else { return }
 
-        let staleThreshold = SettingsStore.shared.automaticFullScanInterval
-        let referenceDate = lastReconciliationAt ?? lastAutomaticScanAt ?? Date()
-        let delay = max(minimumDelay, staleThreshold - Date().timeIntervalSince(referenceDate))
+        let delay = max(minimumDelay, reconciliationBackstopDelay())
 
         reconciliationBackstopTask = Task { @MainActor in
             defer { reconciliationBackstopTask = nil }
@@ -1496,6 +1528,25 @@ final class MenuBarManager: NSObject {
             guard !Task.isCancelled else { return }
             startSilentReconciliationIfStale()
         }
+    }
+
+    private func reconciliationBackstopDelay(at now: Date = Date()) -> TimeInterval {
+        let referenceDate: Date?
+        let interval: TimeInterval
+
+        if consecutiveFailedFullScans > 0 {
+            referenceDate = lastFullScanAttemptAt
+            interval = failedScanBackoff(for: consecutiveFailedFullScans)
+        } else if consecutiveFailedReconciliations > 0 {
+            referenceDate = lastReconciliationAttemptAt
+            interval = failedScanBackoff(for: consecutiveFailedReconciliations)
+        } else {
+            referenceDate = lastReconciliationAttemptAt ?? lastReconciliationAt ?? lastAutomaticScanAt
+            interval = SettingsStore.shared.automaticFullScanInterval
+        }
+
+        guard let referenceDate else { return 0 }
+        return max(0, interval - now.timeIntervalSince(referenceDate))
     }
 
     private func reconcileDrillDownSelection() {
@@ -2931,7 +2982,12 @@ final class MenuBarManager: NSObject {
             hasPendingRecentChanges = false
             return
         }
-        guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning else {
+        guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning, !isReconciling else {
+            // The dirty-refresh task has already fired, so allow the pending work to
+            // schedule a later retry once the full scan/reconciliation releases the DB.
+            if pendingRecentChangeRequiresFullRefresh {
+                dirtyRefreshScheduled = false
+            }
             schedulePendingRecentChangeRefresh()
             return
         }
@@ -3136,13 +3192,99 @@ final class MenuBarManager: NSObject {
         return Set(noiseFiltered.map(\.standardizedFileURL))
     }
 
+    private func recordFullScanAttempt(at date: Date = Date()) {
+        lastFullScanAttemptAt = date
+    }
+
+    private func recordFullScanSuccess(at date: Date = Date()) {
+        lastFullScanCompletedAt = date
+        consecutiveFailedFullScans = 0
+        perfMeter.recordScanOutcome(
+            .success,
+            consecutiveFailures: consecutiveFailedFullScans,
+            lastAttemptAt: lastFullScanAttemptAt ?? date
+        )
+    }
+
+    private func recordFullScanFailure(_ error: Error) {
+        consecutiveFailedFullScans += 1
+        let delay = failedScanBackoff(for: consecutiveFailedFullScans)
+        perfMeter.recordScanOutcome(
+            .failed,
+            consecutiveFailures: consecutiveFailedFullScans,
+            errorCode: diagnosticErrorCode(for: error),
+            lastAttemptAt: lastFullScanAttemptAt
+        )
+        Self.logger.notice(
+            "Full scan failed; retrying no sooner than \(Int(delay))s (consecutive=\(self.consecutiveFailedFullScans))"
+        )
+    }
+
+    private func recordFullScanCancellation() {
+        perfMeter.recordScanOutcome(
+            .cancelled,
+            consecutiveFailures: consecutiveFailedFullScans,
+            lastAttemptAt: lastFullScanAttemptAt
+        )
+    }
+
+    private func diagnosticErrorCode(for error: Error) -> String {
+        guard let scanError = error as? ScanError else {
+            let nsError = error as NSError
+            return "\(String(reflecting: type(of: error))).code=\(nsError.code)"
+        }
+
+        switch scanError {
+        case .permissionDenied: return "ScanError.permissionDenied"
+        case .invalidPath: return "ScanError.invalidPath"
+        case .cancelled: return "ScanError.cancelled"
+        case .stalled: return "ScanError.stalled"
+        case .unknown(let underlying):
+            return "ScanError.unknown.code=\((underlying as NSError).code)"
+        }
+    }
+
+    private func recordReconciliationAttempt(at date: Date = Date()) {
+        lastReconciliationAttemptAt = date
+    }
+
+    private func recordReconciliationSuccess(at date: Date = Date()) {
+        lastReconciliationAt = date
+        consecutiveFailedReconciliations = 0
+    }
+
+    private func recordReconciliationFailure() {
+        consecutiveFailedReconciliations += 1
+    }
+
+    private func failedScanBackoff(for consecutiveFailures: Int) -> TimeInterval {
+        guard consecutiveFailures > 0 else { return 0 }
+        return min(
+            Self.failedFullScanInitialBackoff * pow(2, Double(consecutiveFailures - 1)),
+            Self.failedFullScanMaximumBackoff
+        )
+    }
+
+    private func isScanCancellation(_ error: Error) -> Bool {
+        if let scanError = error as? ScanError, case .cancelled = scanError {
+            return true
+        }
+        return error is CancellationError
+    }
+
     private func isWithinFullRescanCooldown(at now: Date = Date()) -> Bool {
-        guard let lastFullScanCompletedAt else { return false }
+        guard let referenceDate = lastFullScanAttemptAt ?? lastFullScanCompletedAt else { return false }
+
+        if consecutiveFailedFullScans > 0 {
+            return now.timeIntervalSince(referenceDate)
+                < failedScanBackoff(for: consecutiveFailedFullScans)
+        }
+
         let cooldown = max(
             Self.requiresFullRescanCooldown,
             SettingsStore.shared.automaticFullScanInterval
         )
-        return now.timeIntervalSince(lastFullScanCompletedAt) < cooldown
+        return now.timeIntervalSince(referenceDate) < cooldown
     }
 
     private func dropPendingFullRefreshDuringCooldown(reason: String) {

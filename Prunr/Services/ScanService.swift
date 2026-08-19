@@ -26,13 +26,9 @@ actor ScanService {
     /// `true` as soon as the first path scan starts; `false` once the last one finishes.
     @MainActor var isScanning: Bool { activeScanCount > 0 }
 
-    /// Cancellation token for stopping in-progress scans.
-    /// A single shared flag — setting it cancels ALL concurrent scans.
-    private var isCancelled = false
-
-    /// Shared token passed to FileScanner so the FTS producer can check cancellation
-    /// directly, without waiting for the stream consumer round-trip.
-    private var cancellationToken = ScanCancellationToken()
+    /// Cancellation tokens for active scans, keyed per scan so one scan cannot reset
+    /// or replace another scan's cancellation state.
+    private var activeCancellationTokens: [UUID: ScanCancellationToken] = [:]
 
     /// Logger for scan operations
     private let logger = Logger(subsystem: "com.prunr.ScanService", category: "Scanning")
@@ -40,27 +36,16 @@ actor ScanService {
     private init() {}
 
     /// Cancels all currently-running scan operations.
-    /// Sets the shared `isCancelled` flag, which stops ALL concurrent scan loops at
-    /// their next cancellation checkpoint. Structured concurrency (TaskGroup) propagates
-    /// the cancellation to any remaining child tasks automatically.
     func cancelScan() {
         logger.info("Cancellation requested — stopping all active scans")
-        self.isCancelled = true
-        self.cancellationToken.cancel()
+        for token in activeCancellationTokens.values {
+            token.cancel()
+        }
         logger.info("Cancellation signal sent")
     }
 
-    /// Resets cancellation state before starting a new scan batch.
-    /// Must be called once before a group of concurrent `scan()` calls — not inside each
-    /// individual scan — so that a cancellation from a prior session doesn't bleed into the new one.
-    func resetCancellationForNewBatch() {
-        isCancelled = false
-        cancellationToken = ScanCancellationToken()
-        logger.debug("Cancellation state reset for new scan batch")
-    }
-
-    private func throwIfCancelled(_ stage: String) throws {
-        if isCancelled || Task.isCancelled {
+    private func throwIfCancelled(_ stage: String, token: ScanCancellationToken) throws {
+        if token.isCancelled || Task.isCancelled {
             logger.info("Scan cancelled during \(stage)")
             throw ScanError.cancelled
         }
@@ -133,6 +118,10 @@ actor ScanService {
         alsoWriteWorkingSet: Bool = false,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> Snapshot {
+        let scanID = UUID()
+        let cancellationToken = ScanCancellationToken()
+        activeCancellationTokens[scanID] = cancellationToken
+
         // Increment active scan counter (allows parallel scans for independent paths)
         let currentCount = await MainActor.run { () -> Int in
             activeScanCount += 1
@@ -143,6 +132,7 @@ actor ScanService {
 
         // Ensure the counter is decremented when this scan finishes (for any reason)
         defer {
+            activeCancellationTokens.removeValue(forKey: scanID)
             logger.info("Scan cleanup complete for \(path)")
             Task { @MainActor in
                 activeScanCount -= 1
@@ -172,10 +162,11 @@ actor ScanService {
                 trackedPathId: trackedPathId,
                 ignoredNames: ignoredNames,
                 alsoWriteWorkingSet: alsoWriteWorkingSet,
+                cancellationToken: cancellationToken,
                 progress: progress
             )
         } onCancel: {
-            Task { await self.cancelScan() }
+            cancellationToken.cancel()
         }
     }
 
@@ -186,6 +177,7 @@ actor ScanService {
         trackedPathId: UUID,
         ignoredNames: Set<String>?,
         alsoWriteWorkingSet: Bool = false,
+        cancellationToken: ScanCancellationToken,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> Snapshot {
         // Capture volume free space before creating snapshot
@@ -302,7 +294,7 @@ actor ScanService {
 
             for try await result in stream {
                 // Check for cancellation (more frequent check)
-                if isCancelled || Task.isCancelled {
+                if cancellationToken.isCancelled || Task.isCancelled {
                     logger.info("Scan cancelled at item \(count)")
                     throw ScanError.cancelled
                 }
@@ -319,7 +311,7 @@ actor ScanService {
                 // Insert batch when full
                 if batch.count >= batchSize {
                     logger.debug("Inserting batch of \(batch.count) entries (total: \(count))")
-                    try throwIfCancelled("batch insert preflight")
+                    try throwIfCancelled("batch insert preflight", token: cancellationToken)
                     if alsoWriteWorkingSet {
                         try await db.addEntriesWithWorkingSet(
                             to: snapshotId,
@@ -334,7 +326,7 @@ actor ScanService {
                     batch.removeAll()
 
                     // Check cancellation after database write
-                    try throwIfCancelled("batch insert completion")
+                    try throwIfCancelled("batch insert completion", token: cancellationToken)
 
                     // Yield every batch (50000 items) to reduce coordination overhead
                     if count % batchSize == 0 {
@@ -416,7 +408,7 @@ actor ScanService {
             // Insert any remaining entries in partial batch
             if !batch.isEmpty {
                 logger.debug("Inserting final batch of \(batch.count) entries")
-                try throwIfCancelled("final batch insert preflight")
+                try throwIfCancelled("final batch insert preflight", token: cancellationToken)
                 if alsoWriteWorkingSet {
                         try await db.addEntriesWithWorkingSet(
                             to: snapshotId,
@@ -433,7 +425,7 @@ actor ScanService {
             // If we co-wrote the working set inline, write its category totals from the
             // in-memory categoryTotals dict (avoids a separate SQL GROUP BY over 2.2M rows).
             if alsoWriteWorkingSet {
-                try throwIfCancelled("working set category totals preflight")
+                try throwIfCancelled("working set category totals preflight", token: cancellationToken)
                 try await db.replaceWorkingSetCategoryTotals(
                     trackedPathId: trackedPathId,
                     totals: categoryTotals,
@@ -442,7 +434,7 @@ actor ScanService {
             }
 
             // Persist category totals while scan results are still hot in memory.
-            try throwIfCancelled("category snapshot persistence preflight")
+            try throwIfCancelled("category snapshot persistence preflight", token: cancellationToken)
             try await db.replaceCategorySnapshots(snapshotId: snapshotId, totals: categoryTotals)
             let storedSubcategories = subcategoryTotals.map { key, accumulator in
                 DatabaseManager.StoredSubcategorySnapshot(
@@ -453,7 +445,7 @@ actor ScanService {
                     topItems: accumulator.finalized(subcategory: key.subcategory)
                 )
             }
-            try throwIfCancelled("subcategory snapshot persistence preflight")
+            try throwIfCancelled("subcategory snapshot persistence preflight", token: cancellationToken)
             try await db.replaceSubcategorySnapshots(snapshotId: snapshotId, rows: storedSubcategories)
 
             // Send final progress update at 100% completion (UAT-001 fix)
@@ -519,7 +511,8 @@ actor ScanService {
                 throw ScanError.unknown(wrapped)
             }
 
-            logger.error("Unknown scan error domain=\(nsError.domain) code=\(nsError.code): \(error.localizedDescription)")
+            // DIAGNOSTIC (temporary): unredact the real error to find the code=0 root cause.
+            logger.error("Unknown scan error domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public): \(error.localizedDescription, privacy: .public) | reflect=\(String(reflecting: error), privacy: .public)")
             throw ScanError.unknown(error)
         }
     }

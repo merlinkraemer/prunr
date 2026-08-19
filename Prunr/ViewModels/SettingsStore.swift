@@ -308,7 +308,19 @@ final class SettingsStore {
         selectedCommonPathIDs.contains(path.id.uuidString)
     }
 
+    /// Whether this location is already included by the primary scan folder.
+    /// Covered paths are not offered as extras because selecting them would have no
+    /// effect while still requiring the user to rebuild their baseline.
+    func isCoveredByMainScope(_ path: TrackedPath) -> Bool {
+        let root = mainBaseURL.standardizedFileURL.path
+        let candidate = path.url.standardizedFileURL.path
+
+        if root == "/" { return true }
+        return candidate == root || candidate.hasPrefix(root + "/")
+    }
+
     func setCommonPathSelected(_ path: TrackedPath, selected: Bool) {
+        guard !isCoveredByMainScope(path) else { return }
         let currentlySelected = selectedCommonPathIDs.contains(path.id.uuidString)
         guard currentlySelected != selected else { return }
 

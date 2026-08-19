@@ -128,6 +128,41 @@ final class PrunrSmokeTests: XCTestCase {
         return try await body()
     }
 
+    @MainActor
+    func testCoveredCommonLocationDoesNotTriggerScopeReset() async throws {
+        let root = try createTrackedPathDirectory(named: "PrunrScope")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let coveredURL = root.appendingPathComponent("DerivedData", isDirectory: true)
+        let covered = TrackedPath(url: coveredURL, displayName: "Covered")
+
+        try await withIsolatedTrackedPathSettings(mainBaseURL: root) {
+            let settings = SettingsStore.shared
+
+            XCTAssertTrue(settings.isCoveredByMainScope(covered))
+
+            settings.setCommonPathSelected(covered, selected: true)
+            XCTAssertFalse(settings.hasPendingScopeChanges)
+        }
+    }
+
+    @MainActor
+    func testLegacyScanRulesSelectionMigratesToScanScope() {
+        let key = "settingsSelectedTab"
+        let originalValue = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let originalValue {
+                UserDefaults.standard.set(originalValue, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+
+        UserDefaults.standard.set(2, forKey: key)
+
+        XCTAssertEqual(SettingsSelectionModel().tab, .scanScope)
+    }
+
     func testDownloadsPathsCategorizeAsDownloads() {
         let downloadsPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads/archive.zip")

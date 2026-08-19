@@ -55,6 +55,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
         window.orderFrontRegardless()
     }
 
+    func showFeedback() {
+        selection.tab = .troubleshooting
+        window?.toolbar?.selectedItemIdentifier = SettingsTab.troubleshooting.toolbarIdentifier
+        show()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .focusFeedback, object: nil)
+        }
+    }
+
     @objc private func selectTab(_ sender: NSToolbarItem) {
         guard let tab = SettingsTab.from(toolbarIdentifier: sender.itemIdentifier) else { return }
         selection.tab = tab

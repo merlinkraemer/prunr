@@ -45,8 +45,10 @@ enum Perf {
     }
 }
 
-/// Snapshot of app-level state captured when the user hits "Generate Diagnostics".
+/// Snapshot of app-level state captured when the user generates diagnostics.
 /// Built by `MenuBarManager` so the reporter stays decoupled from app internals.
+/// `scopePaths` deliberately never leaves this type: diagnostics only report
+/// aggregate scope information, not root names or filesystem locations.
 struct DiagnosticsAppContext {
     var scopePaths: [String]
     var enabledPathCount: Int
@@ -67,14 +69,22 @@ struct DiagnosticsAppContext {
 /// Main-actor rolling diagnostics recorder. Accumulates FSEvents/refresh activity,
 /// per-operation timings, and periodic CPU samples, then appends a compact summary
 /// line to `~/Library/Logs/Prunr/diagnostics.log` every `windowSeconds`. A manual
-/// snapshot (with full app state) is appended on demand, and the file is revealed
-/// in Finder so the tester can send it over.
+/// snapshot (with full app state) is appended on demand. The rolling log and the
+/// feedback attachment are separately capped so a long-lived install cannot grow
+/// an unbounded diagnostic payload.
 ///
 /// The file is dense rather than pretty — it is meant to be pasted straight into
 /// Claude, not read by a human.
 @MainActor
 final class DiagnosticsReporter {
     static let shared = DiagnosticsReporter()
+
+    /// Retain a useful local history while keeping the feedback attachment small.
+    static let maximumLogBytes = 1_000_000
+    static let maximumAttachmentBytes = 200_000
+    private static let filesystemPathPattern = try! NSRegularExpression(
+        pattern: #"/(?:Users|Volumes)(?:/[^\s\]\[\(\),;\"']*)?"#
+    )
 
     /// How often the rolling window is flushed to disk (seconds).
     private let windowSeconds: TimeInterval = 30 * 60
@@ -90,6 +100,12 @@ final class DiagnosticsReporter {
     private var incrementalRefreshes = 0
     private var incrementalTargets = 0
     private var fullScanEscalations = 0
+    private var successfulScans = 0
+    private var failedScans = 0
+    private var cancelledScans = 0
+    private var consecutiveScanFailures = 0
+    private var lastScanError = "none"
+    private var lastFullScanAt: Date?
 
     private struct OpStat {
         var count = 0
@@ -153,6 +169,24 @@ final class DiagnosticsReporter {
         fullScanEscalations += 1
     }
 
+    /// Records an outcome without retaining raw error text: filesystem and
+    /// database errors can embed a tester's path in their localized description.
+    func recordScanOutcome(
+        _ outcome: ScanOutcome,
+        consecutiveFailures: Int,
+        errorCode: String? = nil,
+        lastAttemptAt: Date?
+    ) {
+        switch outcome {
+        case .success: successfulScans += 1
+        case .failed: failedScans += 1
+        case .cancelled: cancelledScans += 1
+        }
+        consecutiveScanFailures = consecutiveFailures
+        lastScanError = errorCode ?? "none"
+        lastFullScanAt = lastAttemptAt
+    }
+
     func recordOperation(name: String, milliseconds: Double) {
         var stat = ops[name] ?? OpStat()
         stat.count += 1
@@ -163,16 +197,32 @@ final class DiagnosticsReporter {
 
     // MARK: - Manual report
 
-    /// Appends a fresh full snapshot, flushes the current window, and reveals the
-    /// log file in Finder. Returns the file URL (nil if writing failed).
+    /// Appends a fresh full snapshot and flushes the current window. Manual
+    /// troubleshooting keeps the Finder reveal; automated feedback can suppress it.
+    /// Returns the bounded rolling-log URL (nil if writing failed).
     @discardableResult
-    func generateReport(context: DiagnosticsAppContext) -> URL? {
+    func generateReport(context: DiagnosticsAppContext, revealInFinder: Bool = true) -> URL? {
         sampleCPU() // make sure the snapshot has a current CPU reading
         appendManualSnapshot(context: context)
         flushWindow(force: true)
         guard let url = logFileURL else { return nil }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        if revealInFinder {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
         return url
+    }
+
+    /// The newest complete diagnostic records, capped independently from the
+    /// on-disk history. Use this for network attachments rather than reading
+    /// `logFileURL` directly.
+    func attachmentData() -> Data? {
+        guard let url = logFileURL,
+              let data = try? Data(contentsOf: url) else { return nil }
+        let redacted = Self.redactingFilesystemPaths(in: String(decoding: data, as: UTF8.self))
+        return Self.newestCompleteRecords(
+            in: Data(redacted.utf8),
+            maximumBytes: Self.maximumAttachmentBytes
+        )
     }
 
     // MARK: - CPU sampling
@@ -202,6 +252,11 @@ final class DiagnosticsReporter {
             + " cpu(avg/max/min/n)=\(String(format: "%.1f", cpuAvg))/\(String(format: "%.1f", cpuMax))/\(String(format: "%.1f", cpuMinOut))/\(cpuSamples)"
             + " fsBatches=\(fsBatches) rawEvents=\(fsRawEvents) filteredPaths=\(fsFilteredPaths) dirtyBatches=\(fsDirtyBatches)"
             + " incRefreshes=\(incrementalRefreshes) incTargets=\(incrementalTargets) fullScanEsc=\(fullScanEscalations)"
+            + " scans(success/failed/cancelled)=\(successfulScans)/\(failedScans)/\(cancelledScans)"
+            + " consecutiveFailures=\(consecutiveScanFailures)"
+            + " lastScanError=\(lastScanError)"
+            + " lastFullScan=\(lastFullScanAt.map { isoFormatter.string(from: $0) } ?? "never")"
+            + " secsSinceLastFullScan=\(lastFullScanAt.map { Int(Date().timeIntervalSince($0)) } ?? -1)"
             + " ops={\(opsText)}"
     }
 
@@ -227,6 +282,9 @@ final class DiagnosticsReporter {
         incrementalRefreshes = 0
         incrementalTargets = 0
         fullScanEscalations = 0
+        successfulScans = 0
+        failedScans = 0
+        cancelledScans = 0
         ops.removeAll(keepingCapacity: true)
         cpuSamples = 0
         cpuSum = 0
@@ -243,7 +301,7 @@ final class DiagnosticsReporter {
 
         var block = "\n===== MANUAL SNAPSHOT [\(isoFormatter.string(from: Date()))] =====\n"
         block += "app=\(Self.appVersion) macOS=\(ProcessInfo.processInfo.operatingSystemVersionString)\n"
-        block += "scope: paths=\(ctx.scopePaths) enabled=\(ctx.enabledPathCount) watched=\(ctx.watchedPathCount) protectedTraversal=\(ctx.protectedTraversalConfirmed)\n"
+        block += Self.scopeSummary(for: ctx) + "\n"
         block += "disk: used=\(bytes(ctx.usedBytes)) total=\(bytes(ctx.totalBytes)) free=\(bytes(ctx.freeBytes))\n"
         block += "inventory: categories=\(ctx.categoryCount) growing=\(ctx.growingCount) stable=\(ctx.stableCount)\n"
         block += "state: fullScanRunning=\(ctx.fullScanRunning) pendingRecentChanges=\(ctx.pendingRecentChanges) noBaseline=\(ctx.noBaseline) lastFullScan=\(lastScan)\n"
@@ -280,14 +338,53 @@ final class DiagnosticsReporter {
     private func append(_ text: String) {
         guard let url = logFileURL else { return }
         let line = text.hasSuffix("\n") ? text : text + "\n"
-        guard let data = line.data(using: .utf8) else { return }
-        if let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-        } else {
-            try? data.write(to: url, options: .atomic)
+        let existing = (try? Data(contentsOf: url)).map {
+            Data(Self.redactingFilesystemPaths(in: String(decoding: $0, as: UTF8.self)).utf8)
+        } ?? Data()
+        let data = Data(Self.redactingFilesystemPaths(in: line).utf8)
+        let bounded = Self.newestCompleteRecords(
+            in: existing + data,
+            maximumBytes: Self.maximumLogBytes
+        )
+        try? bounded.write(to: url, options: .atomic)
+    }
+
+    /// Returns only the newest complete newline-delimited records. Dropping the
+    /// leading partial record keeps the retained log readable and avoids splitting
+    /// a UTF-8 scalar when the byte cap lands inside non-ASCII text.
+    static func newestCompleteRecords(in data: Data, maximumBytes: Int) -> Data {
+        guard maximumBytes > 0, data.count > maximumBytes else { return data }
+
+        let tail = data.suffix(maximumBytes)
+        guard let firstNewline = tail.firstIndex(of: 0x0A) else {
+            return Data()
         }
+        return Data(tail[tail.index(after: firstNewline)...])
+    }
+
+    /// Redacts the user-visible portion of the two macOS path families that can
+    /// carry a username and arbitrary folder names. Running this over existing
+    /// content also makes reports safe after upgrading from older alpha builds.
+    static func redactingFilesystemPaths(in text: String) -> String {
+        let range = NSRange(text.startIndex..., in: text)
+        return filesystemPathPattern.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: range,
+            withTemplate: "<redacted-path>"
+        )
+    }
+
+    /// Scope location labels can include names and paths, so diagnostics retain
+    /// only aggregate counts and permission state.
+    static func scopeSummary(for context: DiagnosticsAppContext) -> String {
+        "scope: roots=\(context.scopePaths.count) enabled=\(context.enabledPathCount) watched=\(context.watchedPathCount) protectedTraversal=\(context.protectedTraversalConfirmed)"
+    }
+
+    enum ScanOutcome {
+        case success
+        case failed
+        case cancelled
     }
 }
 

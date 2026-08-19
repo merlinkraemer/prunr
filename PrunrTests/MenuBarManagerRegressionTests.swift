@@ -3,6 +3,58 @@ import XCTest
 
 @MainActor
 final class MenuBarManagerRegressionTests: PrunrTestCase {
+    func testDiagnosticsTailKeepsNewestCompleteRecords() {
+        let data = Data("old-record\nnewest-record\n".utf8)
+
+        let tail = DiagnosticsReporter.newestCompleteRecords(in: data, maximumBytes: 16)
+
+        XCTAssertEqual(String(decoding: tail, as: UTF8.self), "newest-record\n")
+    }
+
+    func testDiagnosticsTailDropsAnOversizedPartialRecord() {
+        let data = Data(repeating: 0x61, count: 32)
+
+        let tail = DiagnosticsReporter.newestCompleteRecords(in: data, maximumBytes: 16)
+
+        XCTAssertTrue(tail.isEmpty)
+    }
+
+    func testDiagnosticsScopeSummaryDoesNotContainPathOrFolderNames() {
+        let context = DiagnosticsAppContext(
+            scopePaths: ["/Users/jane/Work/Clients/AcmeCorp", "/Volumes/Archive/Private"],
+            enabledPathCount: 2,
+            watchedPathCount: 2,
+            protectedTraversalConfirmed: true,
+            usedBytes: 0,
+            totalBytes: 0,
+            freeBytes: 0,
+            categoryCount: 0,
+            growingCount: 0,
+            stableCount: 0,
+            fullScanRunning: false,
+            pendingRecentChanges: false,
+            noBaseline: false,
+            lastFullScanCompletedAt: nil
+        )
+
+        let summary = DiagnosticsReporter.scopeSummary(for: context)
+
+        XCTAssertEqual(summary, "scope: roots=2 enabled=2 watched=2 protectedTraversal=true")
+        XCTAssertFalse(summary.contains("/Users/"))
+        XCTAssertFalse(summary.contains("AcmeCorp"))
+    }
+
+    func testDiagnosticsRedactsLegacyUserAndVolumePaths() {
+        let text = "scope: /Users/jane/Work/AcmeCorp and /Volumes/Archive/Private\n"
+
+        let redacted = DiagnosticsReporter.redactingFilesystemPaths(in: text)
+
+        XCTAssertEqual(redacted, "scope: <redacted-path> and <redacted-path>\n")
+        XCTAssertFalse(redacted.contains("jane"))
+        XCTAssertFalse(redacted.contains("AcmeCorp"))
+        XCTAssertFalse(redacted.contains("Archive"))
+    }
+
     func testAppDelegateKeepsMenuBarAppAliveAfterLastWindowCloses() {
         let delegate = AppDelegate()
 

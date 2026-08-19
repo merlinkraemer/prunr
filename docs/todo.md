@@ -1,5 +1,35 @@
 # Todo: Growth UX Redesign
 
+## Settings simplification — 2026-08-19
+
+- [x] Remove the broken Scan Rules surface and simplify General to app preferences.
+- [x] Replace common-path groups with one coverage-aware, ranked expandable list.
+- [x] Build and test the settings window changes.
+- [ ] Manually verify the settings window in the launched app.
+
+### Review
+
+- `make build` passed.
+- `make test` passed: 83 tests, 0 failures.
+- `make run` built, installed, and launched `/Applications/Prunr.app`.
+- Automated visual capture is blocked by local macOS screen-access permissions;
+  the settings flow still needs a brief manual check in the launched app.
+
+## Alpha feedback funnel — 2026-08-19
+
+- [x] Implement scan failure backoff and concurrency protection (s1–s2)
+- [x] Redact and bound diagnostics; add scan-health summary (s3–s5)
+- [x] Add and verify the Brevo feedback endpoint (s6)
+- [x] Add and verify the in-app feedback flow (s7)
+- [x] Run build/tests and document results; do not publish alpha.10 (s8 deferred)
+
+### Review
+
+- `make test` passed: 81 tests, 0 failures.
+- `make run` built, installed, and launched the Debug app.
+- Endpoint relay was tested with a mocked Brevo API. Deployment and live-email
+  verification remain part of the intentionally deferred release slice.
+
 Goal: make the delta-tracker mental model legible. Growth = total accumulation
 since a dated baseline anchor, reset on the user's terms, with a footer that is
 quiet when healthy and loud when broken.

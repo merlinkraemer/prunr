@@ -40,6 +40,7 @@
 		87A5B1FF3296F18C31BE4F72 /* PrunrInternalPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F14DD8766099C599A690EAE /* PrunrInternalPaths.swift */; };
 		8D1CA082042D60BC7B5D588C /* FileScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40E989B2BA4D011B5C20B82D /* FileScanner.swift */; };
 		90EDEF69EAA62103B45A6B9C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE320653A13DE8203E50C2A /* SettingsView.swift */; };
+		97BBACB71AB4AA756B107646 /* FeedbackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F776C3C717DBA7FC64554F6B /* FeedbackService.swift */; };
 		9D605AC42435FF5F0928CDA1 /* CategoryGrowthListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAC89EB552188712FB917B53 /* CategoryGrowthListView.swift */; };
 		A0303104A5915091362D75C3 /* Logger+Prunr.swift in Sources */ = {isa = PBXBuildFile; fileRef = 559792451B4985A1A23FDA0E /* Logger+Prunr.swift */; };
 		A2075B826B9DF97C49F42362 /* MenuBarManagerRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E1ECC974C4E402965F0B80 /* MenuBarManagerRegressionTests.swift */; };
@@ -132,6 +133,7 @@
 		E66E49820CB5A9702B7565F3 /* Prunr.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prunr.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ED22215848F7B27478151FD0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F71C9E671ACF5631597E9040 /* BoundaryConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundaryConfig.swift; sourceTree = "<group>"; };
+		F776C3C717DBA7FC64554F6B /* FeedbackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackService.swift; sourceTree = "<group>"; };
 		F9210484FFB1B230146BD4C7 /* PerfSignpost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfSignpost.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -281,6 +283,7 @@
 				5AE9E79214A43D2FFF57DC26 /* DeltaService.swift */,
 				1D9601CAA1193992B7E7AA1E /* DiskSpaceService.swift */,
 				50F92B2286BD72019F4CFDFB /* E2ETestCommand.swift */,
+				F776C3C717DBA7FC64554F6B /* FeedbackService.swift */,
 				40E989B2BA4D011B5C20B82D /* FileScanner.swift */,
 				C918D45CF08B646E3ABAE820 /* FSEventsNoiseFilter.swift */,
 				ADFA692654D900931A96C796 /* FSEventsWatcher.swift */,
@@ -457,6 +460,7 @@
 				C9D4F1FFD8E341992F3B2E19 /* ExpandableList.swift in Sources */,
 				53BD8763724D3CC68ED76FCB /* FSEventsNoiseFilter.swift in Sources */,
 				4B0B33CD9EAE0386D6E163A6 /* FSEventsWatcher.swift in Sources */,
+				97BBACB71AB4AA756B107646 /* FeedbackService.swift in Sources */,
 				8D1CA082042D60BC7B5D588C /* FileScanner.swift in Sources */,
 				C51BB0A8E9DBA9CC3F92608C /* FormattedBytes.swift in Sources */,
 				83C527FDFEE5852731C91453 /* GrowthBarView.swift in Sources */,

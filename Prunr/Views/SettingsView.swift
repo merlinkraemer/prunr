@@ -1,19 +1,23 @@
 import SwiftUI
 import AppKit
 
+extension Notification.Name {
+    static let focusFeedback = Notification.Name("com.prunr.focusFeedback")
+}
+
 /// One settings pane. The tab bar itself is a native `NSToolbar` (preference
 /// style, big icons) driven by `SettingsWindowController`; this enum is the
 /// shared source of truth for the panes and their toolbar items.
 enum SettingsTab: Int, CaseIterable {
     case general
     case scanScope
-    case scanRules
+    case troubleshooting = 3
 
     var title: String {
         switch self {
         case .general: return "General"
         case .scanScope: return "Scan Scope"
-        case .scanRules: return "Scan Rules"
+        case .troubleshooting: return "Troubleshooting"
         }
     }
 
@@ -21,7 +25,7 @@ enum SettingsTab: Int, CaseIterable {
         switch self {
         case .general: return "gear"
         case .scanScope: return "folder"
-        case .scanRules: return "line.3.horizontal.decrease.circle"
+        case .troubleshooting: return "wrench.and.screwdriver"
         }
     }
 
@@ -46,7 +50,9 @@ final class SettingsSelectionModel {
 
     init() {
         let raw = UserDefaults.standard.integer(forKey: "settingsSelectedTab")
-        tab = SettingsTab(rawValue: raw) ?? .general
+        // Scan Rules used raw value 2. Keep people who last opened it in the
+        // now-consolidated Scan Scope tab instead of stranding them on General.
+        tab = raw == 2 ? .scanScope : (SettingsTab(rawValue: raw) ?? .general)
     }
 }
 
@@ -61,34 +67,25 @@ struct SettingsView: View {
     @State private var isApplyingScopeChanges = false
 
     var body: some View {
-        Group {
-            switch selection.tab {
-            case .general:
-                GeneralSettingsTab(settingsStore: settingsStore)
-            case .scanScope:
-                ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
-            case .scanRules:
-                ScanRulesSettingsTab(settingsStore: settingsStore)
+        VStack(spacing: 0) {
+            if scanService.isScanning {
+                scanActivityBanner
             }
+
+            Group {
+                switch selection.tab {
+                case .general:
+                    GeneralSettingsTab(settingsStore: settingsStore)
+                case .scanScope:
+                    ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
+                case .troubleshooting:
+                    TroubleshootingSettingsTab()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 520, height: 480)
         .disabled(isApplyingScopeChanges)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if scanService.isScanning {
-                HStack(spacing: 8) {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Text("Scan running — scope and rules are locked until it finishes.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.gray.opacity(0.08))
-            }
-        }
         .overlay {
             if isApplyingScopeChanges {
                 Color.black.opacity(0.12)
@@ -97,23 +94,30 @@ struct SettingsView: View {
             }
         }
     }
+
+    private var scanActivityBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 11))
+            Text("Scan running — scan scope changes are available when it finishes.")
+                .font(.system(size: 11))
+            Spacer()
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
 }
 
 // MARK: - General Tab
 
 private struct GeneralSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
-    @State private var baselineService = BaselineService.shared
-    @State private var permissionsService = PermissionsService.shared
-    @State private var isResetting = false
-    @State private var isCompactingDatabase = false
-    @State private var showDeleteSnapshotsConfirmation = false
-    @State private var showingSavedNotice = false
-    @State private var compactedNotice = ""
-    @State private var diagnosticsNotice = ""
-    @State private var hasRequiredScanAccess = false
-    @State private var blockedScanAccessLocations: [String] = []
-    @State private var permissionRefreshTask: Task<Void, Never>? = nil
 
     private var appVersionText: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"
@@ -137,164 +141,6 @@ private struct GeneralSettingsTab: View {
                         .buttonStyle(.bordered)
                     }
                 }
-
-                Section("Permissions") {
-                    HStack {
-                        Image(systemName: hasRequiredScanAccess ? "checkmark.circle.fill" : "shield.fill")
-                            .foregroundStyle(hasRequiredScanAccess ? .green : .orange)
-
-                        Text(hasRequiredScanAccess ? "Current scan scope is accessible" : "Extra privacy access needed for current scan scope")
-                    }
-
-                    if !hasRequiredScanAccess && !blockedScanAccessLocations.isEmpty {
-                        Text("Still blocked: \(blockedScanAccessLocations.prefix(4).joined(separator: ", "))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if !hasRequiredScanAccess {
-                        Button("Open Privacy Settings") {
-                            openScanAccessSettings()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-
-                    Text("Prunr only needs access to the folders in your scan scope. Open Privacy Settings if macOS blocks part of it.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Scanning") {
-                    HStack {
-                        Text("Periodic full rescan")
-                            .font(.system(size: 13))
-
-                        Spacer()
-
-                        Picker(
-                            "",
-                            selection: Binding(
-                                get: { settingsStore.automaticFullScanIntervalHours },
-                                set: { newValue in
-                                    settingsStore.markAutomaticFullScanIntervalChosenByUser()
-                                    settingsStore.automaticFullScanIntervalHours = newValue
-                                }
-                            )
-                        ) {
-                            Text("Daily").tag(24)
-                            Text("Every 2 days").tag(48)
-                            Text("Every 3 days").tag(72)
-                            Text("Weekly").tag(168)
-                            Text("Every 2 weeks").tag(336)
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 140)
-                    }
-
-                    if settingsStore.adaptiveFullScanIntervalApplied && !settingsStore.automaticFullScanIntervalUserTouched {
-                        Text("This interval was chosen automatically from how long your first scan took. Pick a preset above for a fixed schedule.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Data") {
-                    HStack {
-                        Text("Category history")
-                            .font(.system(size: 13))
-
-                        Spacer()
-
-                        Picker("", selection: $settingsStore.categoryHistoryRetentionDays) {
-                            Text("7 days").tag(7)
-                            Text("14 days").tag(14)
-                            Text("30 days").tag(30)
-                            Text("60 days").tag(60)
-                            Text("90 days").tag(90)
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 120)
-                    }
-
-                    Button {
-                        isCompactingDatabase = true
-                        compactedNotice = ""
-
-                        Task {
-                            do {
-                                let report = try await DatabaseCleanupService.shared.compactDatabaseNow()
-                                let reclaimedDbBytes = max(0, report.dbBytesBefore - report.dbBytesAfter)
-                                let reclaimedWalBytes = max(0, report.walBytesBefore - report.walBytesAfter)
-                                let reclaimedTotal = reclaimedDbBytes + reclaimedWalBytes
-
-                                compactedNotice = "Reclaimed \(formattedBytes(reclaimedTotal))."
-                            } catch {
-                                compactedNotice = "Compaction failed: \(error.localizedDescription)"
-                            }
-
-                            isCompactingDatabase = false
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            if isCompactingDatabase {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Image(systemName: "externaldrive.badge.timemachine")
-                            }
-                            Text("Compact Database")
-                        }
-                    }
-                    .disabled(isResetting || isCompactingDatabase)
-
-                    if !compactedNotice.isEmpty {
-                        Text(compactedNotice)
-                            .font(.caption)
-                            .foregroundStyle(compactedNotice.hasPrefix("Compaction failed") ? .red : .green)
-                    }
-
-                    Button(role: .destructive) {
-                        showDeleteSnapshotsConfirmation = true
-                    } label: {
-                        HStack(spacing: 8) {
-                            if isResetting {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Image(systemName: "trash")
-                            }
-                            Text("Delete All Snapshots")
-                        }
-                    }
-                    .disabled(isResetting)
-
-                    if showingSavedNotice {
-                        Label("Snapshots deleted", systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    }
-                }
-
-                Section("Troubleshooting") {
-                    Button {
-                        let url = MenuBarManager.shared?.generateDiagnosticsReport()
-                        diagnosticsNotice = url != nil
-                            ? "Report saved and revealed in Finder. Send it over to help diagnose CPU issues."
-                            : "Could not write diagnostics report."
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "stethoscope")
-                            Text("Generate Diagnostics Report")
-                        }
-                    }
-                    .disabled(isResetting)
-
-                    if !diagnosticsNotice.isEmpty {
-                        Text(diagnosticsNotice)
-                            .font(.caption)
-                            .foregroundStyle(diagnosticsNotice.hasPrefix("Could not") ? .red : .secondary)
-                    }
-                }
             }
             .formStyle(.grouped)
             .hiddenScrollIndicators()
@@ -309,58 +155,198 @@ private struct GeneralSettingsTab: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
         }
-        .confirmationDialog(
-            "Delete all snapshots?",
-            isPresented: $showDeleteSnapshotsConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Delete All Snapshots", role: .destructive) {
-                isResetting = true
-                Task {
-                    if let manager = MenuBarManager.shared {
-                        await manager.performReset()
-                    } else {
-                        try? await baselineService.resetBaseline()
+    }
+}
+
+// MARK: - Troubleshooting Tab
+
+private struct TroubleshootingSettingsTab: View {
+    @State private var baselineService = BaselineService.shared
+    @State private var feedbackMessage = ""
+    @State private var feedbackEmail = ""
+    @State private var feedbackNotice = ""
+    @State private var diagnosticsNotice = ""
+    @State private var isSendingFeedback = false
+    @State private var isResetting = false
+    @State private var isCompactingDatabase = false
+    @State private var showDeleteSnapshotsConfirmation = false
+    @State private var compactedNotice = ""
+    @State private var resetNotice = ""
+    @FocusState private var feedbackFocused: Bool
+
+    var body: some View {
+        Form {
+            Section("Send Feedback") {
+                Text("Prunr is in alpha, and your feedback helps shape it. Tell us what’s working, what isn’t, or what you’d love to see.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                TextEditor(text: $feedbackMessage)
+                    .focused($feedbackFocused)
+                    .frame(minHeight: 110)
+                    .accessibilityLabel("Feedback message")
+
+                TextField("Email for a reply (optional)", text: $feedbackEmail)
+                    .textFieldStyle(.roundedBorder)
+
+                Button {
+                    sendFeedback()
+                } label: {
+                    HStack(spacing: 8) {
+                        if isSendingFeedback {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "paperplane")
+                        }
+                        Text(isSendingFeedback ? "Sending…" : "Send Feedback")
                     }
-                    isResetting = false
-                    showingSavedNotice = true
-                    Task {
-                        try? await Task.sleep(for: .seconds(2))
-                        showingSavedNotice = false
+                }
+                .disabled(isSendingFeedback || feedbackMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                if !feedbackNotice.isEmpty {
+                    Text(feedbackNotice)
+                        .font(.caption)
+                        .foregroundStyle(feedbackNotice.hasPrefix("Could not") ? .red : .green)
+                }
+
+                if feedbackNotice.hasPrefix("Could not") {
+                    Button("Reveal Diagnostics Report in Finder") {
+                        _ = MenuBarManager.shared?.generateDiagnosticsReport()
                     }
                 }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This removes all saved history and cannot be undone.")
-        }
-        .onAppear {
-            refreshScanAccess()
-        }
-        .onDisappear {
-            permissionRefreshTask?.cancel()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshScanAccess()
-        }
-    }
 
-    private func refreshScanAccess() {
-        let roots = settingsStore.enabledTrackedPaths.map(\.url.standardizedFileURL)
-        permissionRefreshTask?.cancel()
-        permissionRefreshTask = Task {
-            let report = await permissionsService.evaluateScanScopeAccessAsync(scanRootURLs: roots)
-            guard !Task.isCancelled else { return }
+            Section("Diagnostics") {
+                Button {
+                    let url = MenuBarManager.shared?.generateDiagnosticsReport()
+                    diagnosticsNotice = url != nil
+                        ? "Report saved and revealed in Finder. Send it over to help diagnose CPU issues."
+                        : "Could not write diagnostics report."
+                } label: {
+                    Label("Generate Diagnostics Report", systemImage: "stethoscope")
+                }
 
-            await MainActor.run {
-                hasRequiredScanAccess = report.isGranted
-                blockedScanAccessLocations = report.blockedLocations
+                if !diagnosticsNotice.isEmpty {
+                    Text(diagnosticsNotice)
+                        .font(.caption)
+                        .foregroundStyle(diagnosticsNotice.hasPrefix("Could not") ? .red : .secondary)
+                }
+            }
+
+            Section("Data Maintenance") {
+                Text("Prunr automatically keeps its data tidy. Use these only when troubleshooting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    compactDatabase()
+                } label: {
+                    Label(
+                        isCompactingDatabase ? "Compacting Database…" : "Compact Database",
+                        systemImage: "externaldrive.badge.timemachine"
+                    )
+                }
+                .disabled(isResetting || isCompactingDatabase)
+
+                if !compactedNotice.isEmpty {
+                    Text(compactedNotice)
+                        .font(.caption)
+                        .foregroundStyle(compactedNotice.hasPrefix("Compaction failed") ? .red : .green)
+                }
+
+                Button(role: .destructive) {
+                    showDeleteSnapshotsConfirmation = true
+                } label: {
+                    Label(
+                        isResetting ? "Resetting Prunr…" : "Reset Prunr Data",
+                        systemImage: "trash"
+                    )
+                }
+                .disabled(isResetting || isCompactingDatabase)
+
+                if !resetNotice.isEmpty {
+                    Text(resetNotice)
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
             }
         }
+        .formStyle(.grouped)
+        .hiddenScrollIndicators()
+        .confirmationDialog(
+            "Reset Prunr data?",
+            isPresented: $showDeleteSnapshotsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Prunr Data", role: .destructive) {
+                resetSnapshots()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This deletes saved snapshots and growth history. Your scan folders stay selected.")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .focusFeedback)) { _ in
+            feedbackFocused = true
+        }
     }
 
-    private func openScanAccessSettings() {
-        Task { await permissionsService.requestFullDiskAccess() }
+    private func sendFeedback() {
+        let message = feedbackMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return }
+        guard let diagnostics = MenuBarManager.shared?.prepareDiagnosticsAttachment() else {
+            feedbackNotice = "Could not prepare diagnostics. Reveal the report in Finder and send it manually."
+            return
+        }
+
+        isSendingFeedback = true
+        feedbackNotice = ""
+        Task {
+            do {
+                try await FeedbackService.send(
+                    message: message,
+                    email: feedbackEmail.trimmingCharacters(in: .whitespacesAndNewlines),
+                    diagnostics: diagnostics
+                )
+                feedbackMessage = ""
+                feedbackNotice = "Feedback sent. Thank you."
+            } catch {
+                feedbackNotice = "Could not send feedback: \(error.localizedDescription)"
+            }
+            isSendingFeedback = false
+        }
+    }
+
+    private func compactDatabase() {
+        isCompactingDatabase = true
+        compactedNotice = ""
+
+        Task {
+            do {
+                let report = try await DatabaseCleanupService.shared.compactDatabaseNow()
+                let reclaimed = max(0, report.dbBytesBefore - report.dbBytesAfter)
+                    + max(0, report.walBytesBefore - report.walBytesAfter)
+                compactedNotice = "Reclaimed \(formattedBytes(reclaimed))."
+            } catch {
+                compactedNotice = "Compaction failed: \(error.localizedDescription)"
+            }
+            isCompactingDatabase = false
+        }
+    }
+
+    private func resetSnapshots() {
+        isResetting = true
+        resetNotice = ""
+
+        Task {
+            if let manager = MenuBarManager.shared {
+                await manager.performReset()
+            } else {
+                try? await baselineService.resetBaseline()
+            }
+            isResetting = false
+            resetNotice = "Prunr data reset. Run a scan to start fresh."
+        }
     }
 
     private func formattedBytes(_ bytes: Int64) -> String {
@@ -376,23 +362,46 @@ private struct ScanScopeSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
     @State private var baselineService = BaselineService.shared
     @State private var scanService = ScanService.shared
+    @State private var permissionsService = PermissionsService.shared
     @State private var showingBasePathPicker = false
     @Binding var isApplyingScopeChanges: Bool
     @State private var showApplyConfirmation = false
     @State private var showingAppliedNotice = false
     @State private var applyStatusText = ""
-    @State private var showOtherCommonPaths = false
+    @State private var showsAllCommonPaths = false
+    @State private var hasRequiredScanAccess = false
+    @State private var blockedScanAccessLocations: [String] = []
+    @State private var permissionRefreshTask: Task<Void, Never>? = nil
+    private let initialCommonPathLimit = 5
 
     private var isScanInProgress: Bool {
         scanService.isScanning
     }
 
-    private var recommendedCommonPaths: [TrackedPath] {
-        settingsStore.recommendedCommonPaths
+    private var additionalCommonPaths: [TrackedPath] {
+        settingsStore.availableCommonPaths
+            .filter { !settingsStore.isCoveredByMainScope($0) }
+            .sorted { lhs, rhs in
+                let lhsSelected = settingsStore.isCommonPathSelected(lhs)
+                let rhsSelected = settingsStore.isCommonPathSelected(rhs)
+                if lhsSelected != rhsSelected { return lhsSelected }
+                if lhs.isRecommendedExtra != rhs.isRecommendedExtra {
+                    return lhs.isRecommendedExtra
+                }
+                return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
+            }
     }
 
-    private var optionalCommonPaths: [TrackedPath] {
-        settingsStore.optionalCommonPaths
+    private var visibleCommonPaths: [TrackedPath] {
+        guard !showsAllCommonPaths else { return additionalCommonPaths }
+
+        let selected = additionalCommonPaths.filter(settingsStore.isCommonPathSelected)
+        let unselected = additionalCommonPaths.filter { !settingsStore.isCommonPathSelected($0) }
+        return selected + unselected.prefix(max(0, initialCommonPathLimit - selected.count))
+    }
+
+    private var hiddenCommonPathCount: Int {
+        max(0, additionalCommonPaths.count - visibleCommonPaths.count)
     }
 
     var body: some View {
@@ -429,39 +438,73 @@ private struct ScanScopeSettingsTab: View {
                             .padding(.top, 4)
                         }
 
-                        GroupBox("Recommended Extras") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                if recommendedCommonPaths.isEmpty {
-                                    Text("No recommended extras found on this machine.")
+                        GroupBox("Scan Access") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label(
+                                    hasRequiredScanAccess
+                                        ? "Prunr can access this scan scope"
+                                        : "Prunr needs access to part of this scan scope",
+                                    systemImage: hasRequiredScanAccess ? "checkmark.circle.fill" : "shield.fill"
+                                )
+                                .foregroundStyle(hasRequiredScanAccess ? .green : .orange)
+
+                                if !hasRequiredScanAccess && !blockedScanAccessLocations.isEmpty {
+                                    Text("Still blocked: \(blockedScanAccessLocations.prefix(4).joined(separator: ", "))")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                } else {
-                                    ForEach(recommendedCommonPaths) { path in
-                                        commonPathToggle(for: path)
+                                }
+
+                                if !hasRequiredScanAccess {
+                                    Button("Open Privacy Settings") {
+                                        openScanAccessSettings()
                                     }
+                                    .buttonStyle(.borderedProminent)
                                 }
                             }
                             .padding(.top, 4)
                         }
 
-                        GroupBox {
-                            DisclosureGroup(isExpanded: $showOtherCommonPaths) {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    if optionalCommonPaths.isEmpty {
-                                        Text("No other common paths found on this machine.")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    } else {
-                                        ForEach(optionalCommonPaths) { path in
-                                            commonPathToggle(for: path)
+                        GroupBox("Additional Locations") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Add storage outside your primary folder. Subfolders are already included.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                if additionalCommonPaths.isEmpty {
+                                    Text("All available common locations are already included in your scan folder.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    ForEach(visibleCommonPaths) { path in
+                                        commonPathToggle(for: path)
+                                    }
+
+                                    if hiddenCommonPathCount > 0 {
+                                        Button {
+                                            withAnimation(.snappy(duration: 0.2)) {
+                                                showsAllCommonPaths = true
+                                            }
+                                        } label: {
+                                            Label("Show \(hiddenCommonPathCount) more locations", systemImage: "chevron.down")
                                         }
+                                        .buttonStyle(.plain)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.blue)
+                                    } else if showsAllCommonPaths, additionalCommonPaths.count > initialCommonPathLimit {
+                                        Button {
+                                            withAnimation(.snappy(duration: 0.2)) {
+                                                showsAllCommonPaths = false
+                                            }
+                                        } label: {
+                                            Label("Show fewer locations", systemImage: "chevron.up")
+                                        }
+                                        .buttonStyle(.plain)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.blue)
                                     }
                                 }
-                                .padding(.top, 4)
-                            } label: {
-                                Text("Other Common Paths")
-                                    .font(.system(size: 13, weight: .semibold))
                             }
+                            .padding(.top, 4)
                         }
                     }
                     .padding()
@@ -622,6 +665,18 @@ private struct ScanScopeSettingsTab: View {
         } message: {
             Text("Changing scan scope can invalidate previous comparisons. Applying will delete existing snapshots.")
         }
+        .onAppear {
+            refreshScanAccess()
+        }
+        .onDisappear {
+            permissionRefreshTask?.cancel()
+        }
+        .onChange(of: settingsStore.enabledTrackedPaths) { _, _ in
+            refreshScanAccess()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshScanAccess()
+        }
     }
 
     @ViewBuilder
@@ -648,118 +703,20 @@ private struct ScanScopeSettingsTab: View {
         .toggleStyle(.switch)
         .disabled(isScanInProgress)
     }
-}
 
-// MARK: - Scan Rules Tab
-
-private struct ScanRulesSettingsTab: View {
-    @Bindable var settingsStore: SettingsStore
-    @State private var scanService = ScanService.shared
-    @State private var newBoundary = ""
-    @State private var newIgnoreName = ""
-
-    private var isScanInProgress: Bool {
-        scanService.isScanning
+    private func refreshScanAccess() {
+        let roots = settingsStore.enabledTrackedPaths.map(\.url.standardizedFileURL)
+        permissionRefreshTask?.cancel()
+        permissionRefreshTask = Task {
+            let report = await permissionsService.evaluateScanScopeAccessAsync(scanRootURLs: roots)
+            guard !Task.isCancelled else { return }
+            hasRequiredScanAccess = report.isGranted
+            blockedScanAccessLocations = report.blockedLocations
+        }
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    Text("Use rules to control what gets scanned: stop expanding large folders, or ignore names entirely.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if isScanInProgress {
-                        Label("Rules are locked while a scan is running.", systemImage: "lock.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Stop Expanding Folders") {
-                    ForEach(Array(BoundaryConfig.standardBoundaries).sorted(), id: \.self) { name in
-                        Toggle(isOn: Binding(
-                            get: { settingsStore.isBoundaryEnabled(name) },
-                            set: { enabled in settingsStore.setBoundaryEnabled(name, enabled: enabled) }
-                        )) {
-                            Text(name)
-                                .font(.system(size: 13, design: .monospaced))
-                        }
-                        .toggleStyle(.switch)
-                    }
-
-                    ForEach(settingsStore.customBoundaries, id: \.self) { name in
-                        HStack {
-                            Text(name)
-                                .font(.system(size: 13, design: .monospaced))
-                            Spacer()
-                            Button {
-                                settingsStore.removeBoundary(name)
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    HStack {
-                        TextField("Folder name (e.g., node_modules)", text: $newBoundary)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 13, design: .monospaced))
-
-                        Button {
-                            settingsStore.addBoundary(newBoundary)
-                            newBoundary = ""
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(newBoundary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-
-                Section("Ignore Names") {
-                    Text("Always ignored: \(SettingsStore.defaultScanIgnoreNames.sorted().joined(separator: ", "))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    ForEach(settingsStore.customScanIgnores, id: \.self) { name in
-                        HStack {
-                            Text(name)
-                                .font(.system(size: 13, design: .monospaced))
-                            Spacer()
-                            Button {
-                                settingsStore.removeScanIgnore(name)
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    HStack {
-                        TextField("Name to ignore (e.g., .DS_Store)", text: $newIgnoreName)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 13, design: .monospaced))
-
-                        Button {
-                            settingsStore.addScanIgnore(newIgnoreName)
-                            newIgnoreName = ""
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(newIgnoreName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .hiddenScrollIndicators()
-            .disabled(isScanInProgress)
-        }
+    private func openScanAccessSettings() {
+        Task { await permissionsService.requestFullDiskAccess() }
     }
 }
 
