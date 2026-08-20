@@ -215,7 +215,30 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             "org.mozilla.firefox": "Firefox",
             "com.microsoft.VSCode": "Visual Studio Code",
             "com.spotify.client": "Spotify",
-            "com.apple.mail": "Mail"
+            "com.apple.mail": "Mail",
+            "com.tinyspeck.slackmacgap": "Slack",
+            "com.hnc.Discord": "Discord",
+            "com.apple.dt.Xcode": "Xcode",
+            "com.docker.docker": "Docker",
+            "com.brave.Browser": "Brave",
+            "com.microsoft.edgemac": "Microsoft Edge",
+            "com.microsoft.Edge": "Microsoft Edge",
+            "com.vivaldi.Vivaldi": "Vivaldi",
+            "company.thebrowser.Browser": "Arc",
+            "com.operasoftware.Opera": "Opera",
+            "com.dropbox.Dropbox": "Dropbox",
+            "com.notion.id": "Notion",
+            "com.figma.Desktop": "Figma",
+            "us.zoom.xos": "Zoom",
+            "org.telegram.desktop": "Telegram",
+            "com.apple.MobileSMS": "Messages",
+            "com.apple.Photos": "Photos",
+            "com.apple.iCal": "Calendar",
+            "com.apple.Music": "Music",
+            "com.apple.podcasts": "Podcasts",
+            "com.apple.Preview": "Preview",
+            "com.apple.finder": "Finder",
+            "com.apple.Terminal": "Terminal"
         ]
         if let knownName = knownNames[key] {
             return knownName

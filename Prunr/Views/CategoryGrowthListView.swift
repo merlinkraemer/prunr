@@ -1132,6 +1132,7 @@ private struct SubcategoryRow: View {
     let onTap: () -> Void
 
     @State private var hoverState = false
+    @State private var nativeApplicationIcon: NSImage?
 
     private var positiveGrowthBytes: Int64? {
         guard let growthBytes = group.growthBytes, growthBytes > 0 else {
@@ -1144,10 +1145,8 @@ private struct SubcategoryRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
-                Image(systemName: group.icon)
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
+                applicationIcon
+                    .frame(width: 18, height: 18)
 
                 Text(group.displayName)
                     .font(.system(size: 13, weight: .semibold))
@@ -1193,8 +1192,61 @@ private struct SubcategoryRow: View {
                 hoverState = hovering
             }
         }
+        .task(id: group.cacheApplicationKey) {
+            nativeApplicationIcon = nil
+            nativeApplicationIcon = CacheApplicationIconResolver.icon(
+                forBundleIdentifier: group.cacheApplicationKey
+            )
+        }
     }
 
+    @ViewBuilder
+    private var applicationIcon: some View {
+        if let nativeApplicationIcon {
+            Image(nsImage: nativeApplicationIcon)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: group.icon)
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
+    }
+
+}
+
+private enum CacheApplicationIconResolver {
+    @MainActor
+    static func icon(forBundleIdentifier bundleIdentifier: String?) -> NSImage? {
+        guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return nil }
+
+        for candidate in bundleIdentifierCandidates(for: bundleIdentifier) {
+            guard let applicationURL = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: candidate
+            ) else {
+                continue
+            }
+
+            return NSWorkspace.shared.icon(forFile: applicationURL.path)
+        }
+
+        return nil
+    }
+
+    static func bundleIdentifierCandidates(for bundleIdentifier: String) -> [String] {
+        [bundleIdentifier, aliases[bundleIdentifier]].compactMap { $0 }
+    }
+
+    private static let aliases: [String: String] = [
+        "com.apple.Safari.SafeBrowsing": "com.apple.Safari",
+        "com.apple.WebKit.Networking": "com.apple.Safari",
+        "com.apple.WebKit.WebContent": "com.apple.Safari",
+        "com.google.Chrome.helper": "com.google.Chrome",
+        "com.microsoft.VSCode.ShipIt": "com.microsoft.VSCode"
+    ]
 }
 
 #Preview {

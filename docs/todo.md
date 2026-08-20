@@ -1,5 +1,18 @@
 # Todo: Growth UX Redesign
 
+## Cache application icons — 2026-08-20
+
+- [x] Resolve cache owners to installed app bundles through Launch Services.
+- [x] Render native app icons in cache drilldown rows with a generic fallback.
+- [x] Expand friendly names for common browser, developer, media, and utility apps.
+- [x] Add regression coverage for common cache-owner names.
+
+### Review
+
+Cache drilldown rows now load each owner’s native macOS bundle icon via
+`NSWorkspace`, including aliases for helper/WebKit cache owners. Unknown or
+uninstalled owners retain the existing SF Symbol fallback.
+
 ## Drilldown and Liquid Glass polish — 2026-08-20
 
 - [x] Keep drilldown navigation responsive while uncached details load.

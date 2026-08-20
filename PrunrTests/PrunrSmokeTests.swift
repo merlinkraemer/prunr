@@ -185,6 +185,14 @@ final class PrunrSmokeTests: XCTestCase {
             GrowthCategory.cacheApplicationDisplayName(for: "com.apple.Safari"),
             "Safari"
         )
+        XCTAssertEqual(
+            GrowthCategory.cacheApplicationDisplayName(for: "com.tinyspeck.slackmacgap"),
+            "Slack"
+        )
+        XCTAssertEqual(
+            GrowthCategory.cacheApplicationDisplayName(for: "com.apple.dt.Xcode"),
+            "Xcode"
+        )
 
         try await withEmptyTemporaryDatabase { trackedPathId in
             let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
