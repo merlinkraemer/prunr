@@ -499,6 +499,13 @@ actor BaselineService {
 
     func getSubcategoryBreakdown(for category: GrowthCategory, snapshotId: Int64) async -> [SubcategoryGroup] {
         do {
+            if category == .cachesAndSystem {
+                return try await db.fetchCacheApplicationGroups(
+                    snapshotId: snapshotId,
+                    topLimit: initialSubcategoryFileLimit
+                )
+            }
+
             let precomputedGroups = try await db.fetchSubcategoryGroups(for: snapshotId, category: category)
             if !precomputedGroups.isEmpty {
                 return precomputedGroups
@@ -519,6 +526,13 @@ actor BaselineService {
     /// are newer than the latest full snapshot.
     func getSubcategoryBreakdownFromWorkingSet(for category: GrowthCategory, trackedPathId: UUID) async -> [SubcategoryGroup] {
         do {
+            if category == .cachesAndSystem {
+                return try await db.fetchWorkingSetCacheApplicationGroups(
+                    trackedPathId: trackedPathId,
+                    topLimit: initialSubcategoryFileLimit
+                )
+            }
+
             return try await db.fetchWorkingSetSubcategoryGroupsByClassification(
                 trackedPathId: trackedPathId,
                 category: category,
@@ -535,6 +549,63 @@ actor BaselineService {
         trackedPathsById: [UUID: TrackedPath],
         baselineSnapshotIdsByPath: [UUID: Int64]
     ) async -> [SubcategoryGroup] {
+        if category == .cachesAndSystem {
+            var aggregated: [String: SubcategoryGroup] = [:]
+
+            for trackedPathId in trackedPathsById.keys {
+                let groups = await getSubcategoryBreakdownFromWorkingSet(
+                    for: category,
+                    trackedPathId: trackedPathId
+                )
+                let growthTotals: [String: Int64]
+                if let baselineSnapshotId = baselineSnapshotIdsByPath[trackedPathId] {
+                    growthTotals = (try? await db.fetchGrowthTotalsByCacheApplication(
+                        trackedPathId: trackedPathId,
+                        snapshotId: baselineSnapshotId
+                    )) ?? [:]
+                } else {
+                    growthTotals = [:]
+                }
+
+                for group in groups {
+                    let key = group.cacheApplicationKey ?? "__other_cache__"
+                    let groupGrowthBytes = growthTotals[key]
+                    if let existing = aggregated[key] {
+                        aggregated[key] = SubcategoryGroup(
+                            subcategory: .appCaches,
+                            displayName: existing.displayName,
+                            totalBytes: existing.totalBytes + group.totalBytes,
+                            fileCount: existing.fileCount + group.fileCount,
+                            growthBytes: mergeOptionalBytes(existing.growthBytes, groupGrowthBytes),
+                            topFiles: mergedTopFiles(
+                                existing.topFiles,
+                                group.topFiles,
+                                limit: SubcategoryGroup.initialLoadLimit
+                            ),
+                            cacheApplicationKey: group.cacheApplicationKey ?? existing.cacheApplicationKey
+                        )
+                    } else {
+                        aggregated[key] = SubcategoryGroup(
+                            subcategory: .appCaches,
+                            displayName: group.displayName,
+                            totalBytes: group.totalBytes,
+                            fileCount: group.fileCount,
+                            growthBytes: groupGrowthBytes,
+                            topFiles: group.topFiles,
+                            cacheApplicationKey: group.cacheApplicationKey
+                        )
+                    }
+                }
+            }
+
+            return aggregated.values.sorted {
+                if $0.totalBytes == $1.totalBytes {
+                    return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+                }
+                return $0.totalBytes > $1.totalBytes
+            }
+        }
+
         var aggregated: [GrowthSubcategory?: SubcategoryGroup] = [:]
 
         for (trackedPathId, trackedPath) in trackedPathsById {
@@ -604,7 +675,8 @@ actor BaselineService {
         snapshotId: Int64,
         category: GrowthCategory,
         subcategory: GrowthSubcategory?,
-        limit: Int = 50
+        limit: Int = 50,
+        cacheApplicationKey: String? = nil
     ) async -> [GrowthContributor] {
         do {
             return try await db.fetchGrowthContributors(
@@ -612,7 +684,8 @@ actor BaselineService {
                 snapshotId: snapshotId,
                 category: category,
                 subcategory: subcategory,
-                limit: limit
+                limit: limit,
+                cacheApplicationKey: cacheApplicationKey
             )
         } catch {
             logger.error("Error fetching growth contributors: \(error.localizedDescription, privacy: .public)")
@@ -624,7 +697,8 @@ actor BaselineService {
         baselineSnapshotIdsByPath: [UUID: Int64],
         category: GrowthCategory,
         subcategory: GrowthSubcategory?,
-        limit: Int = 50
+        limit: Int = 50,
+        cacheApplicationKey: String? = nil
     ) async -> [GrowthContributor] {
         var contributorsByPath: [String: GrowthContributor] = [:]
 
@@ -634,7 +708,8 @@ actor BaselineService {
                 snapshotId: snapshotId,
                 category: category,
                 subcategory: subcategory,
-                limit: limit
+                limit: limit,
+                cacheApplicationKey: cacheApplicationKey
             )
 
             for contributor in contributors {
@@ -677,16 +752,27 @@ actor BaselineService {
         snapshotId: Int64,
         totalBytes: Int64,
         offset: Int,
-        limit: Int = SubcategoryGroup.loadMoreBatchSize
+        limit: Int = SubcategoryGroup.loadMoreBatchSize,
+        cacheApplicationKey: String? = nil
     ) async -> [GrowthItem] {
         do {
-            let page = try await db.fetchSnapshotEntriesByClassification(
-                snapshotId: snapshotId,
-                category: category,
-                subcategory: subcategory,
-                offset: offset,
-                limit: limit
-            )
+            let page: [SnapshotEntryWithPath]
+            if category == .cachesAndSystem, subcategory == .appCaches {
+                page = try await db.fetchSnapshotEntriesByCacheApplication(
+                    snapshotId: snapshotId,
+                    applicationKey: cacheApplicationKey,
+                    offset: offset,
+                    limit: limit
+                )
+            } else {
+                page = try await db.fetchSnapshotEntriesByClassification(
+                    snapshotId: snapshotId,
+                    category: category,
+                    subcategory: subcategory,
+                    offset: offset,
+                    limit: limit
+                )
+            }
 
             return page.map { entry in
                 let percent = totalBytes > 0
@@ -713,19 +799,30 @@ actor BaselineService {
         snapshotIdsByPath: [UUID: Int64],
         totalBytes: Int64,
         offset: Int,
-        limit: Int = SubcategoryGroup.loadMoreBatchSize
+        limit: Int = SubcategoryGroup.loadMoreBatchSize,
+        cacheApplicationKey: String? = nil
     ) async -> [GrowthItem] {
         do {
             let requestedCount = offset + limit
             var entries: [SnapshotEntryWithPath] = []
             for snapshotId in snapshotIdsByPath.values {
-                let rows = try await db.fetchSnapshotEntriesByClassification(
-                    snapshotId: snapshotId,
-                    category: category,
-                    subcategory: subcategory,
-                    offset: 0,
-                    limit: requestedCount
-                )
+                let rows: [SnapshotEntryWithPath]
+                if category == .cachesAndSystem, subcategory == .appCaches {
+                    rows = try await db.fetchSnapshotEntriesByCacheApplication(
+                        snapshotId: snapshotId,
+                        applicationKey: cacheApplicationKey,
+                        offset: 0,
+                        limit: requestedCount
+                    )
+                } else {
+                    rows = try await db.fetchSnapshotEntriesByClassification(
+                        snapshotId: snapshotId,
+                        category: category,
+                        subcategory: subcategory,
+                        offset: 0,
+                        limit: requestedCount
+                    )
+                }
                 entries.append(contentsOf: rows)
             }
 
@@ -766,16 +863,27 @@ actor BaselineService {
         trackedPathId: UUID,
         totalBytes: Int64,
         offset: Int,
-        limit: Int = SubcategoryGroup.loadMoreBatchSize
+        limit: Int = SubcategoryGroup.loadMoreBatchSize,
+        cacheApplicationKey: String? = nil
     ) async -> [GrowthItem] {
         do {
-            let page = try await db.fetchWorkingSetEntriesByClassification(
-                trackedPathId: trackedPathId,
-                category: category,
-                subcategory: subcategory,
-                offset: offset,
-                limit: limit
-            )
+            let page: [SnapshotEntryWithPath]
+            if category == .cachesAndSystem, subcategory == .appCaches {
+                page = try await db.fetchWorkingSetEntriesByCacheApplication(
+                    trackedPathId: trackedPathId,
+                    applicationKey: cacheApplicationKey,
+                    offset: offset,
+                    limit: limit
+                )
+            } else {
+                page = try await db.fetchWorkingSetEntriesByClassification(
+                    trackedPathId: trackedPathId,
+                    category: category,
+                    subcategory: subcategory,
+                    offset: offset,
+                    limit: limit
+                )
+            }
 
             return page.map { entry in
                 let percent = totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0
@@ -799,20 +907,31 @@ actor BaselineService {
         trackedPathIds: [UUID],
         totalBytes: Int64,
         offset: Int,
-        limit: Int = SubcategoryGroup.loadMoreBatchSize
+        limit: Int = SubcategoryGroup.loadMoreBatchSize,
+        cacheApplicationKey: String? = nil
     ) async -> [GrowthItem] {
         do {
             let requestedCount = offset + limit
             var entries: [SnapshotEntryWithPath] = []
 
             for trackedPathId in trackedPathIds {
-                let rows = try await db.fetchWorkingSetEntriesByClassification(
-                    trackedPathId: trackedPathId,
-                    category: category,
-                    subcategory: subcategory,
-                    offset: 0,
-                    limit: requestedCount
-                )
+                let rows: [SnapshotEntryWithPath]
+                if category == .cachesAndSystem, subcategory == .appCaches {
+                    rows = try await db.fetchWorkingSetEntriesByCacheApplication(
+                        trackedPathId: trackedPathId,
+                        applicationKey: cacheApplicationKey,
+                        offset: 0,
+                        limit: requestedCount
+                    )
+                } else {
+                    rows = try await db.fetchWorkingSetEntriesByClassification(
+                        trackedPathId: trackedPathId,
+                        category: category,
+                        subcategory: subcategory,
+                        offset: 0,
+                        limit: requestedCount
+                    )
+                }
                 entries.append(contentsOf: rows)
             }
 
@@ -865,6 +984,60 @@ actor BaselineService {
         latestSnapshotIdsByPath: [UUID: Int64],
         baselineSnapshotIdsByPath: [UUID: Int64]
     ) async -> [SubcategoryGroup] {
+        if category == .cachesAndSystem {
+            var aggregated: [String: SubcategoryGroup] = [:]
+
+            for (trackedPathId, snapshotId) in latestSnapshotIdsByPath {
+                let groups = await getSubcategoryBreakdown(for: category, snapshotId: snapshotId)
+                let growthTotals: [String: Int64]
+                if let baselineSnapshotId = baselineSnapshotIdsByPath[trackedPathId] {
+                    growthTotals = (try? await db.fetchGrowthTotalsByCacheApplication(
+                        trackedPathId: trackedPathId,
+                        snapshotId: baselineSnapshotId
+                    )) ?? [:]
+                } else {
+                    growthTotals = [:]
+                }
+
+                for group in groups {
+                    let key = group.cacheApplicationKey ?? "__other_cache__"
+                    let groupGrowthBytes = growthTotals[key]
+                    if let existing = aggregated[key] {
+                        aggregated[key] = SubcategoryGroup(
+                            subcategory: .appCaches,
+                            displayName: existing.displayName,
+                            totalBytes: existing.totalBytes + group.totalBytes,
+                            fileCount: existing.fileCount + group.fileCount,
+                            growthBytes: mergeOptionalBytes(existing.growthBytes, groupGrowthBytes),
+                            topFiles: mergedTopFiles(
+                                existing.topFiles,
+                                group.topFiles,
+                                limit: SubcategoryGroup.initialLoadLimit
+                            ),
+                            cacheApplicationKey: group.cacheApplicationKey ?? existing.cacheApplicationKey
+                        )
+                    } else {
+                        aggregated[key] = SubcategoryGroup(
+                            subcategory: .appCaches,
+                            displayName: group.displayName,
+                            totalBytes: group.totalBytes,
+                            fileCount: group.fileCount,
+                            growthBytes: groupGrowthBytes,
+                            topFiles: group.topFiles,
+                            cacheApplicationKey: group.cacheApplicationKey
+                        )
+                    }
+                }
+            }
+
+            return aggregated.values.sorted {
+                if $0.totalBytes == $1.totalBytes {
+                    return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+                }
+                return $0.totalBytes > $1.totalBytes
+            }
+        }
+
         var aggregated: [GrowthSubcategory?: SubcategoryGroup] = [:]
 
         for (trackedPathId, snapshotId) in latestSnapshotIdsByPath {

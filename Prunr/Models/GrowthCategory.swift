@@ -187,6 +187,47 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         return subcategorizeFromLowered(lowerPath, category: category)
     }
 
+    /// Returns the first application-owned directory below a Library/Caches
+    /// directory. Cache paths are stored as full paths, so deriving this at
+    /// query time keeps the database schema stable while still allowing the
+    /// drilldown to show one row per application.
+    static func cacheApplicationKey(for path: String) -> String? {
+        let components = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+        for index in components.indices {
+            guard components[index].caseInsensitiveCompare("Library") == .orderedSame,
+                  components.indices.contains(index + 1),
+                  components[index + 1].caseInsensitiveCompare("Caches") == .orderedSame,
+                  components.indices.contains(index + 2) else {
+                continue
+            }
+
+            let application = components[index + 2]
+            return application.isEmpty ? nil : application
+        }
+        return nil
+    }
+
+    static func cacheApplicationDisplayName(for key: String) -> String {
+        let knownNames: [String: String] = [
+            "com.apple.Safari": "Safari",
+            "com.apple.Safari.SafeBrowsing": "Safari Safe Browsing",
+            "com.google.Chrome": "Google Chrome",
+            "org.mozilla.firefox": "Firefox",
+            "com.microsoft.VSCode": "Visual Studio Code",
+            "com.spotify.client": "Spotify",
+            "com.apple.mail": "Mail"
+        ]
+        if let knownName = knownNames[key] {
+            return knownName
+        }
+
+        let component = key.split(separator: ".").last.map(String.init) ?? key
+        let words = component
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+        return words.isEmpty ? key : words
+    }
+
     private static func subcategorizeFromLowered(_ lowerPath: String, category: GrowthCategory) -> GrowthSubcategory? {
         switch category {
         case .developer:
@@ -514,7 +555,10 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
     private static func isAppCachePath(_ lowerPath: String) -> Bool {
         let home = homePathLowercased
         let libraryCacheRoot = home + "/library/caches"
-        return isUnderDirectory(lowerPath, libraryCacheRoot) && !isHomebrewPath(lowerPath)
+        let isHomeLibraryCache = isUnderDirectory(lowerPath, libraryCacheRoot)
+        let isNestedHomeLibraryCache = isUnderDirectory(lowerPath, home + "/library")
+            && lowerPath.contains("/library/caches/")
+        return (isHomeLibraryCache || isNestedHomeLibraryCache) && !isHomebrewPath(lowerPath)
     }
 
     private static func isBrowserCachePath(_ lowerPath: String) -> Bool {

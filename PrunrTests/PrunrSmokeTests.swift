@@ -174,6 +174,41 @@ final class PrunrSmokeTests: XCTestCase {
         )
     }
 
+    func testCacheDrilldownGroupsEntriesByApplication() async throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+        XCTAssertEqual(
+            GrowthCategory.cacheApplicationKey(for: "\(home)/Library/Caches/com.apple.Safari/Cache.db"),
+            "com.apple.Safari"
+        )
+        XCTAssertEqual(
+            GrowthCategory.cacheApplicationDisplayName(for: "com.apple.Safari"),
+            "Safari"
+        )
+
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let snapshotId = try XCTUnwrap(snapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [
+                    ScanResult(path: "\(home)/Library/Caches/com.apple.Safari/Cache.db", sizeBytes: 300),
+                    ScanResult(path: "\(home)/Library/Caches/com.apple.Safari/Blobs/blob", sizeBytes: 100),
+                    ScanResult(path: "\(home)/Library/Caches/com.google.Chrome/Cache/data", sizeBytes: 200)
+                ]
+            )
+
+            let groups = await BaselineService.shared.getSubcategoryBreakdown(
+                for: .cachesAndSystem,
+                snapshotId: snapshotId
+            )
+
+            XCTAssertEqual(groups.map(\.displayName), ["Safari", "Google Chrome"])
+            XCTAssertEqual(groups.map(\.totalBytes), [400, 200])
+            XCTAssertEqual(groups.map(\.cacheApplicationKey), ["com.apple.Safari", "com.google.Chrome"])
+        }
+    }
+
     func testNodeModulesPathsResolveToDeveloperNodeModules() {
         XCTAssertEqual(
             GrowthCategory.subcategorize(path: "/Users/tester/dev/app/node_modules/react/index.js"),

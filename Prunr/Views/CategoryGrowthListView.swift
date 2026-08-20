@@ -608,7 +608,6 @@ struct CategoryGrowthListView: View {
     // MARK: - Actions
 
     private func selectCategory(_ item: CategoryInventoryItem) {
-        guard isDataReady else { return }
         guard !manager.isDrillDownTransitionAnimating, activeTransition == nil, pendingTransition == nil else { return }
         contributorPrefetchTask?.cancel()
         contributorPrefetchTask = nil
@@ -624,10 +623,10 @@ struct CategoryGrowthListView: View {
             : groups.first(where: { $0.subcategory == nil }) ?? groups.first
         let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
 
-        // For categories without subcategories that need async loading, defer
-        // drilling down so we can transition directly from main → files instead
-        // of showing a brief intermediate subcategory screen.
-        let shouldDrillDownImmediately = !needsSubcategoryLoad || item.category.supportsSubcategories
+        // Enter the drilldown immediately. If the uncached breakdown is slow,
+        // the destination page shows its existing skeleton instead of making
+        // the first click appear to do nothing.
+        let shouldDrillDownImmediately = true
 
         // Suppress implicit animations from state mutations so only the
         // explicit slide animation in startNavigationTransition runs.
@@ -685,8 +684,8 @@ struct CategoryGrowthListView: View {
                 if !selectedCategory.supportsSubcategories {
                     manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
                     manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
-                    // Transition from main directly to files now that the single
-                    // group is known, avoiding a visible intermediate subcategory step.
+                    // Replace the loading page with the single file group once
+                    // the uncached breakdown is available.
                     manager.isDrilledDown = true
                 }
             }
@@ -1145,7 +1144,7 @@ private struct SubcategoryRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
-                Image(systemName: group.subcategory?.icon ?? "folder.fill")
+                Image(systemName: group.icon)
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary)
                     .frame(width: 18)

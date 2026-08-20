@@ -1065,7 +1065,212 @@ extension DatabaseManager {
                 WHERE wse.trackedPathId = ? AND pc.category = ? AND pc.subcategory = ?
                 ORDER BY wse.sizeBytes DESC, p.path ASC
                 LIMIT ? OFFSET ?
-                """, arguments: [trackedPathId.uuidString, category.rawValue, subcategoryValue, limit, offset])
+            """, arguments: [trackedPathId.uuidString, category.rawValue, subcategoryValue, limit, offset])
+        }
+    }
+
+    func fetchSnapshotEntriesByCacheApplication(
+        snapshotId: Int64,
+        applicationKey: String?,
+        offset: Int,
+        limit: Int
+    ) async throws -> [SnapshotEntryWithPath] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let pattern = applicationKey.map { "%/Library/Caches/\($0)/%" } ?? "%/Library/Caches/%"
+        return try await dbPool.read { db in
+            try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
+                FROM snapshotEntry se
+                JOIN pathClassification pc ON pc.pathId = se.pathId
+                JOIN paths p ON p.id = se.pathId
+                WHERE se.snapshotId = ?
+                    AND pc.category = ?
+                    AND pc.subcategory IN (?, ?, ?)
+                    AND p.path LIKE ? COLLATE NOCASE
+                ORDER BY se.sizeBytes DESC, p.path ASC
+                LIMIT ? OFFSET ?
+                """, arguments: [
+                    snapshotId,
+                    GrowthCategory.cachesAndSystem.rawValue,
+                    GrowthSubcategory.appCaches.rawValue,
+                    GrowthSubcategory.browserCaches.rawValue,
+                    GrowthSubcategory.spotifyCache.rawValue,
+                    pattern,
+                    limit,
+                    offset
+                ])
+        }
+    }
+
+    func fetchWorkingSetEntriesByCacheApplication(
+        trackedPathId: UUID,
+        applicationKey: String?,
+        offset: Int,
+        limit: Int
+    ) async throws -> [SnapshotEntryWithPath] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let pattern = applicationKey.map { "%/Library/Caches/\($0)/%" } ?? "%/Library/Caches/%"
+        return try await dbPool.read { db in
+            try SnapshotEntryWithPath.fetchAll(db, sql: """
+                SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
+                FROM workingSetEntry wse
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                JOIN paths p ON p.id = wse.pathId
+                WHERE wse.trackedPathId = ?
+                    AND pc.category = ?
+                    AND pc.subcategory IN (?, ?, ?)
+                    AND p.path LIKE ? COLLATE NOCASE
+                ORDER BY wse.sizeBytes DESC, p.path ASC
+                LIMIT ? OFFSET ?
+                """, arguments: [
+                    trackedPathId.uuidString,
+                    GrowthCategory.cachesAndSystem.rawValue,
+                    GrowthSubcategory.appCaches.rawValue,
+                    GrowthSubcategory.browserCaches.rawValue,
+                    GrowthSubcategory.spotifyCache.rawValue,
+                    pattern,
+                    limit,
+                    offset
+                ])
+        }
+    }
+
+    /// Fetches application-owned cache groups without persisting a dynamic
+    /// application column. The owner is derived from the path's first
+    /// component below Library/Caches.
+    func fetchCacheApplicationGroups(
+        snapshotId: Int64,
+        topLimit: Int
+    ) async throws -> [SubcategoryGroup] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let rows: [(path: String, sizeBytes: Int64)] = try await dbPool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT p.path AS path, se.sizeBytes AS sizeBytes
+                    FROM snapshotEntry se
+                    JOIN pathClassification pc ON pc.pathId = se.pathId
+                    JOIN paths p ON p.id = se.pathId
+                    WHERE se.snapshotId = ?
+                        AND pc.category = ?
+                        AND pc.subcategory IN (?, ?, ?)
+                    """,
+                arguments: [
+                    snapshotId,
+                    GrowthCategory.cachesAndSystem.rawValue,
+                    GrowthSubcategory.appCaches.rawValue,
+                    GrowthSubcategory.browserCaches.rawValue,
+                    GrowthSubcategory.spotifyCache.rawValue
+                ]
+            ).map { row in
+                (path: row["path"] ?? "", sizeBytes: row["sizeBytes"] ?? 0)
+            }
+        }
+
+        return Self.makeCacheApplicationGroups(rows: rows, topLimit: topLimit)
+    }
+
+    func fetchWorkingSetCacheApplicationGroups(
+        trackedPathId: UUID,
+        topLimit: Int
+    ) async throws -> [SubcategoryGroup] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let rows: [(path: String, sizeBytes: Int64)] = try await dbPool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT p.path AS path, wse.sizeBytes AS sizeBytes
+                    FROM workingSetEntry wse
+                    JOIN pathClassification pc ON pc.pathId = wse.pathId
+                    JOIN paths p ON p.id = wse.pathId
+                    WHERE wse.trackedPathId = ?
+                        AND pc.category = ?
+                        AND pc.subcategory IN (?, ?, ?)
+                    """,
+                arguments: [
+                    trackedPathId.uuidString,
+                    GrowthCategory.cachesAndSystem.rawValue,
+                    GrowthSubcategory.appCaches.rawValue,
+                    GrowthSubcategory.browserCaches.rawValue,
+                    GrowthSubcategory.spotifyCache.rawValue
+                ]
+            ).map { row in
+                (path: row["path"] ?? "", sizeBytes: row["sizeBytes"] ?? 0)
+            }
+        }
+
+        return Self.makeCacheApplicationGroups(rows: rows, topLimit: topLimit)
+    }
+
+    private static func makeCacheApplicationGroups(
+        rows: [(path: String, sizeBytes: Int64)],
+        topLimit: Int
+    ) -> [SubcategoryGroup] {
+        struct Accumulator {
+            var key: String?
+            var totalBytes = Int64(0)
+            var fileCount = 0
+            var topFiles: [(path: String, sizeBytes: Int64)] = []
+        }
+
+        var grouped: [String: Accumulator] = [:]
+        for row in rows {
+            let key = GrowthCategory.cacheApplicationKey(for: row.path)
+            let dictionaryKey = key ?? "__other_cache__"
+            var accumulator = grouped[dictionaryKey] ?? Accumulator(key: key)
+            accumulator.totalBytes += row.sizeBytes
+            accumulator.fileCount += 1
+            accumulator.topFiles.append((path: row.path, sizeBytes: row.sizeBytes))
+            accumulator.topFiles.sort {
+                if $0.sizeBytes == $1.sizeBytes {
+                    return $0.path.localizedStandardCompare($1.path) == .orderedAscending
+                }
+                return $0.sizeBytes > $1.sizeBytes
+            }
+            if accumulator.topFiles.count > topLimit {
+                accumulator.topFiles.removeLast()
+            }
+            grouped[dictionaryKey] = accumulator
+        }
+
+        return grouped.values.map { accumulator in
+            let displayName = accumulator.key.map(GrowthCategory.cacheApplicationDisplayName(for:)) ?? "Other Caches"
+            let topFiles = accumulator.topFiles.map { file in
+                GrowthItem(
+                    path: file.path,
+                    growthBytes: file.sizeBytes,
+                    currentSizeBytes: file.sizeBytes,
+                    percentOfParent: accumulator.totalBytes > 0
+                        ? Double(file.sizeBytes) / Double(accumulator.totalBytes)
+                        : 0,
+                    subcategory: .appCaches
+                )
+            }
+            return SubcategoryGroup(
+                subcategory: .appCaches,
+                displayName: displayName,
+                totalBytes: accumulator.totalBytes,
+                fileCount: accumulator.fileCount,
+                topFiles: topFiles,
+                cacheApplicationKey: accumulator.key
+            )
+        }.sorted {
+            if $0.totalBytes == $1.totalBytes {
+                return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+            }
+            return $0.totalBytes > $1.totalBytes
         }
     }
 
@@ -2414,7 +2619,8 @@ extension DatabaseManager {
         snapshotId: Int64,
         category: GrowthCategory,
         subcategory: GrowthSubcategory?,
-        limit: Int = 50
+        limit: Int = 50,
+        cacheApplicationKey: String? = nil
     ) async throws -> [GrowthContributor] {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
@@ -2442,6 +2648,7 @@ extension DatabaseManager {
                         AND wse.sizeBytes > COALESCE(se.sizeBytes, 0)
                         AND pc.category = ?
                         AND (? = 0 OR pc.subcategory = ?)
+                        AND (? = '' OR p.path LIKE ? COLLATE NOCASE)
                     ORDER BY growthBytes DESC
                     LIMIT ?
                     """,
@@ -2451,6 +2658,8 @@ extension DatabaseManager {
                     category.rawValue,
                     hasSubcategoryFilter,
                     subcategoryRawValue,
+                    cacheApplicationKey ?? "",
+                    "%/Library/Caches/\(cacheApplicationKey ?? "")%",
                     limit
                 ]
             )
@@ -2466,6 +2675,53 @@ extension DatabaseManager {
                     growthBytes: growthBytes
                 )
             }
+        }
+    }
+
+    func fetchGrowthTotalsByCacheApplication(
+        trackedPathId: UUID,
+        snapshotId: Int64
+    ) async throws -> [String: Int64] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT p.path AS path,
+                           wse.sizeBytes - COALESCE(se.sizeBytes, 0) AS growthBytes
+                    FROM workingSetEntry wse
+                    JOIN pathClassification pc ON pc.pathId = wse.pathId
+                    JOIN paths p ON p.id = wse.pathId
+                    LEFT JOIN snapshotEntry se
+                        ON se.pathId = wse.pathId
+                        AND se.snapshotId = ?
+                    WHERE wse.trackedPathId = ?
+                        AND wse.sizeBytes > COALESCE(se.sizeBytes, 0)
+                        AND pc.category = ?
+                        AND pc.subcategory IN (?, ?, ?)
+                    """,
+                arguments: [
+                    snapshotId,
+                    trackedPathId.uuidString,
+                    GrowthCategory.cachesAndSystem.rawValue,
+                    GrowthSubcategory.appCaches.rawValue,
+                    GrowthSubcategory.browserCaches.rawValue,
+                    GrowthSubcategory.spotifyCache.rawValue
+                ]
+            )
+
+            var totals: [String: Int64] = [:]
+            for row in rows {
+                let path: String = row["path"] ?? ""
+                let growthBytes: Int64 = row["growthBytes"] ?? 0
+                guard growthBytes > 0 else { continue }
+                let key = GrowthCategory.cacheApplicationKey(for: path) ?? "__other_cache__"
+                totals[key, default: 0] += growthBytes
+            }
+            return totals
         }
     }
 

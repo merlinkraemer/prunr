@@ -1782,7 +1782,8 @@ final class MenuBarManager: NSObject {
                 subcategory: group.subcategory,
                 trackedPathIds: Array(trackedPathsByID.keys),
                 totalBytes: group.totalBytes,
-                offset: group.loadedFileCount
+                offset: group.loadedFileCount,
+                cacheApplicationKey: group.cacheApplicationKey
             )
         } else {
             additionalFiles = await baselineService.loadMoreSubcategoryFiles(
@@ -1790,7 +1791,8 @@ final class MenuBarManager: NSObject {
                 subcategory: group.subcategory,
                 snapshotIdsByPath: currentInventorySnapshotIDsByPath,
                 totalBytes: group.totalBytes,
-                offset: group.loadedFileCount
+                offset: group.loadedFileCount,
+                cacheApplicationKey: group.cacheApplicationKey
             )
         }
 
@@ -1853,7 +1855,8 @@ final class MenuBarManager: NSObject {
         let contributors = await baselineService.getGrowthContributors(
             baselineSnapshotIdsByPath: currentGrowthBaselineSnapshotIDsByPath,
             category: category,
-            subcategory: group.subcategory
+            subcategory: group.cacheApplicationKey == nil ? group.subcategory : nil,
+            cacheApplicationKey: group.cacheApplicationKey
         )
         growthContributorsBySubcategory[cacheKey] = contributors
         return contributors

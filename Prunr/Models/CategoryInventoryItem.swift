@@ -66,6 +66,8 @@ struct SupplementalInventoryItem: Identifiable, Sendable, Equatable {
 struct SubcategoryGroup: Identifiable, Sendable, Equatable {
     let id: String
     let subcategory: GrowthSubcategory?
+    /// Set for cache groups that are split by the application owning the cache.
+    let cacheApplicationKey: String?
     let displayName: String
     let totalBytes: Int64
     let fileCount: Int
@@ -78,10 +80,14 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
         totalBytes: Int64,
         fileCount: Int,
         growthBytes: Int64? = nil,
-        topFiles: [GrowthItem]
+        topFiles: [GrowthItem],
+        cacheApplicationKey: String? = nil
     ) {
-        self.id = subcategory?.rawValue ?? "__uncategorized__:\(displayName)"
+        self.id = cacheApplicationKey.map { "cache-application:\($0)" }
+            ?? subcategory?.rawValue
+            ?? "__uncategorized__:\(displayName)"
         self.subcategory = subcategory
+        self.cacheApplicationKey = cacheApplicationKey
         self.displayName = displayName
         self.totalBytes = totalBytes
         self.fileCount = fileCount
@@ -97,6 +103,10 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
     /// Number of files currently loaded
     var loadedFileCount: Int {
         topFiles.count
+    }
+
+    var icon: String {
+        cacheApplicationKey == nil ? (subcategory?.icon ?? "folder.fill") : "app.fill"
     }
 
     // MARK: - Pagination Constants

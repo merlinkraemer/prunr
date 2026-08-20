@@ -203,11 +203,14 @@ struct MenuBarView: View {
     }
 
     private var onboardingCardFillColor: Color {
-        Color(nsColor: .controlBackgroundColor).opacity(0.92)
+        // Keep the content surface translucent so the panel's Liquid Glass
+        // remains visible on macOS 26+; the fallback panel still gets a quiet
+        // contrast layer on older systems.
+        Color.primary.opacity(0.045)
     }
 
     private var onboardingControlFillColor: Color {
-        Color(nsColor: .windowBackgroundColor).opacity(0.9)
+        Color.primary.opacity(0.06)
     }
 
     private var onboardingStrokeColor: Color {
@@ -497,13 +500,13 @@ struct MenuBarView: View {
             .padding(.vertical, 22)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.92))
+                    .fill(Color.primary.opacity(0.045))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
+            .shadow(color: .black.opacity(0.08), radius: 16, x: 0, y: 10)
             .padding(.horizontal, 16)
 
             Spacer(minLength: 0)
@@ -1911,13 +1914,13 @@ struct MenuBarView: View {
         .padding(.vertical, 22)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.92))
+                .fill(Color.primary.opacity(0.045))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
+        .shadow(color: .black.opacity(0.08), radius: 16, x: 0, y: 10)
     }
 
     // MARK: - Helper Methods
@@ -1962,9 +1965,9 @@ struct MenuBarView: View {
             : groups.first(where: { $0.subcategory == nil }) ?? groups.first
         let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
 
-        // For categories without subcategories that need async loading, defer
-        // drilling down so we can transition directly from main → files.
-        let shouldDrillDownImmediately = !needsSubcategoryLoad || category.supportsSubcategories
+        // Enter the drilldown immediately. The destination page owns the
+        // loading skeleton while an uncached breakdown is being fetched.
+        let shouldDrillDownImmediately = true
 
         var transaction = Transaction()
         transaction.disablesAnimations = true

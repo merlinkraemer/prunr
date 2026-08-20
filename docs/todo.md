@@ -1,5 +1,26 @@
 # Todo: Growth UX Redesign
 
+## Drilldown and Liquid Glass polish — 2026-08-20
+
+- [x] Keep drilldown navigation responsive while uncached details load.
+- [x] Group cache drilldown entries by owning application.
+- [x] Let the existing Liquid Glass panel show through inner surfaces while
+      keeping the macOS 14 fallback intact.
+- [x] Run focused regressions, full tests, and a build.
+
+### Review
+
+- Uncached category clicks now enter the drilldown immediately and show the
+  existing loading skeleton while database work continues; the same behavior
+  applies to drive-bar navigation.
+- Cache drilldown groups are derived from `Library/Caches` ownership paths and
+  show friendly names such as Safari and Google Chrome. Pagination, growth
+  totals, and growth contributors retain the application key.
+- The panel already uses `NSGlassEffectView` on macOS 26; inner onboarding and
+  scan cards are now translucent instead of flattening the glass. macOS 14
+  fallback behavior remains unchanged.
+- `make test` passed: 86 tests, 0 failures. `make build` passed.
+
 ## Critical pre-alpha sync fixes — 2026-08-20
 
 - [x] Preserve onboarding when a first scan is cancelled or fails.
