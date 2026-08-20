@@ -36,8 +36,10 @@ STRESS_MUTATE_COUNT ?= 1000
 STRESS_MUTATE_BYTES ?= 1048576
 
 E2E_FILE_COUNT ?= 5000
+SCREENSHOT_OUTPUT_DIR ?= $(PWD)/website/screenshots/marketing
+SCREENSHOT_SCALE ?= 2
 
-.PHONY: all build install-app run dev launch clean clean-build reset-dev-state help doctor test open logs release stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean e2e e2e-runtime
+.PHONY: all build install-app run dev launch clean clean-build reset-dev-state help doctor test open logs release stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean e2e e2e-runtime screenshot
 
 all: help
 
@@ -60,6 +62,7 @@ help:
 	@echo "$(GREEN)make stress-clean$(NC)  - Remove the synthetic scan tree"
 	@echo "$(GREEN)make e2e$(NC)           - Run headless E2E test suite (build + scan + watcher + perf)"
 	@echo "$(GREEN)make e2e-runtime$(NC)    - Run full runtime E2E (installs + launches app + monitors)"
+	@echo "$(GREEN)make screenshot$(NC)     - Render 4K overview, drilldown, and settings images"
 	@echo "$(GREEN)make open$(NC)     - Open in Xcode"
 	@echo "$(GREEN)make logs$(NC)     - Show recent app logs"
 	@echo ""
@@ -172,6 +175,16 @@ test:
 		exit $$status; \
 	fi; \
 	rm -f "$$output_file"
+
+screenshot: build
+	@echo "$(BLUE)Rendering marketing screenshots...$(NC)"
+	@mkdir -p "$(SCREENSHOT_OUTPUT_DIR)"
+	@for scene in overview drilldown settings; do \
+		"$(DERIVED_DATA)/Build/Products/$(CONFIG)/$(SCHEME).app/Contents/MacOS/$(SCHEME)" render-screenshot \
+			--scene "$$scene" \
+			--output "$(SCREENSHOT_OUTPUT_DIR)/prunr-$$scene.png" \
+			--scale "$(SCREENSHOT_SCALE)"; \
+	done
 
 stress-create:
 	@echo "$(BLUE)Generating synthetic stress tree at $(STRESS_ROOT)...$(NC)"

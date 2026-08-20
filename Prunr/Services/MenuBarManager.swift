@@ -709,6 +709,48 @@ final class MenuBarManager: NSObject {
         perfMeter.start()
     }
 
+    /// Supplies stable, privacy-safe content for the marketing screenshot renderer.
+    /// This never touches the user's database or tracked paths.
+    func applyScreenshotPreviewContent() {
+        let now = Date()
+        let baselineDate = Calendar.current.date(byAdding: .day, value: -4, to: now) ?? now
+
+        func growth(_ category: GrowthCategory, _ bytes: Int64) -> RecentGrowthStory {
+            RecentGrowthStory(
+                category: category,
+                subcategory: nil,
+                deltaBytes: bytes,
+                startedAt: baselineDate,
+                endedAt: now,
+                duration: now.timeIntervalSince(baselineDate),
+                displayLabel: "Since baseline"
+            )
+        }
+
+        allCategories = [
+            CategoryInventoryItem(category: .audioProduction, currentSizeBytes: 522_400_000_000, growthTrend: nil, recentGrowthStory: nil),
+            CategoryInventoryItem(category: .other, currentSizeBytes: 421_100_000_000, growthTrend: nil, recentGrowthStory: growth(.other, 151_000_000)),
+            CategoryInventoryItem(category: .cachesAndSystem, currentSizeBytes: 228_200_000_000, growthTrend: nil, recentGrowthStory: growth(.cachesAndSystem, 1_400_000_000)),
+            CategoryInventoryItem(category: .mediaAndDocuments, currentSizeBytes: 119_500_000_000, growthTrend: nil, recentGrowthStory: growth(.mediaAndDocuments, 9_000_000_000)),
+            CategoryInventoryItem(category: .developer, currentSizeBytes: 71_500_000_000, growthTrend: nil, recentGrowthStory: growth(.developer, 4_900_000_000)),
+            CategoryInventoryItem(category: .applications, currentSizeBytes: 18_900_000_000, growthTrend: nil, recentGrowthStory: nil),
+            CategoryInventoryItem(category: .downloads, currentSizeBytes: 7_100_000_000, growthTrend: nil, recentGrowthStory: growth(.downloads, 10_000_000))
+        ]
+        totalBytes = 2_000_000_000_000
+        usedBytes = 1_389_000_000_000
+        freeBytes = totalBytes - usedBytes
+        monitoredPathSizeBytes = usedBytes
+        growthBaselineDate = baselineDate
+        noBaseline = false
+        isPermissionConfirmedForProtectedTraversal = true
+        watchedPaths = ["screenshot-preview"]
+        isLoading = false
+        isAutoScanning = false
+        isCheckingGrowth = false
+        hasPendingRecentChanges = false
+        runtimeBlockedLocations = []
+    }
+
     /// Captures current app state, appends a fresh diagnostics snapshot to the
     /// log file, and reveals it in Finder so the tester can send it over.
     /// Returns the log file URL (nil if writing failed).

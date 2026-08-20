@@ -1,6 +1,7 @@
 import Foundation
 
 enum HeadlessCommandRouter {
+    @MainActor
     static func runIfNeeded(arguments: [String]) -> Int32? {
         guard let command = arguments.first else {
             return nil
@@ -18,6 +19,8 @@ enum HeadlessCommandRouter {
                 return StressScanCommand.executeReport(config: config)
             case "e2e":
                 return runE2E(arguments: Array(arguments.dropFirst()))
+            case "render-screenshot":
+                return MarketingScreenshotRenderer.run(arguments: Array(arguments.dropFirst()))
             default:
                 return nil
             }

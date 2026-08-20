@@ -1,5 +1,31 @@
 # Todo: Growth UX Redesign
 
+## Pre-alpha sync and UX review — 2026-08-19
+
+- [x] Map the sync pipeline end to end: filesystem events, reconciliation,
+      scans, database writes, baseline/growth aggregation, and UI publication.
+- [x] Audit concurrency, cancellation, retry/backoff, persistence, permissions,
+      and lifecycle edge cases.
+- [x] Trace every user-visible state and transition, including first run,
+      baseline, healthy/stale/error, settings changes, reset, and update states.
+- [x] Review motion, timing, reduced-motion behavior, interaction affordances,
+      accessibility, and menu-bar lifecycle behavior.
+- [x] Run focused regression tests plus the available end-to-end/runtime checks.
+- [x] Record severity-ranked findings, release blockers, residual risks, and a
+      concrete pre-alpha recommendation.
+
+### Review
+
+- Verdict: no-go for the next external alpha until the P1 findings in
+  `docs/pre-alpha-sync-ux-review-2026-08-19.md` are resolved.
+- `make test`: 83 tests, 0 failures.
+- Headless E2E: 10/10 phases at 5,000 files and 10/10 at 50,000 files.
+- Live in-app feedback endpoint: Vercel 404; feedback is currently broken.
+- Runtime E2E was not executed because it deletes the user's app state and its
+  watcher miss is currently non-fatal; both limitations are release findings.
+- Automated live-panel/animation capture remains blocked by macOS Accessibility
+  permissions. Static UI/state/motion review is complete.
+
 ## Settings simplification — 2026-08-19
 
 - [x] Remove the broken Scan Rules surface and simplify General to app preferences.
