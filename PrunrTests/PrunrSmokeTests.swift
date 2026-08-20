@@ -186,6 +186,10 @@ final class PrunrSmokeTests: XCTestCase {
             "Safari"
         )
         XCTAssertEqual(
+            GrowthCategory.cacheApplicationDisplayName(for: "com.google.Chrome.canary"),
+            "Google Chrome Canary"
+        )
+        XCTAssertEqual(
             GrowthCategory.cacheApplicationDisplayName(for: "com.tinyspeck.slackmacgap"),
             "Slack"
         )

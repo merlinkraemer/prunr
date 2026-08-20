@@ -421,13 +421,21 @@ struct CategoryGrowthListView: View {
 
         return AnyView(
             ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(groups) { group in
-                        SubcategoryRow(group: group) {
-                            selectSubcategory(group, category: category.category)
-                        }
+                ExpandableList(
+                    items: groups,
+                    chunkSize: 10,
+                    canLoadMoreFromDB: false,
+                    isLoadingFromDB: false,
+                    onLoadMoreFromDB: {},
+                    remainingCountInDB: 0,
+                    remainingBytesInDB: 0,
+                    maxLoadableCount: groups.count
+                ) { group in
+                    SubcategoryRow(group: group) {
+                        selectSubcategory(group, category: category.category)
                     }
                 }
+                .id(category.category)
                 .padding(.top, pageTopInset)
                 .padding(.bottom, pageTopInset)
             }
@@ -1224,13 +1232,19 @@ private enum CacheApplicationIconResolver {
         guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return nil }
 
         for candidate in bundleIdentifierCandidates(for: bundleIdentifier) {
-            guard let applicationURL = NSWorkspace.shared.urlForApplication(
+            if let applicationURL = NSWorkspace.shared.urlForApplication(
                 withBundleIdentifier: candidate
-            ) else {
-                continue
+            ) {
+                return NSWorkspace.shared.icon(forFile: applicationURL.path)
             }
+        }
 
-            return NSWorkspace.shared.icon(forFile: applicationURL.path)
+        // Launch Services can briefly lag behind an app install/update. Keep
+        // explicit paths for the major browsers so their cache rows still get
+        // their real icons during that window.
+        for path in knownApplicationPaths[bundleIdentifier] ?? [] {
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            return NSWorkspace.shared.icon(forFile: path)
         }
 
         return nil
@@ -1246,6 +1260,33 @@ private enum CacheApplicationIconResolver {
         "com.apple.WebKit.WebContent": "com.apple.Safari",
         "com.google.Chrome.helper": "com.google.Chrome",
         "com.microsoft.VSCode.ShipIt": "com.microsoft.VSCode"
+    ]
+
+    private static let knownApplicationPaths: [String: [String]] = [
+        "com.google.Chrome": [
+            "/Applications/Google Chrome.app",
+            "(NSHomeDirectory())/Applications/Google Chrome.app"
+        ],
+        "com.google.Chrome.canary": [
+            "/Applications/Google Chrome Canary.app",
+            "(NSHomeDirectory())/Applications/Google Chrome Canary.app"
+        ],
+        "com.google.Chrome.beta": [
+            "/Applications/Google Chrome Beta.app",
+            "(NSHomeDirectory())/Applications/Google Chrome Beta.app"
+        ],
+        "com.google.Chrome.dev": [
+            "/Applications/Google Chrome Dev.app",
+            "(NSHomeDirectory())/Applications/Google Chrome Dev.app"
+        ],
+        "org.mozilla.firefox": [
+            "/Applications/Firefox.app",
+            "(NSHomeDirectory())/Applications/Firefox.app"
+        ],
+        "com.apple.Safari": [
+            "/Applications/Safari.app",
+            "/System/Applications/Safari.app"
+        ]
     ]
 }
 

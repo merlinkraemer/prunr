@@ -1,5 +1,19 @@
 # Todo: Growth UX Redesign
 
+## Cache drilldown batching — 2026-08-20
+
+- [x] Make Google Chrome and browser variants resolve native icons reliably.
+- [x] Render no more than 10 cache-owner rows at a time.
+- [x] Keep the existing “Show more” progressive disclosure affordance.
+- [x] Add coverage for Chrome variant naming.
+
+### Review
+
+Cache-owner rows now use the shared `ExpandableList` with a chunk size of 10,
+so scrolling does not instantiate every application row and icon at once.
+Chrome, Chrome Canary/Beta/Dev, Firefox, and Safari also have explicit app-path
+fallbacks if Launch Services has not refreshed yet.
+
 ## Cache application icons — 2026-08-20
 
 - [x] Resolve cache owners to installed app bundles through Launch Services.
