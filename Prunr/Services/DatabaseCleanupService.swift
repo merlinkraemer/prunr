@@ -179,15 +179,18 @@ actor DatabaseCleanupService {
                 sql: """
                     SELECT s.id
                     FROM snapshot s
-                    JOIN (
+                    LEFT JOIN (
                         SELECT trackedPathId, MAX(updatedAt) AS latestWorkingSetUpdate
                         FROM workingSetEntry
                         GROUP BY trackedPathId
                     ) ws ON ws.trackedPathId = s.trackedPathId
-                    WHERE s.trackedPathId != ''
-                      AND s.createdAt > ws.latestWorkingSetUpdate
-                    """
-            )
+                    WHERE s.lifecycle != ?
+                       OR (s.trackedPathId != ''
+                           AND ws.latestWorkingSetUpdate IS NOT NULL
+                           AND s.createdAt > ws.latestWorkingSetUpdate)
+                    """,
+                    arguments: [Snapshot.Lifecycle.complete.rawValue]
+                )
 
             guard !snapshotIDs.isEmpty else { return 0 }
 

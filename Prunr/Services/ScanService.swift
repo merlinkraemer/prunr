@@ -190,7 +190,11 @@ actor ScanService {
 
         // Create new snapshot
         logger.debug("Creating new snapshot")
-        let snapshot = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: freeBytes)
+        let snapshot = try await db.createSnapshot(
+            trackedPathId: trackedPathId,
+            freeBytes: freeBytes,
+            lifecycle: .scanning
+        )
         guard let snapshotId = snapshot.id else {
             logger.error("Failed to create snapshot with ID")
             throw ScanError.unknown(NSError(
@@ -465,9 +469,12 @@ actor ScanService {
                 logger.debug("Final progress update sent: \(count) files")
             }
 
+            try await db.markSnapshotComplete(id: snapshotId)
             logger.info("Scan completed successfully: \(count) files scanned")
 
-            return snapshot
+            var completedSnapshot = snapshot
+            completedSnapshot.lifecycle = .complete
+            return completedSnapshot
 
         } catch {
             // Clean up orphaned snapshot before rethrowing
@@ -511,8 +518,6 @@ actor ScanService {
                 throw ScanError.unknown(wrapped)
             }
 
-            // DIAGNOSTIC (temporary): unredact the real error to find the code=0 root cause.
-            logger.error("Unknown scan error domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public): \(error.localizedDescription, privacy: .public) | reflect=\(String(reflecting: error), privacy: .public)")
             throw ScanError.unknown(error)
         }
     }

@@ -159,6 +159,8 @@ final class MainViewModel {
                     errorMessage = "Invalid path or path does not exist"
                 case .stalled(let path):
                     errorMessage = "Scan stalled while reading: \(path)"
+                case .traversalFailed(let path):
+                    errorMessage = "Scan could not read: \(path)"
                 case .unknown(let err):
                     errorMessage = "Scan failed: \(err.localizedDescription)"
                 case .cancelled:

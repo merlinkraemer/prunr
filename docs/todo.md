@@ -1,5 +1,19 @@
 # Todo: Growth UX Redesign
 
+## Critical pre-alpha sync fixes — 2026-08-20
+
+- [x] Preserve onboarding when a first scan is cancelled or fails.
+- [x] Keep dirty filesystem signals pending across active scans and cooldowns.
+- [x] Make snapshot publication explicit and ignore/delete incomplete snapshots.
+- [x] Fail authoritative scans on unreadable traversal errors.
+- [x] Run focused regressions, full tests, and a build.
+
+### Review
+
+Implemented only the highest-risk data-integrity fixes from the pre-alpha review.
+Scope-edit staging, baseline-anchor persistence, reset serialization, feedback
+deployment, and release-E2E gating remain separate follow-ups.
+
 ## Pre-alpha sync and UX review — 2026-08-19
 
 - [x] Map the sync pipeline end to end: filesystem events, reconciliation,

@@ -3,6 +3,11 @@ import GRDB
 
 /// Represents a single storage scan snapshot
 struct Snapshot: Codable, Identifiable, Equatable, Hashable {
+    enum Lifecycle: String, Codable, Sendable {
+        case scanning
+        case complete
+    }
+
     /// Auto-increment primary key
     var id: Int64?
 
@@ -16,19 +21,36 @@ struct Snapshot: Codable, Identifiable, Equatable, Hashable {
     /// Nil for legacy snapshots before migration
     var freeBytes: Int64?
 
-    init(id: Int64? = nil, trackedPathId: UUID, createdAt: Date = Date(), freeBytes: Int64? = nil) {
+    /// A snapshot is invisible to readers until all scan data is published.
+    var lifecycle: Lifecycle
+
+    init(
+        id: Int64? = nil,
+        trackedPathId: UUID,
+        createdAt: Date = Date(),
+        freeBytes: Int64? = nil,
+        lifecycle: Lifecycle = .complete
+    ) {
         self.id = id
         self.trackedPathId = trackedPathId
         self.createdAt = createdAt
         self.freeBytes = freeBytes
+        self.lifecycle = lifecycle
     }
 
     /// Custom init for GRDB decoding that handles empty strings
-    init(id: Int64? = nil, trackedPathIdString: String?, createdAt: Date, freeBytes: Int64? = nil) {
+    init(
+        id: Int64? = nil,
+        trackedPathIdString: String?,
+        createdAt: Date,
+        freeBytes: Int64? = nil,
+        lifecycle: Lifecycle = .complete
+    ) {
         self.id = id
         self.trackedPathId = UUID(uuidString: trackedPathIdString ?? "") ?? UUID()
         self.createdAt = createdAt
         self.freeBytes = freeBytes
+        self.lifecycle = lifecycle
     }
 }
 
@@ -44,6 +66,7 @@ extension Snapshot: FetchableRecord, MutablePersistableRecord {
         static let trackedPathId = Column(CodingKeys.trackedPathId)
         static let createdAt = Column(CodingKeys.createdAt)
         static let freeBytes = Column(CodingKeys.freeBytes)
+        static let lifecycle = Column(CodingKeys.lifecycle)
     }
 
     /// Decode from database row, handling UUID conversion
@@ -51,6 +74,7 @@ extension Snapshot: FetchableRecord, MutablePersistableRecord {
         id = row["id"]
         createdAt = row["createdAt"]
         freeBytes = row["freeBytes"]
+        lifecycle = Lifecycle(rawValue: (row["lifecycle"] as String?) ?? Lifecycle.complete.rawValue) ?? .complete
 
         // Handle trackedPathId - may be empty string for old snapshots
         if let pathIdString: String = row["trackedPathId"], !pathIdString.isEmpty {
@@ -66,6 +90,7 @@ extension Snapshot: FetchableRecord, MutablePersistableRecord {
         container["createdAt"] = createdAt
         container["trackedPathId"] = trackedPathId.uuidString
         container["freeBytes"] = freeBytes
+        container["lifecycle"] = lifecycle.rawValue
     }
 
     /// Auto-generate ID on insert

@@ -580,6 +580,9 @@ final class MenuBarManager: NSObject {
     private var isInventoryRefreshInProgress = false
     private var pendingRecentChangePaths: Set<URL> = []
     private var pendingRecentChangeRequiresFullRefresh = false
+    /// A dirty watcher signal survives active scans and full-scan cooldowns.
+    /// It is cleared only after a successful authoritative refresh begins.
+    private(set) var needsAuthoritativeReconciliation = false
     private var lastFullScanCompletedAt: Date?
     private var lastFullScanAttemptAt: Date?
     private var consecutiveFailedFullScans = 0
@@ -1148,15 +1151,18 @@ final class MenuBarManager: NSObject {
     // and initialized above.
 
     /// Loads inventory data with growth trends for the preferred enabled tracked path
-    func loadInventory(isAutomatic: Bool = false, trackedPathsOverride: [TrackedPath]? = nil) async {
+    @discardableResult
+    func loadInventory(isAutomatic: Bool = false, trackedPathsOverride: [TrackedPath]? = nil) async -> Bool {
         // Prefer the most specific enabled tracked path to avoid scanning huge umbrella roots.
         let enabledPaths = effectiveTrackedPaths(from: trackedPathsOverride ?? SettingsStore.shared.enabledTrackedPaths)
         guard let trackedPath = primaryTrackedPath(from: enabledPaths) else {
             errorMessage = "No paths enabled in Settings"
-            return
+            return false
         }
-        guard beginInventoryRefresh() else { return }
+        guard beginInventoryRefresh() else { return false }
         defer { endInventoryRefresh() }
+
+        let hadBaselineAtStart = !noBaseline
 
         let backgroundFullScanUI = isAutomatic
         if backgroundFullScanUI {
@@ -1171,7 +1177,6 @@ final class MenuBarManager: NSObject {
         isLoading = true
         errorMessage = nil
         runtimeBlockedLocations = []
-        noBaseline = false
         filesScanned = 0
         isAnalyzingChanges = false
         if !isProcessingRecentChanges {
@@ -1244,6 +1249,7 @@ final class MenuBarManager: NSObject {
                 baselineDate: aggregation.baselineSnapshotDate,
                 invalidateSubcategoryCache: true
             )
+            noBaseline = false
 
             // Also compute disk accounting for free space tracking
             do {
@@ -1297,17 +1303,20 @@ final class MenuBarManager: NSObject {
                 scanCurrentPathDisplay = ""
                 isAnalyzingChanges = false
                 wasCancelled = true
+                if !hadBaselineAtStart { noBaseline = true }
             } else if let scanError = error as? ScanError, case .permissionDenied(let path) = scanError {
                 let label = URL(fileURLWithPath: path).lastPathComponent
                 runtimeBlockedLocations = [label.isEmpty ? path : label]
                 if !isAutomatic {
                     errorMessage = "Permission denied: \(path)"
                 }
+                if !hadBaselineAtStart { noBaseline = true }
             } else {
                 Self.logger.error("Error loading inventory: \(error.localizedDescription, privacy: .public)")
                 if !isAutomatic {
                     errorMessage = "Scan failed: \(error.localizedDescription)"
                 }
+                if !hadBaselineAtStart { noBaseline = true }
             }
         }
 
@@ -1356,6 +1365,7 @@ final class MenuBarManager: NSObject {
 
         // Flush any FSEvents that arrived during the scan
         schedulePendingRecentChangeRefresh()
+        return completedSuccessfully
     }
 
     private var lastInventoryFromSnapshotLoadedAt: Date?
@@ -2888,6 +2898,10 @@ final class MenuBarManager: NSObject {
             Logger.fsEvents.notice(
                 "Ignoring dirty FSEvents batch during full scan: reason=\(changeBatch.dirtyReason ?? "stream-rescan-required", privacy: .public) raw=\(changeBatch.rawEventCount)"
             )
+            markDirty(
+                reason: changeBatch.dirtyReason ?? "stream-rescan-required",
+                rawEventCount: changeBatch.rawEventCount
+            )
             return
         }
 
@@ -2931,17 +2945,13 @@ final class MenuBarManager: NSObject {
 
     @MainActor
     private func markDirty(reason: String, rawEventCount: Int = 0) {
-        let promoted = promotePendingChangesToFullRefreshIfAllowed(
-            reason: reason
+        needsAuthoritativeReconciliation = true
+        pendingRecentChangeRequiresFullRefresh = true
+        pendingDirtyReason = reason
+        hasPendingRecentChanges = true
+        Logger.fsEvents.notice(
+            "Marking tracked root dirty: reason=\(reason, privacy: .public) raw=\(rawEventCount)"
         )
-        if promoted {
-            Logger.fsEvents.notice(
-                "Marking tracked root dirty: reason=\(reason, privacy: .public) raw=\(rawEventCount)"
-            )
-        }
-        if promoted {
-            pendingDirtyReason = reason
-        }
     }
 
     @MainActor
@@ -3049,12 +3059,13 @@ final class MenuBarManager: NSObject {
                 return
             }
             if isWithinFullRescanCooldown() {
-                dropPendingFullRefreshDuringCooldown(reason: pendingDirtyReason ?? "dirty-root")
+                retainPendingFullRefreshDuringCooldown(reason: pendingDirtyReason ?? "dirty-root")
                 return
             }
 
             pendingRecentChangeRequiresFullRefresh = false
             pendingRecentChangePaths.removeAll()
+            needsAuthoritativeReconciliation = false
             isProcessingRecentChanges = true
             defer {
                 isProcessingRecentChanges = false
@@ -3065,7 +3076,12 @@ final class MenuBarManager: NSObject {
             }
 
             lastDetectedChangeAt = Date()
-            await loadInventory(isAutomatic: true)
+            let succeeded = await loadInventory(isAutomatic: true)
+            if !succeeded {
+                needsAuthoritativeReconciliation = true
+                pendingRecentChangeRequiresFullRefresh = true
+                hasPendingRecentChanges = true
+            }
             return
         }
 
@@ -3136,7 +3152,7 @@ final class MenuBarManager: NSObject {
                 return
             }
             if isWithinFullRescanCooldown() {
-                dropPendingFullRefreshDuringCooldown(reason: "incremental-refresh-escalation")
+                retainPendingFullRefreshDuringCooldown(reason: "incremental-refresh-escalation")
                 return
             }
             await loadInventory(isAutomatic: true)
@@ -3281,6 +3297,7 @@ final class MenuBarManager: NSObject {
         case .invalidPath: return "ScanError.invalidPath"
         case .cancelled: return "ScanError.cancelled"
         case .stalled: return "ScanError.stalled"
+        case .traversalFailed: return "ScanError.traversalFailed"
         case .unknown(let underlying):
             return "ScanError.unknown.code=\((underlying as NSError).code)"
         }
@@ -3329,24 +3346,37 @@ final class MenuBarManager: NSObject {
         return now.timeIntervalSince(referenceDate) < cooldown
     }
 
-    private func dropPendingFullRefreshDuringCooldown(reason: String) {
+    private func fullRescanCooldownRemaining(at now: Date = Date()) -> TimeInterval {
+        guard let referenceDate = lastFullScanAttemptAt ?? lastFullScanCompletedAt else { return 0 }
+        let cooldown: TimeInterval
+        if consecutiveFailedFullScans > 0 {
+            cooldown = failedScanBackoff(for: consecutiveFailedFullScans)
+        } else {
+            cooldown = max(Self.requiresFullRescanCooldown, SettingsStore.shared.automaticFullScanInterval)
+        }
+        return max(1, cooldown - now.timeIntervalSince(referenceDate))
+    }
+
+    private func retainPendingFullRefreshDuringCooldown(reason: String) {
         Logger.fsEvents.notice(
             "Deferring full refresh during full-scan cooldown: reason=\(reason, privacy: .public)"
         )
-        pendingRecentChangeRequiresFullRefresh = false
-        pendingRecentChangePaths.removeAll()
-        hasPendingRecentChanges = false
-        pendingDirtyReason = nil
         dirtyRefreshScheduled = false
-        dirtyRootConsecutiveCount = 0
-        scheduleReconciliationBackstop()
+        pendingRecentChangeRequiresFullRefresh = true
+        needsAuthoritativeReconciliation = true
+        hasPendingRecentChanges = true
+        scheduleRecentChangeRefreshTask(after: fullRescanCooldownRemaining())
     }
 
     private func promotePendingChangesToFullRefreshIfAllowed(reason: String) -> Bool {
         let now = Date()
         guard !isWithinFullRescanCooldown(at: now) else {
             let elapsed = Int(now.timeIntervalSince(lastFullScanCompletedAt ?? now))
-            Logger.fsEvents.notice("Dropping \(reason, privacy: .public) during full-rescan cooldown (\(elapsed)s)")
+            Logger.fsEvents.notice("Deferring \(reason, privacy: .public) during full-rescan cooldown (\(elapsed)s)")
+            needsAuthoritativeReconciliation = true
+            pendingRecentChangeRequiresFullRefresh = true
+            pendingDirtyReason = reason
+            hasPendingRecentChanges = true
             return false
         }
 
@@ -3380,7 +3410,8 @@ final class MenuBarManager: NSObject {
         }
         guard !isWithinFullRescanCooldown() else {
             let elapsed = Int(Date().timeIntervalSince(lastFullScanCompletedAt ?? Date()))
-            Logger.fsEvents.notice("Dropping requiresFullRescan signal during cooldown (\(elapsed)s since full scan)")
+            Logger.fsEvents.notice("Deferring requiresFullRescan signal during cooldown (\(elapsed)s since full scan)")
+            markDirty(reason: "requiresFullRescan")
             return
         }
 

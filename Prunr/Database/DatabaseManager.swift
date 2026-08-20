@@ -479,6 +479,16 @@ final class DatabaseManager {
                 """)
         }
 
+        // Migration v20: Make scan publication explicit so killed scans cannot
+        // be mistaken for valid first-run baselines.
+        migrator.registerMigration("v20_add_snapshot_lifecycle") { db in
+            try db.alter(table: "snapshot") { t in
+                t.add(column: "lifecycle", .text)
+                    .notNull()
+                    .defaults(to: Snapshot.Lifecycle.complete.rawValue)
+            }
+        }
+
         try migrator.migrate(dbPool)
     }
 }
@@ -496,16 +506,39 @@ extension DatabaseManager {
     ///   - trackedPathId: The ID of the TrackedPath this snapshot belongs to
     ///   - freeBytes: Optional volume free space at snapshot creation time
     /// - Returns: The inserted Snapshot with populated id
-    func createSnapshot(trackedPathId: UUID, freeBytes: Int64? = nil) async throws -> Snapshot {
+    func createSnapshot(
+        trackedPathId: UUID,
+        freeBytes: Int64? = nil,
+        lifecycle: Snapshot.Lifecycle = .complete
+    ) async throws -> Snapshot {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
         return try await dbPool.write { db in
-            var snapshot = Snapshot(trackedPathId: trackedPathId, createdAt: Date(), freeBytes: freeBytes)
+            var snapshot = Snapshot(
+                trackedPathId: trackedPathId,
+                createdAt: Date(),
+                freeBytes: freeBytes,
+                lifecycle: lifecycle
+            )
             try snapshot.insert(db)
             // Snapshot created — id, trackedPathId, freeBytes logged via OSLog in callers
             return snapshot
+        }
+    }
+
+    /// Publishes a staged snapshot after all scan payloads and summaries exist.
+    func markSnapshotComplete(id: Int64) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.write { db in
+            try db.execute(
+                sql: "UPDATE snapshot SET lifecycle = ? WHERE id = ?",
+                arguments: [Snapshot.Lifecycle.complete.rawValue, id]
+            )
         }
     }
 
@@ -744,6 +777,7 @@ extension DatabaseManager {
         return try await dbPool.read { db in
             var request = Snapshot.all()
                 .order(Snapshot.Columns.createdAt.desc, Snapshot.Columns.id.desc)
+                .filter(Snapshot.Columns.lifecycle == Snapshot.Lifecycle.complete.rawValue)
 
             // Filter by trackedPathId if provided
             // Also exclude snapshots with empty trackedPathId (old snapshots before migration)
@@ -774,6 +808,7 @@ extension DatabaseManager {
             var request = Snapshot.all()
                 .order(Snapshot.Columns.createdAt.desc, Snapshot.Columns.id.desc)
                 .limit(limit)
+                .filter(Snapshot.Columns.lifecycle == Snapshot.Lifecycle.complete.rawValue)
 
             if let trackedPathId = trackedPathId {
                 request = request.filter(Snapshot.Columns.trackedPathId == trackedPathId.uuidString)

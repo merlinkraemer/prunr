@@ -214,12 +214,19 @@ final class FileScanner {
                         }
 
                     case FTS_DNR, FTS_ERR, FTS_NS:
+                        let errno = entry.pointee.fts_errno
                         if entry.pointee.fts_errno != 0 {
-                            let message = String(cString: strerror(entry.pointee.fts_errno))
+                            let message = String(cString: strerror(errno))
                             Self.logger.error("FTS error at \(path, privacy: .public): \(message, privacy: .public)")
                         } else {
                             Self.logger.error("FTS error at \(path, privacy: .public)")
                         }
+                        if errno == EACCES || errno == EPERM {
+                            continuation.finish(throwing: ScanError.permissionDenied(path))
+                        } else {
+                            continuation.finish(throwing: ScanError.traversalFailed(path))
+                        }
+                        return
 
                     case FTS_SL, FTS_SLNONE:
                         continue

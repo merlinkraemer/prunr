@@ -733,6 +733,28 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testIncompleteSnapshotIsNeverReadableAndIsCleanedWithoutWorkingSet() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let snapshot = try await DatabaseManager.shared.createSnapshot(
+                trackedPathId: trackedPathId,
+                lifecycle: .scanning
+            )
+            _ = try XCTUnwrap(snapshot.id)
+
+            let visibleSnapshots = try await DatabaseManager.shared.fetchRecentSnapshots(
+                trackedPathId: trackedPathId,
+                limit: 10
+            )
+            XCTAssertTrue(visibleSnapshots.isEmpty)
+
+            let deleted = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
+            XCTAssertEqual(deleted, 1)
+
+            let remaining = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
+            XCTAssertTrue(remaining.isEmpty)
+        }
+    }
+
     func testRecentGrowthStorySumsAllDeltasSinceBaseline() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let trackedPath = TrackedPath(
@@ -1894,7 +1916,7 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     @MainActor
-    func testMenuBarManagerDropsDirtyFullRefreshInsideConfiguredInterval() async throws {
+    func testMenuBarManagerRetainsDirtyFullRefreshInsideConfiguredInterval() async throws {
         let trackedRoot = try createTrackedPathDirectory(named: "PrunrDirtyCooldown")
         defer {
             try? FileManager.default.removeItem(at: trackedRoot)
@@ -1931,8 +1953,9 @@ final class PrunrSmokeTests: XCTestCase {
                         rawEventCount: 1
                     )
                 )
-                XCTAssertFalse(manager.hasPendingRecentChanges)
-                XCTAssertNil(manager.pendingDirtyReason)
+                XCTAssertTrue(manager.hasPendingRecentChanges)
+                XCTAssertEqual(manager.pendingDirtyReason, "stream-dropped")
+                XCTAssertTrue(manager.needsAuthoritativeReconciliation)
             }
         }
     }
@@ -1997,7 +2020,23 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     @MainActor
-    func testMenuBarManagerIgnoresDirtyWatcherBatchDuringFullScan() {
+    func testFirstScanFailureKeepsOnboardingBaselineState() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let manager = MenuBarManager()
+            manager.noBaseline = true
+            let missingRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PrunrMissing-\(UUID().uuidString)", isDirectory: true)
+            let trackedPath = TrackedPath(url: missingRoot, displayName: "Missing")
+
+            let succeeded = await manager.loadInventory(trackedPathsOverride: [trackedPath])
+
+            XCTAssertFalse(succeeded)
+            XCTAssertTrue(manager.noBaseline)
+        }
+    }
+
+    @MainActor
+    func testMenuBarManagerRetainsDirtyWatcherBatchDuringFullScan() {
         let manager = MenuBarManager()
         manager.isLoading = true
 
@@ -2010,8 +2049,9 @@ final class PrunrSmokeTests: XCTestCase {
             )
         )
 
-        XCTAssertFalse(manager.hasPendingRecentChanges)
-        XCTAssertNil(manager.pendingDirtyReason)
+        XCTAssertTrue(manager.hasPendingRecentChanges)
+        XCTAssertEqual(manager.pendingDirtyReason, "directory-heavy")
+        XCTAssertTrue(manager.needsAuthoritativeReconciliation)
         XCTAssertNil(manager.lastScheduledRecentChangeRefreshDelay)
     }
 

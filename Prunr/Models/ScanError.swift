@@ -14,6 +14,9 @@ enum ScanError: Error, LocalizedError, Sendable {
     /// Scan traversal stopped making progress and was aborted
     case stalled(String)
 
+    /// The filesystem reported an unreadable or otherwise incomplete subtree.
+    case traversalFailed(String)
+
     /// An unknown error occurred during scanning
     case unknown(Error)
 
@@ -27,6 +30,8 @@ enum ScanError: Error, LocalizedError, Sendable {
             return "Scan cancelled"
         case .stalled(let path):
             return "Scan stalled while reading: \(path)\n\nThe scan was stopped so Prunr can recover. Try scanning a smaller folder or add this location to the ignore list."
+        case .traversalFailed(let path):
+            return "Scan could not read: \(path)\n\nThe previous inventory was kept so unreadable files are not mistaken for deletions."
         case .unknown(let error):
             return "Scan failed: \(error.localizedDescription)"
         }
@@ -43,6 +48,8 @@ enum ScanError: Error, LocalizedError, Sendable {
             return nil
         case .stalled:
             return "Try again after excluding problematic folders, or choose a more specific tracked path."
+        case .traversalFailed:
+            return "Check access to this folder, then try again."
         case .unknown:
             return "Try again or contact support if the problem persists."
         }
