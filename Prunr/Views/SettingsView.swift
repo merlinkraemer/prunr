@@ -320,12 +320,9 @@ private struct TroubleshootingSettingsTab: View {
                 feedbackMessage = ""
                 feedbackNotice = "Feedback sent. Thank you."
                 feedbackNoticeIsError = false
-            } catch FeedbackServiceError.networkUnavailable {
-                // Keep message/email so the user can retry after reconnecting.
-                feedbackNotice = FeedbackServiceError.networkUnavailableMessage
-                feedbackNoticeIsError = true
             } catch {
-                feedbackNotice = "Could not send feedback: \(error.localizedDescription)"
+                // Keep message/email so the user can retry; always surface mailto fallback.
+                feedbackNotice = FeedbackServiceError.userFacingMessage(for: error)
                 feedbackNoticeIsError = true
             }
             isSendingFeedback = false

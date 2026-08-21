@@ -708,10 +708,13 @@ extension DatabaseManager {
                     )
                 }
                 let uniquePaths = Array(Set(normalizedBatch.map(\.path)))
+                // Duplicate paths in one batch are expected (same path seen twice);
+                // keep the latest classification instead of trapping via uniqueKeysWithValues.
                 let classificationsByPath = Dictionary(
-                    uniqueKeysWithValues: normalizedBatch.map {
+                    normalizedBatch.map {
                         ($0.path, ResolvedPathClassification(category: $0.category, subcategory: $0.subcategory))
-                    }
+                    },
+                    uniquingKeysWith: { _, latest in latest }
                 )
                 let pathIdByPath = try fetchPathIds(
                     for: uniquePaths,
@@ -2435,8 +2438,9 @@ extension DatabaseManager {
 
     /// Normalizes a file path for consistent storage
     /// - Removes trailing slash (unless it's just "/")
-    /// - Note: Case is preserved as-is. macOS is case-preserving, and normalizePath
-    ///   is applied on every insert/lookup so exact-match queries are safe.
+    /// - Case is preserved for display. `paths.path` uses UNIQUE COLLATE NOCASE, so
+    ///   SQLite matches case-insensitively; Swift dictionary lookups must key by the
+    ///   requested spelling (see `fetchPathIds`) rather than assuming stored case matches.
     private static func normalizePath(_ path: String) -> String {
         if path == "/" {
             return path
@@ -2507,7 +2511,8 @@ extension DatabaseManager {
     private func getOrCreatePathId(path: String, db: Database) throws -> Int64 {
         let normalizedPath = Self.normalizePath(path)
         try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [normalizedPath])
-        // Exact match — paths are normalized on insert so no COLLATE NOCASE needed
+        // Column collation is NOCASE: a prior row with different casing still matches.
+        // INSERT OR IGNORE leaves the stored spelling unchanged when that happens.
         if let row = try Row.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [normalizedPath]),
            let id: Int64 = row["id"] {
             try upsertPathClassifications(pathIdByPath: [normalizedPath: id], db: db)
@@ -2523,11 +2528,13 @@ extension DatabaseManager {
     ) throws -> [String: Int64] {
         guard !paths.isEmpty else { return [:] }
 
-        // normalizePath is idempotent; dedup via Set
+        // normalizePath is idempotent; dedup via Set (case-sensitive — callers may
+        // request both casings; NOCASE UNIQUE collapses them in SQLite).
         let normalizedPaths = Array(Set(paths.map { Self.normalizePath($0) }))
         let pathChunkSize = 500
 
-        // Bulk-insert any new paths (exact match, no COLLATE NOCASE — paths normalized on entry)
+        // Bulk-insert any new paths. COLLATE NOCASE UNIQUE + INSERT OR IGNORE means a
+        // case-only rename leaves the existing row (old spelling) in place.
         for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
             let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
             let chunk = Array(normalizedPaths[startIndex..<endIndex])
@@ -2538,10 +2545,13 @@ extension DatabaseManager {
             )
         }
 
-        var result: [String: Int64] = [:]
-        result.reserveCapacity(normalizedPaths.count)
+        var idsByLowercasedPath: [String: Int64] = [:]
+        idsByLowercasedPath.reserveCapacity(normalizedPaths.count)
 
-        // Fetch IDs with exact match — no COLLATE NOCASE overhead
+        // SELECT uses NOCASE collation via the column definition, so IN matches
+        // regardless of stored vs requested casing. Key the Swift map by lowercased
+        // stored path, then remap onto each *requested* normalized spelling so
+        // callers (addEntriesCore) can look up scanResult.path without pathLookupFailed.
         for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
             let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
             let chunk = Array(normalizedPaths[startIndex..<endIndex])
@@ -2556,7 +2566,15 @@ extension DatabaseManager {
                 else {
                     continue
                 }
-                result[storedPath] = pathId
+                idsByLowercasedPath[storedPath.lowercased()] = pathId
+            }
+        }
+
+        var result: [String: Int64] = [:]
+        result.reserveCapacity(normalizedPaths.count)
+        for path in normalizedPaths {
+            if let pathId = idsByLowercasedPath[path.lowercased()] {
+                result[path] = pathId
             }
         }
 

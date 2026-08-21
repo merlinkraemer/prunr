@@ -41,4 +41,30 @@ final class FeedbackServiceRegressionTests: XCTestCase {
         XCTAssertTrue(message.contains("Reconnect to the internet"))
         XCTAssertTrue(message.contains("merlinkraemer@gmail.com"))
     }
+
+    func testInvalidResponseDescriptionIncludesMailtoFallback() {
+        let description = FeedbackServiceError.invalidResponse.localizedDescription
+        XCTAssertTrue(description.contains("unexpected response"))
+        XCTAssertTrue(description.contains(FeedbackServiceError.mailtoFallbackAddress))
+    }
+
+    func testRejectedDescriptionIncludesMailtoFallback() {
+        let description = FeedbackServiceError.rejected("Server busy").localizedDescription
+        XCTAssertTrue(description.contains("Server busy"))
+        XCTAssertTrue(description.contains(FeedbackServiceError.mailtoFallbackAddress))
+    }
+
+    func testUserFacingMessageCoversAllSendFailureKinds() {
+        let network = FeedbackServiceError.userFacingMessage(for: FeedbackServiceError.networkUnavailable)
+        let invalid = FeedbackServiceError.userFacingMessage(for: FeedbackServiceError.invalidResponse)
+        let rejected = FeedbackServiceError.userFacingMessage(for: FeedbackServiceError.rejected("nope"))
+        let unknown = FeedbackServiceError.userFacingMessage(for: URLError(.badServerResponse))
+
+        for message in [network, invalid, rejected, unknown] {
+            XCTAssertTrue(
+                message.contains(FeedbackServiceError.mailtoFallbackAddress),
+                "Expected mailto in: \(message)"
+            )
+        }
+    }
 }

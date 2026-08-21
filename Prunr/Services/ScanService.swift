@@ -286,6 +286,8 @@ actor ScanService {
             logger.debug("Initial progress update sent")
         }
 
+        let backpressure = ScanBackpressureGate(maxOutstanding: batchSize * 2)
+
         do {
             // Stream scan results and accumulate into batches
             logger.debug("Starting file enumeration stream")
@@ -294,7 +296,12 @@ actor ScanService {
             } else {
                 await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
             }
-            let stream = scanner.scan(url, ignoredNames: resolvedIgnoredNames, cancellationToken: cancellationToken)
+            let stream = scanner.scan(
+                url,
+                ignoredNames: resolvedIgnoredNames,
+                cancellationToken: cancellationToken,
+                backpressure: backpressure
+            )
 
             for try await result in stream {
                 // Check for cancellation (more frequent check)
@@ -316,6 +323,7 @@ actor ScanService {
                 if batch.count >= batchSize {
                     logger.debug("Inserting batch of \(batch.count) entries (total: \(count))")
                     try throwIfCancelled("batch insert preflight", token: cancellationToken)
+                    let batchCount = batch.count
                     if alsoWriteWorkingSet {
                         try await db.addEntriesWithWorkingSet(
                             to: snapshotId,
@@ -328,14 +336,10 @@ actor ScanService {
                         try await db.addEntries(to: snapshotId, entries: batch, cancellationToken: cancellationToken)
                     }
                     batch.removeAll()
+                    await backpressure.release(batchCount)
 
                     // Check cancellation after database write
                     try throwIfCancelled("batch insert completion", token: cancellationToken)
-
-                    // Yield every batch (50000 items) to reduce coordination overhead
-                    if count % batchSize == 0 {
-                        await Task.yield()
-                    }
                 }
 
                 // Report progress (throttled to every 250ms)
@@ -413,18 +417,20 @@ actor ScanService {
             if !batch.isEmpty {
                 logger.debug("Inserting final batch of \(batch.count) entries")
                 try throwIfCancelled("final batch insert preflight", token: cancellationToken)
+                let batchCount = batch.count
                 if alsoWriteWorkingSet {
-                        try await db.addEntriesWithWorkingSet(
-                            to: snapshotId,
-                            entries: batch,
-                            trackedPathId: trackedPathId,
-                            updatedAt: snapshot.createdAt,
-                            cancellationToken: cancellationToken
-                        )
-                    } else {
-                        try await db.addEntries(to: snapshotId, entries: batch, cancellationToken: cancellationToken)
-                    }
+                    try await db.addEntriesWithWorkingSet(
+                        to: snapshotId,
+                        entries: batch,
+                        trackedPathId: trackedPathId,
+                        updatedAt: snapshot.createdAt,
+                        cancellationToken: cancellationToken
+                    )
+                } else {
+                    try await db.addEntries(to: snapshotId, entries: batch, cancellationToken: cancellationToken)
                 }
+                await backpressure.release(batchCount)
+            }
 
             // If we co-wrote the working set inline, write its category totals from the
             // in-memory categoryTotals dict (avoids a separate SQL GROUP BY over 2.2M rows).
@@ -477,6 +483,11 @@ actor ScanService {
             return completedSnapshot
 
         } catch {
+            // A failed DB write can stop consuming the stream before its normal
+            // termination callback runs. Close the gate explicitly so a producer
+            // parked on a full buffer is released before the scan unwinds.
+            await backpressure.close()
+
             // Clean up orphaned snapshot before rethrowing
             do {
                 try await db.deleteSnapshot(id: snapshotId)

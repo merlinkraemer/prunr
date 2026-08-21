@@ -1,3 +1,19 @@
+# Todo: Critical audit fixes — 2026-08-21
+
+- [x] Split subcategory and growth-contributor cache generations (CACHE-01).
+- [x] Retain the panel hosting view across hide/show (CACHE-02).
+- [x] Make path-ID lookup case-insensitive across NOCASE storage (SCAN-02).
+- [x] Add bounded producer backpressure to full scans (SCAN-01).
+- [x] Keep feedback failures actionable with an email fallback (FB-01 residual).
+- [x] Add focused regressions and run build/tests plus the live feedback probe.
+
+## Review
+
+Implemented CACHE-01/02, SCAN-01/02, and FB-01 residual from `docs/prunr-depth-audit.md`.
+- `make test`: **101 tests, 0 failures**
+- Feedback probe: `POST /api/feedback` with `{}` → **401** `{"error":"Unauthorized."}` (live; not 404)
+- Manual still needed: panel close/open (CACHE-02 idle CPU / state retention), drilldown under FSEvents churn (CACHE-01)
+
 # Todo: Growth UX Redesign
 
 ## Scan hardening review fixes — 2026-08-21
@@ -98,7 +114,8 @@ deployment, and release-E2E gating remain separate follow-ups.
   `docs/pre-alpha-sync-ux-review-2026-08-19.md` are resolved.
 - `make test`: 83 tests, 0 failures.
 - Headless E2E: 10/10 phases at 5,000 files and 10/10 at 50,000 files.
-- Live in-app feedback endpoint: Vercel 404; feedback is currently broken.
+- Live in-app feedback endpoint: reachable at `https://prunr-web.vercel.app/api/feedback`
+  (401 Unauthorized without a valid token — not a 404).
 - Runtime E2E was not executed because it deletes the user's app state and its
   watcher miss is currently non-fatal; both limitations are release findings.
 - Automated live-panel/animation capture remains blocked by macOS Accessibility

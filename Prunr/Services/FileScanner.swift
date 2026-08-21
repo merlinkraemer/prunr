@@ -54,6 +54,63 @@ private final class ScanTraversalState: @unchecked Sendable {
     }
 }
 
+/// Bounds outstanding scan results between FileScanner's producer and the
+/// ScanService DB consumer. Does not drop results (unlike bufferingNewest/Oldest).
+actor ScanBackpressureGate {
+    private let maxOutstanding: Int
+    private var outstanding = 0
+    private var waiters: [CheckedContinuation<Bool, Never>] = []
+    private var isClosed = false
+
+    init(maxOutstanding: Int = 20_000) {
+        self.maxOutstanding = max(1, maxOutstanding)
+    }
+
+    /// Wait until there is capacity, then reserve one outstanding slot.
+    /// Returns `false` after `close()` so cancellation cannot deadlock or yield
+    /// another result after the consumer has stopped.
+    func waitToProduce() async -> Bool {
+        guard !isClosed else { return false }
+        if outstanding < maxOutstanding {
+            outstanding += 1
+            return true
+        }
+
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            if isClosed {
+                continuation.resume(returning: false)
+            } else {
+                waiters.append(continuation)
+            }
+        }
+    }
+
+    /// Release capacity after the consumer successfully persists a batch.
+    func release(_ count: Int) {
+        guard count > 0 else { return }
+        outstanding = max(0, outstanding - count)
+        resumeWaitersIfNeeded()
+    }
+
+    /// Unblock any waiting producers on cancel, error, or stream termination.
+    func close() {
+        guard !isClosed else { return }
+        isClosed = true
+        let pending = waiters
+        waiters.removeAll(keepingCapacity: false)
+        for waiter in pending {
+            waiter.resume(returning: false)
+        }
+    }
+
+    private func resumeWaitersIfNeeded() {
+        while outstanding < maxOutstanding, !waiters.isEmpty {
+            outstanding += 1
+            waiters.removeFirst().resume(returning: true)
+        }
+    }
+}
+
 /// Recursively scans directories and streams scan results.
 ///
 /// Optimized for speed: low-level FTS traversal avoids Foundation URL/resourceValues
@@ -88,9 +145,18 @@ final class FileScanner {
 
     /// Recursively scans a directory and streams results via AsyncThrowingStream
     ///
-    /// - Parameter rootURL: The root URL to begin scanning from
+    /// - Parameters:
+    ///   - rootURL: The root URL to begin scanning from
+    ///   - ignoredNames: Directory names to skip
+    ///   - cancellationToken: Optional cooperative cancel signal
+    ///   - backpressure: Optional gate limiting outstanding unconsumed results
     /// - Returns: An AsyncThrowingStream that yields ScanResult values
-    func scan(_ rootURL: URL, ignoredNames: Set<String>, cancellationToken: ScanCancellationToken? = nil) -> AsyncThrowingStream<ScanResult, Error> {
+    func scan(
+        _ rootURL: URL,
+        ignoredNames: Set<String>,
+        cancellationToken: ScanCancellationToken? = nil,
+        backpressure: ScanBackpressureGate? = nil
+    ) -> AsyncThrowingStream<ScanResult, Error> {
         return AsyncThrowingStream<ScanResult, Error> { continuation in
             let traversalState = ScanTraversalState(rootPath: rootURL.path)
             let watchdogTask = Task {
@@ -114,6 +180,7 @@ final class FileScanner {
             let producerTask = Task { [weak self] in
                 guard let self else {
                     traversalState.markFinished()
+                    await backpressure?.close()
                     continuation.finish()
                     return
                 }
@@ -129,12 +196,14 @@ final class FileScanner {
                 var isDirectory: ObjCBool = false
                 guard fileManager.fileExists(atPath: rootURL.path, isDirectory: &isDirectory) else {
                     traversalState.markFinished()
+                    await backpressure?.close()
                     continuation.finish(throwing: ScanError.invalidPath)
                     return
                 }
 
                 guard isDirectory.boolValue else {
                     traversalState.markFinished()
+                    await backpressure?.close()
                     continuation.finish(throwing: ScanError.invalidPath)
                     return
                 }
@@ -148,6 +217,7 @@ final class FileScanner {
                 let duplicatedRoot = strdup(rootPath)
 
                 guard let duplicatedRoot else {
+                    await backpressure?.close()
                     continuation.finish(throwing: ScanError.invalidPath)
                     return
                 }
@@ -160,6 +230,7 @@ final class FileScanner {
                     free(duplicatedRoot)
                     pathBuffer.deinitialize(count: 2)
                     pathBuffer.deallocate()
+                    await backpressure?.close()
                     continuation.finish(throwing: ScanError.invalidPath)
                     return
                 }
@@ -171,7 +242,7 @@ final class FileScanner {
                     pathBuffer.deallocate()
                 }
 
-                while let entry = fts_read(tree) {
+                scanLoop: while let entry = fts_read(tree) {
                     if Task.isCancelled || cancellationToken?.isCancelled == true {
                         Self.logger.info("Producer task cancelled after \(count) files")
                         break
@@ -201,16 +272,20 @@ final class FileScanner {
                             category: category,
                             subcategory: subcategory
                         )
+                        if let backpressure {
+                            guard await backpressure.waitToProduce() else {
+                                break scanLoop
+                            }
+                            if Task.isCancelled || cancellationToken?.isCancelled == true {
+                                break scanLoop
+                            }
+                        }
                         continuation.yield(result)
                         count += 1
 
                         if count - lastLogCount >= logInterval {
                             Self.logger.debug("Scanned \(count) files, current: \(path, privacy: .public)")
                             lastLogCount = count
-                        }
-
-                        if count % 10000 == 0 {
-                            await Task.yield()
                         }
 
                     case FTS_DNR, FTS_ERR, FTS_NS:
@@ -223,6 +298,7 @@ final class FileScanner {
                         }
 
                         if let abortError = Self.abortError(forFTSErrno: entryErrno, path: path) {
+                            await backpressure?.close()
                             continuation.finish(throwing: abortError)
                             return
                         }
@@ -237,11 +313,15 @@ final class FileScanner {
                 }
 
                 Self.logger.debug("Scan complete: \(count) files total")
+                await backpressure?.close()
                 continuation.finish()
             }
 
             // Cancel the producer when the stream is terminated (consumer cancelled or dropped)
             continuation.onTermination = { @Sendable _ in
+                Task {
+                    await backpressure?.close()
+                }
                 watchdogTask.cancel()
                 producerTask.cancel()
             }

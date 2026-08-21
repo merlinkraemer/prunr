@@ -246,4 +246,33 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         ).map(\.path)
         XCTAssertEqual(Set(result), Set([home.path, external.path]))
     }
+
+    // MARK: - CACHE-01 subcategory vs contributor generation
+
+    func testSubcategoryBreakdownSurvivesContributorCacheInvalidation() {
+        let manager = MenuBarManager()
+        let group = SubcategoryGroup(
+            subcategory: .nodeModules,
+            displayName: "node_modules",
+            totalBytes: 1_024,
+            fileCount: 1,
+            topFiles: []
+        )
+
+        manager._testSeedSubcategoryReady(category: .developer, groups: [group])
+        XCTAssertTrue(manager.isSubcategoryBreakdownReady(for: .developer))
+
+        manager._testInvalidateGrowthContributorCache()
+        XCTAssertTrue(
+            manager.isSubcategoryBreakdownReady(for: .developer),
+            "Contributor-only invalidation must not stale subcategory readiness"
+        )
+
+        manager._testBumpSubcategoryCacheGeneration()
+        XCTAssertFalse(
+            manager.isSubcategoryBreakdownReady(for: .developer),
+            "Subcategory generation bump must stale readiness"
+        )
+    }
+
 }

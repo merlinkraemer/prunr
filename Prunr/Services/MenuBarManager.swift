@@ -217,6 +217,9 @@ final class MenuBarManager: NSObject {
     var subcategoryBreakdownLoadingCategories: Set<GrowthCategory> = []
     var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
     var growthContributorCacheGeneration: UInt64 = 0
+    /// Generation for subcategory breakdown readiness. Bumped only when the
+    /// subcategory cache is wiped — independent of growth-contributor invalidation.
+    private var subcategoryCacheGeneration: UInt64 = 0
     private var currentInventorySnapshotIDsByPath: [UUID: Int64] = [:]
     private var currentGrowthBaselineSnapshotIDsByPath: [UUID: Int64] = [:]
     /// "Since" anchor for accumulated growth — the baseline snapshot date.
@@ -800,15 +803,14 @@ final class MenuBarManager: NSObject {
             button.alphaValue = 1.0
         }
 
-        // Panel uses a placeholder NSView — NSHostingView<MenuBarView> is created
-        // lazily in togglePopover() on first show. This prevents the SwiftUI view tree
-        // from being alive in the hidden NSPanel, which reduces CA display cycle overhead.
+        // Panel starts with a placeholder; NSHostingView<MenuBarView> is installed
+        // lazily on first show and kept installed across ordinary hide/close so
+        // SwiftUI @State and drilldown caches survive reopen.
         let placeholder = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
         panel = DropdownPanel(contentView: placeholder) { [weak self] in
             self?.isPopoverShown = false
             self?.panelAutoCloseSuspensionCount = 0
             self?.panel?.closesOnResignKey = true
-            self?.uninstallPanelHostingView()
         }
     }
 
@@ -909,11 +911,10 @@ final class MenuBarManager: NSObject {
     }
 
     @objc func openSettings() {
-        // Close popover if open
+        // Close popover if open (keep hosting view installed across settings transitions)
         if let panel = panel, panel.isVisible {
             panel.orderOut(nil)
             isPopoverShown = false
-            uninstallPanelHostingView()
         }
 
         // Open the settings window on demand. We avoid SwiftUI's Settings scene
@@ -1650,7 +1651,7 @@ final class MenuBarManager: NSObject {
 
     func isSubcategoryBreakdownReady(for category: GrowthCategory) -> Bool {
         guard subcategoryGroupsByCategory[category] != nil else { return false }
-        return subcategoryBreakdownCacheGenerationByCategory[category] == growthContributorCacheGeneration
+        return subcategoryBreakdownCacheGenerationByCategory[category] == subcategoryCacheGeneration
     }
 
     func isSubcategoryBreakdownLoading(for category: GrowthCategory) -> Bool {
@@ -2134,6 +2135,7 @@ final class MenuBarManager: NSObject {
             subcategoryBreakdownLoadingCategories = []
             hasCompletedInitialSubcategoryWarmup = false
             initialSubcategoryWarmupRequestSignature = nil
+            subcategoryCacheGeneration &+= 1
         } else {
             let validCategories = Set(allCategories.map(\.category))
             subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
@@ -2164,6 +2166,7 @@ final class MenuBarManager: NSObject {
             subcategoryGroupsByCategory = [:]
             subcategoryBreakdownCacheGenerationByCategory = [:]
             subcategoryBreakdownLoadingCategories = []
+            subcategoryCacheGeneration &+= 1
             invalidateGrowthContributorCache()
             selectedInventoryCategory = nil
             selectedSubcategory = nil
@@ -2200,7 +2203,7 @@ final class MenuBarManager: NSObject {
             t.disablesAnimations = true
             withTransaction(t) {
                 subcategoryGroupsByCategory[category] = groups
-                subcategoryBreakdownCacheGenerationByCategory[category] = growthContributorCacheGeneration
+                subcategoryBreakdownCacheGenerationByCategory[category] = subcategoryCacheGeneration
                 subcategoryBreakdownLoadingCategories.remove(category)
             }
             return groups
@@ -2230,6 +2233,22 @@ final class MenuBarManager: NSObject {
     private func invalidateGrowthContributorCache() {
         growthContributorsBySubcategory = [:]
         growthContributorCacheGeneration &+= 1
+    }
+
+    /// Test hook: mark a subcategory breakdown ready at the current subcategory generation.
+    func _testSeedSubcategoryReady(category: GrowthCategory, groups: [SubcategoryGroup] = []) {
+        subcategoryGroupsByCategory[category] = groups
+        subcategoryBreakdownCacheGenerationByCategory[category] = subcategoryCacheGeneration
+    }
+
+    /// Test hook: invalidate only the growth-contributor cache (not subcategory readiness).
+    func _testInvalidateGrowthContributorCache() {
+        invalidateGrowthContributorCache()
+    }
+
+    /// Test hook: bump subcategory generation so existing stamped readiness becomes stale.
+    func _testBumpSubcategoryCacheGeneration() {
+        subcategoryCacheGeneration &+= 1
     }
 
     private func suppressedGrowthItem(from item: CategoryInventoryItem) -> CategoryInventoryItem {
@@ -2373,13 +2392,8 @@ final class MenuBarManager: NSObject {
     /// Tracks whether the panel's SwiftUI hosting view has been installed.
     private var panelHostingViewInstalled = false
 
-    private func uninstallPanelHostingView() {
-        guard panelHostingViewInstalled else { return }
-        panelHostingViewInstalled = false
-
-        let placeholder = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
-        panel?.setContent(placeholder)
-    }
+    // The hosting view remains installed across ordinary hide/show cycles so
+    // SwiftUI @State and in-memory drilldown caches survive reopen.
 
     @objc private func togglePopover() {
         guard let button = statusItem?.button else {
@@ -2391,16 +2405,14 @@ final class MenuBarManager: NSObject {
             isPopoverShown = false
             panelAutoCloseSuspensionCount = 0
             panel.closesOnResignKey = true
-            uninstallPanelHostingView()
         } else {
             guard let buttonWindow = button.window,
                   buttonWindow.screen != nil else {
                 return
             }
 
-            // Lazily install the SwiftUI hosting view on first show.
-            // This defers MenuBarView creation until the user opens the panel,
-            // preventing continuous CA layout passes while the panel is hidden.
+            // Lazily install the SwiftUI hosting view on first show and keep it
+            // across hide/show so @State and in-memory drilldown survive reopen.
             if !panelHostingViewInstalled {
                 panelHostingViewInstalled = true
                 let panelContent = NSHostingView(rootView: MenuBarView(manager: self))
@@ -2614,12 +2626,11 @@ final class MenuBarManager: NSObject {
 
     func closePopover() {
         if isPopoverShown {
-            // Close panel if using panel mode
+            // Close panel if using panel mode (keep hosting view installed)
             if let panel = panel, panel.isVisible {
                 panel.orderOut(nil)
             }
             isPopoverShown = false
-            uninstallPanelHostingView()
 
             // Reset auto-close suspension state when manually closing
             panelAutoCloseSuspensionCount = 0
@@ -3166,10 +3177,11 @@ final class MenuBarManager: NSObject {
             lastDetectedChangeAt = Date()
             hasIncrementalDeltasSinceSnapshot = true
             liveWorkingSetDrillDownCategories.formUnion(allDeltas.keys.map(\.category))
-            invalidateGrowthContributorCache()
             // Reload inventory from DB ground truth instead of patching in-memory.
             // The incremental refresh already updated workingSetEntry + category totals
             // in the DB. Just read them back — no drift possible.
+            // applyInventory (via loadInventoryFromLatestSnapshot) already invalidates
+            // the growth-contributor cache; do not bump it again here.
             await loadInventoryFromLatestSnapshot(
                 refreshedAt: Date(),
                 invalidateSubcategoryCache: false

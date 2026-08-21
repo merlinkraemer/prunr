@@ -15,15 +15,50 @@ enum FeedbackServiceError: LocalizedError {
     case rejected(String)
     case networkUnavailable
 
+    static let mailtoFallbackAddress = "merlinkraemer@gmail.com"
+
+    /// Shared mailto line included in every user-facing send failure.
+    static let mailtoFallbackMessage =
+        "Or email \(mailtoFallbackAddress) directly."
+
     static let networkUnavailableMessage =
-        "Could not send feedback. Reconnect to the internet and try again, or email merlinkraemer@gmail.com directly."
+        "Could not send feedback. Reconnect to the internet and try again, or email \(mailtoFallbackAddress) directly."
+
+    /// User-facing copy for non-network send failures (always includes mailto).
+    static func userFacingMessage(for error: Error) -> String {
+        if let serviceError = error as? FeedbackServiceError {
+            switch serviceError {
+            case .networkUnavailable:
+                return networkUnavailableMessage
+            case .invalidResponse:
+                return "Could not send feedback. The service returned an unexpected response. \(mailtoFallbackMessage)"
+            case .rejected(let message):
+                let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                let base = trimmed.isEmpty
+                    ? "Could not send feedback. Please try again later."
+                    : trimmed
+                if base.localizedCaseInsensitiveContains(mailtoFallbackAddress) {
+                    return base
+                }
+                return "\(base) \(mailtoFallbackMessage)"
+            }
+        }
+        return "Could not send feedback: \(error.localizedDescription) \(mailtoFallbackMessage)"
+    }
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            return "The feedback service returned an unexpected response."
+            return "The feedback service returned an unexpected response. \(Self.mailtoFallbackMessage)"
         case .rejected(let message):
-            return message
+            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            let base = trimmed.isEmpty
+                ? "Could not send feedback. Please try again later."
+                : trimmed
+            if base.localizedCaseInsensitiveContains(Self.mailtoFallbackAddress) {
+                return base
+            }
+            return "\(base) \(Self.mailtoFallbackMessage)"
         case .networkUnavailable:
             return Self.networkUnavailableMessage
         }

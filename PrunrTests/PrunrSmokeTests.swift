@@ -2355,6 +2355,70 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testAddEntriesResolvesCaseOnlyPathRenameWithoutLookupFailure() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let snapshotId = try XCTUnwrap(snapshot.id)
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [
+                    ScanResult(path: "/Users/tester/Docs/Report.pdf", sizeBytes: 100)
+                ]
+            )
+
+            // Case-only rename: UNIQUE COLLATE NOCASE keeps the old spelling; lookup must
+            // still resolve the new requested casing (SCAN-02).
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [
+                    ScanResult(path: "/Users/tester/Docs/report.pdf", sizeBytes: 120)
+                ]
+            )
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let result = try await dbPool.read { db in
+                let pathCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM paths") ?? 0
+                let entryCount = try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM snapshotEntry WHERE snapshotId = ?",
+                    arguments: [snapshotId]
+                ) ?? 0
+                let newestSize = try Int64.fetchOne(
+                    db,
+                    sql: "SELECT MAX(sizeBytes) FROM snapshotEntry WHERE snapshotId = ?",
+                    arguments: [snapshotId]
+                )
+                return (pathCount, entryCount, newestSize)
+            }
+            XCTAssertEqual(result.0, 1)
+            XCTAssertEqual(result.1, 2)
+            XCTAssertEqual(result.2, 120)
+        }
+    }
+
+    func testScanBackpressureGateBoundsOutstandingAndUnblocksOnClose() async throws {
+        let gate = ScanBackpressureGate(maxOutstanding: 2)
+
+        await gate.waitToProduce()
+        await gate.waitToProduce()
+
+        async let blockedProduce = gate.waitToProduce()
+        // Give the waiter time to park inside the gate before releasing capacity.
+        try await Task.sleep(for: .milliseconds(40))
+        await gate.release(1)
+        let didProduce = await blockedProduce
+        XCTAssertTrue(didProduce)
+
+        // A second waiter remains blocked because the third producer consumed
+        // the one released slot. Closing must release it without granting a slot.
+        async let closedProduce = gate.waitToProduce()
+        try await Task.sleep(for: .milliseconds(20))
+        await gate.close()
+        let producedAfterClose = await closedProduce
+        XCTAssertFalse(producedAfterClose)
+    }
+
     func testWorkingSetCategoryDeltasDeleteZeroTotalsWithoutReadback() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let trackedPath = TrackedPath(
