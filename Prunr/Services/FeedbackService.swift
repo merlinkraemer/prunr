@@ -13,6 +13,10 @@ struct FeedbackSubmission: Encodable {
 enum FeedbackServiceError: LocalizedError {
     case invalidResponse
     case rejected(String)
+    case networkUnavailable
+
+    static let networkUnavailableMessage =
+        "Could not send feedback. Reconnect to the internet and try again, or email merlinkraemer@gmail.com directly."
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +24,28 @@ enum FeedbackServiceError: LocalizedError {
             return "The feedback service returned an unexpected response."
         case .rejected(let message):
             return message
+        case .networkUnavailable:
+            return Self.networkUnavailableMessage
+        }
+    }
+
+    /// Maps URLSession transport failures (offline, timeout, DNS, connection) to a typed error.
+    /// Returns nil for non-network errors so HTTP/server handling stays unchanged.
+    static func mapTransportFailure(_ error: Error) -> FeedbackServiceError? {
+        guard let urlError = error as? URLError else { return nil }
+        switch urlError.code {
+        case .notConnectedToInternet,
+             .networkConnectionLost,
+             .timedOut,
+             .cannotFindHost,
+             .dnsLookupFailed,
+             .cannotConnectToHost,
+             .internationalRoamingOff,
+             .callIsActive,
+             .dataNotAllowed:
+            return .networkUnavailable
+        default:
+            return nil
         }
     }
 }
@@ -57,7 +83,17 @@ enum FeedbackService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(submission)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            if let mapped = FeedbackServiceError.mapTransportFailure(error) {
+                throw mapped
+            }
+            throw error
+        }
+
         guard let http = response as? HTTPURLResponse else {
             throw FeedbackServiceError.invalidResponse
         }
