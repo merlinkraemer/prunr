@@ -39,6 +39,10 @@ actor DatabaseCleanupService {
     private static let startupInitialDelay: TimeInterval = 2 * 60
     private static let startupIdlePollInterval: TimeInterval = 5
     private static let startupIdleMaxWait: TimeInterval = 5 * 60
+    /// Incomplete snapshots newer than this are treated as in-flight, not abandoned.
+    static let abandonedScanGracePeriod: TimeInterval = 15 * 60
+    private static let compactIdleMaxWait: TimeInterval = 10
+    private static let compactIdlePollInterval: TimeInterval = 0.5
     private static let minimumVacuumReclaimBytes: Int64 = 96 * 1024 * 1024
     private static let minimumVacuumReclaimRatio = 0.18
 
@@ -112,6 +116,10 @@ actor DatabaseCleanupService {
     /// Performs startup maintenance to keep app data lean between app versions.
     /// Runs a standard cleanup pass and optionally forces WAL checkpoint/vacuum
     /// when version changes or database size grows beyond thresholds.
+    ///
+    /// Abandoned-snapshot cleanup always runs once the app is idle so launch
+    /// cannot race an in-flight scan. Broader maintenance still respects the
+    /// interval / size gates.
     func performStartupMaintenance() async {
         guard !isStartupMaintenanceRunning else { return }
         isStartupMaintenanceRunning = true
@@ -119,6 +127,16 @@ actor DatabaseCleanupService {
 
         // Give initial autoscan/watcher setup time to settle before maintenance can claim the writer.
         try? await Task.sleep(for: .milliseconds(Int(Self.startupInitialDelay * 1000)))
+
+        let becameIdle = await waitForAppToBeIdle(
+            maxWait: Self.startupIdleMaxWait,
+            pollInterval: Self.startupIdlePollInterval
+        )
+        guard becameIdle else {
+            return
+        }
+
+        _ = try? await cleanupAbandonedSnapshots()
 
         let appVersion = currentAppVersion()
         let lastVersion = UserDefaults.standard.string(forKey: Self.appVersionKey)
@@ -134,14 +152,6 @@ actor DatabaseCleanupService {
             || sizes.walBytes >= Self.startupAggressiveWalSizeBytes
 
         guard shouldRun || shouldAggressiveCleanup else { return }
-
-        let becameIdle = await waitForAppToBeIdle(
-            maxWait: Self.startupIdleMaxWait,
-            pollInterval: Self.startupIdlePollInterval
-        )
-        guard becameIdle else {
-            return
-        }
 
         _ = try? await backfillRecentCategorySnapshots()
         _ = try? await backfillRecentSubcategorySnapshots()
@@ -169,9 +179,13 @@ actor DatabaseCleanupService {
     /// Normal scan failures are cleaned up by ScanService, but a killed process cannot
     /// run that handler. Completed scans rebuild the working set with the snapshot
     /// timestamp; abandoned snapshots are newer than the live working set.
+    /// Fresh `.scanning` rows inside the grace window are left alone so launch
+    /// cleanup cannot delete an in-flight scan.
     @discardableResult
     func cleanupAbandonedSnapshots() async throws -> Int {
         guard let dbPool = db.dbPool else { return 0 }
+
+        let staleBefore = Date().addingTimeInterval(-Self.abandonedScanGracePeriod)
 
         return try await dbPool.write { db in
             let snapshotIDs = try Int64.fetchAll(
@@ -184,12 +198,13 @@ actor DatabaseCleanupService {
                         FROM workingSetEntry
                         GROUP BY trackedPathId
                     ) ws ON ws.trackedPathId = s.trackedPathId
-                    WHERE s.lifecycle != ?
-                       OR (s.trackedPathId != ''
+                    WHERE (s.lifecycle != ? AND s.createdAt < ?)
+                       OR (s.lifecycle = ?
+                           AND s.trackedPathId != ''
                            AND ws.latestWorkingSetUpdate IS NOT NULL
                            AND s.createdAt > ws.latestWorkingSetUpdate)
                     """,
-                    arguments: [Snapshot.Lifecycle.complete.rawValue]
+                    arguments: [Snapshot.Lifecycle.complete.rawValue, staleBefore, Snapshot.Lifecycle.complete.rawValue]
                 )
 
             guard !snapshotIDs.isEmpty else { return 0 }
@@ -212,7 +227,16 @@ actor DatabaseCleanupService {
     }
 
     /// Performs an explicit one-shot maintenance pass and forces WAL checkpoint + VACUUM.
+    /// Refuses while a scan/refresh is running so abandoned cleanup cannot delete live work.
     func compactDatabaseNow() async throws -> MaintenanceReport {
+        let becameIdle = await waitForAppToBeIdle(
+            maxWait: Self.compactIdleMaxWait,
+            pollInterval: Self.compactIdlePollInterval
+        )
+        guard becameIdle else {
+            throw CleanupError.appBusy
+        }
+
         let before = databaseFileSizes()
         _ = try await cleanupAbandonedSnapshots()
         let backfilled = try await backfillRecentCategorySnapshots()
@@ -366,6 +390,8 @@ actor DatabaseCleanupService {
                 || manager.isAutoScanning
                 || manager.isAnalyzingChanges
                 || manager.isCleaningUp
+                || manager.isReconciling
+                || manager.isInventoryRefreshInProgress
         }
     }
 
@@ -841,6 +867,19 @@ actor DatabaseCleanupService {
             }
             guard sizeBytes > topItems[smallestIndex].currentSizeBytes else { return }
             topItems[smallestIndex] = item
+        }
+    }
+}
+
+extension DatabaseCleanupService {
+    enum CleanupError: Error, LocalizedError {
+        case appBusy
+
+        var errorDescription: String? {
+            switch self {
+            case .appBusy:
+                return "Cannot compact while a scan or refresh is running. Try again when Prunr is idle."
+            }
         }
     }
 }

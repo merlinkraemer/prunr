@@ -1,5 +1,21 @@
 # Todo: Growth UX Redesign
 
+## Scan hardening review fixes — 2026-08-21
+
+- [x] B: Continue past transient ENOENT/ESTALE FTS errors; abort on permission/systematic errors.
+- [x] A: 15-minute abandoned-scan grace; idle-gated startup cleanup; refuse compact while busy; markSnapshotComplete rowcount check.
+- [x] E: Include `isReconciling` and `isInventoryRefreshInProgress` in busy gates.
+- [x] C: FileHandle append with rotation only over the diagnostics log cap.
+- [x] Minors: explicit Settings notice error state; tilde path redaction; store `scopePathCount`.
+- [x] Add/update regressions for fresh/stale scanning cleanup, vanished snapshot publish, FTS policy, tilde redaction.
+- [ ] D: Release decision only — respin alpha.11 vs avoid sysdiagnose requests (no code change).
+
+### Review
+
+Implemented findings B/A/E/C plus the listed minors from
+`docs/scan-hardening-review-2026-08-21.md`. Finding D remains a release process
+decision. `make test` → **91 tests, 0 failures**.
+
 ## Cache drilldown batching — 2026-08-20
 
 - [x] Make Google Chrome and browser variants resolve native icons reliably.

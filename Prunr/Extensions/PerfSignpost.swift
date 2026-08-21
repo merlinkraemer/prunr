@@ -47,10 +47,9 @@ enum Perf {
 
 /// Snapshot of app-level state captured when the user generates diagnostics.
 /// Built by `MenuBarManager` so the reporter stays decoupled from app internals.
-/// `scopePaths` deliberately never leaves this type: diagnostics only report
-/// aggregate scope information, not root names or filesystem locations.
+/// Diagnostics only report aggregate scope counts, never root names or paths.
 struct DiagnosticsAppContext {
-    var scopePaths: [String]
+    var scopePathCount: Int
     var enabledPathCount: Int
     var watchedPathCount: Int
     var protectedTraversalConfirmed: Bool
@@ -83,7 +82,7 @@ final class DiagnosticsReporter {
     static let maximumLogBytes = 1_000_000
     static let maximumAttachmentBytes = 200_000
     private static let filesystemPathPattern = try! NSRegularExpression(
-        pattern: #"/(?:Users|Volumes)(?:/[^\s\]\[\(\),;\"']*)?"#
+        pattern: #"(?:~|/(?:Users|Volumes))(?:/[^\s\]\[\(\),;\"']*)?"#
     )
 
     /// How often the rolling window is flushed to disk (seconds).
@@ -338,14 +337,26 @@ final class DiagnosticsReporter {
     private func append(_ text: String) {
         guard let url = logFileURL else { return }
         let line = text.hasSuffix("\n") ? text : text + "\n"
-        let existing = (try? Data(contentsOf: url)).map {
-            Data(Self.redactingFilesystemPaths(in: String(decoding: $0, as: UTF8.self)).utf8)
-        } ?? Data()
         let data = Data(Self.redactingFilesystemPaths(in: line).utf8)
-        let bounded = Self.newestCompleteRecords(
-            in: existing + data,
-            maximumBytes: Self.maximumLogBytes
-        )
+
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url, options: .atomic)
+            return
+        }
+
+        rotateIfNeeded(url: url)
+    }
+
+    /// Only pays the read-rewrite cost when the file is actually over the cap.
+    private func rotateIfNeeded(url: URL) {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        guard size > Self.maximumLogBytes else { return }
+        guard let existing = try? Data(contentsOf: url) else { return }
+        let bounded = Self.newestCompleteRecords(in: existing, maximumBytes: Self.maximumLogBytes)
         try? bounded.write(to: url, options: .atomic)
     }
 
@@ -362,9 +373,8 @@ final class DiagnosticsReporter {
         return Data(tail[tail.index(after: firstNewline)...])
     }
 
-    /// Redacts the user-visible portion of the two macOS path families that can
-    /// carry a username and arbitrary folder names. Running this over existing
-    /// content also makes reports safe after upgrading from older alpha builds.
+    /// Redacts the user-visible portion of the macOS path families that can
+    /// carry a username and arbitrary folder names, including `~/…` forms.
     static func redactingFilesystemPaths(in text: String) -> String {
         let range = NSRange(text.startIndex..., in: text)
         return filesystemPathPattern.stringByReplacingMatches(
@@ -378,7 +388,7 @@ final class DiagnosticsReporter {
     /// Scope location labels can include names and paths, so diagnostics retain
     /// only aggregate counts and permission state.
     static func scopeSummary(for context: DiagnosticsAppContext) -> String {
-        "scope: roots=\(context.scopePaths.count) enabled=\(context.enabledPathCount) watched=\(context.watchedPathCount) protectedTraversal=\(context.protectedTraversalConfirmed)"
+        "scope: roots=\(context.scopePathCount) enabled=\(context.enabledPathCount) watched=\(context.watchedPathCount) protectedTraversal=\(context.protectedTraversalConfirmed)"
     }
 
     enum ScanOutcome {

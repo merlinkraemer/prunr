@@ -577,7 +577,7 @@ final class MenuBarManager: NSObject {
     nonisolated(unsafe) private var reconciliationBackstopTask: Task<Void, Never>?
     @ObservationIgnored
     nonisolated(unsafe) private var deferredAutoCleanupTask: Task<Void, Never>?
-    private var isInventoryRefreshInProgress = false
+    private(set) var isInventoryRefreshInProgress = false
     private var pendingRecentChangePaths: Set<URL> = []
     private var pendingRecentChangeRequiresFullRefresh = false
     /// A dirty watcher signal survives active scans and full-scan cooldowns.
@@ -660,7 +660,7 @@ final class MenuBarManager: NSObject {
     private var lastReconciliationAt: Date?
     private var lastReconciliationAttemptAt: Date?
     private var consecutiveFailedReconciliations = 0
-    private var isReconciling = false
+    private(set) var isReconciling = false
     @ObservationIgnored
     nonisolated(unsafe) private var reconciliationTask: Task<Void, Never>?
     var lastScanStatusText: String {
@@ -765,7 +765,7 @@ final class MenuBarManager: NSObject {
     @discardableResult
     private func generateDiagnosticsReport(revealInFinder: Bool) -> URL? {
         let context = DiagnosticsAppContext(
-            scopePaths: SettingsStore.shared.enabledTrackedPaths.map { $0.url.path },
+            scopePathCount: SettingsStore.shared.enabledTrackedPaths.count,
             enabledPathCount: enabledPathCount,
             watchedPathCount: watchedPaths.count,
             protectedTraversalConfirmed: isPermissionConfirmedForProtectedTraversal,
@@ -3440,7 +3440,7 @@ final class MenuBarManager: NSObject {
     }
 
     private func runDeferredAutoCleanupIfNeeded() async {
-        guard !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else {
+        guard !isLoading, !isAutoScanning, !isInventoryRefreshInProgress, !isReconciling else {
             scheduleDeferredAutoCleanup()
             return
         }

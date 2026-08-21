@@ -21,7 +21,7 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
 
     func testDiagnosticsScopeSummaryDoesNotContainPathOrFolderNames() {
         let context = DiagnosticsAppContext(
-            scopePaths: ["/Users/jane/Work/Clients/AcmeCorp", "/Volumes/Archive/Private"],
+            scopePathCount: 2,
             enabledPathCount: 2,
             watchedPathCount: 2,
             protectedTraversalConfirmed: true,
@@ -53,6 +53,16 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         XCTAssertFalse(redacted.contains("jane"))
         XCTAssertFalse(redacted.contains("AcmeCorp"))
         XCTAssertFalse(redacted.contains("Archive"))
+    }
+
+    func testDiagnosticsRedactsTildePaths() {
+        let text = "opened ~/Library/Caches/AcmeCorp/tmp.log\n"
+
+        let redacted = DiagnosticsReporter.redactingFilesystemPaths(in: text)
+
+        XCTAssertEqual(redacted, "opened <redacted-path>\n")
+        XCTAssertFalse(redacted.contains("Library"))
+        XCTAssertFalse(redacted.contains("AcmeCorp"))
     }
 
     func testAppDelegateKeepsMenuBarAppAliveAfterLastWindowCloses() {

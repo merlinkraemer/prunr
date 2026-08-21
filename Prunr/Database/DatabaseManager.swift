@@ -539,6 +539,9 @@ extension DatabaseManager {
                 sql: "UPDATE snapshot SET lifecycle = ? WHERE id = ?",
                 arguments: [Snapshot.Lifecycle.complete.rawValue, id]
             )
+            guard db.changesCount == 1 else {
+                throw DatabaseError.snapshotVanished(id)
+            }
         }
     }
 
@@ -2919,6 +2922,7 @@ extension DatabaseManager {
         case directoryNotFound
         case notInitialized
         case pathLookupFailed(String)
+        case snapshotVanished(Int64)
 
         var errorDescription: String? {
             switch self {
@@ -2928,6 +2932,8 @@ extension DatabaseManager {
                 return "Database has not been initialized"
             case .pathLookupFailed(let path):
                 return "Failed to resolve path ID for: \(path)"
+            case .snapshotVanished(let id):
+                return "Snapshot \(id) vanished before it could be published"
             }
         }
     }

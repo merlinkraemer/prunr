@@ -780,13 +780,13 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
-    func testIncompleteSnapshotIsNeverReadableAndIsCleanedWithoutWorkingSet() async throws {
+    func testIncompleteSnapshotIsNeverReadableAndFreshScanningSurvivesCleanup() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let snapshot = try await DatabaseManager.shared.createSnapshot(
                 trackedPathId: trackedPathId,
                 lifecycle: .scanning
             )
-            _ = try XCTUnwrap(snapshot.id)
+            let snapshotId = try XCTUnwrap(snapshot.id)
 
             let visibleSnapshots = try await DatabaseManager.shared.fetchRecentSnapshots(
                 trackedPathId: trackedPathId,
@@ -795,11 +795,126 @@ final class PrunrSmokeTests: XCTestCase {
             XCTAssertTrue(visibleSnapshots.isEmpty)
 
             let deleted = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
+            XCTAssertEqual(deleted, 0)
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let remaining: (id: Int64?, lifecycle: String?)? = try await dbPool.read { db in
+                guard let row = try Row.fetchOne(
+                    db,
+                    sql: "SELECT id, lifecycle FROM snapshot WHERE id = ?",
+                    arguments: [snapshotId]
+                ) else {
+                    return nil
+                }
+                return (id: row["id"], lifecycle: row["lifecycle"])
+            }
+            XCTAssertEqual(remaining?.id, snapshotId)
+            XCTAssertEqual(remaining?.lifecycle, Snapshot.Lifecycle.scanning.rawValue)
+        }
+    }
+
+    func testFreshScanningSnapshotSurvivesCleanupWithWorkingSet() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let completedSnapshot = try await DatabaseManager.shared.createSnapshot(
+                trackedPathId: trackedPathId
+            )
+            let completedSnapshotId = try XCTUnwrap(completedSnapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: completedSnapshotId,
+                entries: [
+                    ScanResult(path: "/Users/tester/dev/file.dat", sizeBytes: 100)
+                ]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: completedSnapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date()
+            )
+
+            let scanningSnapshot = try await DatabaseManager.shared.createSnapshot(
+                trackedPathId: trackedPathId,
+                lifecycle: .scanning
+            )
+            let scanningSnapshotId = try XCTUnwrap(scanningSnapshot.id)
+
+            let deleted = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
+            XCTAssertEqual(deleted, 0)
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let remainingLifecycle = try await dbPool.read { db in
+                try String.fetchOne(
+                    db,
+                    sql: "SELECT lifecycle FROM snapshot WHERE id = ?",
+                    arguments: [scanningSnapshotId]
+                )
+            }
+            XCTAssertEqual(remainingLifecycle, Snapshot.Lifecycle.scanning.rawValue)
+        }
+    }
+
+    func testStaleScanningSnapshotIsCleanedWithoutWorkingSet() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let snapshot = try await DatabaseManager.shared.createSnapshot(
+                trackedPathId: trackedPathId,
+                lifecycle: .scanning
+            )
+            let snapshotId = try XCTUnwrap(snapshot.id)
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let staleDate = Date().addingTimeInterval(-(DatabaseCleanupService.abandonedScanGracePeriod + 60))
+            try await dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE snapshot SET createdAt = ? WHERE id = ?",
+                    arguments: [staleDate, snapshotId]
+                )
+            }
+
+            let deleted = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
             XCTAssertEqual(deleted, 1)
 
-            let remaining = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
-            XCTAssertTrue(remaining.isEmpty)
+            let remainingCount = try await dbPool.read { db in
+                try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM snapshot WHERE id = ?",
+                    arguments: [snapshotId]
+                ) ?? -1
+            }
+            XCTAssertEqual(remainingCount, 0)
         }
+    }
+
+    func testMarkSnapshotCompleteThrowsWhenSnapshotVanished() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            do {
+                try await DatabaseManager.shared.markSnapshotComplete(id: 9_999_999)
+                XCTFail("Expected snapshotVanished")
+            } catch let error as DatabaseManager.DatabaseError {
+                guard case .snapshotVanished(9_999_999) = error else {
+                    return XCTFail("Unexpected DatabaseError: \(error)")
+                }
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testFileScannerContinuesOnTransientFTSErrors() {
+        XCTAssertNil(FileScanner.abortError(forFTSErrno: ENOENT, path: "/tmp/gone"))
+        XCTAssertNil(FileScanner.abortError(forFTSErrno: ESTALE, path: "/tmp/stale"))
+
+        guard case .permissionDenied(let deniedPath)? = FileScanner.abortError(forFTSErrno: EACCES, path: "/tmp/denied") else {
+            return XCTFail("Expected permissionDenied for EACCES")
+        }
+        XCTAssertEqual(deniedPath, "/tmp/denied")
+
+        guard case .permissionDenied? = FileScanner.abortError(forFTSErrno: EPERM, path: "/tmp/perm") else {
+            return XCTFail("Expected permissionDenied for EPERM")
+        }
+
+        guard case .traversalFailed(let failedPath)? = FileScanner.abortError(forFTSErrno: EIO, path: "/tmp/io") else {
+            return XCTFail("Expected traversalFailed for EIO")
+        }
+        XCTAssertEqual(failedPath, "/tmp/io")
     }
 
     func testRecentGrowthStorySumsAllDeltasSinceBaseline() async throws {

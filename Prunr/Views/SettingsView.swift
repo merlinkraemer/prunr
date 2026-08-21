@@ -165,12 +165,15 @@ private struct TroubleshootingSettingsTab: View {
     @State private var feedbackMessage = ""
     @State private var feedbackEmail = ""
     @State private var feedbackNotice = ""
+    @State private var feedbackNoticeIsError = false
     @State private var diagnosticsNotice = ""
+    @State private var diagnosticsNoticeIsError = false
     @State private var isSendingFeedback = false
     @State private var isResetting = false
     @State private var isCompactingDatabase = false
     @State private var showDeleteSnapshotsConfirmation = false
     @State private var compactedNotice = ""
+    @State private var compactedNoticeIsError = false
     @State private var resetNotice = ""
     @FocusState private var feedbackFocused: Bool
 
@@ -207,10 +210,10 @@ private struct TroubleshootingSettingsTab: View {
                 if !feedbackNotice.isEmpty {
                     Text(feedbackNotice)
                         .font(.caption)
-                        .foregroundStyle(feedbackNotice.hasPrefix("Could not") ? .red : .green)
+                        .foregroundStyle(feedbackNoticeIsError ? .red : .green)
                 }
 
-                if feedbackNotice.hasPrefix("Could not") {
+                if feedbackNoticeIsError {
                     Button("Reveal Diagnostics Report in Finder") {
                         _ = MenuBarManager.shared?.generateDiagnosticsReport()
                     }
@@ -220,9 +223,13 @@ private struct TroubleshootingSettingsTab: View {
             Section("Diagnostics") {
                 Button {
                     let url = MenuBarManager.shared?.generateDiagnosticsReport()
-                    diagnosticsNotice = url != nil
-                        ? "Report saved and revealed in Finder. Send it over to help diagnose CPU issues."
-                        : "Could not write diagnostics report."
+                    if url != nil {
+                        diagnosticsNotice = "Report saved and revealed in Finder. Send it over to help diagnose CPU issues."
+                        diagnosticsNoticeIsError = false
+                    } else {
+                        diagnosticsNotice = "Could not write diagnostics report."
+                        diagnosticsNoticeIsError = true
+                    }
                 } label: {
                     Label("Generate Diagnostics Report", systemImage: "stethoscope")
                 }
@@ -230,7 +237,7 @@ private struct TroubleshootingSettingsTab: View {
                 if !diagnosticsNotice.isEmpty {
                     Text(diagnosticsNotice)
                         .font(.caption)
-                        .foregroundStyle(diagnosticsNotice.hasPrefix("Could not") ? .red : .secondary)
+                        .foregroundStyle(diagnosticsNoticeIsError ? .red : .secondary)
                 }
             }
 
@@ -252,7 +259,7 @@ private struct TroubleshootingSettingsTab: View {
                 if !compactedNotice.isEmpty {
                     Text(compactedNotice)
                         .font(.caption)
-                        .foregroundStyle(compactedNotice.hasPrefix("Compaction failed") ? .red : .green)
+                        .foregroundStyle(compactedNoticeIsError ? .red : .green)
                 }
 
                 Button(role: .destructive) {
@@ -296,11 +303,13 @@ private struct TroubleshootingSettingsTab: View {
         guard !message.isEmpty else { return }
         guard let diagnostics = MenuBarManager.shared?.prepareDiagnosticsAttachment() else {
             feedbackNotice = "Could not prepare diagnostics. Reveal the report in Finder and send it manually."
+            feedbackNoticeIsError = true
             return
         }
 
         isSendingFeedback = true
         feedbackNotice = ""
+        feedbackNoticeIsError = false
         Task {
             do {
                 try await FeedbackService.send(
@@ -310,8 +319,10 @@ private struct TroubleshootingSettingsTab: View {
                 )
                 feedbackMessage = ""
                 feedbackNotice = "Feedback sent. Thank you."
+                feedbackNoticeIsError = false
             } catch {
                 feedbackNotice = "Could not send feedback: \(error.localizedDescription)"
+                feedbackNoticeIsError = true
             }
             isSendingFeedback = false
         }
@@ -320,6 +331,7 @@ private struct TroubleshootingSettingsTab: View {
     private func compactDatabase() {
         isCompactingDatabase = true
         compactedNotice = ""
+        compactedNoticeIsError = false
 
         Task {
             do {
@@ -327,8 +339,10 @@ private struct TroubleshootingSettingsTab: View {
                 let reclaimed = max(0, report.dbBytesBefore - report.dbBytesAfter)
                     + max(0, report.walBytesBefore - report.walBytesAfter)
                 compactedNotice = "Reclaimed \(formattedBytes(reclaimed))."
+                compactedNoticeIsError = false
             } catch {
-                compactedNotice = "Compaction failed: \(error.localizedDescription)"
+                compactedNotice = error.localizedDescription
+                compactedNoticeIsError = true
             }
             isCompactingDatabase = false
         }

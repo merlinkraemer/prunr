@@ -214,19 +214,19 @@ final class FileScanner {
                         }
 
                     case FTS_DNR, FTS_ERR, FTS_NS:
-                        let errno = entry.pointee.fts_errno
-                        if entry.pointee.fts_errno != 0 {
-                            let message = String(cString: strerror(errno))
+                        let entryErrno = entry.pointee.fts_errno
+                        if entryErrno != 0 {
+                            let message = String(cString: strerror(entryErrno))
                             Self.logger.error("FTS error at \(path, privacy: .public): \(message, privacy: .public)")
                         } else {
                             Self.logger.error("FTS error at \(path, privacy: .public)")
                         }
-                        if errno == EACCES || errno == EPERM {
-                            continuation.finish(throwing: ScanError.permissionDenied(path))
-                        } else {
-                            continuation.finish(throwing: ScanError.traversalFailed(path))
+
+                        if let abortError = Self.abortError(forFTSErrno: entryErrno, path: path) {
+                            continuation.finish(throwing: abortError)
+                            return
                         }
-                        return
+                        continue
 
                     case FTS_SL, FTS_SLNONE:
                         continue
@@ -245,6 +245,21 @@ final class FileScanner {
                 watchdogTask.cancel()
                 producerTask.cancel()
             }
+        }
+    }
+
+    // MARK: - FTS Error Policy
+
+    /// Transient per-entry failures (vanished/stale nodes) continue the scan.
+    /// Permission and other systematic errors abort so inventories stay trustworthy.
+    static func abortError(forFTSErrno entryErrno: Int32, path: String) -> ScanError? {
+        switch entryErrno {
+        case ENOENT, ESTALE:
+            return nil
+        case EACCES, EPERM:
+            return .permissionDenied(path)
+        default:
+            return .traversalFailed(path)
         }
     }
 

@@ -41,7 +41,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await menuBarManager.configureMonitoringOnLaunch()
             }
             Task.detached(priority: .utility) {
-                _ = try? await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
                 await DatabaseCleanupService.shared.performStartupMaintenance()
             }
         } catch {
