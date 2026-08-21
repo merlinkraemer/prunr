@@ -74,9 +74,9 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
     func testEqualSizeCategoriesRemainDeterministicallySortedByName() {
         let manager = MenuBarManager()
         manager.allCategories = [
-            CategoryInventoryItem(category: .downloads, currentSizeBytes: 100, growthTrend: nil, recentGrowthStory: nil),
-            CategoryInventoryItem(category: .applications, currentSizeBytes: 100, growthTrend: nil, recentGrowthStory: nil),
-            CategoryInventoryItem(category: .developer, currentSizeBytes: 100, growthTrend: nil, recentGrowthStory: nil)
+            CategoryInventoryItem(category: .downloads, currentSizeBytes: 100, recentGrowthStory: nil),
+            CategoryInventoryItem(category: .applications, currentSizeBytes: 100, recentGrowthStory: nil),
+            CategoryInventoryItem(category: .developer, currentSizeBytes: 100, recentGrowthStory: nil)
         ]
 
         XCTAssertEqual(
@@ -92,29 +92,23 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             CategoryInventoryItem(
                 category: .downloads,
                 currentSizeBytes: 100,
-                growthTrend: nil,
                 recentGrowthStory: RecentGrowthStory(
                     category: .downloads,
                     subcategory: nil,
                     deltaBytes: 2_000_000,
                     startedAt: now,
-                    endedAt: now,
-                    duration: 0,
-                    displayLabel: "now"
+                    endedAt: now
                 )
             ),
             CategoryInventoryItem(
                 category: .applications,
                 currentSizeBytes: 100,
-                growthTrend: nil,
                 recentGrowthStory: RecentGrowthStory(
                     category: .applications,
                     subcategory: nil,
                     deltaBytes: 2_000_000,
                     startedAt: now,
-                    endedAt: now,
-                    duration: 0,
-                    displayLabel: "now"
+                    endedAt: now
                 )
             )
         ]
@@ -134,16 +128,13 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         return CategoryInventoryItem(
             category: category,
             currentSizeBytes: size,
-            growthTrend: nil,
             recentGrowthStory: delta.map {
                 RecentGrowthStory(
                     category: category,
                     subcategory: nil,
                     deltaBytes: $0,
                     startedAt: now,
-                    endedAt: now,
-                    duration: 60,
-                    displayLabel: ""
+                    endedAt: now
                 )
             }
         )

@@ -485,7 +485,6 @@ actor BaselineService {
                 return CategoryInventoryItem(
                     category: category,
                     currentSizeBytes: totalBytes,
-                    growthTrend: nil,
                     recentGrowthStory: nil
                 )
             }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
@@ -1286,63 +1285,6 @@ actor BaselineService {
         )
     }
 
-    private func buildInventoryTrend(
-        from history: [(snapshotId: Int64, createdAt: Date, totalBytes: Int64)],
-        significanceThreshold: Int64
-    ) -> CategoryGrowthTrend? {
-        guard history.count >= 2 else { return nil }
-
-        // Ignore the initial jump from "missing/zero" to the first real snapshot.
-        // That reads like "grew from 0" in the UI even when nothing recently changed.
-        let appearanceThreshold = significanceThreshold / 2
-        let trimmedHistory: ArraySlice<(snapshotId: Int64, createdAt: Date, totalBytes: Int64)>
-        if let firstMeaningfulIndex = history.firstIndex(where: { $0.totalBytes > appearanceThreshold }) {
-            trimmedHistory = history[firstMeaningfulIndex...]
-        } else {
-            trimmedHistory = history[history.startIndex...]
-        }
-
-        guard trimmedHistory.count >= 2,
-              let oldest = trimmedHistory.first,
-              let mostRecent = trimmedHistory.last else {
-            return nil
-        }
-
-        let totalGrowth = mostRecent.totalBytes - oldest.totalBytes
-        guard totalGrowth > significanceThreshold else {
-            return nil
-        }
-
-        let minBytes = trimmedHistory.map(\.totalBytes).min() ?? oldest.totalBytes
-        let tolerance = significanceThreshold / 10
-
-        var growthStartedAt = oldest.createdAt
-        var foundMinimum = false
-
-        for point in trimmedHistory {
-            if !foundMinimum {
-                if point.totalBytes <= minBytes + tolerance {
-                    foundMinimum = true
-                }
-            } else if point.totalBytes > minBytes + tolerance {
-                growthStartedAt = point.createdAt
-                break
-            }
-        }
-
-        let growthSpanDays = Calendar.current.dateComponents(
-            [.day],
-            from: growthStartedAt,
-            to: mostRecent.createdAt
-        ).day ?? 0
-
-        return CategoryGrowthTrend(
-            growthBytes: mostRecent.totalBytes - minBytes,
-            growthStartedAt: growthStartedAt,
-            growthSpanDays: max(1, growthSpanDays)
-        )
-    }
-
     private func mergeInventoryItem(
         _ existing: CategoryInventoryItem,
         with incoming: CategoryInventoryItem
@@ -1350,35 +1292,8 @@ actor BaselineService {
         CategoryInventoryItem(
             category: existing.category,
             currentSizeBytes: existing.currentSizeBytes + incoming.currentSizeBytes,
-            growthTrend: mergeGrowthTrend(existing.growthTrend, incoming.growthTrend),
             recentGrowthStory: mergeRecentGrowthStory(existing.recentGrowthStory, incoming.recentGrowthStory)
         )
-    }
-
-    private func mergeGrowthTrend(
-        _ lhs: CategoryGrowthTrend?,
-        _ rhs: CategoryGrowthTrend?
-    ) -> CategoryGrowthTrend? {
-        switch (lhs, rhs) {
-        case (nil, nil):
-            return nil
-        case let (trend?, nil), let (nil, trend?):
-            return trend
-        case let (lhs?, rhs?):
-            let startedAt = min(lhs.growthStartedAt, rhs.growthStartedAt)
-            let growthBytes = lhs.growthBytes + rhs.growthBytes
-            let growthSpanDays = Calendar.current.dateComponents(
-                [.day],
-                from: startedAt,
-                to: Date()
-            ).day ?? max(lhs.growthSpanDays, rhs.growthSpanDays)
-
-            return CategoryGrowthTrend(
-                growthBytes: growthBytes,
-                growthStartedAt: startedAt,
-                growthSpanDays: max(1, growthSpanDays)
-            )
-        }
     }
 
     private func mergeRecentGrowthStory(
@@ -1391,36 +1306,14 @@ actor BaselineService {
         case let (story?, nil), let (nil, story?):
             return story
         case let (lhs?, rhs?):
-            let startedAt = min(lhs.startedAt, rhs.startedAt)
-            let endedAt = max(lhs.endedAt, rhs.endedAt)
-            let duration = max(60, endedAt.timeIntervalSince(startedAt) + 60)
-
             return RecentGrowthStory(
                 category: lhs.category,
                 subcategory: lhs.subcategory,
                 deltaBytes: lhs.deltaBytes + rhs.deltaBytes,
-                startedAt: startedAt,
-                endedAt: endedAt,
-                duration: duration,
-                displayLabel: formattedDuration(duration)
+                startedAt: min(lhs.startedAt, rhs.startedAt),
+                endedAt: max(lhs.endedAt, rhs.endedAt)
             )
         }
-    }
-
-    private func formattedDuration(_ duration: TimeInterval) -> String {
-        let minute: TimeInterval = 60
-        let hour: TimeInterval = 60 * minute
-        let day: TimeInterval = 24 * hour
-
-        if duration >= day {
-            return "\(max(1, Int(round(duration / day))))d"
-        }
-
-        if duration >= hour {
-            return "\(max(1, Int(round(duration / hour))))h"
-        }
-
-        return "\(max(1, Int(round(duration / minute))))m"
     }
 
     private func mergeOptionalBytes(_ lhs: Int64?, _ rhs: Int64?) -> Int64? {

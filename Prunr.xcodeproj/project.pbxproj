@@ -15,7 +15,6 @@
 		25D53FEECF12CC55C4083ED4 /* MainViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6797B8CC6B8A7749EE273E30 /* MainViewModel.swift */; };
 		2885805D6C1159CC536F1DDB /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE59D0E4C4CF9EDC7891E253 /* MenuBarView.swift */; };
 		3281BD75CCF8244614B7FD63 /* PathManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F36F34441EB516303B2BD52 /* PathManager.swift */; };
-		329C620A6865EABA78C690C7 /* SizeBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F33B39DE84ED14867FAA70 /* SizeBarView.swift */; };
 		32E78179E10D430300BF7E64 /* PermissionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B953D7CD08AC50B0B235D07 /* PermissionsService.swift */; };
 		3B4467433F47A7142C0854B0 /* TrackedPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC001C18FD4269712CA4509B /* TrackedPath.swift */; };
 		4AC78F0F119F18CB3CE23891 /* CategoryDetectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52D26AD1272CBF1764A7E804 /* CategoryDetectionService.swift */; };
@@ -36,7 +35,6 @@
 		757C9A064BD647AB176EA1E6 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = E2B22E46386C6B33EB942744 /* GRDB */; };
 		7C5339B7F5B27A4AC2298FCD /* ScanService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */; };
 		822AEE41D036935587136574 /* SparkleUpdateObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70C765BE517BD973F52B196C /* SparkleUpdateObserver.swift */; };
-		83C527FDFEE5852731C91453 /* GrowthBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94049E57FB0FCA23630AE64C /* GrowthBarView.swift */; };
 		845DFCF0D39A86833A9526BB /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 9E190D096D431F2D6EEC388C /* Sparkle */; };
 		8544011316A0B70538CE78C6 /* MarketingScreenshotRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BB6D844265BBE22C4B3CD31 /* MarketingScreenshotRenderer.swift */; };
 		87A5B1FF3296F18C31BE4F72 /* PrunrInternalPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F14DD8766099C599A690EAE /* PrunrInternalPaths.swift */; };
@@ -82,7 +80,6 @@
 		03FCFE74B7D3EE5B8B0F729C /* SnapshotEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotEntry.swift; sourceTree = "<group>"; };
 		08EB343218571F3B97D51611 /* MenuBarManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarManager.swift; sourceTree = "<group>"; };
 		14CFD6B00057E08E333E4BCA /* DatabaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseManager.swift; sourceTree = "<group>"; };
-		15F33B39DE84ED14867FAA70 /* SizeBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SizeBarView.swift; sourceTree = "<group>"; };
 		1D9601CAA1193992B7E7AA1E /* DiskSpaceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskSpaceService.swift; sourceTree = "<group>"; };
 		225146949C55B77C0509C557 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		25E6413BC5E09F3DB8AA03F4 /* RecentChangeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentChangeService.swift; sourceTree = "<group>"; };
@@ -113,7 +110,6 @@
 		80A10C308A2C694CD6B761DB /* DatabaseCleanupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseCleanupService.swift; sourceTree = "<group>"; };
 		8834DB1F78EB9D61CD16B641 /* FeedbackServiceRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackServiceRegressionTests.swift; sourceTree = "<group>"; };
 		8B3CF2AD939B5B3B85D4CA22 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
-		94049E57FB0FCA23630AE64C /* GrowthBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthBarView.swift; sourceTree = "<group>"; };
 		9710F15700CB12CB50CDC585 /* CategoryInventoryItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryInventoryItem.swift; sourceTree = "<group>"; };
 		9921DE49FF88377717A1B3B5 /* DiskAccountingResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskAccountingResult.swift; sourceTree = "<group>"; };
 		99E7A9176C148C19BAAF8BB4 /* ExpandableList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpandableList.swift; sourceTree = "<group>"; };
@@ -178,11 +174,9 @@
 				DE8A8886A955FB6030EB2BB5 /* DrilldownListPane.swift */,
 				5E6FEE64AD47C800334F9958 /* DrilldownTransitionCoordinator.swift */,
 				43903A2B7D47CDB2B20369FB /* DriveBarView.swift */,
-				94049E57FB0FCA23630AE64C /* GrowthBarView.swift */,
 				CE59D0E4C4CF9EDC7891E253 /* MenuBarView.swift */,
 				9CE320653A13DE8203E50C2A /* SettingsView.swift */,
 				225146949C55B77C0509C557 /* SettingsWindowController.swift */,
-				15F33B39DE84ED14867FAA70 /* SizeBarView.swift */,
 				309F502053B7382480DA400A /* Components */,
 			);
 			path = Views;
@@ -470,7 +464,6 @@
 				97BBACB71AB4AA756B107646 /* FeedbackService.swift in Sources */,
 				8D1CA082042D60BC7B5D588C /* FileScanner.swift in Sources */,
 				C51BB0A8E9DBA9CC3F92608C /* FormattedBytes.swift in Sources */,
-				83C527FDFEE5852731C91453 /* GrowthBarView.swift in Sources */,
 				B632B7B36A8CC8106FA8B352 /* GrowthCategory.swift in Sources */,
 				F3ED05960EF85A2BBE4D45EB /* GrowthJournalService.swift in Sources */,
 				E338FC37EE276E7D1346DDDD /* HiddenScrollIndicators.swift in Sources */,
@@ -491,7 +484,6 @@
 				6653FC659FE7068CDF28824B /* SettingsStore.swift in Sources */,
 				90EDEF69EAA62103B45A6B9C /* SettingsView.swift in Sources */,
 				F4C350CADF72B37F75417E70 /* SettingsWindowController.swift in Sources */,
-				329C620A6865EABA78C690C7 /* SizeBarView.swift in Sources */,
 				5474497B734859A564238117 /* Snapshot.swift in Sources */,
 				568A6B4175387523687ED559 /* SnapshotEntry.swift in Sources */,
 				822AEE41D036935587136574 /* SparkleUpdateObserver.swift in Sources */,

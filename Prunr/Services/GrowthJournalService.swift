@@ -130,15 +130,12 @@ actor GrowthJournalService {
             let total = sorted.reduce(Int64(0)) { $0 + $1.deltaBytes }
             guard total != 0 else { continue }
 
-            let duration = max(60, last.bucketStart.timeIntervalSince(first.bucketStart) + 60)
             result[category] = RecentGrowthStory(
                 category: category,
                 subcategory: nil,
                 deltaBytes: total,
                 startedAt: first.bucketStart,
-                endedAt: last.bucketStart,
-                duration: duration,
-                displayLabel: ""
+                endedAt: last.bucketStart
             )
         }
 

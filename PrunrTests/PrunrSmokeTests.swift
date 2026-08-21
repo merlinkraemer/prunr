@@ -459,7 +459,6 @@ final class PrunrSmokeTests: XCTestCase {
             let developer = try XCTUnwrap(inventory.first(where: { $0.category == .developer }))
 
             XCTAssertNil(developer.recentGrowthStory)
-            XCTAssertNil(developer.growthTrend)
         }
     }
 

@@ -839,7 +839,6 @@ private struct CategoryInventoryRow: View, Equatable {
         lhs.item.id == rhs.item.id &&
         lhs.item.currentSizeBytes == rhs.item.currentSizeBytes &&
         lhs.item.recentGrowthStory == rhs.item.recentGrowthStory &&
-        lhs.item.growthTrend == rhs.item.growthTrend &&
         lhs.isNavigationReady == rhs.isNavigationReady &&
         lhs.isPreparing == rhs.isPreparing &&
         lhs.isHighlightedFromBar == rhs.isHighlightedFromBar

@@ -407,7 +407,6 @@ final class MenuBarManager: NSObject {
                 CategoryInventoryItem(
                     category: category,
                     currentSizeBytes: bytes,
-                    growthTrend: nil,
                     recentGrowthStory: nil
                 )
             }
@@ -755,20 +754,18 @@ final class MenuBarManager: NSObject {
                 subcategory: nil,
                 deltaBytes: bytes,
                 startedAt: baselineDate,
-                endedAt: now,
-                duration: now.timeIntervalSince(baselineDate),
-                displayLabel: "Since baseline"
+                endedAt: now
             )
         }
 
         allCategories = [
-            CategoryInventoryItem(category: .audioProduction, currentSizeBytes: 522_400_000_000, growthTrend: nil, recentGrowthStory: nil),
-            CategoryInventoryItem(category: .other, currentSizeBytes: 421_100_000_000, growthTrend: nil, recentGrowthStory: growth(.other, 151_000_000)),
-            CategoryInventoryItem(category: .cachesAndSystem, currentSizeBytes: 228_200_000_000, growthTrend: nil, recentGrowthStory: growth(.cachesAndSystem, 1_400_000_000)),
-            CategoryInventoryItem(category: .mediaAndDocuments, currentSizeBytes: 119_500_000_000, growthTrend: nil, recentGrowthStory: growth(.mediaAndDocuments, 9_000_000_000)),
-            CategoryInventoryItem(category: .developer, currentSizeBytes: 71_500_000_000, growthTrend: nil, recentGrowthStory: growth(.developer, 4_900_000_000)),
-            CategoryInventoryItem(category: .applications, currentSizeBytes: 18_900_000_000, growthTrend: nil, recentGrowthStory: nil),
-            CategoryInventoryItem(category: .downloads, currentSizeBytes: 7_100_000_000, growthTrend: nil, recentGrowthStory: growth(.downloads, 10_000_000))
+            CategoryInventoryItem(category: .audioProduction, currentSizeBytes: 522_400_000_000, recentGrowthStory: nil),
+            CategoryInventoryItem(category: .other, currentSizeBytes: 421_100_000_000, recentGrowthStory: growth(.other, 151_000_000)),
+            CategoryInventoryItem(category: .cachesAndSystem, currentSizeBytes: 228_200_000_000, recentGrowthStory: growth(.cachesAndSystem, 1_400_000_000)),
+            CategoryInventoryItem(category: .mediaAndDocuments, currentSizeBytes: 119_500_000_000, recentGrowthStory: growth(.mediaAndDocuments, 9_000_000_000)),
+            CategoryInventoryItem(category: .developer, currentSizeBytes: 71_500_000_000, recentGrowthStory: growth(.developer, 4_900_000_000)),
+            CategoryInventoryItem(category: .applications, currentSizeBytes: 18_900_000_000, recentGrowthStory: nil),
+            CategoryInventoryItem(category: .downloads, currentSizeBytes: 7_100_000_000, recentGrowthStory: growth(.downloads, 10_000_000))
         ]
         totalBytes = 2_000_000_000_000
         usedBytes = 1_389_000_000_000
@@ -2096,7 +2093,7 @@ final class MenuBarManager: NSObject {
 
         let items = itemsByCategory.map {
             CategoryInventoryItem(category: $0.key, currentSizeBytes: $0.value,
-                                  growthTrend: nil, recentGrowthStory: nil)
+                                  recentGrowthStory: nil)
         }.sorted(by: Self.inventorySortsBefore)
 
         applyQuickInventory(items)
@@ -2281,7 +2278,6 @@ final class MenuBarManager: NSObject {
 
     private func suppressedGrowthItem(from item: CategoryInventoryItem) -> CategoryInventoryItem {
         var updated = item
-        updated.growthTrend = nil
         updated.recentGrowthStory = nil
         return updated
     }
@@ -3228,8 +3224,10 @@ final class MenuBarManager: NSObject {
         now: Date
     ) -> RecentGrowthStory? {
         let totalDelta = (existing?.deltaBytes ?? 0) + delta
-        // Skip if cumulative growth is below 1 MB threshold
-        guard totalDelta >= 1_048_576 else { return existing }
+        // Signed, and no floor: a category that nets to zero has no story, and
+        // sub-floor movement stays in the header sum. The 1 MB floor is applied
+        // at render time only.
+        guard totalDelta != 0 else { return nil }
 
         if let existing {
             return RecentGrowthStory(
@@ -3237,9 +3235,7 @@ final class MenuBarManager: NSObject {
                 subcategory: existing.subcategory,
                 deltaBytes: totalDelta,
                 startedAt: existing.startedAt,
-                endedAt: now,
-                duration: now.timeIntervalSince(existing.startedAt),
-                displayLabel: "recent"
+                endedAt: now
             )
         }
         return RecentGrowthStory(
@@ -3247,9 +3243,7 @@ final class MenuBarManager: NSObject {
             subcategory: nil,
             deltaBytes: delta,
             startedAt: now,
-            endedAt: now,
-            duration: 0,
-            displayLabel: "just now"
+            endedAt: now
         )
     }
 

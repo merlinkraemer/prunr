@@ -1378,7 +1378,6 @@ extension DatabaseManager {
                 return CategoryInventoryItem(
                     category: category,
                     currentSizeBytes: totalBytes,
-                    growthTrend: nil,
                     recentGrowthStory: nil
                 )
             }
@@ -1418,7 +1417,6 @@ extension DatabaseManager {
                 return CategoryInventoryItem(
                     category: category,
                     currentSizeBytes: totalBytes,
-                    growthTrend: nil,
                     recentGrowthStory: nil
                 )
             }
