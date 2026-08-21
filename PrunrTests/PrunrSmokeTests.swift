@@ -944,8 +944,7 @@ final class PrunrSmokeTests: XCTestCase {
             )
 
             let stories = await GrowthJournalService.shared.recentGrowthStories(
-                trackedPath: trackedPath,
-                retentionDays: 7
+                trackedPath: trackedPath
             )
 
             // Cumulative total = both buckets, regardless of age within retention.
@@ -1968,11 +1967,11 @@ final class PrunrSmokeTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            manager.stableCategories.first(where: { $0.category == .downloads })?.currentSizeBytes,
+            manager.sortedCategories.first(where: { $0.category == .downloads })?.currentSizeBytes,
             150
         )
         XCTAssertEqual(
-            manager.stableCategories.first(where: { $0.category == .developer })?.currentSizeBytes,
+            manager.sortedCategories.first(where: { $0.category == .developer })?.currentSizeBytes,
             25
         )
     }
@@ -2028,7 +2027,7 @@ final class PrunrSmokeTests: XCTestCase {
 
                 XCTAssertNotNil(manager.lastDetectedChangeAt)
                 XCTAssertEqual(
-                    manager.growingCategories.first(where: { $0.category == .developer })?.currentSizeBytes,
+                    manager.sortedCategories.first(where: { $0.category == .developer })?.currentSizeBytes,
                     Int64(128_000 + liveGrowthBytes)
                 )
 
@@ -2254,12 +2253,12 @@ final class PrunrSmokeTests: XCTestCase {
                 let manager = MenuBarManager()
                 let loadedQuickInventory = await manager.loadQuickInventory()
                 XCTAssertTrue(loadedQuickInventory)
-                XCTAssertTrue(manager.growingCategories.isEmpty)
+                XCTAssertTrue(manager.changedCategories.isEmpty)
 
                 await manager.loadInventoryFromLatestSnapshotIfStale()
 
-                XCTAssertEqual(manager.growingCategories.first?.category, .developer)
-                XCTAssertEqual(manager.growingCategories.first?.recentGrowthStory?.deltaBytes, 2 * 1024 * 1024)
+                XCTAssertEqual(manager.changedCategories.first?.category, .developer)
+                XCTAssertEqual(manager.changedCategories.first?.recentGrowthStory?.deltaBytes, 2 * 1024 * 1024)
             }
         }
     }
@@ -2301,13 +2300,13 @@ final class PrunrSmokeTests: XCTestCase {
                 let manager = MenuBarManager()
                 await manager.loadInventoryFromLatestSnapshotIfStale()
                 let loadedInventory = manager.allCategories
-                XCTAssertEqual(manager.growingCategories.first?.category, .developer)
+                XCTAssertEqual(manager.changedCategories.first?.category, .developer)
 
                 let loadedQuickInventory = await manager.loadQuickInventory()
 
                 XCTAssertTrue(loadedQuickInventory)
                 XCTAssertEqual(manager.allCategories, loadedInventory)
-                XCTAssertEqual(manager.growingCategories.first?.recentGrowthStory?.deltaBytes, 2 * 1024 * 1024)
+                XCTAssertEqual(manager.changedCategories.first?.recentGrowthStory?.deltaBytes, 2 * 1024 * 1024)
             }
         }
     }

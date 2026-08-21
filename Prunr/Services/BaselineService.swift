@@ -622,8 +622,7 @@ actor BaselineService {
 
             let journalTotals = await growthJournalService.subcategoryGrowthTotals(
                 trackedPath: trackedPath,
-                category: category,
-                retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+                category: category
             )
             if !journalTotals.isEmpty {
                 for (subcategory, total) in journalTotals {
@@ -1055,8 +1054,7 @@ actor BaselineService {
             if let trackedPath = trackedPathsById[trackedPathId] {
                 let journalTotals = await growthJournalService.subcategoryGrowthTotals(
                     trackedPath: trackedPath,
-                    category: category,
-                    retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+                    category: category
                 )
                 if !journalTotals.isEmpty {
                     for (subcategory, total) in journalTotals {
@@ -1172,12 +1170,13 @@ actor BaselineService {
         }
 
         let recentStories = await growthJournalService.recentGrowthStories(
-            trackedPath: trackedPath,
-            retentionDays: SettingsStore.shared.categoryHistoryRetentionDays
+            trackedPath: trackedPath
         )
 
         for index in inventory.indices {
-            if let story = recentStories[inventory[index].category], story.deltaBytes >= 1_048_576 {
+            // Assign every signed story. The 1 MB floor is applied at render
+            // time only — sub-floor categories must stay in the header sum.
+            if let story = recentStories[inventory[index].category] {
                 inventory[index].recentGrowthStory = story
             }
         }

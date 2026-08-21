@@ -34,7 +34,6 @@ struct MenuBarView: View {
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
     @State private var headerWidth: CGFloat = 0
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
-    @State private var acceptedGrowthFeedbackTask: Task<Void, Never>? = nil
     @State private var scanAccessRefreshTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
     @State private var selectedOnboardingPage = OnboardingPage.folder
@@ -398,7 +397,6 @@ struct MenuBarView: View {
             folderValidationTask?.cancel()
             onboardingTransitionTask?.cancel()
             drillTransitionCoordinator.cancelAndReset()
-            acceptedGrowthFeedbackTask?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshScanAccess()
@@ -421,22 +419,6 @@ struct MenuBarView: View {
             guard isShown else { return }
             synchronizeVisibleHeaderToCurrent()
             synchronizeVisibleOnboardingToCurrent()
-        }
-        .onChange(of: manager.lastAcceptedGrowthAt) { _, acceptedAt in
-            guard acceptedAt != nil else { return }
-            acceptedGrowthFeedbackTask?.cancel()
-            withAnimation(.snappy(duration: 0.32, extraBounce: 0)) {
-                justAcceptedGrowth = true
-            }
-            acceptedGrowthFeedbackTask = Task {
-                try? await Task.sleep(for: .seconds(1.5))
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-                        justAcceptedGrowth = false
-                    }
-                }
-            }
         }
         .task {
             if manager.hasDisplayableInventory {
@@ -1071,7 +1053,7 @@ struct MenuBarView: View {
     }
 
     private var driveBarSegments: [DriveBarSegment] {
-        var segments = (manager.growingCategories + manager.stableCategories)
+        var segments = manager.sortedCategories
             .filter { $0.currentSizeBytes > 0 }
             .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
             .map {
@@ -1096,8 +1078,7 @@ struct MenuBarView: View {
     }
 
     private var trackedInventoryBytes: Int64 {
-        (manager.growingCategories + manager.stableCategories)
-            .reduce(Int64(0)) { $0 + $1.currentSizeBytes }
+        manager.sortedCategories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
     }
 
     private var outsideScanScopeBytes: Int64 {
@@ -1110,27 +1091,15 @@ struct MenuBarView: View {
         []
     }
 
+    /// Signed net change across every category over the fixed display window.
     private var overallGrowthBytes: Int64 {
-        manager.growingCategories.reduce(Int64(0)) { partial, item in
-            partial + (item.recentGrowthStory?.deltaBytes ?? 0)
-        }
+        manager.overallGrowthBytes
     }
 
-    /// "Since" anchor shown next to growth — a relative duration since the
-    /// baseline was set, e.g. "just now", "12 minutes ago", "3 hours ago",
-    /// "5 days ago".
-    private var baselineSinceLabel: String? {
-        guard let date = manager.growthBaselineDate else { return nil }
-        let elapsed = max(0, Date().timeIntervalSince(date))
-
-        func unit(_ value: Int, _ singular: String) -> String {
-            "\(value) \(singular)\(value == 1 ? "" : "s") ago"
-        }
-
-        if elapsed < 60 { return "just now" }
-        if elapsed < 3600 { return unit(Int(elapsed / 60), "minute") }
-        if elapsed < 86_400 { return unit(Int(elapsed / 3600), "hour") }
-        return unit(Int(elapsed / 86_400), "day")
+    /// Constant, never a computed relative date — the value and the label must
+    /// read the same clock.
+    private var growthWindowLabel: String {
+        "last \(GrowthJournalService.displayWindowDays) days"
     }
 
     private var currentHeaderScreen: HeaderScreen {
@@ -1150,7 +1119,7 @@ struct MenuBarView: View {
             return nil
         }
 
-        return (manager.growingCategories + manager.stableCategories)
+        return manager.sortedCategories
             .first { $0.category == selectedCategory.category } ?? selectedCategory
     }
 
@@ -1369,99 +1338,65 @@ struct MenuBarView: View {
             .frame(width: width, height: 40, alignment: .center)
     }
 
-    @State private var justAcceptedGrowth = false
-    @State private var growthPillHovered = false
-
+    /// Header states — three, exactly symmetrical, no adjectives:
+    ///
+    ///     ↑ +4.2 GB · last 7 days
+    ///     ↓ −4.2 GB · last 7 days
+    ///          0 MB · last 7 days
+    ///
+    /// The number is the signed sum of *all* category deltas. It is not a
+    /// button: with a rolling window there is nothing to accept. Urgency lives
+    /// in the drive bar below.
     private var overviewHeader: some View {
-        ZStack {
-            if overallGrowthBytes > 0 && !justAcceptedGrowth {
-                HStack(spacing: 6) {
-                    Button {
-                        // Drive the morph optimistically off the click — the green
-                        // pill IS the feedback. The actual re-baseline runs in the
-                        // background; schedule the settle-to-Stable here so it never
-                        // depends on when the async accept finishes.
-                        withAnimation(.snappy(duration: 0.32, extraBounce: 0)) {
-                            justAcceptedGrowth = true
-                        }
-                        acceptedGrowthFeedbackTask?.cancel()
-                        acceptedGrowthFeedbackTask = Task {
-                            try? await Task.sleep(for: .seconds(1.8))
-                            guard !Task.isCancelled else { return }
-                            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
-                                justAcceptedGrowth = false
-                            }
-                        }
-                        Task { await manager.acceptGrowth() }
-                    } label: {
-                        ZStack {
-                            // Growth state — also the width floor: the pill never
-                            // shrinks below the GB label even when "Reset" is shorter.
-                            HStack(spacing: 5) {
-                                Image(systemName: "arrow.up.right")
-                                    .font(.system(size: 10, weight: .semibold))
-                                Text("+\(formattedBytes(overallGrowthBytes))")
-                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            }
-                            .opacity(growthPillHovered ? 0 : 1)
+        let net = overallGrowthBytes
+        let isBelowFloor = abs(net) < GrowthJournalService.presentationFloorBytes
+        let isGrowth = net > 0
+        let tint: Color = isGrowth ? .orange : .secondary
 
-                            // Reset state (hover) — if wider than GB, it wins.
-                            HStack(spacing: 5) {
-                                Image(systemName: "arrow.counterclockwise")
-                                    .font(.system(size: 10, weight: .semibold))
-                                Text("Reset")
-                                    .font(.system(size: 11, weight: .semibold))
-                            }
-                            .opacity(growthPillHovered ? 1 : 0)
-                        }
-                        .foregroundStyle(.orange)
+        return HStack(spacing: 6) {
+            Group {
+                if isBelowFloor {
+                    // Render the literal floor, not the formatted value — a
+                    // 900 KB net formats to "0.9 MB" and contradicts the floor
+                    // the rows apply.
+                    Text("0 MB")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 8)
                         .frame(height: 22)
-                        .background(Capsule().fill(Color.orange.opacity(growthPillHovered ? 0.18 : 0.12)))
-                        .contentShape(Capsule())
+                        .background(Capsule().fill(Color.secondary.opacity(0.10)))
+                } else {
+                    HStack(spacing: 5) {
+                        Image(systemName: isGrowth ? "arrow.up.right" : "arrow.down.right")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("\(isGrowth ? "+" : "\u{2212}")\(formattedBytes(abs(net)))")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     }
-                    .buttonStyle(.plain)
-                    .disabled(manager.isAcceptingGrowth)
-                    .fixedSize()
-                    .onHover { growthPillHovered = $0 }
-                    .help("Reset growth: save the current sizes as the new baseline and start tracking from now")
-
-                    if let since = baselineSinceLabel {
-                        Text("since \(since)")
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(.tertiary)
-                            .fixedSize()
-                    }
-                }
-                .frame(height: 40, alignment: .center)
-                .animation(.snappy(duration: 0.16), value: growthPillHovered)
-                .transition(.opacity)
-            } else if justAcceptedGrowth {
-                Text("Set as New Baseline!")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(tint)
                     .padding(.horizontal, 8)
                     .frame(height: 22)
-                    .background(Capsule().fill(Color.green.opacity(0.12)))
-                    .transition(.opacity)
-            } else {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .semibold))
-                    Text("Stable")
+                    .background(Capsule().fill(tint.opacity(0.12)))
                 }
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.green)
-                .padding(.horizontal, 6)
-                .frame(height: 22, alignment: .center)
-                .background(Capsule().fill(Color.green.opacity(0.12)))
-                .transition(.opacity)
             }
+            .fixedSize()
+
+            Text(growthWindowLabel)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(.tertiary)
+                .fixedSize()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .padding(.horizontal, 12)
-        .animation(.snappy(duration: 0.24, extraBounce: 0), value: overallGrowthBytes > 0)
-        .animation(.snappy(duration: 0.28, extraBounce: 0), value: justAcceptedGrowth)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(headerAccessibilityLabel(net: net, isBelowFloor: isBelowFloor))
+    }
+
+    private func headerAccessibilityLabel(net: Int64, isBelowFloor: Bool) -> String {
+        if isBelowFloor {
+            return "No net change over the \(growthWindowLabel)"
+        }
+        let direction = net > 0 ? "up" : "down"
+        return "\(direction) \(formattedBytes(abs(net))) over the \(growthWindowLabel)"
     }
 
     private func drillDownHeader(category: CategoryInventoryItem, subcategory: SubcategoryGroup?) -> some View {
@@ -1519,10 +1454,8 @@ struct MenuBarView: View {
                 .padding()
             } else {
                 CategoryGrowthListView(
-                    growingCategories: manager.growingCategories,
-                    stableCategories: manager.stableCategories,
+                    categories: manager.sortedCategories,
                     supplementalItems: supplementalInventoryItems,
-                    stableTotalBytes: manager.stableTotalBytes,
                     manager: manager,
                     highlightedSegmentID: $highlightedStorageSegmentID,
                     drillTransitionCoordinator: drillTransitionCoordinator,
@@ -1955,7 +1888,7 @@ struct MenuBarView: View {
         guard !manager.isDrillDownTransitionAnimating else { return }
         guard segmentID != outsideScopeSegmentID, segmentID != "other-used" else { return }
         guard let category = GrowthCategory(rawValue: segmentID) else { return }
-        guard let item = (manager.growingCategories + manager.stableCategories)
+        guard let item = manager.sortedCategories
             .first(where: { $0.category == category }) else { return }
 
         let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: category)

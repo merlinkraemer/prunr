@@ -118,7 +118,28 @@ final class DropdownPanel: NSPanel {
 @MainActor
 @Observable
 final class MenuBarManager: NSObject {
+    /// Change-rank: two tiers.
+    ///
+    /// 1. Rows whose |delta| clears the presentation floor, by |delta| descending.
+    /// 2. Everything else after them, by current size descending.
+    ///
+    /// Absolute, not positive-only — a −20 GB event is real information and must
+    /// not sink below a stack of +50 MB rows.
     private static func inventorySortsBefore(_ lhs: CategoryInventoryItem, _ rhs: CategoryInventoryItem) -> Bool {
+        let lhsDelta = abs(lhs.recentGrowthStory?.deltaBytes ?? 0)
+        let rhsDelta = abs(rhs.recentGrowthStory?.deltaBytes ?? 0)
+        let floor = GrowthJournalService.presentationFloorBytes
+        let lhsChanged = lhsDelta >= floor
+        let rhsChanged = rhsDelta >= floor
+
+        if lhsChanged != rhsChanged {
+            return lhsChanged
+        }
+
+        if lhsChanged && lhsDelta != rhsDelta {
+            return lhsDelta > rhsDelta
+        }
+
         if lhs.currentSizeBytes == rhs.currentSizeBytes {
             return lhs.category.displayName.localizedStandardCompare(rhs.category.displayName) == .orderedAscending
         }
@@ -180,20 +201,27 @@ final class MenuBarManager: NSObject {
     // MARK: - Scan & Growth Logic (Moved from ViewModel)
 
     // Single source of truth for all category inventory items.
-    // Views read `growingCategories` / `stableCategories` (computed from this).
+    // Views read `sortedCategories` (computed from this).
     var allCategories: [CategoryInventoryItem] = []
 
-    // Computed partitions — automatically derived from allCategories
-    var growingCategories: [CategoryInventoryItem] {
-        allCategories.filter { $0.recentGrowthStory != nil }
-            .sorted(by: Self.inventorySortsBefore)
+    /// One change-ranked list. There is no growing/stable partition: a row
+    /// either carries a signed delta or it doesn't.
+    var sortedCategories: [CategoryInventoryItem] {
+        allCategories.sorted(by: Self.inventorySortsBefore)
     }
-    var stableCategories: [CategoryInventoryItem] {
-        allCategories.filter { $0.recentGrowthStory == nil }
-            .sorted(by: Self.inventorySortsBefore)
+
+    /// Signed net change across **all** categories over the display window.
+    /// This is the headline number; the rows decompose it.
+    var overallGrowthBytes: Int64 {
+        allCategories.reduce(Int64(0)) { $0 + ($1.recentGrowthStory?.deltaBytes ?? 0) }
     }
-    var stableTotalBytes: Int64 {
-        stableCategories.reduce(0) { $0 + $1.currentSizeBytes }
+
+    /// Categories whose |delta| clears the presentation floor, i.e. the rows
+    /// that actually render a delta line.
+    var changedCategories: [CategoryInventoryItem] {
+        sortedCategories.filter {
+            abs($0.recentGrowthStory?.deltaBytes ?? 0) >= GrowthJournalService.presentationFloorBytes
+        }
     }
     var hasDisplayableInventory: Bool {
         !allCategories.isEmpty
@@ -352,7 +380,7 @@ final class MenuBarManager: NSObject {
         }
     }
 
-    /// Merges partial category totals arriving from an in-progress scan into `stableCategories`
+    /// Merges partial category totals arriving from an in-progress scan into `allCategories`
     /// so the user sees categories appearing and growing live during the scan.
     ///
     /// - Parameters:
@@ -372,7 +400,7 @@ final class MenuBarManager: NSObject {
         }
 
         // Convert partial totals to CategoryInventoryItem (no growth trend during scan)
-        // and push to stableCategories so views see them live.
+        // and push to allCategories so views see them live.
         let liveCategories = aggregateTotals
             .filter { $0.value > 0 }
             .map { category, bytes in
@@ -776,8 +804,8 @@ final class MenuBarManager: NSObject {
             totalBytes: totalBytes,
             freeBytes: freeBytes,
             categoryCount: allCategories.count,
-            growingCount: growingCategories.count,
-            stableCount: stableCategories.count,
+            growingCount: changedCategories.count,
+            stableCount: allCategories.count - changedCategories.count,
             fullScanRunning: isLoading || isAutoScanning || isReconciling,
             pendingRecentChanges: hasPendingRecentChanges,
             noBaseline: noBaseline,
@@ -1268,7 +1296,7 @@ final class MenuBarManager: NSObject {
             configureFileWatcherIfNeeded()
 
             let snapshotTimestamp = aggregation.latestSnapshotDate ?? Date()
-            if !growingCategories.isEmpty {
+            if !changedCategories.isEmpty {
                 lastDetectedChangeAt = snapshotTimestamp
             }
 
@@ -1614,7 +1642,7 @@ final class MenuBarManager: NSObject {
                 return
             }
 
-            if let refreshed = (growingCategories + stableCategories).first(where: { $0.category == currentSelection.category }) {
+            if let refreshed = allCategories.first(where: { $0.category == currentSelection.category }) {
                 selectedInventoryCategory = refreshed
             } else {
                 selectedInventoryCategory = nil

@@ -5,17 +5,11 @@ import AppKit
 struct CategoryGrowthListView: View {
     private let pageTopInset: CGFloat = 2
 
-    /// Growing categories with active growth trends
-    let growingCategories: [CategoryInventoryItem]
-
-    /// Stable categories without growth
-    let stableCategories: [CategoryInventoryItem]
+    /// One change-ranked list: rows that moved first, then the rest by size.
+    let categories: [CategoryInventoryItem]
 
     /// Supplemental rows for storage that appears in the drive bar but has no category drill-down
     let supplementalItems: [SupplementalInventoryItem]
-
-    /// Total size of all stable categories
-    let stableTotalBytes: Int64
 
     /// Menu bar manager for drill-down state tracking
     @Bindable var manager: MenuBarManager
@@ -128,7 +122,7 @@ struct CategoryGrowthListView: View {
                     hasInitializedDisplay = true
                     displayedScreen = currentScreen
                 }
-                if !growingCategories.isEmpty || !stableCategories.isEmpty {
+                if !categories.isEmpty {
                     isDataReady = true
                 }
                 preloadVisibleCategoriesIfNeeded()
@@ -169,9 +163,9 @@ struct CategoryGrowthListView: View {
             }
         }
         .frame(maxHeight: maxHeight)
-        .onChange(of: growingCategories.map(\.id) + stableCategories.map(\.id)) { _, categories in
+        .onChange(of: categories.map(\.id)) { _, ids in
             // Mark data as ready once we have content
-            if !categories.isEmpty {
+            if !ids.isEmpty {
                 isDataReady = true
             }
             preloadVisibleCategoriesIfNeeded()
@@ -333,27 +327,15 @@ struct CategoryGrowthListView: View {
 
     private var categoryListView: some View {
         Group {
-            if !isDataReady && growingCategories.isEmpty && stableCategories.isEmpty {
+            if !isDataReady && categories.isEmpty {
                 categoryListSkeletonView
-            } else if growingCategories.isEmpty && stableCategories.isEmpty {
+            } else if categories.isEmpty {
                 emptyStateView
             } else {
                 VStack(spacing: 0) {
                     ScrollView {
                         VStack(spacing: 0) {
-                            ForEach(growingCategories) { item in
-                                CategoryInventoryRow(
-                                    item: item,
-                                    isNavigationReady: true,
-                                    isPreparing: false,
-                                    isHighlightedFromBar: highlightedSegmentID == item.category.rawValue,
-                                    highlightedSegmentID: $highlightedSegmentID,
-                                    onTap: { selectCategory(item) }
-                                )
-                                .equatable()
-                            }
-
-                            ForEach(stableCategories) { item in
+                            ForEach(categories) { item in
                                 CategoryInventoryRow(
                                     item: item,
                                     isNavigationReady: true,
@@ -745,7 +727,7 @@ struct CategoryGrowthListView: View {
     }
 
     private var visibleCategories: [CategoryInventoryItem] {
-        growingCategories + stableCategories
+        categories
     }
 
     private var startupWarmupSignature: [String] {
@@ -910,14 +892,17 @@ private struct CategoryInventoryRow: View, Equatable {
                     .foregroundStyle(.primary)
                     .fixedSize()
 
-                if let story = item.recentGrowthStory {
+                // Signed delta, floored for presentation only. Sub-floor
+                // movement is still counted in the header — it just doesn't
+                // earn a line here.
+                if let delta = item.renderableGrowthDeltaBytes {
                     HStack(spacing: 4) {
-                        Image(systemName: "arrow.up.right")
+                        Image(systemName: delta > 0 ? "arrow.up.right" : "arrow.down.right")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("+\(formattedBytes(story.deltaBytes))")
+                        Text("\(delta > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(delta)))")
                     }
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(delta > 0 ? Color.orange : Color.secondary)
                 }
             }
             .opacity(isPreparing ? 0.55 : 1)

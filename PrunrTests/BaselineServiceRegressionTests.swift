@@ -3,6 +3,116 @@ import GRDB
 @testable import Prunr
 
 final class BaselineServiceRegressionTests: PrunrTestCase {
+
+    // MARK: - Signed growth over a fixed window
+
+    private func makeTrackedPath(_ id: UUID) -> TrackedPath {
+        TrackedPath(
+            id: id,
+            url: URL(fileURLWithPath: "/Users/tester/dev", isDirectory: true),
+            displayName: "dev"
+        )
+    }
+
+    /// The header must equal the signed sum of every category delta, including
+    /// sub-floor categories that never render a delta line.
+    func testGrowthStoriesSumSignedAcrossCategoriesIncludingSubFloor() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let trackedPath = self.makeTrackedPath(trackedPathId)
+            let gb: Int64 = 1024 * 1024 * 1024
+
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [
+                    .init(category: .developer, subcategory: nil): -20 * gb,
+                    .init(category: .downloads, subcategory: nil): 1 * gb,
+                    // Sub-floor: hidden by the row renderer, still in the sum.
+                    .init(category: .applications, subcategory: nil): 800_000
+                ],
+                at: Date().addingTimeInterval(-3600)
+            )
+
+            let stories = await GrowthJournalService.shared.recentGrowthStories(trackedPath: trackedPath)
+
+            XCTAssertEqual(stories[.developer]?.deltaBytes, -20 * gb)
+            XCTAssertEqual(stories[.downloads]?.deltaBytes, 1 * gb)
+            XCTAssertEqual(stories[.applications]?.deltaBytes, 800_000)
+
+            let signedTotal = stories.values.reduce(Int64(0)) { $0 + $1.deltaBytes }
+            XCTAssertEqual(signedTotal, -19 * gb + 800_000)
+        }
+    }
+
+    /// Grew then cleared inside the window nets to zero — no story at all, not `+8 GB`.
+    func testCategoryClearedInWindowProducesNoStory() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let trackedPath = self.makeTrackedPath(trackedPathId)
+            let eightGB: Int64 = 8 * 1024 * 1024 * 1024
+
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [.init(category: .cachesAndSystem, subcategory: nil): eightGB],
+                at: Date().addingTimeInterval(-7200)
+            )
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [.init(category: .cachesAndSystem, subcategory: nil): -eightGB],
+                at: Date().addingTimeInterval(-3600)
+            )
+
+            let stories = await GrowthJournalService.shared.recentGrowthStories(trackedPath: trackedPath)
+            XCTAssertNil(stories[.cachesAndSystem])
+        }
+    }
+
+    /// Retention governs pruning only. Lowering it must not change what the
+    /// fixed display window counts, and pruning must never reach inside it.
+    func testDisplayWindowIsIndependentOfRetentionSetting() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let trackedPath = self.makeTrackedPath(trackedPathId)
+            let inWindow: Int64 = 5 * 1024 * 1024
+            let outOfWindow: Int64 = 16 * 1024 * 1024 * 1024
+            let day: TimeInterval = 24 * 60 * 60
+
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [.init(category: .developer, subcategory: nil): inWindow],
+                at: Date().addingTimeInterval(-2 * day)
+            )
+            // 9 days back: outside the 7-day display window.
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [.init(category: .developer, subcategory: nil): outOfWindow],
+                at: Date().addingTimeInterval(-9 * day)
+            )
+
+            let stories = await GrowthJournalService.shared.recentGrowthStories(trackedPath: trackedPath)
+            XCTAssertEqual(stories[.developer]?.deltaBytes, inWindow, "the 9-day-old spike must have aged out")
+
+            // A retention shorter than the display window must be clamped, so
+            // pruning cannot delete the bucket that is still on screen.
+            await GrowthJournalService.shared.prune(retentionDays: 1)
+
+            let afterPrune = await GrowthJournalService.shared.recentGrowthStories(trackedPath: trackedPath)
+            XCTAssertEqual(
+                afterPrune[.developer]?.deltaBytes,
+                inWindow,
+                "pruning must never reach inside the display window"
+            )
+        }
+    }
+
+    @MainActor
+    func testRetentionSettingIsClampedToDisplayWindow() {
+        let previous = SettingsStore.shared.categoryHistoryRetentionDays
+        defer { SettingsStore.shared.categoryHistoryRetentionDays = previous }
+
+        SettingsStore.shared.categoryHistoryRetentionDays = 3
+        XCTAssertEqual(
+            SettingsStore.shared.categoryHistoryRetentionDays,
+            GrowthJournalService.displayWindowDays
+        )
+    }
     func testAcceptGrowthPromotesWorkingSetWithoutFilesystemFreeSpace() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let trackedPath = TrackedPath(
@@ -151,8 +261,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             // 4) Displayed growth must equal the ACTUAL growth, not 2x.
             let stories = await GrowthJournalService.shared.recentGrowthStories(
-                trackedPath: trackedPath,
-                retentionDays: 30
+                trackedPath: trackedPath
             )
             let total = stories[.other]?.deltaBytes ?? 0
             XCTAssertEqual(

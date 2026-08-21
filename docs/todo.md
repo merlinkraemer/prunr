@@ -1,3 +1,58 @@
+# Todo: Trust plan — 2026-08-21
+
+Full plan: `docs/trust-plan-2026-08-21.md`. Context: `docs/ux-review-brief-2026-08-21.md`.
+Phases 1-3 are the trust core and block the cleaning feature.
+
+## Phase 0 — decisions — SETTLED
+Superseded by `docs/prd-signed-growth-2026-08-21.md` (via `docs/growth-framing-2026-08-21.md`).
+- [x] D-1: not a baseline at all — fixed 7-day rolling window, no user-managed mark
+- [x] D-2: decoupled — `displayWindowDays = 7`, retention governs pruning only, clamped >= 7
+- [x] D-3: one change-ranked list, growth as a signed row delta (no growing/stable split)
+
+## Phase 1 — signed net change over a fixed 7-day window — SHIPPED
+Spec: `docs/prd-signed-growth-2026-08-21.md`.
+- [x] Slice 1 — signed math: dropped `deltaBytes > 0`; 1 MB floor is presentation-only
+- [x] Slice 2 — fixed window: `displayWindowDays`, prune clamp, constant `last 7 days` label
+- [x] Slice 3 — one list: change-rank sort (|delta| desc, then size desc)
+- [x] Slice 4 — header is not a button; zero state renders literal `0 MB`
+- [x] Regression tests (PRD §9): signed sum incl. sub-floor, net-zero -> no story,
+      window/retention independence, retention clamp, sort rule, header == Σ deltas
+
+## Phase 2 — typed drilldown outcomes (D4)
+- [ ] Result type `loaded | empty | failed | unavailable` through BaselineService's 12 catch blocks
+- [ ] Four distinct states in `CategoryGrowthListView`; Retry on failed
+- [ ] Non-zero parent + zero rows = contradiction state, not empty state
+- [ ] Instrument every empty-under-nonzero to diagnostics
+
+## Phase 3 — refresh means refresh (D5)
+- [ ] Promote `checkGrowth()` to real rescan, or remove the button for explicit "Rescan now"
+- [ ] One freshness element naming what is stale; delete the footer priority chain
+- [ ] Staleness policy (age + pending volume), not a binary
+- [ ] Drop "Changes pending"
+
+## Phase 4 — collapse clocks
+- [ ] Sample statfs at panel-open
+- [ ] Unify all but free space + baseline delta to "as of last scan"
+- [ ] Section-level provenance only (no per-row labels)
+
+## Phase 5 — honest accounting gap (D6)
+- [ ] Remove the `max(0, ...)` clamp
+- [ ] Signed gap with named buckets; never the word "reconciled"
+
+## Phase 6 — named contributors
+- [ ] Precompute/hydrate contributors before surfacing in overview
+- [ ] Signed named list replaces the rate
+- [ ] Per-contributor dismiss/ignore, persisted + visible in Settings
+
+## Phase 7 — cleanup (D7)
+- [ ] Delete dead `GrowthBarView.swift` / `SizeBarView.swift`
+- [ ] Remove unused rate/trend plumbing
+- [ ] Purge "recent" / "just now" timing strings
+
+## Phase 8 — cleaning (gated on zero empty-under-nonzero events over N weeks)
+- [ ] Live path revalidation at action time (existence, size, mtime, permissions, scope)
+- [ ] Recoverability stated (Trash vs. permanent); abort loudly on mismatch
+
 # Todo: Critical audit fixes — 2026-08-21
 
 - [x] Split subcategory and growth-contributor cache generations (CACHE-01).

@@ -8,6 +8,20 @@ struct CategoryInventoryItem: Identifiable, Sendable, Equatable {
     var currentSizeBytes: Int64
     var growthTrend: CategoryGrowthTrend?
     var recentGrowthStory: RecentGrowthStory?
+
+    /// Signed net change over the display window.
+    var growthDeltaBytes: Int64 {
+        recentGrowthStory?.deltaBytes ?? 0
+    }
+
+    /// The delta a row should draw, or `nil` when it falls under the
+    /// presentation floor. Sub-floor movement stays in every sum — the floor
+    /// only decides whether the line is worth the pixels.
+    var renderableGrowthDeltaBytes: Int64? {
+        let delta = growthDeltaBytes
+        guard abs(delta) >= GrowthJournalService.presentationFloorBytes else { return nil }
+        return delta
+    }
 }
 
 /// Represents a detected growth trend for a category

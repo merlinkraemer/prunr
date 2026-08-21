@@ -4,11 +4,25 @@ import OSLog
 actor GrowthJournalService {
     static let shared = GrowthJournalService()
 
+    /// Fixed window the UI reports on: "last 7 days".
+    ///
+    /// Deliberately decoupled from `categoryHistoryRetentionDays`. Retention
+    /// governs pruning only; changing it must never change what the headline
+    /// number counts.
+    static let displayWindowDays = 7
+
+    /// Presentation floor. Deltas smaller than this are not *rendered*, but they
+    /// remain part of every sum — the floor never drops data from the arithmetic.
+    static let presentationFloorBytes: Int64 = 1 * 1024 * 1024
+
     private let db = DatabaseManager.shared
-    private let recentStoryThresholdBytes: Int64 = 1 * 1024 * 1024
     private let logger = Logger(subsystem: "com.prunr.app", category: "GrowthJournal")
 
     private init() {}
+
+    private static var displayWindow: TimeInterval {
+        TimeInterval(displayWindowDays) * 24 * 60 * 60
+    }
 
     func recordDeltas(
         trackedPath: TrackedPath,
@@ -23,16 +37,15 @@ actor GrowthJournalService {
         )
     }
 
+    /// Signed net change per category over the fixed display window.
     func recentGrowthStories(
-        trackedPath: TrackedPath,
-        retentionDays: Int
+        trackedPath: TrackedPath
     ) async -> [GrowthCategory: RecentGrowthStory] {
-        let retentionWindow = TimeInterval(max(1, retentionDays)) * 24 * 60 * 60
-        let cutoff = Date().addingTimeInterval(-retentionWindow)
+        let cutoff = Date().addingTimeInterval(-Self.displayWindow)
 
         do {
             let buckets = try await db.fetchGrowthJournalBuckets(trackedPathId: trackedPath.id, since: cutoff)
-            return buildStories(from: buckets, now: Date(), retentionWindow: retentionWindow)
+            return buildStories(from: buckets)
         } catch {
             logger.error("Failed to fetch recent growth stories: \(error.localizedDescription, privacy: .public)")
             return [:]
@@ -54,13 +67,13 @@ actor GrowthJournalService {
         }
     }
 
+    /// Signed subcategory totals over the same window the category rows use, so
+    /// a drilldown decomposes the row above it rather than reading a second clock.
     func subcategoryGrowthTotals(
         trackedPath: TrackedPath,
-        category: GrowthCategory,
-        retentionDays: Int
+        category: GrowthCategory
     ) async -> [GrowthSubcategory?: Int64] {
-        let retentionWindow = TimeInterval(max(1, retentionDays)) * 24 * 60 * 60
-        let cutoff = Date().addingTimeInterval(-retentionWindow)
+        let cutoff = Date().addingTimeInterval(-Self.displayWindow)
 
         do {
             return try await db.fetchGrowthJournalTotalsBySubcategory(
@@ -74,8 +87,14 @@ actor GrowthJournalService {
         }
     }
 
+    /// Deletes buckets older than the retention window.
+    ///
+    /// Clamped to at least `displayWindowDays` — pruning inside the display
+    /// window would silently shrink the on-screen number with no filesystem
+    /// activity, which is the decay bug this design exists to remove.
     func prune(retentionDays: Int) async {
-        let retentionWindow = TimeInterval(max(1, retentionDays)) * 24 * 60 * 60
+        let clampedDays = max(retentionDays, Self.displayWindowDays)
+        let retentionWindow = TimeInterval(clampedDays) * 24 * 60 * 60
         let cutoff = Date().addingTimeInterval(-retentionWindow)
 
         do {
@@ -85,31 +104,31 @@ actor GrowthJournalService {
         }
     }
 
-    /// Builds one cumulative growth story per category from the retained journal.
+    /// Builds one signed net-change story per category from the buckets in the
+    /// display window.
     ///
-    /// The journal is cleared on Accept/Reset (`BaselineService.acceptGrowth`),
-    /// so every retained bucket represents growth since the current baseline.
-    /// Growth is therefore the **sum of all positive deltas** per category —
-    /// not a single recent burst — with the time anchor surfaced separately as
-    /// the baseline date in the UI.
+    /// The write path already stores signed deltas and nets within a bucket
+    /// (`DatabaseManager.upsertGrowthJournalBuckets`), so summing them here is
+    /// the true net change: a category that grew 8 GB and was then cleared nets
+    /// to zero and produces no story.
+    ///
+    /// `presentationFloorBytes` is *not* applied here — sub-floor categories
+    /// still get a story so they remain part of the header sum. Hiding the
+    /// delta line is the view's decision.
     private func buildStories(
-        from buckets: [GrowthJournalBucket],
-        now: Date,
-        retentionWindow: TimeInterval
+        from buckets: [GrowthJournalBucket]
     ) -> [GrowthCategory: RecentGrowthStory] {
         let grouped = Dictionary(grouping: buckets) { $0.category }
         var result: [GrowthCategory: RecentGrowthStory] = [:]
 
         for (rawCategory, categoryBuckets) in grouped {
             guard let category = GrowthCategory(rawValue: rawCategory) else { continue }
-            let positiveBuckets = categoryBuckets
-                .filter { $0.deltaBytes > 0 }
-                .sorted { $0.bucketStart < $1.bucketStart }
+            let sorted = categoryBuckets.sorted { $0.bucketStart < $1.bucketStart }
 
-            guard let first = positiveBuckets.first, let last = positiveBuckets.last else { continue }
+            guard let first = sorted.first, let last = sorted.last else { continue }
 
-            let total = positiveBuckets.reduce(Int64(0)) { $0 + $1.deltaBytes }
-            guard total >= recentStoryThresholdBytes else { continue }
+            let total = sorted.reduce(Int64(0)) { $0 + $1.deltaBytes }
+            guard total != 0 else { continue }
 
             let duration = max(60, last.bucketStart.timeIntervalSince(first.bucketStart) + 60)
             result[category] = RecentGrowthStory(

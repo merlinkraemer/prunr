@@ -80,7 +80,7 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         ]
 
         XCTAssertEqual(
-            manager.stableCategories.map(\.category),
+            manager.sortedCategories.map(\.category),
             [.applications, .developer, .downloads]
         )
     }
@@ -120,9 +120,84 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         ]
 
         XCTAssertEqual(
-            manager.growingCategories.map(\.category),
+            manager.sortedCategories.map(\.category),
             [.applications, .downloads]
         )
+    }
+
+    private func item(
+        _ category: GrowthCategory,
+        size: Int64,
+        delta: Int64? = nil
+    ) -> CategoryInventoryItem {
+        let now = Date()
+        return CategoryInventoryItem(
+            category: category,
+            currentSizeBytes: size,
+            growthTrend: nil,
+            recentGrowthStory: delta.map {
+                RecentGrowthStory(
+                    category: category,
+                    subcategory: nil,
+                    deltaBytes: $0,
+                    startedAt: now,
+                    endedAt: now,
+                    duration: 60,
+                    displayLabel: ""
+                )
+            }
+        )
+    }
+
+    /// Change-rank, absolute: a −20 GB event outranks a +2 GB one, and both
+    /// outrank a 546 GB category that didn't move.
+    func testCategoriesRankByAbsoluteChangeThenBySize() {
+        let manager = MenuBarManager()
+        let gb: Int64 = 1024 * 1024 * 1024
+        manager.allCategories = [
+            item(.other, size: 546 * gb),
+            item(.downloads, size: 2 * gb, delta: 2 * gb),
+            item(.developer, size: 121 * gb, delta: -20 * gb),
+            item(.audioProduction, size: 12 * gb)
+        ]
+
+        XCTAssertEqual(
+            manager.sortedCategories.map(\.category),
+            [.developer, .downloads, .other, .audioProduction]
+        )
+    }
+
+    /// Sub-floor movers rank with the unchanged rows (by size), but their bytes
+    /// still count toward the header.
+    func testSubFloorMoversRankBySizeAndStillCountInHeader() {
+        let manager = MenuBarManager()
+        let gb: Int64 = 1024 * 1024 * 1024
+        manager.allCategories = [
+            item(.other, size: 546 * gb, delta: 800_000),
+            item(.audioProduction, size: 12 * gb, delta: 900_000),
+            item(.downloads, size: 2 * gb, delta: 2 * gb)
+        ]
+
+        XCTAssertEqual(
+            manager.sortedCategories.map(\.category),
+            [.downloads, .other, .audioProduction]
+        )
+        XCTAssertEqual(manager.changedCategories.map(\.category), [.downloads])
+        XCTAssertEqual(manager.overallGrowthBytes, 2 * gb + 800_000 + 900_000)
+        XCTAssertNil(manager.allCategories.first { $0.category == .other }?.renderableGrowthDeltaBytes)
+    }
+
+    /// Delete 20 GB from one category, add 1 GB to another → header −19 GB.
+    func testHeaderIsSignedSumOfAllCategoryDeltas() {
+        let manager = MenuBarManager()
+        let gb: Int64 = 1024 * 1024 * 1024
+        manager.allCategories = [
+            item(.developer, size: 100 * gb, delta: -20 * gb),
+            item(.downloads, size: 5 * gb, delta: 1 * gb),
+            item(.other, size: 400 * gb)
+        ]
+
+        XCTAssertEqual(manager.overallGrowthBytes, -19 * gb)
     }
 
     func testInitialSubcategoryWarmupDoesNotRepeatSameCategorySet() {

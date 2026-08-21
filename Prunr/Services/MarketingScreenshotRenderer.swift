@@ -139,11 +139,11 @@ private struct MarketingPopoverPreview: View {
     let manager: MenuBarManager
 
     private var categories: [CategoryInventoryItem] {
-        manager.growingCategories + manager.stableCategories
+        manager.sortedCategories
     }
 
     private var totalGrowth: Int64 {
-        manager.growingCategories.reduce(0) { $0 + ($1.recentGrowthStory?.deltaBytes ?? 0) }
+        manager.overallGrowthBytes
     }
 
     var body: some View {
@@ -162,13 +162,16 @@ private struct MarketingPopoverPreview: View {
             Divider().overlay(.white.opacity(0.13))
 
             HStack(spacing: 6) {
-                Label("+\(formattedBytes(totalGrowth))", systemImage: "arrow.up.right")
+                Label(
+                    "\(totalGrowth > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(totalGrowth)))",
+                    systemImage: totalGrowth > 0 ? "arrow.up.right" : "arrow.down.right"
+                )
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.orange)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
                     .background(.orange.opacity(0.14), in: Capsule())
-                Text("since 4 days ago")
+                Text("last \(GrowthJournalService.displayWindowDays) days")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.48))
             }
@@ -192,10 +195,13 @@ private struct MarketingPopoverPreview: View {
                         VStack(alignment: .trailing, spacing: 2) {
                             Text(formattedBytes(category.currentSizeBytes))
                                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            if let growth = category.recentGrowthStory {
-                                Label("+\(formattedBytes(growth.deltaBytes))", systemImage: "arrow.up.right")
+                            if let delta = category.renderableGrowthDeltaBytes {
+                                Label(
+                                    "\(delta > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(delta)))",
+                                    systemImage: delta > 0 ? "arrow.up.right" : "arrow.down.right"
+                                )
                                     .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(delta > 0 ? Color.orange : Color.secondary)
                             }
                         }
                         .foregroundStyle(.white.opacity(0.88))
