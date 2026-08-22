@@ -54,13 +54,15 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         let manager = MenuBarManager()
         manager.isCheckingGrowth = true
         XCTAssertEqual(manager.footerActivity, .checkingChanges)
+        XCTAssertEqual(manager.footerActivity.text, "Checking storage…")
 
         manager.isCheckingGrowth = false
         manager.isProcessingRecentChanges = true
         XCTAssertEqual(manager.footerActivity, .updatingChanges)
+        XCTAssertEqual(manager.footerActivity.text, "Updating storage…")
     }
 
-    func testFooterActivityDistinguishesQueuedDirtyAndNormalChanges() {
+    func testFooterActivityOnlyShowsExceptionalQueuedReconciliation() {
         let dirtyManager = MenuBarManager()
         dirtyManager.recordFileWatcherChangeBatch(
             FSEventsWatcher.ChangeBatch(
@@ -71,10 +73,11 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             )
         )
         XCTAssertEqual(dirtyManager.footerActivity, .reconciliationQueued)
+        XCTAssertEqual(dirtyManager.footerActivity.text, "Full refresh queued")
 
         let normalManager = MenuBarManager()
         normalManager.hasPendingRecentChanges = true
-        XCTAssertEqual(normalManager.footerActivity, .changesQueued)
+        XCTAssertEqual(normalManager.footerActivity, .idle)
     }
 
     func testFooterActivityIsIdleWithoutCurrentOrQueuedWork() {

@@ -1,5 +1,18 @@
 # Todo: Trust plan — 2026-08-21
 
+# Todo: Quiet watcher footer — 2026-08-22
+
+- [x] Hide routine watcher backlogs from the footer and retain a completed update briefly.
+- [x] Verify manager presentation rules and the full suite; install only after verification.
+
+## Review
+
+Routine watcher backlog is no longer a footer state. The footer only reports
+real work, exceptional queued reconciliation, or idle context; a completed
+storage update remains visible for 1.5 seconds to avoid a visual handoff.
+
+- `make test`: **114 tests, 0 failures**
+
 # Todo: Watcher soak and truthful footer — 2026-08-22
 
 - [x] Present concrete footer activity (scan progress, change update, queued reconciliation) from one manager state model.

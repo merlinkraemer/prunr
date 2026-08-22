@@ -268,7 +268,6 @@ final class MenuBarManager: NSObject {
         case checkingChanges
         case updatingChanges
         case reconciliationQueued
-        case changesQueued
         case idle
 
         var text: String {
@@ -283,13 +282,11 @@ final class MenuBarManager: NSObject {
             case .fullScan(.analyzing, _):
                 return "Analyzing inventory…"
             case .checkingChanges:
-                return "Checking for changes…"
+                return "Checking storage…"
             case .updatingChanges:
-                return "Updating changes…"
+                return "Updating storage…"
             case .reconciliationQueued:
-                return "Reconciliation queued"
-            case .changesQueued:
-                return "Changes queued"
+                return "Full refresh queued"
             case .idle:
                 return ""
             }
@@ -327,9 +324,6 @@ final class MenuBarManager: NSObject {
         }
         if pendingDirtyReason != nil || needsAuthoritativeReconciliation {
             return .reconciliationQueued
-        }
-        if hasPendingRecentChanges {
-            return .changesQueued
         }
         return .idle
     }

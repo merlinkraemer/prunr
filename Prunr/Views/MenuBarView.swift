@@ -55,8 +55,34 @@ struct MenuBarView: View {
     }()
     @State private var developerFolderExists = false
     @State private var footerBackgroundScanPulse = false
+    @State private var heldFooterActivity: MenuBarManager.FooterActivity?
+    @State private var footerActivityHoldTask: Task<Void, Never>?
 
     private let outsideScopeSegmentID = "outside-scan-scope"
+    private let footerActivityHoldDuration: TimeInterval = 1.5
+
+    private var displayedFooterActivity: MenuBarManager.FooterActivity {
+        manager.footerActivity == .idle ? (heldFooterActivity ?? .idle) : manager.footerActivity
+    }
+
+    private func updateFooterActivityHold(for activity: MenuBarManager.FooterActivity) {
+        footerActivityHoldTask?.cancel()
+
+        switch activity {
+        case .updatingChanges:
+            heldFooterActivity = activity
+        case .idle:
+            guard heldFooterActivity == .updatingChanges else { return }
+            footerActivityHoldTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(Int(footerActivityHoldDuration * 1_000)))
+                guard !Task.isCancelled, manager.footerActivity == .idle else { return }
+                heldFooterActivity = nil
+                footerActivityHoldTask = nil
+            }
+        default:
+            heldFooterActivity = nil
+        }
+    }
 
     private enum HeaderNavigationDirection {
         case forward
@@ -1545,6 +1571,14 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
+        .onChange(of: manager.footerActivity) { _, activity in
+            updateFooterActivityHold(for: activity)
+        }
+        .onDisappear {
+            footerActivityHoldTask?.cancel()
+            footerActivityHoldTask = nil
+            heldFooterActivity = nil
+        }
     }
 
     @ViewBuilder
@@ -1587,8 +1621,8 @@ struct MenuBarView: View {
             }
             .font(.system(size: 11))
             .help("Growth can't be detected for this scope. Grant Full Disk Access in Settings so Prunr can track changes.")
-        } else if manager.footerActivity != .idle {
-            let activity = manager.footerActivity
+        } else if displayedFooterActivity != .idle {
+            let activity = displayedFooterActivity
             HStack(spacing: 6) {
                 Circle()
                     .fill(Color.secondary.opacity(activity.isFullScan && footerBackgroundScanPulse ? 0.78 : 0.55))
