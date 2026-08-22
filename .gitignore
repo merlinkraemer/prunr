@@ -37,7 +37,9 @@ fastlane/test_output
 .idea/
 .vscode/
 .cursor/
-.agents/
+.agents/*
+!.agents/skills/
+!.agents/skills/**
 .claude/*
 !.claude/skills/
 .pi/
@@ -131,3 +133,5 @@ context.md
 progress.md
 s1-canvas-result.md
 s2-primitives-result.md
+.env
+.env.*
