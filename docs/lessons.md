@@ -61,3 +61,16 @@ areas or rendering work.
 **Rule:** Do not retain invisible duplicate SwiftUI trees for pre-warming. Any
 warmup must be one-shot and removed before interaction; treat transparent or
 zero-sized views as live until proven otherwise.
+
+## Target the named control, not a same-looking one (2026-08-22)
+
+**Correction:** “Back button” referred to the drilldown navigation control, not
+the visually identical onboarding chevron.
+
+**Rule:** When a request names a navigation context, locate and confirm that
+interaction path before editing; do not infer the target from shared iconography.
+
+**Follow-up rule:** A `contentShape` that exceeds a view's layout bounds does
+not create an effective larger target when an ancestor constrains hit testing.
+Use a real frame for the required target size and compensate surrounding layout
+when visuals must remain fixed.

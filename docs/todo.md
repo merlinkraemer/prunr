@@ -1,3 +1,17 @@
+# Todo: Drilldown back-button hit target — 2026-08-22
+
+- [x] Give the drilldown back button a genuine 44×44 layout hit target while preserving the header's visuals.
+- [x] Build, reinstall, and relaunch the app to verify the explicit label hit-surface fix.
+
+## Review
+
+The header and button now use real 44-point frames. Negative padding and content
+offsets keep the list, chevron, and header contents at their previous positions.
+
+- `make install-app`: passed
+- Installed binary matched the freshly built binary by SHA-256.
+- Relaunched Prunr; current PID 12481 started after installation.
+
 # Todo: Hover correctness and idle CPU — 2026-08-22
 
 - [x] Stop non-row regions from retaining or assigning a category hover highlight.

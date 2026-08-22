@@ -1189,7 +1189,9 @@ struct MenuBarView: View {
     private var pageNavigationContent: some View {
         VStack(spacing: 0) {
             headerNavigationView
+                .zIndex(1)
             categoryListView
+                .padding(.top, -4)
         }
         .background(
             DrilldownBackSwipeBridge(
@@ -1267,7 +1269,7 @@ struct MenuBarView: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
-        .frame(height: 40)
+        .frame(height: 44)
     }
 
     @ViewBuilder
@@ -1335,7 +1337,7 @@ struct MenuBarView: View {
 
     private func headerPage(for screen: HeaderScreen, width: CGFloat) -> some View {
         headerView(for: screen)
-            .frame(width: width, height: 40, alignment: .center)
+            .frame(width: width, height: 44, alignment: .center)
     }
 
     /// Header states — three, exactly symmetrical, no adjectives:
@@ -1387,6 +1389,7 @@ struct MenuBarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .padding(.horizontal, 12)
+        .offset(y: -2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(headerAccessibilityLabel(net: net, isBelowFloor: isBelowFloor))
     }
@@ -1405,25 +1408,34 @@ struct MenuBarView: View {
         return HStack(spacing: 0) {
             // Back button — fixed width for centering balance
             Button(action: navigateBackFromDrilldown) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.blue)
+                ZStack(alignment: .leading) {
+                    // A clear shape makes the full target participate in
+                    // AppKit hit testing while leaving the rendered button unchanged.
+                    Color.clear
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .frame(width: 32, height: 32)
+                        .offset(y: -2)
+                }
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
             .accessibilityHint("Return to category overview")
-            .frame(width: 32, height: 32)
-            .contentShape(Rectangle())
 
             Text(headerName)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-            .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity)
+                .offset(y: -2)
 
             // Balance spacer matches back button width
             Color.clear
-                .frame(width: 32)
+                .frame(width: 44)
         }
         .padding(.horizontal, 12)
         .frame(maxHeight: .infinity, alignment: .center)
