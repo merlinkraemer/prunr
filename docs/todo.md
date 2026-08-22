@@ -1,3 +1,24 @@
+# Todo: Hover correctness and idle CPU — 2026-08-22
+
+- [x] Stop non-row regions from retaining or assigning a category hover highlight.
+- [x] Identify and remove unnecessary idle work that can heat the laptop.
+- [x] Run the full suite; manually verify hover behavior after install.
+
+## Review
+
+Removed the permanently hidden duplicate drilldown tree. Despite being zero-sized
+and transparent, it retained live hover tracking and shared highlight state with
+the visible list; it also kept all pre-warmed list branches alive. No invisible
+list tree is now retained after the panel opens.
+
+The watcher can still consume CPU during sustained real filesystem activity;
+the diagnostics report already records watcher batches, raw events, incremental
+refreshes, and process CPU to distinguish that workload from an idle leak.
+
+- Full XCTest: **116 tests, 0 failures**
+- Manual after install: hover the blank lower portion of the main list; no
+  category should highlight.
+
 # Todo: Cache-owner app icon mapping — 2026-08-22
 
 - [x] Map common vendor cache-owner keys to their installed application bundle IDs.

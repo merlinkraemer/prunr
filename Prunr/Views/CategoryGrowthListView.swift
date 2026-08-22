@@ -194,24 +194,6 @@ struct CategoryGrowthListView: View {
             manager.isDrillDownTransitionAnimating = false
             displayedScreen = currentScreen
         }
-        // Always-present pre-warm — no onAppear, no flags, no async
-        // Keeps all branch types materialized in the view tree permanently
-        .background {
-            ZStack {
-                categoryListView
-                if let firstCategory = GrowthCategory.allCases.first {
-                    subcategoryListView(for: CategoryInventoryItem(
-                        category: firstCategory,
-                        currentSizeBytes: 0
-                    ))
-                }
-                fileListView(for: nil)
-            }
-            .frame(width: 0, height: 0)
-            .opacity(0)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
     }
 
     @ViewBuilder

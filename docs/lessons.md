@@ -47,3 +47,17 @@ Troubleshooting → "Generate Diagnostics Report"; file at
 `~/Library/Logs/Prunr/diagnostics.log`. The file is dense/structured (pasted into
 Claude), not human-pretty. Periodic 30-min window lines + a manual full snapshot
 on button hit. CPU sampled via mach `thread_basic_info` every 20s.
+
+## Hidden SwiftUI views are live views (2026-08-22)
+
+**Symptom:** Hovering empty space highlighted an unrelated category, and the app
+could keep doing unnecessary UI work while the panel was open.
+
+**Root cause:** A zero-sized, transparent background used to pre-warm drilldown
+branches permanently instantiated a second list tree. Its `onHover` handlers
+shared state with the visible list, and hiding it did not remove its tracking
+areas or rendering work.
+
+**Rule:** Do not retain invisible duplicate SwiftUI trees for pre-warming. Any
+warmup must be one-shot and removed before interaction; treat transparent or
+zero-sized views as live until proven otherwise.
