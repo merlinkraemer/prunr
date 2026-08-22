@@ -3,6 +3,86 @@ import XCTest
 
 @MainActor
 final class MenuBarManagerRegressionTests: PrunrTestCase {
+    func testFooterActivityShowsReliableFullScanPercentage() {
+        let manager = MenuBarManager()
+        manager.isAutoScanning = true
+        manager.scanProgressPercentage = 0.374
+        manager.hasReliableScanProgressEstimate = true
+
+        XCTAssertEqual(
+            manager.footerActivity,
+            .fullScan(phase: .scanning, percentage: 37)
+        )
+        XCTAssertEqual(manager.footerActivity.text, "Scanning 37%")
+    }
+
+    func testFooterActivityShowsFullScanPhaseInsteadOfMisleadingPercentage() {
+        let manager = MenuBarManager()
+        manager.isLoading = true
+        manager.isAnalyzingChanges = true
+        manager.scanProgressPercentage = 1
+        manager.hasReliableScanProgressEstimate = true
+
+        XCTAssertEqual(
+            manager.footerActivity,
+            .fullScan(phase: .analyzing, percentage: nil)
+        )
+        XCTAssertEqual(manager.footerActivity.text, "Analyzing inventory…")
+    }
+
+    func testFooterActivityPrioritizesAutomaticFullScanOverQueuedChanges() {
+        let manager = MenuBarManager()
+        manager.isAutoScanning = true
+        manager.scanProgressPercentage = 0.5
+        manager.hasReliableScanProgressEstimate = true
+        manager.recordFileWatcherChangeBatch(
+            FSEventsWatcher.ChangeBatch(
+                changedPaths: [],
+                requiresFullRescan: false,
+                dirtyReason: "stream-dropped",
+                rawEventCount: 1
+            )
+        )
+
+        XCTAssertEqual(
+            manager.footerActivity,
+            .fullScan(phase: .scanning, percentage: 50)
+        )
+    }
+
+    func testFooterActivityDescribesActiveChangeWork() {
+        let manager = MenuBarManager()
+        manager.isCheckingGrowth = true
+        XCTAssertEqual(manager.footerActivity, .checkingChanges)
+
+        manager.isCheckingGrowth = false
+        manager.isProcessingRecentChanges = true
+        XCTAssertEqual(manager.footerActivity, .updatingChanges)
+    }
+
+    func testFooterActivityDistinguishesQueuedDirtyAndNormalChanges() {
+        let dirtyManager = MenuBarManager()
+        dirtyManager.recordFileWatcherChangeBatch(
+            FSEventsWatcher.ChangeBatch(
+                changedPaths: [],
+                requiresFullRescan: false,
+                dirtyReason: "stream-dropped",
+                rawEventCount: 1
+            )
+        )
+        XCTAssertEqual(dirtyManager.footerActivity, .reconciliationQueued)
+
+        let normalManager = MenuBarManager()
+        normalManager.hasPendingRecentChanges = true
+        XCTAssertEqual(normalManager.footerActivity, .changesQueued)
+    }
+
+    func testFooterActivityIsIdleWithoutCurrentOrQueuedWork() {
+        let manager = MenuBarManager()
+
+        XCTAssertEqual(manager.footerActivity, .idle)
+    }
+
     func testDiagnosticsTailKeepsNewestCompleteRecords() {
         let data = Data("old-record\nnewest-record\n".utf8)
 

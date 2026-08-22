@@ -1,5 +1,28 @@
 # Todo: Trust plan — 2026-08-21
 
+# Todo: Watcher soak and truthful footer — 2026-08-22
+
+- [x] Present concrete footer activity (scan progress, change update, queued reconciliation) from one manager state model.
+- [x] Add deterministic sustained-watcher coverage that verifies queued changes drain without a full scan.
+- [x] Run the XCTest suite, large static scan stress harness, and an end-to-end watcher check; report the remaining leak-test gap.
+
+## Review
+
+Footer copy now distinguishes scanning (with a reliable percentage), finalizing,
+inventory analysis, change updates, queued reconciliation, and normal queued
+changes. The watcher stress test injects 1,000 rapid normal batches and proves
+one retained deadline, no reschedules, one execution, and an empty queue.
+
+- `make test`: **114 tests, 0 failures**
+- `make e2e E2E_FILE_COUNT=50000`: **10/10 phases passed**
+- Static scan stress: **250,000 files**, stable repeated scans, then exact
+  detection of a **10,000-file / 10.24 GB** mutation. Results:
+  `tmp/stress-results/report.json`.
+
+The static harness and XCTest stress prove correctness under load, but do not
+measure a long-run RSS or file-descriptor trend. A 5–15 minute real-app watcher
+soak with those thresholds remains a separate test-harness addition.
+
 # Todo: Feedback evidence — pending state and CPU — 2026-08-22
 
 - [x] Stop sustained normal FSEvents from indefinitely resetting the refresh debounce.

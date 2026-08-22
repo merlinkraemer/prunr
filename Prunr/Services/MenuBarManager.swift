@@ -256,9 +256,84 @@ final class MenuBarManager: NSObject {
     @ObservationIgnored
     private var subcategoryBreakdownLoadTasks: [GrowthCategory: Task<SubcategoryBreakdownLoadResult, Never>] = [:]
     var monitoredPathName: String = ""
-    var isBackgroundFullScanRunning: Bool {
-        isReconciling
+
+    enum FooterActivity: Equatable {
+        enum FullScanPhase: Equatable {
+            case scanning
+            case finalizing
+            case analyzing
+        }
+
+        case fullScan(phase: FullScanPhase, percentage: Int?)
+        case checkingChanges
+        case updatingChanges
+        case reconciliationQueued
+        case changesQueued
+        case idle
+
+        var text: String {
+            switch self {
+            case .fullScan(.scanning, let percentage):
+                if let percentage {
+                    return "Scanning \(percentage)%"
+                }
+                return "Scanning…"
+            case .fullScan(.finalizing, _):
+                return "Finalizing scan…"
+            case .fullScan(.analyzing, _):
+                return "Analyzing inventory…"
+            case .checkingChanges:
+                return "Checking for changes…"
+            case .updatingChanges:
+                return "Updating changes…"
+            case .reconciliationQueued:
+                return "Reconciliation queued"
+            case .changesQueued:
+                return "Changes queued"
+            case .idle:
+                return ""
+            }
+        }
+
+        var isFullScan: Bool {
+            if case .fullScan = self {
+                return true
+            }
+            return false
+        }
     }
+
+    /// The footer should describe work that is happening now, without treating a
+    /// queued watcher batch as an active scan.
+    var footerActivity: FooterActivity {
+        if isLoading || isAutoScanning || isReconciling {
+            if isAnalyzingChanges {
+                return .fullScan(phase: .analyzing, percentage: nil)
+            }
+            if scanProgress.hasPrefix("Finalizing") {
+                return .fullScan(phase: .finalizing, percentage: nil)
+            }
+            let percentage = hasReliableScanProgressEstimate
+                ? Int((max(0, min(1, scanProgressPercentage)) * 100).rounded())
+                : nil
+            return .fullScan(phase: .scanning, percentage: percentage)
+        }
+
+        if isCheckingGrowth {
+            return .checkingChanges
+        }
+        if isProcessingRecentChanges {
+            return .updatingChanges
+        }
+        if pendingDirtyReason != nil || needsAuthoritativeReconciliation {
+            return .reconciliationQueued
+        }
+        if hasPendingRecentChanges {
+            return .changesQueued
+        }
+        return .idle
+    }
+
     var enabledPathCount: Int {
         SettingsStore.shared.enabledTrackedPaths.count
     }
@@ -1545,7 +1620,7 @@ final class MenuBarManager: NSObject {
     }
 
     /// Silently reconciles the working set against a fresh full scan.
-    /// No spinners, no status text changes — applies corrections as incremental patches.
+    /// The inventory remains visible, while the footer reports real scan progress.
     func performSilentReconciliation() async {
         guard Self.enableSilentFullReconciliation else {
             Self.logger.info("Silent full reconciliation disabled")
@@ -1562,9 +1637,35 @@ final class MenuBarManager: NSObject {
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         guard !enabledPaths.isEmpty else { return }
 
+        filesScanned = 0
+        isAnalyzingChanges = false
+        scanProgress = "Scanning \(enabledPaths[0].displayName)..."
+        scanCurrentPath = enabledPaths[0].url.path
+        scanCurrentPathDisplay = "."
+        prepareAggregateScanProgress(for: enabledPaths)
+        scanProgressPercentage = 0.03
+        scanEstimatedTotalFiles = 0
+        hasReliableScanProgressEstimate = false
+        setupProgressStream()
+        let progressCallback: (TrackedPath, ScanService.ScanProgress) -> Void = { [weak self] trackedPath, progress in
+            self?.progressContinuation?.yield(.progress(trackedPath: trackedPath, progress: progress))
+        }
+        defer {
+            teardownProgressStream()
+            scanProgress = ""
+            scanCurrentPath = ""
+            scanCurrentPathDisplay = ""
+            resetAggregateScanProgress()
+            scanProgressPercentage = 0.0
+            scanEstimatedTotalFiles = 0
+            hasReliableScanProgressEstimate = false
+            filesScanned = 0
+            isAnalyzingChanges = false
+        }
+
         recordReconciliationAttempt()
         do {
-            _ = try await createBaselines(for: enabledPaths) { _, _ in }
+            _ = try await createBaselines(for: enabledPaths, progressCallback: progressCallback)
         } catch {
             if !isScanCancellation(error) {
                 recordReconciliationFailure()
@@ -1581,6 +1682,12 @@ final class MenuBarManager: NSObject {
 
         guard !Task.isCancelled else { return }
         recordReconciliationSuccess()
+        scanProgress = "Analyzing inventory..."
+        scanCurrentPath = ""
+        scanCurrentPathDisplay = ""
+        scanProgressPercentage = 1.0
+        hasReliableScanProgressEstimate = true
+        isAnalyzingChanges = true
 
         // Silently reload inventory from the new snapshot — no invalidation
         await loadInventoryFromLatestSnapshot(refreshedAt: Date())

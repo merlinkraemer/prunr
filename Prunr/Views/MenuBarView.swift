@@ -1587,35 +1587,37 @@ struct MenuBarView: View {
             }
             .font(.system(size: 11))
             .help("Growth can't be detected for this scope. Grant Full Disk Access in Settings so Prunr can track changes.")
-        } else if manager.isBackgroundFullScanRunning {
+        } else if manager.footerActivity != .idle {
+            let activity = manager.footerActivity
             HStack(spacing: 6) {
                 Circle()
-                    .fill(Color.secondary.opacity(footerBackgroundScanPulse ? 0.78 : 0.42))
+                    .fill(Color.secondary.opacity(activity.isFullScan && footerBackgroundScanPulse ? 0.78 : 0.55))
                     .frame(width: 5, height: 5)
-                    .scaleEffect(footerBackgroundScanPulse ? 1.0 : 0.82)
-                Text("Refreshing")
+                    .scaleEffect(activity.isFullScan && footerBackgroundScanPulse ? 1.0 : 0.82)
+                Text(activity.text)
                     .foregroundStyle(.secondary)
-                    .opacity(footerBackgroundScanPulse ? 0.96 : 0.72)
+                    .opacity(activity.isFullScan && footerBackgroundScanPulse ? 0.96 : 0.72)
             }
             .font(.system(size: 11))
             .onAppear {
                 footerBackgroundScanPulse = false
-                withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
-                    footerBackgroundScanPulse = true
+                if activity.isFullScan {
+                    withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                        footerBackgroundScanPulse = true
+                    }
+                }
+            }
+            .onChange(of: activity.isFullScan) { _, isFullScan in
+                footerBackgroundScanPulse = false
+                if isFullScan {
+                    withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                        footerBackgroundScanPulse = true
+                    }
                 }
             }
             .onDisappear {
                 footerBackgroundScanPulse = false
             }
-        } else if manager.pendingDirtyReason != nil || manager.hasPendingRecentChanges {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(Color.secondary.opacity(0.55))
-                    .frame(width: 5, height: 5)
-                Text("Changes pending")
-                    .foregroundStyle(.secondary)
-            }
-            .font(.system(size: 11))
         } else {
             // Healthy default: no nags. Show how much of the drive sits outside
             // the scan scope — the standing context that nags temporarily replace.

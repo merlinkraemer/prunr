@@ -2076,27 +2076,43 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     @MainActor
-    func testMenuBarManagerDoesNotStarveNormalRefreshUnderContinuousWatcherBatches() async throws {
-        let manager = MenuBarManager()
-        let changedURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PrunrWatcherDebounce-\(UUID().uuidString)")
-
-        manager.recordFileWatcherChangeBatch(
-            FSEventsWatcher.ChangeBatch(changedPaths: [changedURL], requiresFullRescan: false)
-        )
-        let firstGeneration = manager.recentChangeTaskGeneration
-        XCTAssertGreaterThan(firstGeneration, 0)
-
-        for _ in 0..<5 {
-            manager.recordFileWatcherChangeBatch(
-                FSEventsWatcher.ChangeBatch(changedPaths: [changedURL], requiresFullRescan: false)
-            )
+    func testMenuBarManagerSettlesSustainedNormalWatcherBatchesWithoutRescheduling() async throws {
+        let isolatedRoot = try createTrackedPathDirectory(named: "PrunrWatcherDebounce")
+        defer {
+            try? FileManager.default.removeItem(at: isolatedRoot)
         }
-        XCTAssertEqual(manager.recentChangeTaskGeneration, firstGeneration)
 
-        try await Task.sleep(for: .seconds(2))
-        XCTAssertEqual(manager.recentChangeRefreshScheduleCount, 1)
-        XCTAssertEqual(manager.recentChangeRefreshExecutionCount, 1)
+        try await withIsolatedTrackedPathSettings(mainBaseURL: isolatedRoot) {
+            let settings = SettingsStore.shared
+            settings.setPathEnabled(settings.mainTrackedPath, enabled: false)
+            XCTAssertTrue(settings.enabledTrackedPaths.isEmpty)
+
+            let manager = MenuBarManager()
+            let changedURL = isolatedRoot.appendingPathComponent("changed-file")
+            let batch = FSEventsWatcher.ChangeBatch(
+                changedPaths: [changedURL],
+                requiresFullRescan: false
+            )
+
+            manager.recordFileWatcherChangeBatch(batch)
+            let firstGeneration = manager.recentChangeTaskGeneration
+            XCTAssertGreaterThan(firstGeneration, 0)
+
+            for _ in 0..<1_000 {
+                manager.recordFileWatcherChangeBatch(batch)
+            }
+
+            // Normal batches must retain the first debounce deadline rather than
+            // moving it indefinitely under sustained filesystem activity.
+            XCTAssertEqual(manager.recentChangeTaskGeneration, firstGeneration)
+            XCTAssertEqual(manager.recentChangeRefreshScheduleCount, 1)
+            XCTAssertEqual(manager.recentChangeRefreshRescheduleCount, 0)
+
+            try await Task.sleep(for: .seconds(2))
+
+            XCTAssertEqual(manager.recentChangeRefreshExecutionCount, 1)
+            XCTAssertFalse(manager.hasPendingRecentChanges)
+        }
     }
 
     @MainActor
