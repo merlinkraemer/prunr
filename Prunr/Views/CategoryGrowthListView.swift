@@ -1210,7 +1210,7 @@ private struct SubcategoryRow: View {
 
 }
 
-private enum CacheApplicationIconResolver {
+enum CacheApplicationIconResolver {
     @MainActor
     static func icon(forBundleIdentifier bundleIdentifier: String?) -> NSImage? {
         guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return nil }
@@ -1221,6 +1221,12 @@ private enum CacheApplicationIconResolver {
             ) {
                 return NSWorkspace.shared.icon(forFile: applicationURL.path)
             }
+        }
+
+        // Many cache directories use the application's product name rather
+        // than its bundle identifier (for example, Arc or Steam).
+        if let applicationPath = NSWorkspace.shared.fullPath(forApplication: bundleIdentifier) {
+            return NSWorkspace.shared.icon(forFile: applicationPath)
         }
 
         // Launch Services can briefly lag behind an app install/update. Keep
@@ -1235,8 +1241,15 @@ private enum CacheApplicationIconResolver {
     }
 
     static func bundleIdentifierCandidates(for bundleIdentifier: String) -> [String] {
-        [bundleIdentifier, aliases[bundleIdentifier]].compactMap { $0 }
+        let helperBase = helperSuffixes.first(where: { bundleIdentifier.hasSuffix($0) })
+            .map { String(bundleIdentifier.dropLast($0.count)) }
+        var seen = Set<String>()
+        return [bundleIdentifier, aliases[bundleIdentifier], helperBase]
+            .compactMap { $0 }
+            .filter { seen.insert($0).inserted }
     }
+
+    private static let helperSuffixes = [".ShipIt", ".helper"]
 
     private static let aliases: [String: String] = [
         "com.apple.Safari.SafeBrowsing": "com.apple.Safari",
@@ -1249,29 +1262,36 @@ private enum CacheApplicationIconResolver {
     private static let knownApplicationPaths: [String: [String]] = [
         "com.google.Chrome": [
             "/Applications/Google Chrome.app",
-            "(NSHomeDirectory())/Applications/Google Chrome.app"
+            userApplicationPath("Google Chrome.app")
         ],
         "com.google.Chrome.canary": [
             "/Applications/Google Chrome Canary.app",
-            "(NSHomeDirectory())/Applications/Google Chrome Canary.app"
+            userApplicationPath("Google Chrome Canary.app")
         ],
         "com.google.Chrome.beta": [
             "/Applications/Google Chrome Beta.app",
-            "(NSHomeDirectory())/Applications/Google Chrome Beta.app"
+            userApplicationPath("Google Chrome Beta.app")
         ],
         "com.google.Chrome.dev": [
             "/Applications/Google Chrome Dev.app",
-            "(NSHomeDirectory())/Applications/Google Chrome Dev.app"
+            userApplicationPath("Google Chrome Dev.app")
         ],
         "org.mozilla.firefox": [
             "/Applications/Firefox.app",
-            "(NSHomeDirectory())/Applications/Firefox.app"
+            userApplicationPath("Firefox.app")
         ],
         "com.apple.Safari": [
             "/Applications/Safari.app",
             "/System/Applications/Safari.app"
         ]
     ]
+
+    private static func userApplicationPath(_ applicationName: String) -> String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Applications", isDirectory: true)
+            .appendingPathComponent(applicationName, isDirectory: true)
+            .path
+    }
 }
 
 #Preview {

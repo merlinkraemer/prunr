@@ -221,6 +221,21 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testCacheApplicationIconResolverStripsUpdaterAndHelperSuffixes() {
+        XCTAssertEqual(
+            CacheApplicationIconResolver.bundleIdentifierCandidates(
+                for: "com.microsoft.VSCode.ShipIt"
+            ),
+            ["com.microsoft.VSCode.ShipIt", "com.microsoft.VSCode"]
+        )
+        XCTAssertEqual(
+            CacheApplicationIconResolver.bundleIdentifierCandidates(
+                for: "com.example.App.helper"
+            ),
+            ["com.example.App.helper", "com.example.App"]
+        )
+    }
+
     func testNodeModulesPathsResolveToDeveloperNodeModules() {
         XCTAssertEqual(
             GrowthCategory.subcategorize(path: "/Users/tester/dev/app/node_modules/react/index.js"),

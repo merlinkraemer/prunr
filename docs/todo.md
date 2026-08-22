@@ -1,3 +1,20 @@
+# Todo: Cache drilldown application icons — 2026-08-22
+
+- [x] Identify cache-owner naming variants that bypass the installed-app resolver.
+- [x] Resolve those variants to native application icons while preserving the generic fallback.
+- [x] Add regressions and run focused/full tests.
+
+## Review
+
+Cache drilldowns now resolve raw app-name cache directories through Launch
+Services, and generic `.ShipIt` / `.helper` cache keys retry as their base bundle
+IDs. The pre-existing browser fallbacks now also work for apps installed in the
+user's Applications directory. Ambiguous vendor/service cache directories retain
+the generic app icon.
+
+- Focused resolver regression: **1 test, 0 failures**
+- `make test`: **116 tests, 0 failures**
+
 # Todo: Trust plan — 2026-08-21
 
 # Todo: Stable refresh control — 2026-08-22
