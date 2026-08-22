@@ -74,7 +74,8 @@ function decodeDiagnostics(value) {
   return {
     attachment: {
       content: value,
-      name: "prunr-diagnostics.log",
+      // Brevo rejects .log attachments ("Unsupported file format"); txt is allowed.
+      name: "prunr-diagnostics.txt",
     },
   };
 }
