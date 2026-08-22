@@ -50,7 +50,7 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         )
     }
 
-    func testFooterActivityDescribesActiveChangeWork() {
+    func testFooterActivityDescribesManualStorageCheckOnly() {
         let manager = MenuBarManager()
         manager.isCheckingGrowth = true
         XCTAssertEqual(manager.footerActivity, .checkingChanges)
@@ -58,8 +58,7 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
 
         manager.isCheckingGrowth = false
         manager.isProcessingRecentChanges = true
-        XCTAssertEqual(manager.footerActivity, .updatingChanges)
-        XCTAssertEqual(manager.footerActivity.text, "Updating storage…")
+        XCTAssertEqual(manager.footerActivity, .idle)
     }
 
     func testFooterActivityOnlyShowsExceptionalQueuedReconciliation() {

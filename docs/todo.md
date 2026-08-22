@@ -1,5 +1,16 @@
 # Todo: Trust plan — 2026-08-21
 
+# Todo: Silent automatic watcher refreshes — 2026-08-22
+
+- [x] Keep short automatic incremental refreshes out of the footer; verify no footer churn regressions.
+
+## Review
+
+Automatic incremental watcher refreshes are intentionally silent. The footer now
+reports only manual checks, full-scan work, or exceptional queued reconciliation.
+
+- `make test`: **114 tests, 0 failures**
+
 # Todo: Quiet watcher footer — 2026-08-22
 
 - [x] Hide routine watcher backlogs from the footer and retain a completed update briefly.

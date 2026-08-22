@@ -266,7 +266,6 @@ final class MenuBarManager: NSObject {
 
         case fullScan(phase: FullScanPhase, percentage: Int?)
         case checkingChanges
-        case updatingChanges
         case reconciliationQueued
         case idle
 
@@ -283,8 +282,6 @@ final class MenuBarManager: NSObject {
                 return "Analyzing inventory…"
             case .checkingChanges:
                 return "Checking storage…"
-            case .updatingChanges:
-                return "Updating storage…"
             case .reconciliationQueued:
                 return "Full refresh queued"
             case .idle:
@@ -318,9 +315,6 @@ final class MenuBarManager: NSObject {
 
         if isCheckingGrowth {
             return .checkingChanges
-        }
-        if isProcessingRecentChanges {
-            return .updatingChanges
         }
         if pendingDirtyReason != nil || needsAuthoritativeReconciliation {
             return .reconciliationQueued
