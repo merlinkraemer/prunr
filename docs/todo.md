@@ -1,3 +1,20 @@
+# Todo: Cache-owner app icon mapping — 2026-08-22
+
+- [x] Map common vendor cache-owner keys to their installed application bundle IDs.
+- [x] Keep native installed-app icons as the preferred result.
+- [x] Add resolver regression coverage; build and install.
+
+## Review
+
+`Google`, `Adobe`, and `Steam` now map to their installed application bundles:
+Chrome, Creative Cloud, and Steam. Bundle-ID resolution remains preferred, then
+known app paths handle delayed Launch Services registration. We intentionally do
+not redistribute third-party artwork for stale cache folders after uninstallation.
+
+- Focused resolver regression: **1 test, 0 failures**
+- `make test`: **116 tests, 0 failures**
+- `make install-app`: installed `/Applications/Prunr.app`
+
 # Todo: Cache drilldown application icons — 2026-08-22
 
 - [x] Identify cache-owner naming variants that bypass the installed-app resolver.

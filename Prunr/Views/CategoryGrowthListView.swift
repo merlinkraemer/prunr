@@ -1215,7 +1215,8 @@ enum CacheApplicationIconResolver {
     static func icon(forBundleIdentifier bundleIdentifier: String?) -> NSImage? {
         guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return nil }
 
-        for candidate in bundleIdentifierCandidates(for: bundleIdentifier) {
+        let candidates = bundleIdentifierCandidates(for: bundleIdentifier)
+        for candidate in candidates {
             if let applicationURL = NSWorkspace.shared.urlForApplication(
                 withBundleIdentifier: candidate
             ) {
@@ -1232,9 +1233,11 @@ enum CacheApplicationIconResolver {
         // Launch Services can briefly lag behind an app install/update. Keep
         // explicit paths for the major browsers so their cache rows still get
         // their real icons during that window.
-        for path in knownApplicationPaths[bundleIdentifier] ?? [] {
-            guard FileManager.default.fileExists(atPath: path) else { continue }
-            return NSWorkspace.shared.icon(forFile: path)
+        for candidate in candidates {
+            for path in knownApplicationPaths[candidate] ?? [] {
+                guard FileManager.default.fileExists(atPath: path) else { continue }
+                return NSWorkspace.shared.icon(forFile: path)
+            }
         }
 
         return nil
@@ -1256,7 +1259,10 @@ enum CacheApplicationIconResolver {
         "com.apple.WebKit.Networking": "com.apple.Safari",
         "com.apple.WebKit.WebContent": "com.apple.Safari",
         "com.google.Chrome.helper": "com.google.Chrome",
-        "com.microsoft.VSCode.ShipIt": "com.microsoft.VSCode"
+        "com.microsoft.VSCode.ShipIt": "com.microsoft.VSCode",
+        "Google": "com.google.Chrome",
+        "Adobe": "com.adobe.acc.AdobeCreativeCloud",
+        "Steam": "com.valvesoftware.steam"
     ]
 
     private static let knownApplicationPaths: [String: [String]] = [
@@ -1283,6 +1289,12 @@ enum CacheApplicationIconResolver {
         "com.apple.Safari": [
             "/Applications/Safari.app",
             "/System/Applications/Safari.app"
+        ],
+        "com.adobe.acc.AdobeCreativeCloud": [
+            "/Applications/Utilities/Adobe Creative Cloud/ACC/Creative Cloud.app"
+        ],
+        "com.valvesoftware.steam": [
+            "/Applications/Steam.app"
         ]
     ]
 

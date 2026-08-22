@@ -221,7 +221,7 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
-    func testCacheApplicationIconResolverStripsUpdaterAndHelperSuffixes() {
+    func testCacheApplicationIconResolverMapsVendorAndHelperKeys() {
         XCTAssertEqual(
             CacheApplicationIconResolver.bundleIdentifierCandidates(
                 for: "com.microsoft.VSCode.ShipIt"
@@ -233,6 +233,18 @@ final class PrunrSmokeTests: XCTestCase {
                 for: "com.example.App.helper"
             ),
             ["com.example.App.helper", "com.example.App"]
+        )
+        XCTAssertEqual(
+            CacheApplicationIconResolver.bundleIdentifierCandidates(for: "Google"),
+            ["Google", "com.google.Chrome"]
+        )
+        XCTAssertEqual(
+            CacheApplicationIconResolver.bundleIdentifierCandidates(for: "Adobe"),
+            ["Adobe", "com.adobe.acc.AdobeCreativeCloud"]
+        )
+        XCTAssertEqual(
+            CacheApplicationIconResolver.bundleIdentifierCandidates(for: "Steam"),
+            ["Steam", "com.valvesoftware.steam"]
         )
     }
 
