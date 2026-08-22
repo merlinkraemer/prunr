@@ -16,6 +16,9 @@ actor BaselineService {
         let inventory: [CategoryInventoryItem]
         let latestSnapshotIdsByPath: [UUID: Int64]
         let baselineSnapshotIdsByPath: [UUID: Int64]
+        /// Paths whose inventory could not be read. Callers must retain their
+        /// current UI rather than treating an incomplete result as empty data.
+        let unavailableTrackedPathIDs: Set<UUID>
         let latestSnapshotDate: Date?
         /// Earliest baseline-snapshot date across enabled paths — the "since"
         /// anchor for accumulated growth. Resets to ~now after Accept/Reset.
@@ -451,49 +454,51 @@ actor BaselineService {
     /// - Returns: Array of CategoryInventoryItem sorted by currentSizeBytes descending
     func getCategoryInventory(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
         do {
-            let workingSetTotals = try await db.fetchWorkingSetCategoryTotals(for: trackedPath.id)
-            if !workingSetTotals.isEmpty {
-                return workingSetTotals
-            }
-
-            // Get the latest snapshot for this trackedPath
-            let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
-            guard let latestSnapshot = snapshots.first,
-                  let snapshotId = latestSnapshot.id else {
-                return []
-            }
-
-            let precomputedTotals = try await db.fetchCategoryTotals(for: snapshotId)
-
-            if !precomputedTotals.isEmpty {
-                return precomputedTotals
-            }
-
-            // Query snapshotEntry for that snapshot, JOIN paths to get path strings
-            let entries = try await db.fetchEntries(for: snapshotId)
-
-            // Aggregate into Dictionary<GrowthCategory, Int64>
-            var categoryTotals: [GrowthCategory: Int64] = [:]
-
-            for entry in entries {
-                let category = GrowthCategory.categorize(path: entry.path)
-                categoryTotals[category, default: 0] += entry.sizeBytes
-            }
-
-            // Return as [CategoryInventoryItem] sorted by totalBytes descending
-            let items = categoryTotals.map { (category, totalBytes) -> CategoryInventoryItem in
-                return CategoryInventoryItem(
-                    category: category,
-                    currentSizeBytes: totalBytes,
-                    recentGrowthStory: nil
-                )
-            }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
-
-            return items
+            return try await loadCategoryInventory(trackedPath: trackedPath)
         } catch {
             logger.error("Error getting category inventory: \(error.localizedDescription, privacy: .public)")
             return []
         }
+    }
+
+    private func loadCategoryInventory(trackedPath: TrackedPath) async throws -> [CategoryInventoryItem] {
+        let workingSetTotals = try await db.fetchWorkingSetCategoryTotals(for: trackedPath.id)
+        if !workingSetTotals.isEmpty {
+            return workingSetTotals
+        }
+
+        // Get the latest snapshot for this trackedPath
+        let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
+        guard let latestSnapshot = snapshots.first,
+              let snapshotId = latestSnapshot.id else {
+            return []
+        }
+
+        let precomputedTotals = try await db.fetchCategoryTotals(for: snapshotId)
+
+        if !precomputedTotals.isEmpty {
+            return precomputedTotals
+        }
+
+        // Query snapshotEntry for that snapshot, JOIN paths to get path strings
+        let entries = try await db.fetchEntries(for: snapshotId)
+
+        // Aggregate into Dictionary<GrowthCategory, Int64>
+        var categoryTotals: [GrowthCategory: Int64] = [:]
+
+        for entry in entries {
+            let category = GrowthCategory.categorize(path: entry.path)
+            categoryTotals[category, default: 0] += entry.sizeBytes
+        }
+
+        // Return as [CategoryInventoryItem] sorted by totalBytes descending
+        return categoryTotals.map { (category, totalBytes) -> CategoryInventoryItem in
+            CategoryInventoryItem(
+                category: category,
+                currentSizeBytes: totalBytes,
+                recentGrowthStory: nil
+            )
+        }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
     }
 
     func getSubcategoryBreakdown(for category: GrowthCategory, snapshotId: Int64) async -> [SubcategoryGroup] {
@@ -1154,15 +1159,23 @@ actor BaselineService {
     /// - Parameter trackedPath: The tracked path to analyze
     /// - Returns: Array of CategoryInventoryItem with recent growth attached where applicable
     func getInventoryWithTrends(trackedPath: TrackedPath) async -> [CategoryInventoryItem] {
-        var inventory = await getCategoryInventory(trackedPath: trackedPath)
-        let comparisonSnapshots = try? await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id)
-        guard let comparisonSnapshots else {
+        do {
+            return try await loadInventoryWithTrends(trackedPath: trackedPath)
+        } catch {
+            logger.error("Error getting inventory with trends: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
+
+    private func loadInventoryWithTrends(trackedPath: TrackedPath) async throws -> [CategoryInventoryItem] {
+        var inventory = try await loadCategoryInventory(trackedPath: trackedPath)
+        guard let comparisonSnapshots = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id) else {
             return inventory
         }
 
         if comparisonSnapshots.baselineSnapshotId == nil {
-            let snapshots = try? await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
-            let hasSingleSnapshotOnly = (snapshots?.count == 1)
+            let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
+            let hasSingleSnapshotOnly = snapshots.count == 1
             guard hasSingleSnapshotOnly else {
                 return inventory
             }
@@ -1187,6 +1200,7 @@ actor BaselineService {
         var itemsByCategory: [GrowthCategory: CategoryInventoryItem] = [:]
         var latestSnapshotIdsByPath: [UUID: Int64] = [:]
         var baselineSnapshotIdsByPath: [UUID: Int64] = [:]
+        var unavailableTrackedPathIDs: Set<UUID> = []
         var latestSnapshotDate: Date?
         var baselineSnapshotDate: Date?
 
@@ -1219,9 +1233,18 @@ actor BaselineService {
                 }
             } catch {
                 logger.error("Error resolving snapshots for \(trackedPath.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                unavailableTrackedPathIDs.insert(trackedPath.id)
+                continue
             }
 
-            let inventory = await getInventoryWithTrends(trackedPath: trackedPath)
+            let inventory: [CategoryInventoryItem]
+            do {
+                inventory = try await loadInventoryWithTrends(trackedPath: trackedPath)
+            } catch {
+                logger.error("Error getting inventory for \(trackedPath.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                unavailableTrackedPathIDs.insert(trackedPath.id)
+                continue
+            }
             for item in inventory {
                 if let existing = itemsByCategory[item.category] {
                     itemsByCategory[item.category] = mergeInventoryItem(existing, with: item)
@@ -1242,6 +1265,7 @@ actor BaselineService {
             inventory: inventory,
             latestSnapshotIdsByPath: latestSnapshotIdsByPath,
             baselineSnapshotIdsByPath: baselineSnapshotIdsByPath,
+            unavailableTrackedPathIDs: unavailableTrackedPathIDs,
             latestSnapshotDate: latestSnapshotDate,
             baselineSnapshotDate: baselineSnapshotDate
         )

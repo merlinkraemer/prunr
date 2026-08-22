@@ -1839,6 +1839,50 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testIncompleteInventoryRefreshPreservesDrillDownSelection() async throws {
+        let trackedRoot = try createTrackedPathDirectory(named: "PrunrIncompleteInventoryRefresh")
+        defer {
+            try? FileManager.default.removeItem(at: trackedRoot)
+        }
+
+        try await withEmptyTemporaryDatabase { _ in
+            try await self.withIsolatedTrackedPathSettings(mainBaseURL: trackedRoot) {
+                let trackedPath = SettingsStore.shared.mainTrackedPath
+                let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPath.id)
+                let snapshotId = try XCTUnwrap(snapshot.id)
+                try await DatabaseManager.shared.addEntries(
+                    to: snapshotId,
+                    entries: [
+                        ScanResult(
+                            path: trackedRoot.appendingPathComponent("project/node_modules/pkg/index.js").path,
+                            sizeBytes: 128
+                        )
+                    ]
+                )
+                try await DatabaseManager.shared.rebuildWorkingSet(
+                    from: snapshotId,
+                    trackedPathId: trackedPath.id
+                )
+
+                let manager = MenuBarManager()
+                await manager.loadInventoryFromLatestSnapshot(refreshedAt: Date())
+                let selectedCategory = try XCTUnwrap(
+                    manager.allCategories.first(where: { $0.category == .developer })
+                )
+                manager.selectedInventoryCategory = selectedCategory
+                manager.isDrilledDown = true
+
+                try DatabaseManager.shared.close()
+                await manager.loadInventoryFromLatestSnapshot(refreshedAt: Date())
+
+                XCTAssertTrue(manager.isDrilledDown)
+                XCTAssertEqual(manager.selectedInventoryCategory?.category, .developer)
+                XCTAssertEqual(manager.allCategories.first(where: { $0.category == .developer })?.currentSizeBytes, 128)
+            }
+        }
+    }
+
     func testRecentChangeRefreshAddsNewCategoryToInventoryFromWorkingSet() async throws {
         try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
             let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeNewCategory")

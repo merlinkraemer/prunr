@@ -1510,6 +1510,14 @@ final class MenuBarManager: NSObject {
         let aggregation = await Perf.measure("inventory-aggregation", detail: "paths=\(enabledPaths.count)") {
             await baselineService.getInventoryWithTrends(trackedPaths: enabledPaths)
         }
+        guard aggregation.unavailableTrackedPathIDs.isEmpty else {
+            let unavailableNames = enabledPaths
+                .filter { aggregation.unavailableTrackedPathIDs.contains($0.id) }
+                .map(\.displayName)
+                .joined(separator: ", ")
+            Self.logger.warning("Keeping visible inventory after incomplete refresh for: \(unavailableNames, privacy: .public)")
+            return
+        }
         guard !aggregation.latestSnapshotIdsByPath.isEmpty else {
             noBaseline = true
             clearInventoryState()
@@ -2299,11 +2307,14 @@ final class MenuBarManager: NSObject {
         }
         invalidateGrowthContributorCache()
 
-        reconcileDrillDownSelection()
-
-        if shouldInvalidateSubcategoryCache, isDrilledDown, let category = selectedInventoryCategory?.category {
+        if shouldInvalidateSubcategoryCache,
+           isDrilledDown,
+           let category = selectedInventoryCategory?.category,
+           allCategories.contains(where: { $0.category == category }) {
             preloadSubcategoryBreakdowns(for: [category])
         }
+
+        reconcileDrillDownSelection()
     }
 
     private func clearInventoryState() {
