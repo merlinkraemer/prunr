@@ -1,5 +1,21 @@
 # Todo: Trust plan — 2026-08-21
 
+# Todo: Agent-accessible feedback inbox — 2026-08-22
+
+- [x] Persist each accepted feedback submission in Vercel KV before notifying via Brevo.
+- [x] Add bearer-authenticated agent list, detail, and triage endpoints.
+- [x] Add API-level regression coverage and run app/API tests.
+- [ ] Configure the production KV and agent-token environment variables.
+
+## Review
+
+Implemented the Vercel KV-backed inbox, agent API, rate limiting, and API
+regressions. Setup and CLI examples: `docs/feedback-agent-api.md`.
+
+- `npm run test:api`: **3 tests, 0 failures**
+- `make test XCODE_EXTRA_FLAGS='CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='`:
+  **107 tests, 0 failures**
+
 Full plan: `docs/trust-plan-2026-08-21.md`. Context: `docs/ux-review-brief-2026-08-21.md`.
 Phases 1-3 are the trust core and block the cleaning feature.
 

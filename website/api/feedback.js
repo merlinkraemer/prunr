@@ -3,6 +3,8 @@
 // browser-origin policy. A shared token only deters casual unsolicited traffic;
 // it is not a substitute for user authentication.
 
+import { checkSubmissionRateLimit, createFeedback, updateNotificationStatus } from "./feedback-store.js";
+
 const DEFAULT_NOTIFY_EMAIL = "merlinkraemer@gmail.com";
 const DEFAULT_SHARED_TOKEN = "prunr-alpha-feedback-v1";
 
@@ -35,6 +37,13 @@ function senderConfig() {
   const senderEmail = process.env.BREVO_SENDER_EMAIL;
   if (!senderEmail) return null;
   return { name: process.env.BREVO_SENDER_NAME || "Merlin", email: senderEmail };
+}
+
+function requestIp(req) {
+  const forwarded = req.headers?.["x-forwarded-for"];
+  if (typeof forwarded !== "string") return "unknown";
+  const ip = forwarded.split(",", 1)[0].trim();
+  return /^[0-9a-f:.]{1,64}$/i.test(ip) ? ip : "unknown";
 }
 
 function bodyByteLength(body) {
@@ -89,8 +98,7 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function emailPayload({ sender, notifyEmail, message, email, appVersion, macOSVersion, installId, attachment }) {
-  const receivedAt = new Date().toISOString();
+function emailPayload({ sender, notifyEmail, message, email, appVersion, macOSVersion, installId, attachment, receivedAt }) {
   const diagnosticsStatus = attachment ? "Attached" : "Not included";
   const replyToLine = email || "Not supplied";
   const textContent = [
@@ -193,7 +201,34 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Server is not configured." });
   }
 
+  let accepted;
+  try {
+    if (!await checkSubmissionRateLimit(installId, requestIp(req))) {
+      return res.status(429).json({ error: "Too many feedback submissions. Please try again later." });
+    }
+    accepted = {
+      id: crypto.randomUUID(),
+      receivedAt: new Date().toISOString(),
+      updatedAt: null,
+      status: "new",
+      labels: [],
+      agentSummary: null,
+      notificationStatus: "pending",
+      message,
+      email,
+      appVersion,
+      macOSVersion,
+      installId,
+      diagnosticsBase64: body.diagnosticsBase64 || null,
+    };
+    await createFeedback(accepted);
+  } catch (error) {
+    console.error("Feedback persistence failed", error);
+    return res.status(503).json({ error: "Feedback storage is unavailable. Please try again." });
+  }
+
   const notifyEmail = process.env.NOTIFY_EMAIL || DEFAULT_NOTIFY_EMAIL;
+  let notificationStatus;
   try {
     await sendBrevoEmail(apiKey, emailPayload({
       sender,
@@ -204,10 +239,20 @@ export default async function handler(req, res) {
       macOSVersion,
       installId,
       attachment: diagnostics.attachment,
+      receivedAt: accepted.receivedAt,
     }));
-    return res.status(202).json({ ok: true });
+    notificationStatus = "sent";
   } catch (error) {
     console.error("Feedback relay failed", error);
-    return res.status(502).json({ error: "Couldn’t send feedback. Please try again." });
+    notificationStatus = "failed";
   }
+
+  try {
+    await updateNotificationStatus(accepted.id, notificationStatus);
+  } catch (error) {
+    // The feedback record is already durable. Delivery-state tracking must not
+    // turn an accepted submission into a retry.
+    console.error("Feedback notification state update failed", error);
+  }
+  return res.status(202).json({ ok: true, id: accepted.id });
 }
