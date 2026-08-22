@@ -3,13 +3,13 @@
     <channel>
         <title>Prunr</title>
         <item>
-            <title>0.1.5-alpha.13</title>
-            <pubDate>Sat, 22 Aug 2026 11:07:38 +0000</pubDate>
-            <link>https://github.com/merlinkraemer/prunr/releases/tag/v0.1.5-alpha.13</link>
-            <sparkle:version>14</sparkle:version>
-            <sparkle:shortVersionString>0.1.5-alpha.13</sparkle:shortVersionString>
+            <title>0.1.5-alpha.14</title>
+            <pubDate>Sat, 22 Aug 2026 13:48:16 +0000</pubDate>
+            <link>https://github.com/merlinkraemer/prunr/releases/tag/v0.1.5-alpha.14</link>
+            <sparkle:version>15</sparkle:version>
+            <sparkle:shortVersionString>0.1.5-alpha.14</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/merlinkraemer/prunr/releases/download/v0.1.5-alpha.13/Prunr-0.1.5-alpha.13-build14-macos.zip" length="10185470" type="application/octet-stream" sparkle:edSignature="mw0baRDiaUiD8SmUYX8tJkVGEqD4hp4vVOHQoJNboDsXMdNxmJaphKEVh0jt8Om2fFfS4XbfM7qODmvNrgdmCQ=="/>
+            <enclosure url="https://github.com/merlinkraemer/prunr/releases/download/v0.1.5-alpha.14/Prunr-0.1.5-alpha.14-build15-macos.zip" length="10184850" type="application/octet-stream" sparkle:edSignature="T3R90lmFJ7TIINGkRpkDfCXI/Y0ciRmhiA6oNIOsHWphuB0x8fDzhHj218Mj6KE741Fk788i+knZMM2o64ciAg=="/>
         </item>
     </channel>
 </rss>
