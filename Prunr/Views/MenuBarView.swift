@@ -1507,7 +1507,7 @@ struct MenuBarView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(manager.isLoading || manager.isAutoScanning || manager.isProcessingRecentChanges || manager.isCheckingGrowth)
+                .disabled(manager.isLoading || manager.isAutoScanning || manager.isCheckingGrowth)
                 .accessibilityLabel("Refresh recent changes")
                 .accessibilityHint("Run a lightweight refresh without a full scan")
                 .onHover { hovering in

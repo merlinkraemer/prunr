@@ -1597,9 +1597,18 @@ final class MenuBarManager: NSObject {
     /// Lightweight growth check: flushes any pending FSEvents changes immediately
     /// without escalating into a full filesystem scan.
     func checkGrowth() async {
-        guard !isLoading, !isAutoScanning, !isProcessingRecentChanges else { return }
+        guard !isLoading, !isAutoScanning, !isCheckingGrowth else { return }
         isCheckingGrowth = true
         defer { isCheckingGrowth = false }
+
+        // Automatic watcher refreshes are brief, routine maintenance. A manual
+        // check should join immediately after one rather than making the enabled
+        // refresh button a no-op or visually flicker with every watcher batch.
+        while isProcessingRecentChanges {
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+        }
+
         // Cancel any pending debounced refresh so we can run immediately
         recentChangeTask?.cancel()
         recentChangeTask = nil

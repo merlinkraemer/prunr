@@ -61,6 +61,21 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         XCTAssertEqual(manager.footerActivity, .idle)
     }
 
+    func testManualCheckWaitsForAutomaticRefreshInsteadOfReturning() async throws {
+        let manager = MenuBarManager()
+        manager.isProcessingRecentChanges = true
+
+        let checkTask = Task { @MainActor in
+            await manager.checkGrowth()
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(manager.isCheckingGrowth)
+
+        manager.isProcessingRecentChanges = false
+        await checkTask.value
+        XCTAssertFalse(manager.isCheckingGrowth)
+    }
+
     func testFooterActivityOnlyShowsExceptionalQueuedReconciliation() {
         let dirtyManager = MenuBarManager()
         dirtyManager.recordFileWatcherChangeBatch(

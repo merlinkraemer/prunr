@@ -1,5 +1,15 @@
 # Todo: Trust plan — 2026-08-21
 
+# Todo: Stable refresh control — 2026-08-22
+
+- [x] Keep automatic watcher refreshes from dimming the manual refresh icon; verify manual refresh joins correctly.
+
+## Review
+
+Automatic watcher work no longer disables the manual refresh button. A manual
+check waits for the current short automatic pass, then runs rather than being
+dropped. Regression coverage verifies that join behavior.
+
 # Todo: Silent automatic watcher refreshes — 2026-08-22
 
 - [x] Keep short automatic incremental refreshes out of the footer; verify no footer churn regressions.
