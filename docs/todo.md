@@ -1,5 +1,23 @@
 # Todo: Trust plan — 2026-08-21
 
+# Todo: Feedback evidence — pending state and CPU — 2026-08-22
+
+- [x] Stop sustained normal FSEvents from indefinitely resetting the refresh debounce.
+- [x] Include privacy-safe pending-queue and scheduler state in diagnostics.
+- [x] Add a regression for repeated normal watcher batches and run focused/full tests.
+
+## Review
+
+The alpha.12 report `dc4ba2f2-e7a8-472c-ada0-a22c33dacb65` proves 107 watcher
+batches / 507 accepted paths in 109 seconds, with pending state and zero
+incremental refreshes. It also reports real Prunr CPU (89.1% at submission),
+but lacks enough scheduler state to attribute the heat precisely.
+
+Normal watcher batches now retain the first 1.5s refresh deadline rather than
+restarting it. Diagnostics additionally report queue count, dirty/reconciliation
+state, event age, deadline, and schedule/execution/reschedule counters. The
+continuous-watcher regression and full suite passed: **108 tests, 0 failures**.
+
 # Todo: Agent-accessible feedback inbox — 2026-08-22
 
 - [x] Persist each accepted feedback submission in Vercel KV before notifying via Brevo.

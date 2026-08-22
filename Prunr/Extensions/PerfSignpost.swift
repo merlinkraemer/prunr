@@ -61,6 +61,19 @@ struct DiagnosticsAppContext {
     var stableCount: Int
     var fullScanRunning: Bool
     var pendingRecentChanges: Bool
+    var pendingRecentChangePathCount = 0
+    var pendingRecentChangeRequiresFullRefresh = false
+    var pendingDirtyReason: String? = nil
+    var needsAuthoritativeReconciliation = false
+    var isProcessingRecentChanges = false
+    var dirtyRefreshScheduled = false
+    var dirtyRootConsecutiveCount = 0
+    var scheduledRecentChangeRefreshDelay: TimeInterval? = nil
+    var scheduledRecentChangeRefreshAt: Date? = nil
+    var lastFileEventAt: Date? = nil
+    var recentChangeRefreshScheduleCount = 0
+    var recentChangeRefreshExecutionCount = 0
+    var recentChangeRefreshRescheduleCount = 0
     var noBaseline: Bool
     var lastFullScanCompletedAt: Date?
 }
@@ -297,6 +310,13 @@ final class DiagnosticsReporter {
         func bytes(_ v: Int64) -> String { bcf.string(fromByteCount: v) }
         let lastScan = ctx.lastFullScanCompletedAt.map { isoFormatter.string(from: $0) } ?? "never"
         let memMB = ProcessCPU.residentMemoryBytes() / (1024 * 1024)
+        let now = Date()
+        func elapsed(_ date: Date?) -> String {
+            date.map { "\(max(0, Int(now.timeIntervalSince($0))))s" } ?? "never"
+        }
+        func remaining(_ date: Date?) -> String {
+            date.map { "\(max(0, Int($0.timeIntervalSince(now))))s" } ?? "none"
+        }
 
         var block = "\n===== MANUAL SNAPSHOT [\(isoFormatter.string(from: Date()))] =====\n"
         block += "app=\(Self.appVersion) macOS=\(ProcessInfo.processInfo.operatingSystemVersionString)\n"
@@ -304,6 +324,7 @@ final class DiagnosticsReporter {
         block += "disk: used=\(bytes(ctx.usedBytes)) total=\(bytes(ctx.totalBytes)) free=\(bytes(ctx.freeBytes))\n"
         block += "inventory: categories=\(ctx.categoryCount) growing=\(ctx.growingCount) stable=\(ctx.stableCount)\n"
         block += "state: fullScanRunning=\(ctx.fullScanRunning) pendingRecentChanges=\(ctx.pendingRecentChanges) noBaseline=\(ctx.noBaseline) lastFullScan=\(lastScan)\n"
+        block += "watcher: pendingPaths=\(ctx.pendingRecentChangePathCount) requiresFullRefresh=\(ctx.pendingRecentChangeRequiresFullRefresh) dirtyReason=\(ctx.pendingDirtyReason ?? "none") reconciliationNeeded=\(ctx.needsAuthoritativeReconciliation) processing=\(ctx.isProcessingRecentChanges) dirtyScheduled=\(ctx.dirtyRefreshScheduled) dirtyCycles=\(ctx.dirtyRootConsecutiveCount) lastScheduledDelay=\(ctx.scheduledRecentChangeRefreshDelay.map { "\(Int($0))s" } ?? "none") scheduledIn=\(remaining(ctx.scheduledRecentChangeRefreshAt)) lastEventAge=\(elapsed(ctx.lastFileEventAt)) refresh(schedule/executed/rescheduled)=\(ctx.recentChangeRefreshScheduleCount)/\(ctx.recentChangeRefreshExecutionCount)/\(ctx.recentChangeRefreshRescheduleCount)\n"
         block += "process: residentMem=\(memMB)MB cpuNow=\(String(format: "%.1f", ProcessCPU.usagePercent()))%\n"
         block += windowSummaryLine(label: "live-window-so-far") + "\n"
         append(block)

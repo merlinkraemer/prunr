@@ -2076,6 +2076,30 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     @MainActor
+    func testMenuBarManagerDoesNotStarveNormalRefreshUnderContinuousWatcherBatches() async throws {
+        let manager = MenuBarManager()
+        let changedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PrunrWatcherDebounce-\(UUID().uuidString)")
+
+        manager.recordFileWatcherChangeBatch(
+            FSEventsWatcher.ChangeBatch(changedPaths: [changedURL], requiresFullRescan: false)
+        )
+        let firstGeneration = manager.recentChangeTaskGeneration
+        XCTAssertGreaterThan(firstGeneration, 0)
+
+        for _ in 0..<5 {
+            manager.recordFileWatcherChangeBatch(
+                FSEventsWatcher.ChangeBatch(changedPaths: [changedURL], requiresFullRescan: false)
+            )
+        }
+        XCTAssertEqual(manager.recentChangeTaskGeneration, firstGeneration)
+
+        try await Task.sleep(for: .seconds(2))
+        XCTAssertEqual(manager.recentChangeRefreshScheduleCount, 1)
+        XCTAssertEqual(manager.recentChangeRefreshExecutionCount, 1)
+    }
+
+    @MainActor
     func testMenuBarManagerRetainsDirtyFullRefreshInsideConfiguredInterval() async throws {
         let trackedRoot = try createTrackedPathDirectory(named: "PrunrDirtyCooldown")
         defer {

@@ -602,7 +602,11 @@ final class MenuBarManager: NSObject {
 
     @ObservationIgnored
     nonisolated(unsafe) private var recentChangeTask: Task<Void, Never>?
-    private var recentChangeTaskGeneration = 0
+    private(set) var recentChangeTaskGeneration = 0
+    private var scheduledRecentChangeRefreshAt: Date?
+    private(set) var recentChangeRefreshScheduleCount = 0
+    private(set) var recentChangeRefreshExecutionCount = 0
+    private(set) var recentChangeRefreshRescheduleCount = 0
     @ObservationIgnored
     nonisolated(unsafe) private var reconciliationBackstopTask: Task<Void, Never>?
     @ObservationIgnored
@@ -805,6 +809,19 @@ final class MenuBarManager: NSObject {
             stableCount: allCategories.count - changedCategories.count,
             fullScanRunning: isLoading || isAutoScanning || isReconciling,
             pendingRecentChanges: hasPendingRecentChanges,
+            pendingRecentChangePathCount: pendingRecentChangePaths.count,
+            pendingRecentChangeRequiresFullRefresh: pendingRecentChangeRequiresFullRefresh,
+            pendingDirtyReason: pendingDirtyReason,
+            needsAuthoritativeReconciliation: needsAuthoritativeReconciliation,
+            isProcessingRecentChanges: isProcessingRecentChanges,
+            dirtyRefreshScheduled: dirtyRefreshScheduled,
+            dirtyRootConsecutiveCount: dirtyRootConsecutiveCount,
+            scheduledRecentChangeRefreshDelay: lastScheduledRecentChangeRefreshDelay,
+            scheduledRecentChangeRefreshAt: scheduledRecentChangeRefreshAt,
+            lastFileEventAt: lastFileEventAt,
+            recentChangeRefreshScheduleCount: recentChangeRefreshScheduleCount,
+            recentChangeRefreshExecutionCount: recentChangeRefreshExecutionCount,
+            recentChangeRefreshRescheduleCount: recentChangeRefreshRescheduleCount,
             noBaseline: noBaseline,
             lastFullScanCompletedAt: lastFullScanCompletedAt
         )
@@ -1208,6 +1225,7 @@ final class MenuBarManager: NSObject {
         if !isProcessingRecentChanges {
             recentChangeTask?.cancel()
             recentChangeTask = nil
+            scheduledRecentChangeRefreshAt = nil
         }
         pendingRecentChangePaths.removeAll()
         pendingRecentChangeRequiresFullRefresh = false
@@ -3260,20 +3278,37 @@ final class MenuBarManager: NSObject {
         if pendingRecentChangeRequiresFullRefresh {
             scheduleDirtyRootRefresh()
         } else {
-            scheduleRecentChangeRefreshTask(after: currentRecentChangeDebounce)
+            // A busy filesystem must not prevent a refresh forever. New normal
+            // batches join the already-scheduled pass; dirty/cooldown paths are
+            // the only callers allowed to deliberately replace its deadline.
+            scheduleRecentChangeRefreshTask(
+                after: currentRecentChangeDebounce,
+                replacingExisting: false
+            )
         }
     }
 
-    private func scheduleRecentChangeRefreshTask(after delay: TimeInterval) {
+    private func scheduleRecentChangeRefreshTask(
+        after delay: TimeInterval,
+        replacingExisting: Bool = true
+    ) {
+        guard replacingExisting || recentChangeTask == nil else { return }
+        if recentChangeTask != nil {
+            recentChangeRefreshRescheduleCount += 1
+            recentChangeTask?.cancel()
+        }
         recentChangeTaskGeneration += 1
         let generation = recentChangeTaskGeneration
-        recentChangeTask?.cancel()
+        recentChangeRefreshScheduleCount += 1
         lastScheduledRecentChangeRefreshDelay = delay
+        scheduledRecentChangeRefreshAt = Date().addingTimeInterval(delay)
         recentChangeTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
             guard !Task.isCancelled else { return }
             guard recentChangeTaskGeneration == generation else { return }
             recentChangeTask = nil
+            scheduledRecentChangeRefreshAt = nil
+            recentChangeRefreshExecutionCount += 1
             await performRecentChangeRefresh()
         }
     }
