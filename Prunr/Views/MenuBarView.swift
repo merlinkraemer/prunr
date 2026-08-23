@@ -1085,10 +1085,20 @@ struct MenuBarView: View {
         max(0, manager.usedBytes - trackedInventoryBytes)
     }
 
-    // Outside-scan-scope total is represented by the drive bar and Scan Scope
-    // settings, not by a persistent footer message.
+    // Supplemental rows render after the regular categories, keeping this
+    // outside-scope total in the final spot of the inventory list.
     private var supplementalInventoryItems: [SupplementalInventoryItem] {
-        []
+        guard outsideScanScopeBytes > 0 else { return [] }
+
+        return [
+            SupplementalInventoryItem(
+                id: outsideScopeSegmentID,
+                title: "Outside Scan Scope",
+                icon: "square.dashed",
+                currentSizeBytes: outsideScanScopeBytes,
+                badgeText: "Not scanned"
+            )
+        ]
     }
 
     /// Signed net change across every category over the fixed display window.
