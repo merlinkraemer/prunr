@@ -39,8 +39,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.prunr.app
         PRODUCT_NAME: Prunr
-        MARKETING_VERSION: "0.1.5-alpha.16"
-        CURRENT_PROJECT_VERSION: "17"
+        MARKETING_VERSION: "0.1.5-alpha.17"
+        CURRENT_PROJECT_VERSION: "18"
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: PM5QWB5426
