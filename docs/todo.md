@@ -1,3 +1,67 @@
+# Todo: Growth-ranked subcategories — 2026-08-23
+
+- [x] Sort subcategories by meaningful growth before size.
+- [x] Put growth on the larger first metric line and size below it.
+- [x] Run regression checks and document the result.
+
+## Review
+
+Subcategory rows now follow the same change-ranking model as the main category
+list: absolute growth above the presentation floor first, then total size.
+Growth is the larger top metric; total size is the smaller lower metric.
+
+- `make test`: 117 tests, 0 failures
+- `swiftlint lint --strict`: 0 violations
+
+# Todo: Overview status bar width — 2026-08-23
+
+- [x] Match the overview status bar and divider to the category-list content width.
+- [x] Show the divider only on the main overview screen.
+- [x] Run regression checks and document the result.
+
+## Review
+
+The overview summary now uses 18-point horizontal insets, matching the list's
+content bounds. The divider is omitted from category and file headers.
+
+- `make test`: 117 tests, 0 failures
+- `swiftlint lint --strict`: 0 violations
+
+# Todo: Unified file drilldown — 2026-08-23
+
+- [x] Add a category-aligned separator below the header summary.
+- [x] Merge growth and inventory file sections into one ordered list.
+- [x] Put added/grown files first, then shrunk files, then unchanged files by filesize.
+- [x] Run regression checks and document the result.
+
+## Review
+
+The header divider now matches the category row bounds. File-level drilldowns use
+one list, deduplicate contributor paths, and sort changed files ahead of
+unchanged files by current size while preserving signed growth indicators.
+
+- `make test`: 117 tests, 0 failures
+- `swiftlint lint --strict`: 0 violations
+
+# Todo: Growth presentation update — 2026-08-23
+
+- [x] Inspect the current growth/category/drilldown views and data formatting.
+- [x] Move the overview growth display into a 7-day change + total growth section.
+- [x] Show signed growth-only values in drilldowns; preserve size + growth in categories.
+- [x] Run focused checks and document the result.
+
+## Review
+
+The overview now uses a left-aligned “7-day change” label and right-aligned
+signed net total without the old pill. Category and subcategory rows retain
+their size values while using orange/green direction icons with neutral growth
+numbers. File-growth rows show only the signed change, using orange `+` for
+new files, orange up arrows for growth, and green down arrows for shrinkage.
+The live contributor query now includes negative working-set deltas.
+
+- `make test XCODE_EXTRA_FLAGS='CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='`: 117 tests, 0 failures
+- `swiftlint lint --strict --config .swiftlint.yml`: 0 violations
+
 # Todo: Drilldown back-button hit target — 2026-08-22
 
 - [x] Give the drilldown back button a genuine 44×44 layout hit target while preserving the header's visuals.

@@ -2623,8 +2623,8 @@ extension DatabaseManager {
 
 extension DatabaseManager {
 
-    /// Finds files in a category that grew or appeared since the last snapshot
-    /// by comparing working set entries against snapshot entries.
+    /// Finds files in a category whose size changed since the last snapshot by
+    /// comparing working set entries against snapshot entries.
     ///
     /// - Parameters:
     ///   - trackedPathId: The tracked path to query
@@ -2632,7 +2632,8 @@ extension DatabaseManager {
     ///   - category: The growth category to filter by
     ///   - subcategory: Optional subcategory filter
     ///   - limit: Maximum number of results
-    /// - Returns: Array of (path, currentSizeBytes, growthBytes) tuples sorted by growthBytes DESC
+    /// - Returns: Array of (path, currentSizeBytes, growthBytes) tuples sorted
+    ///   by absolute change DESC.
     func fetchGrowthContributors(
         trackedPathId: UUID,
         snapshotId: Int64,
@@ -2664,11 +2665,11 @@ extension DatabaseManager {
                         ON se.pathId = wse.pathId
                         AND se.snapshotId = ?
                     WHERE wse.trackedPathId = ?
-                        AND wse.sizeBytes > COALESCE(se.sizeBytes, 0)
+                        AND wse.sizeBytes != COALESCE(se.sizeBytes, 0)
                         AND pc.category = ?
                         AND (? = 0 OR pc.subcategory = ?)
                         AND (? = '' OR p.path LIKE ? COLLATE NOCASE)
-                    ORDER BY growthBytes DESC
+                    ORDER BY ABS(growthBytes) DESC
                     LIMIT ?
                     """,
                 arguments: [

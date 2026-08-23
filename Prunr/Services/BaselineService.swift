@@ -729,10 +729,10 @@ actor BaselineService {
         }
 
         return contributorsByPath.values.sorted {
-            if $0.growthBytes == $1.growthBytes {
+            if abs($0.growthBytes) == abs($1.growthBytes) {
                 return $0.path.localizedStandardCompare($1.path) == .orderedAscending
             }
-            return $0.growthBytes > $1.growthBytes
+            return abs($0.growthBytes) > abs($1.growthBytes)
         }
         .prefix(limit)
         .map { $0 }

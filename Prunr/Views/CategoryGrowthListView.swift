@@ -358,7 +358,8 @@ struct CategoryGrowthListView: View {
     // MARK: - Subcategory List View
 
     private func subcategoryListView(for category: CategoryInventoryItem) -> some View {
-        let groups = manager.subcategoryGroupsByCategory[category.category] ?? []
+        let groups = (manager.subcategoryGroupsByCategory[category.category] ?? [])
+            .sorted(by: subcategorySortsBefore)
         let isLoading = isLoadingSubcategories ||
             (manager.isSubcategoryBreakdownLoading(for: category.category) && groups.isEmpty)
 
@@ -442,9 +443,33 @@ struct CategoryGrowthListView: View {
         let visibleGrowthContributors = loadedContributorTaskID == contributorTaskID ? growthContributors : []
         let showFileSkeleton = isLoadingContributors && loadedFiles.isEmpty
 
-        // Filter out growth contributors from the "all files" list to avoid duplicates
+        // Keep changed files in the unified list, but remove them from the
+        // inventory-backed portion so each path appears exactly once.
         let contributorPaths = Set(visibleGrowthContributors.map(\.path))
         let nonGrowthFiles = loadedFiles.filter { !contributorPaths.contains($0.path) }
+        let orderedFiles = (
+            visibleGrowthContributors.map {
+                DrilldownFileListItem(
+                    path: $0.path,
+                    currentSizeBytes: $0.currentSizeBytes,
+                    growthBytes: $0.growthBytes
+                )
+            } + nonGrowthFiles.map {
+                DrilldownFileListItem(
+                    path: $0.path,
+                    currentSizeBytes: $0.currentSizeBytes,
+                    growthBytes: nil
+                )
+            }
+        ).sorted { lhs, rhs in
+            if lhs.sortPriority != rhs.sortPriority {
+                return lhs.sortPriority > rhs.sortPriority
+            }
+            if lhs.currentSizeBytes != rhs.currentSizeBytes {
+                return lhs.currentSizeBytes > rhs.currentSizeBytes
+            }
+            return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+        }
 
         return AnyView(
             ScrollView {
@@ -462,40 +487,12 @@ struct CategoryGrowthListView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                         .padding(.top, 12)
                     } else {
-                        // Growth contributors section
-                        if !visibleGrowthContributors.isEmpty {
-                            ExpandableList(
-                                items: visibleGrowthContributors,
-                                chunkSize: 10,
-                                canLoadMoreFromDB: false,
-                                isLoadingFromDB: false,
-                                onLoadMoreFromDB: {},
-                                remainingCountInDB: 0,
-                                remainingBytesInDB: 0,
-                                maxLoadableCount: SubcategoryGroup.maxLoadableFiles
-                            ) { contributor in
-                                DrilldownGrowthRow(contributor: contributor, onTap: {
-                                    onTapItem(contributor.path)
-                                })
-                            }
-
-                            // Visual separator between growth and all files
-                            HStack {
-                                Rectangle()
-                                    .fill(Color.primary.opacity(0.06))
-                                    .frame(height: 1)
-                            }
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 4)
-                        }
-
                         if isLoadingContributors {
                             contributorLoadingRow
                         }
 
-                        // All files section
                         ExpandableList(
-                            items: nonGrowthFiles,
+                            items: orderedFiles,
                             chunkSize: 10,
                             canLoadMoreFromDB: canLoadMore,
                             isLoadingFromDB: isLoadingMoreFiles,
@@ -880,10 +877,11 @@ private struct CategoryInventoryRow: View, Equatable {
                     HStack(spacing: 4) {
                         Image(systemName: delta > 0 ? "arrow.up.right" : "arrow.down.right")
                             .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(delta > 0 ? Color.orange : Color.green)
                         Text("\(delta > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(delta)))")
+                            .foregroundStyle(.secondary)
                     }
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(delta > 0 ? Color.orange : Color.secondary)
                 }
             }
             .opacity(isPreparing ? 0.55 : 1)
@@ -961,8 +959,26 @@ private struct SupplementalInventoryRow: View {
 
 }
 
+private struct DrilldownFileListItem: Identifiable {
+    let path: String
+    let currentSizeBytes: Int64
+    let growthBytes: Int64?
+
+    var id: String { path }
+
+    var sortPriority: Int {
+        guard let growthBytes else { return 0 }
+        return growthBytes >= 0 ? 2 : 1
+    }
+
+    var isAddedFile: Bool {
+        guard let growthBytes else { return false }
+        return growthBytes > 0 && growthBytes == currentSizeBytes
+    }
+}
+
 private struct DrilldownFileRow: View {
-    let item: GrowthItem
+    let item: DrilldownFileListItem
     let onTap: () -> Void
 
     @State private var hoverState = false
@@ -975,6 +991,24 @@ private struct DrilldownFileRow: View {
         let fileURL = URL(fileURLWithPath: item.path)
         let path = fileURL.deletingLastPathComponent().path
         return (path as NSString).abbreviatingWithTildeInPath
+    }
+
+    private var growthIndicatorSymbol: String {
+        guard let growthBytes = item.growthBytes else { return "" }
+        if item.isAddedFile {
+            return "plus"
+        }
+        return growthBytes < 0 ? "arrow.down.right" : "arrow.up.right"
+    }
+
+    private var growthIndicatorColor: Color {
+        guard let growthBytes = item.growthBytes else { return .clear }
+        return growthBytes < 0 ? .green : .orange
+    }
+
+    private var growthValueText: String? {
+        guard let growthBytes = item.growthBytes else { return nil }
+        return "\(growthBytes < 0 ? "\u{2212}" : "+")\(formattedBytes(abs(growthBytes)))"
     }
 
     var body: some View {
@@ -1000,10 +1034,21 @@ private struct DrilldownFileRow: View {
 
                 Spacer()
 
-                Text(formattedBytes(item.currentSizeBytes))
-                    .font(.system(size: isLargeFile ? 11 : 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(isLargeFile ? .secondary : .tertiary)
-                    .fixedSize()
+                if let growthValueText {
+                    HStack(spacing: 3) {
+                        Image(systemName: growthIndicatorSymbol)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(growthIndicatorColor)
+                        Text(growthValueText)
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.primary)
+                    }
+                } else {
+                    Text(formattedBytes(item.currentSizeBytes))
+                        .font(.system(size: isLargeFile ? 11 : 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(isLargeFile ? .secondary : .tertiary)
+                        .fixedSize()
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
@@ -1026,79 +1071,26 @@ private struct DrilldownFileRow: View {
 
 }
 
-private struct DrilldownGrowthRow: View {
-    let contributor: GrowthContributor
-    let onTap: () -> Void
+private func subcategorySortsBefore(_ lhs: SubcategoryGroup, _ rhs: SubcategoryGroup) -> Bool {
+    let lhsGrowth = abs(lhs.growthBytes ?? 0)
+    let rhsGrowth = abs(rhs.growthBytes ?? 0)
+    let floor = GrowthJournalService.presentationFloorBytes
+    let lhsChanged = lhsGrowth >= floor
+    let rhsChanged = rhsGrowth >= floor
 
-    @State private var hoverState = false
-
-    private var fileName: String {
-        URL(fileURLWithPath: contributor.path).lastPathComponent
+    if lhsChanged != rhsChanged {
+        return lhsChanged
     }
 
-    private var parentPath: String {
-        let fileURL = URL(fileURLWithPath: contributor.path)
-        let path = fileURL.deletingLastPathComponent().path
-        return (path as NSString).abbreviatingWithTildeInPath
+    if lhsChanged && lhsGrowth != rhsGrowth {
+        return lhsGrowth > rhsGrowth
     }
 
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.orange)
-                    .frame(width: 18)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(fileName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    Text(parentPath)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(formattedBytes(contributor.currentSizeBytes))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .fixedSize()
-
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 8, weight: .semibold))
-                        Text("+\(formattedBytes(contributor.growthBytes))")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                    .foregroundStyle(.orange)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(minHeight: 34)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
-            )
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(contributor.path)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                hoverState = hovering
-            }
-        }
+    if lhs.totalBytes != rhs.totalBytes {
+        return lhs.totalBytes > rhs.totalBytes
     }
 
+    return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
 }
 
 private struct SubcategoryRow: View {
@@ -1108,8 +1100,9 @@ private struct SubcategoryRow: View {
     @State private var hoverState = false
     @State private var nativeApplicationIcon: NSImage?
 
-    private var positiveGrowthBytes: Int64? {
-        guard let growthBytes = group.growthBytes, growthBytes > 0 else {
+    private var renderableGrowthBytes: Int64? {
+        guard let growthBytes = group.growthBytes,
+              abs(growthBytes) >= GrowthJournalService.presentationFloorBytes else {
             return nil
         }
 
@@ -1129,20 +1122,21 @@ private struct SubcategoryRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(alignment: .trailing, spacing: 2) {
+                    if let renderableGrowthBytes {
+                        HStack(spacing: 4) {
+                            Image(systemName: renderableGrowthBytes > 0 ? "arrow.up.right" : "arrow.down.right")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(renderableGrowthBytes > 0 ? Color.orange : Color.green)
+                            Text("\(renderableGrowthBytes > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(renderableGrowthBytes)))")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                    }
+
                     Text(formattedBytes(group.totalBytes))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .fixedSize()
-
-                    if let positiveGrowthBytes {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 8, weight: .semibold))
-                            Text("+\(formattedBytes(positiveGrowthBytes))")
-                        }
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.orange)
-                    }
                 }
 
                 Image(systemName: "chevron.right")

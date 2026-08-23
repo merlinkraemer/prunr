@@ -1190,8 +1190,12 @@ struct MenuBarView: View {
         VStack(spacing: 0) {
             headerNavigationView
                 .zIndex(1)
+            if currentHeaderScreen.level == .overview {
+                Divider()
+                    .padding(.horizontal, 18)
+            }
             categoryListView
-                .padding(.top, -4)
+                .padding(.top, 0)
         }
         .background(
             DrilldownBackSwipeBridge(
@@ -1340,56 +1344,36 @@ struct MenuBarView: View {
             .frame(width: width, height: 44, alignment: .center)
     }
 
-    /// Header states — three, exactly symmetrical, no adjectives:
-    ///
-    ///     ↑ +4.2 GB · last 7 days
-    ///     ↓ −4.2 GB · last 7 days
-    ///          0 MB · last 7 days
-    ///
-    /// The number is the signed sum of *all* category deltas. It is not a
-    /// button: with a rolling window there is nothing to accept. Urgency lives
-    /// in the drive bar below.
+    /// The overview summary keeps the window label separate from its signed
+    /// total so the change reads like a section heading rather than a badge.
     private var overviewHeader: some View {
         let net = overallGrowthBytes
         let isBelowFloor = abs(net) < GrowthJournalService.presentationFloorBytes
         let isGrowth = net > 0
-        let tint: Color = isGrowth ? .orange : .secondary
+        let tint: Color = isGrowth ? .orange : .green
 
-        return HStack(spacing: 6) {
-            Group {
-                if isBelowFloor {
-                    // Render the literal floor, not the formatted value — a
-                    // 900 KB net formats to "0.9 MB" and contradicts the floor
-                    // the rows apply.
-                    Text("0 MB")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .frame(height: 22)
-                        .background(Capsule().fill(Color.secondary.opacity(0.10)))
-                } else {
-                    HStack(spacing: 5) {
-                        Image(systemName: isGrowth ? "arrow.up.right" : "arrow.down.right")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("\(isGrowth ? "+" : "\u{2212}")\(formattedBytes(abs(net)))")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    }
-                    .foregroundStyle(tint)
-                    .padding(.horizontal, 8)
-                    .frame(height: 22)
-                    .background(Capsule().fill(tint.opacity(0.12)))
+        return HStack {
+            Text("7-day change")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            HStack(spacing: 5) {
+                if !isBelowFloor {
+                    Image(systemName: isGrowth ? "arrow.up.right" : "arrow.down.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(tint)
                 }
-            }
-            .fixedSize()
 
-            Text(growthWindowLabel)
-                .font(.system(size: 10, weight: .regular))
-                .foregroundStyle(.tertiary)
-                .fixedSize()
+                Text(isBelowFloor ? "0 MB" : "\(isGrowth ? "+" : "\u{2212}")\(formattedBytes(abs(net)))")
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
         }
+        .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .padding(.horizontal, 12)
-        .offset(y: -2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(headerAccessibilityLabel(net: net, isBelowFloor: isBelowFloor))
     }
