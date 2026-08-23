@@ -261,12 +261,9 @@ final class MenuBarManager: NSObject {
         enum FullScanPhase: Equatable {
             case scanning
             case finalizing
-            case analyzing
         }
 
         case fullScan(phase: FullScanPhase, percentage: Int?)
-        case checkingChanges
-        case reconciliationQueued
         case idle
 
         var text: String {
@@ -278,12 +275,6 @@ final class MenuBarManager: NSObject {
                 return "Scanning…"
             case .fullScan(.finalizing, _):
                 return "Finalizing scan…"
-            case .fullScan(.analyzing, _):
-                return "Analyzing inventory…"
-            case .checkingChanges:
-                return "Checking storage…"
-            case .reconciliationQueued:
-                return "Full refresh queued"
             case .idle:
                 return ""
             }
@@ -301,9 +292,6 @@ final class MenuBarManager: NSObject {
     /// queued watcher batch as an active scan.
     var footerActivity: FooterActivity {
         if isLoading || isAutoScanning || isReconciling {
-            if isAnalyzingChanges {
-                return .fullScan(phase: .analyzing, percentage: nil)
-            }
             if scanProgress.hasPrefix("Finalizing") {
                 return .fullScan(phase: .finalizing, percentage: nil)
             }
@@ -311,13 +299,6 @@ final class MenuBarManager: NSObject {
                 ? Int((max(0, min(1, scanProgressPercentage)) * 100).rounded())
                 : nil
             return .fullScan(phase: .scanning, percentage: percentage)
-        }
-
-        if isCheckingGrowth {
-            return .checkingChanges
-        }
-        if pendingDirtyReason != nil || needsAuthoritativeReconciliation {
-            return .reconciliationQueued
         }
         return .idle
     }

@@ -16,7 +16,7 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         XCTAssertEqual(manager.footerActivity.text, "Scanning 37%")
     }
 
-    func testFooterActivityShowsFullScanPhaseInsteadOfMisleadingPercentage() {
+    func testFooterActivityFallsBackToScanningDuringInventoryAnalysis() {
         let manager = MenuBarManager()
         manager.isLoading = true
         manager.isAnalyzingChanges = true
@@ -25,9 +25,21 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
 
         XCTAssertEqual(
             manager.footerActivity,
-            .fullScan(phase: .analyzing, percentage: nil)
+            .fullScan(phase: .scanning, percentage: 100)
         )
-        XCTAssertEqual(manager.footerActivity.text, "Analyzing inventory…")
+        XCTAssertEqual(manager.footerActivity.text, "Scanning 100%")
+    }
+
+    func testFooterActivityShowsFinalizingScan() {
+        let manager = MenuBarManager()
+        manager.isLoading = true
+        manager.scanProgress = "Finalizing scan..."
+
+        XCTAssertEqual(
+            manager.footerActivity,
+            .fullScan(phase: .finalizing, percentage: nil)
+        )
+        XCTAssertEqual(manager.footerActivity.text, "Finalizing scan…")
     }
 
     func testFooterActivityPrioritizesAutomaticFullScanOverQueuedChanges() {
@@ -50,11 +62,11 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         )
     }
 
-    func testFooterActivityDescribesManualStorageCheckOnly() {
+    func testFooterActivityHidesManualStorageChecks() {
         let manager = MenuBarManager()
         manager.isCheckingGrowth = true
-        XCTAssertEqual(manager.footerActivity, .checkingChanges)
-        XCTAssertEqual(manager.footerActivity.text, "Checking storage…")
+        XCTAssertEqual(manager.footerActivity, .idle)
+        XCTAssertEqual(manager.footerActivity.text, "")
 
         manager.isCheckingGrowth = false
         manager.isProcessingRecentChanges = true
@@ -76,7 +88,7 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         XCTAssertFalse(manager.isCheckingGrowth)
     }
 
-    func testFooterActivityOnlyShowsExceptionalQueuedReconciliation() {
+    func testFooterActivityHidesQueuedReconciliation() {
         let dirtyManager = MenuBarManager()
         dirtyManager.recordFileWatcherChangeBatch(
             FSEventsWatcher.ChangeBatch(
@@ -86,8 +98,8 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
                 rawEventCount: 1
             )
         )
-        XCTAssertEqual(dirtyManager.footerActivity, .reconciliationQueued)
-        XCTAssertEqual(dirtyManager.footerActivity.text, "Full refresh queued")
+        XCTAssertEqual(dirtyManager.footerActivity, .idle)
+        XCTAssertEqual(dirtyManager.footerActivity.text, "")
 
         let normalManager = MenuBarManager()
         normalManager.hasPendingRecentChanges = true
