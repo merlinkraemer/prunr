@@ -375,6 +375,7 @@ private struct TroubleshootingSettingsTab: View {
 
 private struct ScanScopeSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
+    @State private var manager = MenuBarManager.shared
     @State private var baselineService = BaselineService.shared
     @State private var scanService = ScanService.shared
     @State private var permissionsService = PermissionsService.shared
@@ -448,6 +449,26 @@ private struct ScanScopeSettingsTab: View {
                                     }
                                     .buttonStyle(.bordered)
                                     .disabled(isScanInProgress)
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+
+                        GroupBox("Scan Coverage") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                if outsideScanScopeBytes > 0 {
+                                    Label(
+                                        "\(formattedBytes(outsideScanScopeBytes)) outside scan scope",
+                                        systemImage: "square.dashed"
+                                    )
+                                    .foregroundStyle(.secondary)
+
+                                    Text("This storage isn't tracked. Add another location below to include it.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Label("All detected storage is inside the scan scope", systemImage: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
                                 }
                             }
                             .padding(.top, 4)
@@ -728,6 +749,21 @@ private struct ScanScopeSettingsTab: View {
             hasRequiredScanAccess = report.isGranted
             blockedScanAccessLocations = report.blockedLocations
         }
+    }
+
+    private var trackedInventoryBytes: Int64 {
+        manager?.sortedCategories.reduce(Int64(0)) { $0 + $1.currentSizeBytes } ?? 0
+    }
+
+    private var outsideScanScopeBytes: Int64 {
+        guard let manager else { return 0 }
+        return max(0, manager.usedBytes - trackedInventoryBytes)
+    }
+
+    private func formattedBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 
     private func openScanAccessSettings() {

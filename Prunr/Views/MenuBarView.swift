@@ -1085,8 +1085,8 @@ struct MenuBarView: View {
         max(0, manager.usedBytes - trackedInventoryBytes)
     }
 
-    // Outside-scan-scope total now lives in the footer status line, so the
-    // category list no longer carries a pinned supplemental row for it.
+    // Outside-scan-scope total is represented by the drive bar and Scan Scope
+    // settings, not by a persistent footer message.
     private var supplementalInventoryItems: [SupplementalInventoryItem] {
         []
     }
@@ -1615,21 +1615,8 @@ struct MenuBarView: View {
                 footerBackgroundScanPulse = false
             }
         } else {
-            // Healthy default: no nags. Show how much of the drive sits outside
-            // the scan scope — the standing context that nags temporarily replace.
-            if outsideScanScopeBytes > 0 {
-                HStack(spacing: 6) {
-                    Image(systemName: "square.dashed")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                    Text("\(formattedBytes(outsideScanScopeBytes)) outside scan scope")
-                        .foregroundStyle(.tertiary)
-                }
-                .font(.system(size: 11))
-                .help("Storage outside your scan scope isn't tracked. Add it as a scan path to include it.")
-            } else {
-                Color.clear.frame(height: 1)
-            }
+            // Healthy idle state: leave the footer empty.
+            Color.clear.frame(height: 1)
         }
     }
 
