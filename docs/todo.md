@@ -534,3 +534,22 @@ Implemented all three phases. `make build` ✓, `make test` ✓ (67 tests).
   + "since <date>"; Reset re-anchors the date to today and clears growth.
 - Set scan path to `/` without Full Disk Access → footer shows
   "Not tracking — needs Full Disk Access" instead of looking stable.
+
+## Current request — growth as primary info
+
+- [x] Locate the current growth/total presentation.
+- [x] Make growth the primary value and total the secondary value.
+- [x] Run focused checks and record the result.
+
+### Review
+
+- Category and subcategory rows now show signed growth first in primary styling.
+- Current total remains visible below in secondary monospaced styling.
+- `git diff --check` ✓
+- `make build` ✓
+- `make test` ✓ (117 tests)
+
+## Current request — remove unnecessary storage notice
+
+- [x] Remove the "This storage isn't tracked" notice from Settings.
+- [ ] Run focused checks and record the result.

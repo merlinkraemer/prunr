@@ -865,11 +865,6 @@ private struct CategoryInventoryRow: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text(formattedBytes(item.currentSizeBytes))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .fixedSize()
-
                 // Signed delta, floored for presentation only. Sub-floor
                 // movement is still counted in the header — it just doesn't
                 // earn a line here.
@@ -879,10 +874,15 @@ private struct CategoryInventoryRow: View, Equatable {
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(delta > 0 ? Color.orange : Color.green)
                         Text("\(delta > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(delta)))")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                     }
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                 }
+
+                Text(formattedBytes(item.currentSizeBytes))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
             }
             .opacity(isPreparing ? 0.55 : 1)
 
@@ -1128,7 +1128,7 @@ private struct SubcategoryRow: View {
                                 .font(.system(size: 8, weight: .semibold))
                                 .foregroundStyle(renderableGrowthBytes > 0 ? Color.orange : Color.green)
                             Text("\(renderableGrowthBytes > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(renderableGrowthBytes)))")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.primary)
                         }
                         .font(.system(size: 11, weight: .semibold))
                     }

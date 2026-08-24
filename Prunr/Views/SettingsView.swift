@@ -463,9 +463,6 @@ private struct ScanScopeSettingsTab: View {
                                     )
                                     .foregroundStyle(.secondary)
 
-                                    Text("This storage isn't tracked. Add another location below to include it.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
                                 } else {
                                     Label("All detected storage is inside the scan scope", systemImage: "checkmark.circle.fill")
                                         .foregroundStyle(.green)
