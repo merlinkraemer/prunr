@@ -1,5 +1,7 @@
 # Prunr — What should the growth number *mean*?
 
+> Historical exploration. The [2026-09-07 product roadmap](product-roadmap-2026-09-07.md) now separates size-first Storage from Changes. Keep this discussion for context; do not treat its open questions as the current product direction.
+
 _2026-08-21 · second round, written for cross-model A/B review. Self-contained._
 _Companions: `docs/ux-review-brief-2026-08-21.md` (round 1), `docs/trust-plan-2026-08-21.md` (implementation plan)._
 

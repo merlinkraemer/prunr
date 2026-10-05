@@ -1,3 +1,11 @@
+# Current product roadmap — 2026-09-07
+
+See [Product roadmap](product-roadmap-2026-09-07.md) for the current priorities, acceptance criteria, dependencies, and release gates, and [Product definition](product-definition-notes-2026-09-06.md) for the rationale and competitor evidence.
+
+No new app slices are implemented by this documentation update. Entries below are historical task records; their test results and incomplete checkboxes are not a current readiness assessment. The new roadmap supersedes universal change-first presentation while preserving signed seven-day arithmetic.
+
+---
+
 # Todo: Growth-ranked subcategories — 2026-08-23
 
 - [x] Sort subcategories by meaningful growth before size.

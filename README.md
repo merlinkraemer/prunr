@@ -13,4 +13,4 @@ currently in open alpha - install from releases or download via https://merlinkr
 <img width="814" height="1034" alt="image" src="https://github.com/user-attachments/assets/e807917f-d0d9-4ba9-bc39-54bb4c473329" />
 
 
-License: source-visible during alpha. See [LICENSE](/Users/merlinkraemer/dev/projects/prunr/LICENSE:1).
+License: source-visible during alpha. See [LICENSE](LICENSE). Docs index: [docs/README.md](docs/README.md).

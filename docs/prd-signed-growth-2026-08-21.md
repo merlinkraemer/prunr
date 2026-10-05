@@ -1,5 +1,7 @@
 # PRD — Signed growth over a fixed window
 
+> Presentation update, 2026-09-07: the [product roadmap](product-roadmap-2026-09-07.md) proposes size-first Storage alongside Changes. This document's signed seven-day arithmetic and retention contract remains applicable; universal change-first ordering and growth-only file metrics are superseded as future presentation requirements, not yet changed in code.
+
 _2026-08-21 · implementation spec. Outcome of the round-2 brainstorm (`docs/growth-framing-2026-08-21.md`) + three model reviews (Sol, GPT, Kimi)._
 
 ---

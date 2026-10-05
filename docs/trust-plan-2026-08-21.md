@@ -1,5 +1,7 @@
 # Prunr — Trust Plan
 
+> Historical plan. Follow the [2026-09-07 product roadmap](product-roadmap-2026-09-07.md) for current sequencing. Recheck outstanding findings against source before implementation; this document's checkboxes are not a current status audit. Preserve relevant integrity contracts while adopting the new Storage/Changes direction.
+
 _2026-08-21 · supersedes the ordering in `docs/ux-review-brief-2026-08-21.md` §5.7_
 
 Synthesis of the UX brief plus two external model reviews (Sol, Kimi K3), with every
