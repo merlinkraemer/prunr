@@ -12,8 +12,7 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Push 2 unpushed docs commits on main (f616b88 + init; triggers CI only) — rec: push — branch: main
-2. Untracked `.agents/skills/ship-alpha/` and `docs/next-weeks-brief-2026-10-03.html` — rec: commit both — branch: main
+1. Untracked `.agents/skills/ship-alpha/` and `docs/next-weeks-brief-2026-10-03.html` — rec: commit both — branch: main
 
 ## Queue
 
