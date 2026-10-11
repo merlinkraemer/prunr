@@ -1,6 +1,6 @@
 # Core screen: a list of things that happened
 **Date:** 2026-10-11
-**Status:** draft
+**Status:** in-progress (approved 2026-10-11; drilldown moved out of v1)
 
 ## Problem
 
@@ -27,7 +27,7 @@ The main view becomes a list of **things that happened**, newest first. Each row
   - a signed amount: orange when space was used, grey when it was given back.
 
   Each week ends with one row, "in 9 smaller changes +4.3 GB", that carries the rest. The list scrolls back 30 days and opens on this week.
-- **Change detail (click a row).** A page for that change, in the style of today's drilldown. It lists the folders and files that changed in that place, each with its signed amount, plus Show in Finder. The page states which time span it compares, for example "Changes in Xcode build files since Tue 03:10". For a change older than what Prunr keeps on file, the page lists the biggest items in that place now, labelled as current sizes, and says that details of older changes are not kept.
+- **Click a row.** In v1 a click reveals that place in Finder. The "where it landed" detail page comes after v1 (L0), once the core list is proven.
 - **Footer.** As today: refresh on the left, status in the middle, settings on the right.
 - **Calm week.** The line "Nothing notable changed this week". The "smaller changes" row follows if anything moved, then older weeks.
 - **Day one.** While the list is empty: "Watching your home folder since today. Changes show here from tomorrow." A big change on day one still shows as a row as soon as it happens.
@@ -108,11 +108,19 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
   - A cancelled scan writes no buckets.
   - Migration test: `migrate(upTo: "v20_add_snapshot_lifecycle")`, insert buckets, migrate fully; old rows read back as `source='watch'`.
 
-### s2: Changes are recorded per place and listed by day
+### s2a: Names for places (pure, no database)
+- **outcome:** A pure `UnitResolver` + `UnitNamer` turn any path into a stable unit key and a recognisable name, with Downloads, Trash and the named-place fallback, proven by unit tests. Not wired into the app yet.
+- **depends_on:** none
+- **likely_files:** New `Prunr/Models/UnitResolver.swift`, `Prunr/Models/UnitNamer.swift`, stub `Prunr/Models/UnitRules+Developer.swift`, `UnitRules+Apps.swift`, `UnitRules+Media.swift`, `PrunrTests/UnitResolverTests.swift`.
+- **acceptance:**
+  - The resolver tests listed under s2 (Downloads item, Trash, fallback, `Library/<Area>/<X>`, case preserved, no 32-hex runs or dotted bundle ids in names) pass via `make test`.
+  - No existing file is edited except project membership (`project.yml` if needed).
+
+### s2: Changes are recorded per place and listed by day (s2b)
 - **outcome:** Downloading a 2 GB file makes "Downloads · file.iso" appear under "Today" with its time and +2 GB, in a new list that replaces the category overview as the main view.
-- **depends_on:** [s1]
+- **depends_on:** [s1, s2a]
 - **likely_files:**
-  - New: `Prunr/Models/UnitResolver.swift`, `Prunr/Models/UnitNamer.swift`, `Prunr/Models/UnitRules+Developer.swift`, `Prunr/Models/UnitRules+Apps.swift`, `Prunr/Models/UnitRules+Media.swift` (the last three as empty stubs, so the name slices touch only their own file), `Prunr/Services/EpisodeBuilder.swift`, `Prunr/Views/ChangeFeedView.swift`, `Prunr/Views/ChangeRow.swift`, `PrunrTests/UnitResolverTests.swift`, `PrunrTests/EpisodeBuilderTests.swift`.
+  - New (resolver and rule stubs come from s2a): `Prunr/Services/EpisodeBuilder.swift`, `Prunr/Views/ChangeFeedView.swift`, `Prunr/Views/ChangeRow.swift`, `PrunrTests/UnitResolverTests.swift`, `PrunrTests/EpisodeBuilderTests.swift`.
   - Edited: `Prunr/Database/DatabaseManager.swift`, `Prunr/Services/RecentChangeService.swift`, `Prunr/Services/BaselineService.swift`, `Prunr/Services/GrowthJournalService.swift`, `Prunr/Services/MenuBarManager.swift`, `Prunr/Views/MenuBarView.swift`.
 - **changes:**
   - **Unit key.** `UnitResolver.resolve(path:)` is pure and `nonisolated` and returns `"<kind>|<rootPath>"` with case preserved. Names are computed at read time, so rule edits need no migration. Keys must stay stable across releases.
@@ -126,6 +134,7 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
   - **Feed read.** New multi-path read `fetchJournalSlots(trackedPathIds:since:)`, pre-aggregated in SQL: `GROUP BY unitKey, category, subcategory, source, CAST(strftime('%s', bucketStart)/1800 AS INT)`. It returns Sendable tuples with net and gross per 30-minute slot. Today's `fetchGrowthJournalBuckets` reads one path at a time (`:2282`).
   - **Builder.** `EpisodeBuilder.build(slots:now:calendar:)` groups slots by unit and the local day the run started, splitting at gaps over 30 minutes. It takes the peak slot as the time and flags approximate times. Legacy `''` units become one coarse unit per `(category, subcategory)`, named by subcategory or "Files in <category>", never "Other".
   - **Manager and views.** `GrowthJournalService.changeFeed(trackedPaths:)` runs off the main thread. `MenuBarManager.changeFeed` is recomputed after journal writes (debounced 2 s) and is replaced only when the value differs. `HeaderLevel` (`MenuBarView.swift:110`) gets `.feed` as root. `ChangeRow` uses a 24 px category icon tile, a name with caption, a right-aligned tabular amount, orange for + and grey for −. `CategoryInventoryRow` is `private` (`CategoryGrowthListView.swift:816`): copy its metrics or widen its visibility.
+  - **Row click.** Clicking a row reveals the unit's root in Finder via `manager.revealInFinder(path:)` (`MenuBarManager.swift:2457`); a missing path shows "No longer on disk".
   - **Names in this slice.** Downloads (`~/Downloads/<item>`), Trash, and the named-place fallback.
 - **acceptance:**
   - Resolver tests: Downloads item, Trash, fallback "Archive · Documents", a `Library/<Area>/<X>` path giving "X data", case preserved. A guard test fails any name containing a 32-hex run or a dotted bundle id.
@@ -179,7 +188,7 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
 
 ### s5: Developer names
 - **outcome:** Xcode, Docker, node_modules, Python, build and git changes read as "Xcode build files · Prunr", "Docker disk", "node_modules · acme".
-- **depends_on:** [s2]
+- **depends_on:** [s2a]
 - **likely_files:** `Prunr/Models/UnitRules+Developer.swift`, `PrunrTests/UnitRulesDeveloperTests.swift` (new)
 - **changes:**
   - **Rules:**
@@ -199,7 +208,7 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
 
 ### s6: App and cache names
 - **outcome:** Library caches, containers, app support, Mail, Messages, Steam and cloud folders read as "<App> cache", "<App> data", "Mail attachments", "Google Drive files".
-- **depends_on:** [s2]
+- **depends_on:** [s2a]
 - **likely_files:** `Prunr/Models/UnitRules+Apps.swift`, `PrunrTests/UnitRulesAppsTests.swift` (new)
 - **changes:**
   - `~/Library/Caches/<id>` → "<App> cache", via `GrowthCategory.cacheApplicationKey` / `cacheApplicationDisplayName` (internal already).
@@ -213,7 +222,7 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
 
 ### s7: Media and audio names
 - **outcome:** Photos, iCloud Drive, Final Cut and Ableton changes read as recognisable libraries and projects.
-- **depends_on:** [s2]
+- **depends_on:** [s2a]
 - **likely_files:** `Prunr/Models/UnitRules+Media.swift`, `PrunrTests/UnitRulesMediaTests.swift` (new)
 - **changes:**
   - `<X>.photoslibrary` → "Photos library" (· X if not the default name).
@@ -225,22 +234,6 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
   - Bundle units take the bundle as root and name.
   - Both Ableton forms resolve to "Ableton project · X".
   - Real path samples from the owner's Mac are included as fixtures.
-
-### s8: Click a change to see where it landed
-- **outcome:** Clicking a row opens a page that lists, for that place, the folders and files that changed in a stated time span, each with a signed amount and Show in Finder.
-- **depends_on:** [s4]
-- **likely_files:** `Prunr/Views/EpisodeDetailView.swift` (new), `Prunr/Views/MenuBarView.swift` (`.episode` level), `Prunr/Services/MenuBarManager.swift`, `Prunr/Database/DatabaseManager.swift` (detail query), `Prunr/Views/ChangeRow.swift` (tap), `PrunrTests/EpisodeDetailTests.swift` (new)
-- **changes:**
-  - **Why this design.** Per-file data is kept only for the latest 2 snapshots per path (`DatabaseCleanupService.swift:25`, `maxSnapshotEntryPayloadsPerPath = 2`). That is the simplest honest source.
-  - **Recent changes.** If the episode started after the older retained snapshot S, compare S with the current working set under the unit root. Aggregate to the first path part below the root, in SQL, using the same path-range pattern as `replaceWorkingSetSubtree`. Show signed deltas, largest first, with the header "Changes in <name> since <S time>".
-  - **Older changes.** Show the working set's biggest children under the root, labelled "Biggest items now", plus one line "Details of older changes aren't kept". This reuses the file-drill row style (`DrilldownFileRow` is `private`, `CategoryGrowthListView.swift:980`: widen it).
-  - **Finder.** Show in Finder for the root and each item, via `manager.revealInFinder(path:)` (`MenuBarManager.swift:2457`). A missing path shows "No longer on disk".
-- **acceptance:**
-  - Fixture with two snapshots and changes inside a unit: the compare mode lists the changed children with signed amounts that sum to the root's net since S, and the header names S's time.
-  - An episode older than S selects the "Biggest items now" mode with its label.
-  - A missing root returns `.missing`, not an empty list.
-  - A query failure returns `.failed`.
-  - **(owner visual check)** The slide in and back, and the Finder reveal.
 
 ### s9: Remove the old overview
 - **outcome:** The category-first overview code and its copy are gone, and the marketing screenshot shows the new screen.
@@ -254,32 +247,34 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
   - **(owner visual check)** The marketing renderer output.
 
 ### Later (after v1, not needed for the core screen)
-- **L1: exact per-change detail for all 30 days.** A `growthJournalDetail` table (per bucket, unit and top 20 children) written on every delta path, so s8 can show exactly what changed in any episode, not only recent ones. Depends on s8.
+- **L0: click a change to see where it landed** (was s8; moved out of v1 on 2026-10-11 so the core list ships first). Full spec kept below.
+- **L1: exact per-change detail for all 30 days.** Depends on L0. A `growthJournalDetail` table (per bucket, unit and top 20 children) written on every delta path, so L0 can show exactly what changed in any episode, not only recent ones.
 - **L2: real icons.** `CacheApplicationIconResolver` (`CategoryGrowthListView.swift:1189`) for bundle-id units, and `NSWorkspace.icon(forFile:)` for bundles and download items, cached per unit. Depends on s6.
 - **L3: more names.** Logic, iMovie, Music library, TV. Depends on s7.
 
 ## Dependency graph
 
 ```
-s1 ── s2 ──┬── s3 ── s4 ──┬── s8 ── (L1)
-           │              └── s9 (also needs s3)
-           ├── s5
-           ├── s6 ── (L2)
-           └── s7 ── (L3)
+s1 ─────────┐
+            ├── s2b ── s3 ── s4 ── s9
+s2a ──┬─────┘
+      ├── s5
+      ├── s6 ── (L2)
+      └── s7 ── (L3)
+(after v1: s4 ── L0 ── L1)
 ```
 
 ## Parallel batches
 
-Batches are chosen so no two slices in a batch edit the same file.
-- **B1:** s1
-- **B2:** s2
-- **B3:** s3 ‖ s5 ‖ s6 ‖ s7. s3 edits views, the manager, `GrowthJournalService` and `DatabaseManager`. s5-s7 each edit only their own rule file and test file, because s2 created the stubs.
-- **B4:** s4
-- **B5:** s8. It is not run alongside s4, because both touch the feed and row files.
-- **B6:** s9. It is not run alongside s8, because both edit `MenuBarView.swift` and `MenuBarManager.swift`.
-- L1, L2 and L3 come after v1. L2 and L3 can run in parallel; each touches its own files.
+No two slices in a batch edit the same file.
+- **B1:** s1 ‖ s2a. s1 edits the database and baseline service; s2a only adds new pure files.
+- **B2:** s5 ‖ s6 ‖ s7 (each its own rule + test file), and s2b once s1 and s2a have landed.
+- **B3:** s3.
+- **B4:** s4.
+- **B5:** s9.
+- After v1: L0, then L1; L2 and L3 in parallel.
 
-Order: s1 → s2 → {s3, s5, s6, s7} → s4 → s8 → s9.
+Order: {s1, s2a} → {s2b, s5, s6, s7} → s3 → s4 → s9.
 
 ## Open questions
 
@@ -330,3 +325,22 @@ Each finding in `prd-review.md` was checked against the code.
 - Cutting the drilldown (s10) from v1. The owner explicitly wants row click to open where the change landed, so v1 keeps an honest drilldown (s8). Only the exact 30-day detail table moves to L1.
 - Cutting the Ableton names from s7. The owner's own Mac has its largest area in audio production (Audio Production 453 GB in the screenshot), and the folder-plus-`.als` rule is cheap and covered by fixtures. Logic and iMovie do move to L3.
 - Folding states into s3/s4 was accepted, not rejected: the error and rescan states are in s3, calm, day one and short history in s4.
+
+## Appendix: L0 spec (moved out of v1)
+
+### L0 (was s8): Click a change to see where it landed
+- **outcome:** Clicking a row opens a page that lists, for that place, the folders and files that changed in a stated time span, each with a signed amount and Show in Finder.
+- **depends_on:** [s4], after v1
+- **likely_files:** `Prunr/Views/EpisodeDetailView.swift` (new), `Prunr/Views/MenuBarView.swift` (`.episode` level), `Prunr/Services/MenuBarManager.swift`, `Prunr/Database/DatabaseManager.swift` (detail query), `Prunr/Views/ChangeRow.swift` (tap), `PrunrTests/EpisodeDetailTests.swift` (new)
+- **changes:**
+  - **Why this design.** Per-file data is kept only for the latest 2 snapshots per path (`DatabaseCleanupService.swift:25`, `maxSnapshotEntryPayloadsPerPath = 2`). That is the simplest honest source.
+  - **Recent changes.** If the episode started after the older retained snapshot S, compare S with the current working set under the unit root. Aggregate to the first path part below the root, in SQL, using the same path-range pattern as `replaceWorkingSetSubtree`. Show signed deltas, largest first, with the header "Changes in <name> since <S time>".
+  - **Older changes.** Show the working set's biggest children under the root, labelled "Biggest items now", plus one line "Details of older changes aren't kept". This reuses the file-drill row style (`DrilldownFileRow` is `private`, `CategoryGrowthListView.swift:980`: widen it).
+  - **Finder.** Show in Finder for the root and each item, via `manager.revealInFinder(path:)` (`MenuBarManager.swift:2457`). A missing path shows "No longer on disk".
+- **acceptance:**
+  - Fixture with two snapshots and changes inside a unit: the compare mode lists the changed children with signed amounts that sum to the root's net since S, and the header names S's time.
+  - An episode older than S selects the "Biggest items now" mode with its label.
+  - A missing root returns `.missing`, not an empty list.
+  - A query failure returns `.failed`.
+  - **(owner visual check)** The slide in and back, and the Finder reveal.
+

@@ -12,10 +12,15 @@ Notes, reviews, and plans. Product entrypoint: [../README.md](../README.md).
 | [growth-framing-2026-08-21.md](growth-framing-2026-08-21.md) | Prunr — What should the growth number *mean*? |
 | [lessons.md](lessons.md) | Lessons |
 | [performance-quality-logic-review-2026-10-03.md](performance-quality-logic-review-2026-10-03.md) | Performance, code quality, and system logic review |
+| [core-screen-episodes-prd-2026-10-11.md](core-screen-episodes-prd-2026-10-11.md) | **Current plan** — core screen: list of things that happened (slices s1–s9) |
+| [core-screen-communication-model-2026-10-11.md](core-screen-communication-model-2026-10-11.md) | How to explain what ate storage (episodes, names, timeframe) |
+| [core-screen-layout-review-2026-10-11.md](core-screen-layout-review-2026-10-11.md) | Layout review of the first episode mockup |
+| [core-screen-row-analysis-2026-10-11.md](core-screen-row-analysis-2026-10-11.md) | Why icon/time row layouts failed; chosen direction |
+| [STATE.md](STATE.md) / [journal.md](journal.md) | Orchestrator live state and history |
 | [prd-signed-growth-2026-08-21.md](prd-signed-growth-2026-08-21.md) | PRD — Signed growth over a fixed window |
 | [pre-alpha-sync-ux-review-2026-08-19.md](pre-alpha-sync-ux-review-2026-08-19.md) | Pre-alpha sync and UX review — 2026-08-19 |
 | [product-definition-notes-2026-09-06.md](product-definition-notes-2026-09-06.md) | Prunr — Product Definition: Working Notes |
-| [product-roadmap-2026-09-07.md](product-roadmap-2026-09-07.md) | Prunr product roadmap |
+| [product-roadmap-2026-09-07.md](product-roadmap-2026-09-07.md) | Prunr product roadmap (superseded 2026-10-11) |
 | [prunr-depth-audit.md](prunr-depth-audit.md) | prunr-depth-audit |
 | [prunr-feedback-funnel-prd.md](prunr-feedback-funnel-prd.md) | PRD — Prunr Alpha Feedback & Insights Funnel |
 | [release-and-update-plan.md](release-and-update-plan.md) | Plan: Fix Settings-Close Crash + Build a Real Update Pipeline |

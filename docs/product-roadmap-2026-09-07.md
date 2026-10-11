@@ -1,9 +1,11 @@
 # Prunr product roadmap
 
 **Date:** 2026-09-07
-**Status:** draft; no s1–s7 implementation or release is verified by this plan
+**Status:** superseded on 2026-10-11 by [core-screen-episodes-prd-2026-10-11.md](core-screen-episodes-prd-2026-10-11.md); kept for history
 
 ## Current state and next step
+
+> **2026-10-11:** The core screen is settled: a day-grouped list of named changes over 30 days ("what happened"), not size-first Storage. The current plan and slices are in [core-screen-episodes-prd-2026-10-11.md](core-screen-episodes-prd-2026-10-11.md). Background: [communication model](core-screen-communication-model-2026-10-11.md), [layout review](core-screen-layout-review-2026-10-11.md), [row analysis](core-screen-row-analysis-2026-10-11.md). The text below is the 2026-09-07 plan.
 
 The near-term direction is clear: make capacity honest, then support size-first Storage and signed Changes for Mac developers. The broader product vision/differentiation and the first affected-user proof are not yet settled. **Next step: start a new agent brainstorm session** to define that longer-term promise, what makes Prunr worth using over existing tools, and the evidence that would justify further scope. Then reconcile this roadmap; s1 remains the first implementation slice if authorized. Do not infer that the historical green checks in `todo.md` complete these slices.
 

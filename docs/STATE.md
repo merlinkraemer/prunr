@@ -12,12 +12,12 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Approve core-screen PRD (docs/core-screen-episodes-prd-2026-10-11.md) and lift the "no code until core screen settled" lane rule — rec: approve, start s1 (scan keeps change times, no UI) — branch: none
-2. Untracked `.agents/skills/ship-alpha/` and `docs/next-weeks-brief-2026-10-03.html` — rec: commit both — branch: main
+(none)
 
 ## Queue
 
-### Q1 Baseline Mac test run from lab2 [running] [mac]
+### Q1 Baseline Mac test run from lab2 [landed] [mac]
+result: green 2026-10-10 (xcodegen + make test PASS).
 goal: prove the lab2 checkout builds and tests on the Mac via mac-queue.
 acceptance: mac-queue job 20261010-100621-prunr-f616b88c4-test green (117+ tests, 0 failures).
 validation: `mac-queue show 20261010-100621-prunr-f616b88c4-test`
@@ -42,15 +42,16 @@ acceptance: docs/core-screen-brief-<date>.md, on a branch, unlanded (taste stays
 validation: none.
 do not touch: app code, website.
 
-### Q5 Build core screen per PRD [blocked] [mac]
-goal: slices s1→s9 of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice.
+### Q5 Build core screen per PRD [running] [mac]
+goal: v1 slices of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice. Order {s1, s2a} → {s2b, s5, s6, s7} → s3 → s4 → s9. Drilldown (L0) after v1.
+running: s1 (scan keeps change times), s2a (pure place names).
 acceptance: per slice in the PRD; `make test` green via mac-queue.
 validation: mac-queue test Prunr on the slice branch.
 do not touch: release/appcast/workflows; nothing user-visible lands without Merlin (holiday 10-30→11-16: nothing lands).
-blocked on: Waiting on Merlin #1.
+landing: non-UI slices (s1, s2a, s5–s7) land when mac-queue test is green; UI slices (s2b, s3, s4, s9) wait for Merlin.
 
 ## Rundown
 - Moved from the Mac: main @ f616b88, 4 branches, 2 untracked files, notes, memory. Matches the Mac.
 - Website builds on lab2; API tests 5/5. Preview ports 5180 (dev) / 4180 (review).
-- Core screen settled (G3); PRD written and Fable-reviewed; waiting on approval to start coding.
+- Core screen settled (G3); PRD approved, drilldown moved after v1. Coding started: s1 + s2a in parallel.
 - Next: Q1 result (Mac test run), then Q2.
