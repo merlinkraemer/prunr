@@ -11,3 +11,4 @@
 2026-10-11 15:00 orchestrator Q4 landed: core screen settled on G3; PRD docs/core-screen-episodes-prd-2026-10-11.md (Opus draft, Fable review applied). Q5 queued, blocked on approval
 2026-10-11 15:30 orchestrator Q1 landed: mac-queue test green on main (2026-10-10)
 2026-10-11 15:30 orchestrator - decided: Merlin approved PRD, drilldown out of v1 (L0), lifted no-code lane rule; s2 split into s2a (pure names) + s2b
+2026-10-11 15:35 orchestrator Q5 spawn: workers s1 (feat/s1-scan-residual) and s2a (feat/s2a-unit-names), worktrees, validation via mac-queue
