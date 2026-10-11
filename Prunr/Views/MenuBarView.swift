@@ -30,7 +30,10 @@ struct MenuBarView: View {
         return nil
     }()
     @State private var drillTransitionCoordinator = DrilldownTransitionCoordinator()
-    @State private var displayedHeader = HeaderScreen.overview
+    @State private var displayedHeader = HeaderScreen.feed
+    /// The change list is the root page; the category overview and its drill
+    /// sit one level below it.
+    @State private var showsCategoryOverview = false
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
     @State private var headerWidth: CGFloat = 0
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
@@ -108,6 +111,7 @@ struct MenuBarView: View {
     }
 
     private enum HeaderLevel: Int {
+        case feed
         case overview
         case category
         case files
@@ -118,6 +122,7 @@ struct MenuBarView: View {
         let category: CategoryInventoryItem?
         let subcategory: SubcategoryGroup?
 
+        static let feed = HeaderScreen(level: .feed, category: nil, subcategory: nil)
         static let overview = HeaderScreen(level: .overview, category: nil, subcategory: nil)
 
         static func == (lhs: HeaderScreen, rhs: HeaderScreen) -> Bool {
@@ -126,6 +131,8 @@ struct MenuBarView: View {
 
         var id: String {
             switch level {
+            case .feed:
+                return "feed"
             case .overview:
                 return "overview"
             case .category:
@@ -419,6 +426,7 @@ struct MenuBarView: View {
             guard isShown else { return }
             synchronizeVisibleHeaderToCurrent()
             synchronizeVisibleOnboardingToCurrent()
+            Task { await manager.refreshChangeFeed() }
         }
         .task {
             if manager.hasDisplayableInventory {
@@ -447,6 +455,7 @@ struct MenuBarView: View {
 
             if !manager.noBaseline {
                 await manager.loadInventoryFromLatestSnapshotIfStale()
+                await manager.refreshChangeFeed()
             }
         }
         .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
@@ -1113,6 +1122,10 @@ struct MenuBarView: View {
     }
 
     private var currentHeaderScreen: HeaderScreen {
+        guard showsCategoryOverview else {
+            return .feed
+        }
+
         guard let category = manager.selectedInventoryCategory, manager.isDrilledDown else {
             return .overview
         }
@@ -1200,12 +1213,16 @@ struct MenuBarView: View {
         VStack(spacing: 0) {
             headerNavigationView
                 .zIndex(1)
-            if currentHeaderScreen.level == .overview {
+            if currentHeaderScreen.level == .overview || currentHeaderScreen.level == .feed {
                 Divider()
                     .padding(.horizontal, 18)
             }
-            categoryListView
-                .padding(.top, 0)
+            if showsCategoryOverview {
+                categoryListView
+                    .padding(.top, 0)
+            } else {
+                changeFeedView
+            }
         }
         .background(
             DrilldownBackSwipeBridge(
@@ -1289,8 +1306,21 @@ struct MenuBarView: View {
     @ViewBuilder
     private func headerView(for screen: HeaderScreen) -> some View {
         switch screen.level {
+        case .feed:
+            // The existing summary header stays until s3 replaces it. Clicking
+            // it opens the category overview.
+            Button {
+                setShowsCategoryOverview(true)
+            } label: {
+                overviewHeader(showsBackButton: false)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Show categories")
+            .accessibilityHint("Shows storage by category")
+            .transition(.identity)
         case .overview:
-            overviewHeader
+            overviewHeader(showsBackButton: true)
                 .transition(.identity)
         case .category, .files:
             if let category = resolvedHeaderCategory(for: screen) {
@@ -1356,13 +1386,28 @@ struct MenuBarView: View {
 
     /// The overview summary keeps the window label separate from its signed
     /// total so the change reads like a section heading rather than a badge.
-    private var overviewHeader: some View {
+    private func overviewHeader(showsBackButton: Bool) -> some View {
         let net = overallGrowthBytes
         let isBelowFloor = abs(net) < GrowthJournalService.presentationFloorBytes
         let isGrowth = net > 0
         let tint: Color = isGrowth ? .orange : .green
 
         return HStack {
+            if showsBackButton {
+                Button {
+                    setShowsCategoryOverview(false)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .frame(width: 28, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+                .accessibilityHint("Return to the change list")
+            }
+
             Text("7-day change")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -1384,7 +1429,7 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: showsBackButton ? .contain : .combine)
         .accessibilityLabel(headerAccessibilityLabel(net: net, isBelowFloor: isBelowFloor))
     }
 
@@ -1435,29 +1480,59 @@ struct MenuBarView: View {
         .frame(maxHeight: .infinity, alignment: .center)
     }
 
+    // MARK: - Change Feed
+
+    private var changeFeedView: some View {
+        Group {
+            if let error = manager.errorMessage {
+                scanErrorView(error)
+            } else {
+                ChangeFeedView(feed: manager.changeFeed) { path in
+                    manager.revealInFinder(path: path)
+                }
+            }
+        }
+    }
+
+    private func setShowsCategoryOverview(_ shows: Bool) {
+        guard showsCategoryOverview != shows else { return }
+        if !shows {
+            drillTransitionCoordinator.cancelAndReset()
+            manager.selectedSubcategory = nil
+            manager.selectedInventoryCategory = nil
+            manager.isSubcategoryDrillDown = false
+            manager.isDrilledDown = false
+        }
+        showsCategoryOverview = shows
+        synchronizeVisibleHeaderToCurrent()
+    }
+
+    private func scanErrorView(_ error: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 24))
+                .foregroundStyle(.orange)
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Retry") {
+                Task {
+                    await manager.loadInventory()
+                }
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+
     // MARK: - Category List View
 
     private var categoryListView: some View {
         Group {
             if let error = manager.errorMessage {
-                // Error message
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.orange)
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    Button("Retry") {
-                        Task {
-                            await manager.loadInventory()
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
+                scanErrorView(error)
             } else {
                 CategoryGrowthListView(
                     categories: manager.sortedCategories,
@@ -1896,6 +1971,10 @@ struct MenuBarView: View {
         // Enter the drilldown immediately. The destination page owns the
         // loading skeleton while an uncached breakdown is being fetched.
         let shouldDrillDownImmediately = true
+
+        if !showsCategoryOverview {
+            showsCategoryOverview = true
+        }
 
         var transaction = Transaction()
         transaction.disablesAnimations = true

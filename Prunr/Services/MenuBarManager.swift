@@ -226,6 +226,13 @@ final class MenuBarManager: NSObject {
     var hasDisplayableInventory: Bool {
         !allCategories.isEmpty
     }
+
+    /// The change list: one row per place and day. Nil until first read; a
+    /// failed read keeps the last list on screen.
+    var changeFeed: ChangeFeed?
+    @ObservationIgnored
+    private var changeFeedRefreshTask: Task<Void, Never>?
+    private static let changeFeedDebounce: Duration = .seconds(2)
     var reconciliationResult: DiskAccountingResult? = nil // Free-space accounting data
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
     var selectedInventoryCategory: CategoryInventoryItem? = nil // New inventory-based drill-down selection
@@ -815,6 +822,8 @@ final class MenuBarManager: NSObject {
             CategoryInventoryItem(category: .applications, currentSizeBytes: 18_900_000_000, recentGrowthStory: nil),
             CategoryInventoryItem(category: .downloads, currentSizeBytes: 7_100_000_000, recentGrowthStory: growth(.downloads, 10_000_000))
         ]
+        // s9 gives the screenshot real rows; until then show the list, not a spinner.
+        changeFeed = .empty
         totalBytes = 2_000_000_000_000
         usedBytes = 1_389_000_000_000
         freeBytes = totalBytes - usedBytes
@@ -2296,6 +2305,34 @@ final class MenuBarManager: NSObject {
         }
 
         reconcileDrillDownSelection()
+        // Every journal write (watcher refresh, full scan, accept) ends in an
+        // inventory reload, so this is where the change list follows it.
+        scheduleChangeFeedRefresh()
+    }
+
+    /// Recomputes the change list after journal writes, debounced so a burst
+    /// of watcher refreshes costs one read.
+    func scheduleChangeFeedRefresh() {
+        changeFeedRefreshTask?.cancel()
+        changeFeedRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.changeFeedDebounce)
+            guard !Task.isCancelled else { return }
+            await self?.refreshChangeFeed()
+        }
+    }
+
+    /// Reads the change list now. The value is replaced only when it differs,
+    /// so an unchanged journal does not redraw the list.
+    func refreshChangeFeed() async {
+        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        do {
+            let feed = try await growthJournalService.changeFeed(trackedPaths: trackedPaths)
+            if feed != changeFeed {
+                changeFeed = feed
+            }
+        } catch {
+            Self.logger.error("Failed to read change feed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func clearInventoryState() {
@@ -2319,6 +2356,7 @@ final class MenuBarManager: NSObject {
             liveWorkingSetDrillDownCategories = []
             initialSubcategoryWarmupRequestSignature = nil
         }
+        scheduleChangeFeedRefresh()
     }
 
     private func shouldUseWorkingSetForSubcategoryDetails(_ category: GrowthCategory) -> Bool {
