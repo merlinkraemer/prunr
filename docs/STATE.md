@@ -12,7 +12,8 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-(none — s10 + s11 running; next: one Debug install with both for review)
+1. Review v1 + 1 GB rule + real icons on the Mac (Debug build installed 2026-10-11), then merge feat/v1-review (contains s1–s11) into main — rec: review, then merge — branch: feat/v1-review
+2. Rows of slowly growing places shift by a day as the 30-day window slides (no stored running total) — rec: add a small checkpoint table (schema change) — branch: none
 
 ## Queue
 
@@ -42,9 +43,9 @@ acceptance: docs/core-screen-brief-<date>.md, on a branch, unlanded (taste stays
 validation: none.
 do not touch: app code, website.
 
-### Q5 Build core screen per PRD [running] [mac]
+### Q5 Build core screen per PRD [blocked] [mac]
 goal: v1 slices of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice. Order {s1, s2a} → {s2b, s5, s6, s7} → s3 → s4 → s9. Drilldown (L0) after v1.
-landed: s2a, s5, s6, s7. on branch: s1–s9 (feat/s9-cleanup, installed on Mac, reviewed: too hard to read). running: s10 1 GB rule + day list, s11 real icons (both on top of s9).
+landed: s2a, s5, s6, s7. on branch: s1–s9 (feat/s9-cleanup, installed on Mac, reviewed: too hard to read). s10 1 GB rule + s11 real icons green and combined in feat/v1-review (mac-queue PASS 20261011-131629), installed on the Mac.
 followup: feed rebuild ~2.4 s on a worst-case 200k-bucket fixture; accepted for now (off main thread, debounced), re-measure on real alpha data before s9.
 acceptance: per slice in the PRD; `make test` green via mac-queue.
 validation: mac-queue test Prunr on the slice branch.
