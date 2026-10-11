@@ -191,14 +191,8 @@ final class MenuBarManager: NSObject {
         allCategories.sorted(by: Self.inventorySortsBefore)
     }
 
-    /// Signed net change across **all** categories over the display window.
-    /// This is the headline number; the rows decompose it.
-    var overallGrowthBytes: Int64 {
-        allCategories.reduce(Int64(0)) { $0 + ($1.recentGrowthStory?.deltaBytes ?? 0) }
-    }
-
     /// Categories whose |delta| clears the presentation floor, i.e. the rows
-    /// that actually render a delta line.
+    /// that render a change line. Feeds the diagnostics growing/stable counts.
     var changedCategories: [CategoryInventoryItem] {
         sortedCategories.filter {
             abs($0.recentGrowthStory?.deltaBytes ?? 0) >= GrowthJournalService.presentationFloorBytes
@@ -782,33 +776,14 @@ final class MenuBarManager: NSObject {
     /// Supplies stable, privacy-safe content for the marketing screenshot renderer.
     /// This never touches the user's database or tracked paths.
     func applyScreenshotPreviewContent() {
-        let now = Date()
-        let baselineDate = Calendar.current.date(byAdding: .day, value: -4, to: now) ?? now
+        let now = MarketingSample.now
+        let baselineDate = MarketingSample.watchingSince
 
-        func growth(_ category: GrowthCategory, _ bytes: Int64) -> RecentGrowthStory {
-            RecentGrowthStory(
-                category: category,
-                subcategory: nil,
-                deltaBytes: bytes,
-                startedAt: baselineDate,
-                endedAt: now
-            )
-        }
-
-        allCategories = [
-            CategoryInventoryItem(category: .audioProduction, currentSizeBytes: 522_400_000_000, recentGrowthStory: nil),
-            CategoryInventoryItem(category: .other, currentSizeBytes: 421_100_000_000, recentGrowthStory: growth(.other, 151_000_000)),
-            CategoryInventoryItem(category: .cachesAndSystem, currentSizeBytes: 228_200_000_000, recentGrowthStory: growth(.cachesAndSystem, 1_400_000_000)),
-            CategoryInventoryItem(category: .mediaAndDocuments, currentSizeBytes: 119_500_000_000, recentGrowthStory: growth(.mediaAndDocuments, 9_000_000_000)),
-            CategoryInventoryItem(category: .developer, currentSizeBytes: 71_500_000_000, recentGrowthStory: growth(.developer, 4_900_000_000)),
-            CategoryInventoryItem(category: .applications, currentSizeBytes: 18_900_000_000, recentGrowthStory: nil),
-            CategoryInventoryItem(category: .downloads, currentSizeBytes: 7_100_000_000, recentGrowthStory: growth(.downloads, 10_000_000))
-        ]
-        // s9 gives the screenshot real rows; until then show the list, not a spinner.
-        changeFeed = .loaded(ChangeFeed(weeks: [], watchingSince: baselineDate))
-        totalBytes = 2_000_000_000_000
-        usedBytes = 1_389_000_000_000
-        freeBytes = totalBytes - usedBytes
+        allCategories = MarketingSample.categories(endedAt: now)
+        changeFeed = .loaded(MarketingSample.feed)
+        totalBytes = MarketingSample.totalBytes
+        freeBytes = MarketingSample.freeBytes
+        usedBytes = totalBytes - freeBytes
         monitoredPathSizeBytes = usedBytes
         growthBaselineDate = baselineDate
         noBaseline = false
@@ -831,7 +806,11 @@ final class MenuBarManager: NSObject {
 
     @discardableResult
     private func generateDiagnosticsReport(revealInFinder: Bool) -> URL? {
-        let context = DiagnosticsAppContext(
+        perfMeter.generateReport(context: makeDiagnosticsContext(), revealInFinder: revealInFinder)
+    }
+
+    func makeDiagnosticsContext() -> DiagnosticsAppContext {
+        DiagnosticsAppContext(
             scopePathCount: SettingsStore.shared.enabledTrackedPaths.count,
             enabledPathCount: enabledPathCount,
             watchedPathCount: watchedPaths.count,
@@ -860,7 +839,6 @@ final class MenuBarManager: NSObject {
             noBaseline: noBaseline,
             lastFullScanCompletedAt: lastFullScanCompletedAt
         )
-        return perfMeter.generateReport(context: context, revealInFinder: revealInFinder)
     }
 
     func prepareDiagnosticsAttachment() -> Data? {

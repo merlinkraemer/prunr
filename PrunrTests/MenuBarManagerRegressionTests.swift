@@ -282,12 +282,12 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             [.other, .audioProduction, .downloads]
         )
         XCTAssertEqual(manager.changedCategories.map(\.category), [.downloads])
-        XCTAssertEqual(manager.overallGrowthBytes, 2 * gb + 800_000 + 900_000)
         XCTAssertNil(manager.allCategories.first { $0.category == .other }?.renderableGrowthDeltaBytes)
     }
 
-    /// Delete 20 GB from one category, add 1 GB to another → header −19 GB.
-    func testHeaderIsSignedSumOfAllCategoryDeltas() {
+    /// The diagnostics report keeps its growth and stable counts after the
+    /// old overview is gone: categories that moved this week vs the rest.
+    func testDiagnosticsReportKeepsGrowingAndStableCounts() {
         let manager = MenuBarManager()
         let gb: Int64 = 1024 * 1024 * 1024
         manager.allCategories = [
@@ -296,7 +296,38 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             item(.other, size: 400 * gb)
         ]
 
-        XCTAssertEqual(manager.overallGrowthBytes, -19 * gb)
+        let context = manager.makeDiagnosticsContext()
+
+        XCTAssertEqual(context.categoryCount, 3)
+        XCTAssertEqual(context.growingCount, 2)
+        XCTAssertEqual(context.stableCount, 1)
+        XCTAssertEqual(
+            DiagnosticsReporter.inventorySummary(for: context),
+            "inventory: categories=3 growing=2 stable=1"
+        )
+    }
+
+    /// The marketing screenshot's sample week adds up like the real list: the
+    /// header's +48 GB is the rows plus "in 9 smaller changes +4.3 GB", and the
+    /// days read Today, Wednesday, Tuesday, Monday, Sunday.
+    func testMarketingSampleWeekAddsUpAndReadsAsTheNewScreen() throws {
+        let feed = MarketingSample.feed
+        let week = try XCTUnwrap(feed.thisWeek)
+
+        XCTAssertEqual(WeeklyChange(.loaded(feed), now: MarketingSample.now), .bytes(48_000_000_000))
+        XCTAssertEqual(week.smaller.count, 9)
+        XCTAssertEqual(week.smallerNetBytes, 4_300_000_000)
+        XCTAssertEqual(
+            week.days.map { EpisodeBuilder.dayLabel(for: $0.day, now: MarketingSample.now, calendar: .current) },
+            ["Today", "Wednesday", "Tuesday", "Monday", "Sunday"]
+        )
+        XCTAssertEqual(week.days.first?.episodes.map(\.title), ["Mail attachments", "Final Cut Pro render files · Wedding Edit"])
+        XCTAssertFalse(feed.isShortHistory(now: MarketingSample.now, calendar: .current))
+
+        let categories = MarketingSample.categories(endedAt: MarketingSample.now)
+        XCTAssertEqual(categories.reduce(Int64(0)) { $0 + $1.growthDeltaBytes }, week.netBytes)
+        let tracked = categories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
+        XCTAssertEqual(MarketingSample.totalBytes - MarketingSample.freeBytes - tracked, 122_400_000_000)
     }
 
     // MARK: - Change list states

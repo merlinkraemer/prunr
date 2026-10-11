@@ -135,115 +135,175 @@ private extension View {
     }
 }
 
+/// The panel as it opens: the real header and change rows over the sample
+/// week. The rows are laid out without the scroll view (`ImageRenderer` leaves
+/// it blank) and clipped at the panel's height, like the real list.
 private struct MarketingPopoverPreview: View {
     let manager: MenuBarManager
 
-    private var categories: [CategoryInventoryItem] {
-        manager.sortedCategories
-    }
-
-    private var totalGrowth: Int64 {
-        manager.overallGrowthBytes
+    private var segments: [DriveBarSegment] {
+        let categories = manager.sortedCategories.filter { $0.currentSizeBytes > 0 }
+        var segments = categories.map {
+            DriveBarSegment(id: $0.category.rawValue, bytes: $0.currentSizeBytes, color: $0.category.color)
+        }
+        let outsideScope = manager.usedBytes - categories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
+        if outsideScope > 0 {
+            segments.append(DriveBarSegment(id: "outside-scope", bytes: outsideScope, color: Color.gray.opacity(0.55)))
+        }
+        return segments
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 2) {
-                ForEach(categories) { category in
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(category.category.color)
-                        .frame(width: segmentWidth(for: category))
-                }
-                Spacer(minLength: 0)
+            ChangesHeaderView(
+                freeBytes: manager.freeBytes,
+                totalBytes: manager.totalBytes,
+                weekly: WeeklyChange(manager.changeFeed, now: MarketingSample.now),
+                onOpen: nil
+            ) {
+                DriveBarView(
+                    totalBytes: manager.totalBytes,
+                    usedBytes: manager.usedBytes,
+                    freeBytes: manager.freeBytes,
+                    categorySegments: segments,
+                    highlightedSegmentID: .constant(nil),
+                    disableHover: true
+                )
             }
-            .padding(16)
-            .frame(height: 64)
 
             Divider().overlay(.white.opacity(0.13))
 
-            HStack(spacing: 6) {
-                Label(
-                    "\(totalGrowth > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(totalGrowth)))",
-                    systemImage: totalGrowth > 0 ? "arrow.up.right" : "arrow.down.right"
-                )
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(.orange.opacity(0.14), in: Capsule())
-                Text("last \(GrowthJournalService.displayWindowDays) days")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.48))
+            ChangeFeedRows(
+                feed: manager.changeFeed?.feed ?? .empty,
+                now: MarketingSample.now,
+                onReveal: { _ in }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .clipped()
+
+            // The idle footer: refresh, an empty status, settings.
+            HStack {
+                Image(systemName: "arrow.clockwise")
+                Spacer()
+                Image(systemName: "gearshape")
             }
-            .frame(height: 44)
-
-            VStack(spacing: 0) {
-                ForEach(categories) { category in
-                    HStack(spacing: 10) {
-                        Image(systemName: category.category.icon)
-                            .font(.system(size: 15))
-                            .foregroundStyle(category.category.color)
-                            .frame(width: 18)
-
-                        Text(category.category.displayName)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.92))
-                            .lineLimit(1)
-
-                        Spacer(minLength: 4)
-
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(formattedBytes(category.currentSizeBytes))
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            if let delta = category.renderableGrowthDeltaBytes {
-                                Label(
-                                    "\(delta > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(delta)))",
-                                    systemImage: delta > 0 ? "arrow.up.right" : "arrow.down.right"
-                                )
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(delta > 0 ? Color.orange : Color.secondary)
-                            }
-                        }
-                        .foregroundStyle(.white.opacity(0.88))
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.34))
-                    }
-                    .padding(.horizontal, 18)
-                    .frame(height: 42)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            ZStack {
-                HStack {
-                    Image(systemName: "arrow.clockwise")
-                    Spacer()
-                    Image(systemName: "gearshape")
-                }
-                Text("Tracking")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.52))
-            }
-            .font(.system(size: 14))
+            .font(.system(size: 13))
             .foregroundStyle(.white.opacity(0.82))
-            .padding(.horizontal, 18)
-            .frame(height: 50)
+            .padding(.horizontal, 20)
+            .frame(height: 38)
         }
         .frame(width: 320, height: 480)
     }
+}
 
-    private func segmentWidth(for category: CategoryInventoryItem) -> CGFloat {
-        let total = max(1, categories.reduce(Int64(0)) { $0 + $1.currentSizeBytes })
-        return max(5, 244 * CGFloat(Double(category.currentSizeBytes) / Double(total)))
+/// Privacy-safe sample content for the marketing screenshot: a busy week on a
+/// 2 TB Mac with 19 GB left. Fixed to Friday 9 Oct 2026, 16:40 local time, so
+/// the day labels read Today, Wednesday, Tuesday, Monday and Sunday.
+enum MarketingSample {
+    static let totalBytes: Int64 = 2_000_000_000_000
+    static let freeBytes: Int64 = 19_000_000_000
+
+    private static let calendar = Calendar.current
+
+    static let now: Date = date(day: 9, hour: 16, minute: 40)
+    /// Long before the shown 30 days, so the list has no "Watching since" end.
+    static let watchingSince: Date = date(month: 8, day: 1, hour: 9, minute: 0)
+
+    /// Today first, then Wednesday back to Sunday (Thursday was quiet).
+    static let thisWeekRows: [ChangeEpisode] = [
+        episode("mail", "Mail attachments", detail: nil, .mediaAndDocuments,
+                "/Users/sample/Library/Mail", 600_000_000, day: 9, hour: 15, minute: 10),
+        episode("fcp", "Final Cut Pro render files · Wedding Edit", detail: "Ceremony", .mediaAndDocuments,
+                "/Users/sample/Movies/Wedding Edit.fcpbundle", 2_100_000_000, day: 9, hour: 11, minute: 45),
+        episode("xcode", "Xcode build files · Prunr", detail: nil, .developer,
+                "/Users/sample/Library/Developer/Xcode/DerivedData", 9_000_000_000, day: 7, hour: 14, minute: 20),
+        episode("docker", "Docker disk", detail: "images, containers, volumes", .developer,
+                "/Users/sample/Library/Containers/com.docker.docker", 31_000_000_000, day: 6, hour: 10, minute: 5),
+        episode("iso", "Downloads · ubuntu.iso", detail: nil, .downloads,
+                "/Users/sample/Downloads/ubuntu.iso", 5_000_000_000, day: 5, hour: 21, minute: 30),
+        episode("trash", "Trash emptied", detail: nil, .trash,
+                "/Users/sample/.Trash", -4_000_000_000, day: 4, hour: 18, minute: 0)
+    ]
+
+    /// Nine smaller changes, +4.3 GB together.
+    static let thisWeekSmaller: [ChangeEpisode] = (0..<9).map { index in
+        episode("small-\(index)", "Smaller change \(index + 1)", detail: nil, .cachesAndSystem,
+                nil, index == 0 ? 700_000_000 : 450_000_000, day: 9 - index % 6, hour: 12, minute: 0)
     }
 
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let gigabytes = Double(bytes) / 1_000_000_000
-        if gigabytes >= 1 { return String(format: "%.1f GB", gigabytes) }
-        return String(format: "%.0f MB", Double(bytes) / 1_000_000)
+    /// This week only: +48 GB, the rows plus "in 9 smaller changes +4.3 GB".
+    static let feed: ChangeFeed = {
+        let today = calendar.startOfDay(for: now)
+        let all = thisWeekRows + thisWeekSmaller
+        let days = Dictionary(grouping: thisWeekRows, by: \.day)
+            .map { ChangeFeedDay(day: $0.key, episodes: $0.value.sorted { $0.time > $1.time }) }
+            .sorted { $0.day > $1.day }
+        let week = ChangeFeedWeek(
+            index: 0,
+            start: calendar.date(byAdding: .day, value: -6, to: today) ?? today,
+            end: today,
+            days: days,
+            smaller: thisWeekSmaller,
+            netBytes: all.reduce(Int64(0)) { $0 + $1.netBytes },
+            grossBytes: all.reduce(Int64(0)) { $0 + abs($1.netBytes) },
+            cutoffBytes: EpisodeBuilder.Cutoff.ceilingBytes
+        )
+        return ChangeFeed(weeks: [week], watchingSince: watchingSince)
+    }()
+
+    /// The categories view behind the header. Sizes add up to 1,858.6 GB, so
+    /// "Not watched" carries the other 122.4 GB; the changes add up to the week.
+    static func categories(endedAt now: Date) -> [CategoryInventoryItem] {
+        let weekStart = feed.thisWeek?.start ?? now
+        func item(_ category: GrowthCategory, _ size: Int64, _ delta: Int64?) -> CategoryInventoryItem {
+            CategoryInventoryItem(
+                category: category,
+                currentSizeBytes: size,
+                recentGrowthStory: delta.map {
+                    RecentGrowthStory(category: category, subcategory: nil, deltaBytes: $0, startedAt: weekStart, endedAt: now)
+                }
+            )
+        }
+        return [
+            item(.audioProduction, 640_000_000_000, nil),
+            item(.other, 476_800_000_000, nil),
+            item(.mediaAndDocuments, 300_000_000_000, 2_700_000_000),
+            item(.cachesAndSystem, 228_200_000_000, 4_300_000_000),
+            item(.developer, 160_000_000_000, 40_000_000_000),
+            item(.applications, 30_000_000_000, nil),
+            item(.downloads, 22_400_000_000, 5_000_000_000),
+            item(.trash, 1_200_000_000, -4_000_000_000)
+        ]
+    }
+
+    private static func date(month: Int = 10, day: Int, hour: Int, minute: Int) -> Date {
+        calendar.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour, minute: minute)) ?? Date()
+    }
+
+    private static func episode(
+        _ id: String,
+        _ title: String,
+        detail: String?,
+        _ category: GrowthCategory,
+        _ rootPath: String?,
+        _ netBytes: Int64,
+        day: Int,
+        hour: Int,
+        minute: Int
+    ) -> ChangeEpisode {
+        let time = date(day: day, hour: hour, minute: minute)
+        return ChangeEpisode(
+            id: id,
+            title: title,
+            detail: detail,
+            category: category,
+            rootPath: rootPath,
+            netBytes: netBytes,
+            grossBytes: abs(netBytes),
+            day: calendar.startOfDay(for: time),
+            time: time,
+            isApproximateTime: false
+        )
     }
 }
 
