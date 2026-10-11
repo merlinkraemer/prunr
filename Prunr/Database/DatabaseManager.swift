@@ -53,6 +53,8 @@ final class DatabaseManager {
         var config = Configuration()
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
+            // Registered on every pool connection: journal writes group by it.
+            db.add(function: DatabaseManager.unitKeyFunction)
         }
 
         dbPool = try DatabasePool(path: dbURL.path, configuration: config)
@@ -78,6 +80,13 @@ final class DatabaseManager {
         try dbPool.write { db in
             try Self.clearWorkingSetRefreshStagingRows(sessionId: sessionId, db: db)
         }
+    }
+
+    /// `prunr_unit(path)`: the persisted unit key for a path (`UnitResolver`).
+    /// Pure, so SQLite may cache results within a statement.
+    static let unitKeyFunction = DatabaseFunction("prunr_unit", argumentCount: 1, pure: true) { values in
+        guard let path = String.fromDatabaseValue(values[0]) else { return nil }
+        return UnitResolver.resolve(path: path)
     }
 
     /// Run database migrations using GRDB's DatabaseMigrator
@@ -512,6 +521,24 @@ final class DatabaseManager {
                 """)
         }
 
+        // Migration v22: Record which place (unit) each change belongs to.
+        // Existing rows keep `unitKey = ''` and are shown at category level
+        // until they age out; no backfill, so the migration needs no SQL function.
+        migrator.registerMigration("v22_journal_unit") { db in
+            try db.alter(table: "growthJournalBucket") { t in
+                t.add(column: "unitKey", .text).notNull().defaults(to: "")
+            }
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_growthJournalBucket_identity")
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_growthJournalBucket_identity
+                ON growthJournalBucket(trackedPathId, bucketStart, category, subcategory, source, unitKey)
+                """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_growthJournalBucket_trackedPath_unit_time
+                ON growthJournalBucket(trackedPathId, unitKey, bucketStart)
+                """)
+        }
+
         return migrator
     }
 }
@@ -522,6 +549,20 @@ extension DatabaseManager {
     struct JournalDeltaKey: Hashable, Sendable {
         let category: GrowthCategory
         let subcategory: GrowthSubcategory?
+        /// `UnitResolver` key of the place the change belongs to; `''` for
+        /// category-level (legacy or coarse) totals.
+        let unitKey: String
+
+        init(category: GrowthCategory, subcategory: GrowthSubcategory?, unitKey: String = "") {
+            self.category = category
+            self.subcategory = subcategory
+            self.unitKey = unitKey
+        }
+
+        /// The same change at category grain.
+        var coarse: JournalDeltaKey {
+            JournalDeltaKey(category: category, subcategory: subcategory)
+        }
     }
 
     /// Creates a new snapshot with the current timestamp for a specific path
@@ -1856,6 +1897,7 @@ extension DatabaseManager {
         let normalizedPath = Self.normalizePath(entry.path)
         let newCategory = entry.category
         let newSubcategory = entry.subcategory
+        let unitKey = UnitResolver.resolve(path: normalizedPath)
 
         return try await dbPool.write { db in
             try db.execute(
@@ -1892,13 +1934,13 @@ extension DatabaseManager {
                 let oldRawSubcategory: String = oldRow["subcategory"] ?? ""
                 let oldSubcategory = oldRawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: oldRawSubcategory)
                 deltasByCategory[
-                    JournalDeltaKey(category: oldCategory, subcategory: oldSubcategory),
+                    JournalDeltaKey(category: oldCategory, subcategory: oldSubcategory, unitKey: unitKey),
                     default: 0
                 ] -= oldSizeBytes
             }
 
             deltasByCategory[
-                JournalDeltaKey(category: newCategory, subcategory: newSubcategory),
+                JournalDeltaKey(category: newCategory, subcategory: newSubcategory, unitKey: unitKey),
                 default: 0
             ] += entry.sizeBytes
 
@@ -1967,6 +2009,7 @@ extension DatabaseManager {
 
         let trackedPathIdString = trackedPathId.uuidString
         let normalizedPath = Self.normalizePath(path)
+        let unitKey = UnitResolver.resolve(path: normalizedPath)
 
         return try await dbPool.write { db in
             guard let oldRow = try Row.fetchOne(
@@ -1997,7 +2040,7 @@ extension DatabaseManager {
                 let oldRawSubcategory: String = oldRow["subcategory"] ?? ""
                 let oldSubcategory = oldRawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: oldRawSubcategory)
                 deltasByCategory[
-                    JournalDeltaKey(category: oldCategory, subcategory: oldSubcategory),
+                    JournalDeltaKey(category: oldCategory, subcategory: oldSubcategory, unitKey: unitKey),
                     default: 0
                 ] -= oldSizeBytes
             }
@@ -2154,6 +2197,7 @@ extension DatabaseManager {
                     ),
                     combined AS (
                         SELECT
+                            oldRows.path AS path,
                             COALESCE(newRows.category, oldRows.category) AS category,
                             COALESCE(newRows.subcategory, oldRows.subcategory) AS subcategory,
                             COALESCE(newRows.sizeBytes, 0) - COALESCE(oldRows.sizeBytes, 0) AS deltaBytes
@@ -2161,6 +2205,7 @@ extension DatabaseManager {
                         LEFT JOIN newRows ON newRows.path = oldRows.path
                         UNION ALL
                         SELECT
+                            newRows.path AS path,
                             newRows.category AS category,
                             newRows.subcategory AS subcategory,
                             COALESCE(newRows.sizeBytes, 0) - COALESCE(oldRows.sizeBytes, 0) AS deltaBytes
@@ -2168,10 +2213,10 @@ extension DatabaseManager {
                         LEFT JOIN oldRows ON oldRows.path = newRows.path
                         WHERE oldRows.path IS NULL
                     )
-                    SELECT category, subcategory, SUM(deltaBytes) AS deltaBytes
+                    SELECT category, subcategory, prunr_unit(path) AS unitKey, SUM(deltaBytes) AS deltaBytes
                     FROM combined
                     WHERE deltaBytes != 0
-                    GROUP BY category, subcategory
+                    GROUP BY category, subcategory, unitKey
                     """,
                 arguments: [
                     trackedPathIdString,
@@ -2196,8 +2241,12 @@ extension DatabaseManager {
                 let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
                 let deltaBytes: Int64 = row["deltaBytes"] ?? 0
                 guard deltaBytes != 0 else { continue }
+                let unitKey: String = row["unitKey"] ?? ""
 
-                deltasByCategory[JournalDeltaKey(category: category, subcategory: subcategory), default: 0] += deltaBytes
+                deltasByCategory[
+                    JournalDeltaKey(category: category, subcategory: subcategory, unitKey: unitKey),
+                    default: 0
+                ] += deltaBytes
             }
 
             try db.execute(
@@ -2269,9 +2318,9 @@ extension DatabaseManager {
             let statement = try db.makeStatement(
                 sql: """
                     INSERT INTO growthJournalBucket
-                        (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, observedSince)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(trackedPathId, bucketStart, category, subcategory, source)
+                        (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, observedSince, unitKey)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(trackedPathId, bucketStart, category, subcategory, source, unitKey)
                     DO UPDATE SET
                         deltaBytes = deltaBytes + excluded.deltaBytes,
                         observedSince = COALESCE(observedSince, excluded.observedSince)
@@ -2286,7 +2335,8 @@ extension DatabaseManager {
                     key.subcategory?.rawValue ?? "",
                     deltaBytes,
                     source.rawValue,
-                    observedSince
+                    observedSince,
+                    key.unitKey
                 ])
             }
         }
@@ -2329,7 +2379,7 @@ extension DatabaseManager {
         }
     }
 
-    /// Signed journal totals per (category, subcategory) for buckets in
+    /// Signed journal totals per (category, subcategory, unit) for buckets in
     /// `(from, to]`, across every source. A full scan uses this to compute the
     /// residual its authoritative delta adds on top of what is already recorded.
     func fetchGrowthJournalTotalsByKey(
@@ -2347,10 +2397,10 @@ extension DatabaseManager {
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                    SELECT category, subcategory, COALESCE(SUM(deltaBytes), 0) AS totalDelta
+                    SELECT category, subcategory, unitKey, COALESCE(SUM(deltaBytes), 0) AS totalDelta
                     FROM growthJournalBucket
                     WHERE trackedPathId = ? AND bucketStart > ? AND bucketStart <= ?
-                    GROUP BY category, subcategory
+                    GROUP BY category, subcategory, unitKey
                     """,
                 arguments: [trackedPathIdString, from, to]
             )
@@ -2367,10 +2417,73 @@ extension DatabaseManager {
                 let rawSubcategory: String? = row["subcategory"]
                 let subcategory = rawSubcategory.flatMap { GrowthSubcategory(rawValue: $0) }
                 let totalDelta: Int64 = row["totalDelta"] ?? 0
-                result[JournalDeltaKey(category: category, subcategory: subcategory), default: 0] += totalDelta
+                let unitKey: String = row["unitKey"] ?? ""
+                result[
+                    JournalDeltaKey(category: category, subcategory: subcategory, unitKey: unitKey),
+                    default: 0
+                ] += totalDelta
             }
 
             return result
+        }
+    }
+
+    /// Journal activity for the change feed, pre-aggregated in SQL into
+    /// 30-minute slots per (unit, category, subcategory, source) across all
+    /// given tracked paths. Bounded by slot count, not by bucket count.
+    func fetchJournalSlots(trackedPathIds: [UUID], since: Date) async throws -> [JournalSlot] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+        guard !trackedPathIds.isEmpty else { return [] }
+
+        return try await dbPool.read { db in
+            try Self.fetchJournalSlots(db: db, trackedPathIds: trackedPathIds, since: since)
+        }
+    }
+
+    /// Synchronous core of `fetchJournalSlots`, mapped to `Sendable` values
+    /// inside the read (docs/lessons.md, 2026-06-02).
+    static func fetchJournalSlots(db: Database, trackedPathIds: [UUID], since: Date) throws -> [JournalSlot] {
+        guard !trackedPathIds.isEmpty else { return [] }
+        let placeholders = Array(repeating: "?", count: trackedPathIds.count).joined(separator: ",")
+        var arguments: [DatabaseValueConvertible?] = trackedPathIds.map { $0.uuidString }
+        arguments.append(since)
+
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT
+                    unitKey,
+                    category,
+                    subcategory,
+                    source,
+                    CAST(CAST(strftime('%s', bucketStart) AS INTEGER) / \(JournalSlot.slotSeconds) AS INTEGER) AS slot,
+                    SUM(deltaBytes) AS netBytes,
+                    SUM(ABS(deltaBytes)) AS grossBytes,
+                    MIN(bucketStart) AS firstAt,
+                    MIN(observedSince) AS observedSince
+                FROM growthJournalBucket
+                WHERE trackedPathId IN (\(placeholders)) AND bucketStart >= ?
+                GROUP BY unitKey, category, subcategory, source, slot
+                """,
+            arguments: StatementArguments(arguments)
+        )
+
+        return rows.compactMap { row -> JournalSlot? in
+            guard let firstAt: Date = row["firstAt"] else { return nil }
+            let rawSource: String = row["source"] ?? GrowthJournalBucket.Source.watch.rawValue
+            return JournalSlot(
+                unitKey: row["unitKey"] ?? "",
+                category: row["category"] ?? "",
+                subcategory: row["subcategory"] ?? "",
+                source: GrowthJournalBucket.Source(rawValue: rawSource) ?? .watch,
+                slot: row["slot"] ?? 0,
+                netBytes: row["netBytes"] ?? 0,
+                grossBytes: row["grossBytes"] ?? 0,
+                firstAt: firstAt,
+                observedSince: row["observedSince"]
+            )
         }
     }
 

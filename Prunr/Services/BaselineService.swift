@@ -155,15 +155,28 @@ actor BaselineService {
             for delta in deltas {
                 let category = GrowthCategory.categorize(path: delta.path)
                 let subcategory = GrowthCategory.subcategorize(path: delta.path)
-                let key = DatabaseManager.JournalDeltaKey(category: category, subcategory: subcategory)
+                let key = DatabaseManager.JournalDeltaKey(
+                    category: category,
+                    subcategory: subcategory,
+                    unitKey: UnitResolver.resolve(path: delta.path)
+                )
                 authoritativeByKey[key, default: 0] += delta.changeBytes
             }
 
-            let recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
+            var recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
                 trackedPathId: trackedPath.id,
                 from: previous.createdAt,
                 to: snapshot.createdAt
             )
+
+            // Coarse grain: if the window still holds buckets without a unit
+            // (written before v22), per-unit residuals would show every change the
+            // old watcher recorded as a fake "found" row. Reconcile at category
+            // grain instead and write the residual without a unit.
+            if recordedByKey.keys.contains(where: { $0.unitKey.isEmpty }) {
+                authoritativeByKey = Self.coarsened(authoritativeByKey)
+                recordedByKey = Self.coarsened(recordedByKey)
+            }
 
             var residualByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
             for key in Set(authoritativeByKey.keys).union(recordedByKey.keys) {
@@ -186,6 +199,17 @@ actor BaselineService {
 
         return snapshot
     }
+
+    private static func coarsened(
+        _ deltas: [DatabaseManager.JournalDeltaKey: Int64]
+    ) -> [DatabaseManager.JournalDeltaKey: Int64] {
+        var result: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+        for (key, bytes) in deltas {
+            result[key.coarse, default: 0] += bytes
+        }
+        return result
+    }
+
     /// Checks whether at least one snapshot exists.
     ///
     /// - Returns: `true` if a snapshot exists

@@ -45,6 +45,9 @@ struct GrowthJournalBucket: Codable, Identifiable, Sendable, Equatable, Hashable
     /// For `scan` buckets: start of the window the scan reconciled. The change
     /// happened somewhere in `(observedSince, bucketStart]`.
     let observedSince: Date?
+    /// `UnitResolver` key of the place this change belongs to; `''` for rows
+    /// written before v22 or at category grain (coarse residuals).
+    let unitKey: String
 
     enum Source: String, Codable, Sendable {
         /// Recorded by the realtime watcher at the time the change happened.

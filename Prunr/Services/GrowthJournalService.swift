@@ -56,6 +56,19 @@ actor GrowthJournalService {
         }
     }
 
+    /// The change list across all tracked paths: the journal read as 30-minute
+    /// slots and grouped into one row per place and day. Runs on this actor,
+    /// off the main thread. Throws when history cannot be read.
+    func changeFeed(
+        trackedPaths: [TrackedPath],
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) async throws -> ChangeFeed {
+        let since = EpisodeBuilder.windowStart(now: now, calendar: calendar)
+        let slots = try await db.fetchJournalSlots(trackedPathIds: trackedPaths.map(\.id), since: since)
+        return EpisodeBuilder.build(slots: slots, now: now, calendar: calendar)
+    }
+
     func deltasSinceLastSnapshot(
         trackedPath: TrackedPath,
         since snapshotDate: Date

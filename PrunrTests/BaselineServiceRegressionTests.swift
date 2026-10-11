@@ -250,10 +250,12 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
+    /// The key the watcher writes for a file: its category and its unit.
     private func journalKey(for file: URL) -> DatabaseManager.JournalDeltaKey {
         .init(
             category: GrowthCategory.categorize(path: file.path),
-            subcategory: GrowthCategory.subcategorize(path: file.path)
+            subcategory: GrowthCategory.subcategorize(path: file.path),
+            unitKey: UnitResolver.resolve(path: file.path)
         )
     }
 

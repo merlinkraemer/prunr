@@ -2555,7 +2555,10 @@ final class PrunrSmokeTests: XCTestCase {
                 entries: []
             )
             XCTAssertEqual(
-                deltasByCategory[DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules)],
+                deltasByCategory
+                    .filter { $0.key.category == .developer && $0.key.subcategory == .nodeModules }
+                    .values
+                    .reduce(0, +),
                 -400
             )
 
