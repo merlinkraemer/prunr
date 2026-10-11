@@ -44,7 +44,7 @@ do not touch: app code, website.
 
 ### Q5 Build core screen per PRD [running] [mac]
 goal: v1 slices of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice. Order {s1, s2a} → {s2b, s5, s6, s7} → s3 → s4 → s9. Drilldown (L0) after v1.
-landed: s2a. waiting: s1 (Waiting #1). running: s2b (stacked on s1), s5, s6, s7.
+landed: s2a, s5, s6, s7. waiting: s1 (Waiting #1). running: s2b (stacked on s1).
 acceptance: per slice in the PRD; `make test` green via mac-queue.
 validation: mac-queue test Prunr on the slice branch.
 do not touch: release/appcast/workflows; nothing user-visible lands without Merlin (holiday 10-30→11-16: nothing lands).
