@@ -3,7 +3,7 @@ import XCTest
 
 final class UnitRulesDeveloperTests: XCTestCase {
     private let home = "/Users/tester"
-    private let hash = "bkgqxrtyuiopasdfghjklzxcvbnm"
+    private let xcodeHash ="bkgqxrtyuiopasdfghjklzxcvbnm"
 
     private func key(_ path: String) -> UnitKey {
         UnitResolver.resolveKey(path: path, home: home)
@@ -18,8 +18,8 @@ final class UnitRulesDeveloperTests: XCTestCase {
     private var fixture: [(path: String, kind: UnitKind, root: String, title: String)] {
         let xcode = "/Users/tester/Library/Developer/Xcode"
         return [
-            ("\(xcode)/DerivedData/Prunr-\(hash)/Build/Products/Debug/Prunr.app", .xcodeBuild, "\(xcode)/DerivedData/Prunr-\(hash)", "Xcode build files · Prunr"),
-            ("\(xcode)/DerivedData/My App-\(hash)/Index", .xcodeBuild, "\(xcode)/DerivedData/My App-\(hash)", "Xcode build files · My App"),
+            ("\(xcode)/DerivedData/Prunr-\(xcodeHash)/Build/Products/Debug/Prunr.app", .xcodeBuild, "\(xcode)/DerivedData/Prunr-\(xcodeHash)", "Xcode build files · Prunr"),
+            ("\(xcode)/DerivedData/My App-\(xcodeHash)/Index", .xcodeBuild, "\(xcode)/DerivedData/My App-\(xcodeHash)", "Xcode build files · My App"),
             ("\(xcode)/DerivedData/ModuleCache.noindex/x.pcm", .xcodeBuild, "\(xcode)/DerivedData/ModuleCache.noindex", "Xcode build files"),
             ("\(xcode)/DerivedData", .xcodeBuild, "\(xcode)/DerivedData", "Xcode build files"),
             ("\(xcode)/Archives/2026-10-01/Prunr.xcarchive/Products", .xcodeArchives, "\(xcode)/Archives", "Xcode archives"),
@@ -72,7 +72,7 @@ final class UnitRulesDeveloperTests: XCTestCase {
             let unitName = name(entry.path)
             XCTAssertFalse(UnitNamer.containsForbiddenToken(unitName.title), unitName.title)
             XCTAssertFalse(UnitNamer.containsForbiddenToken(unitName.detail ?? ""), unitName.detail ?? "")
-            XCTAssertFalse(unitName.title.contains(hash), unitName.title)
+            XCTAssertFalse(unitName.title.contains(xcodeHash), unitName.title)
             XCTAssertFalse(unitName.title.contains("Library"), unitName.title)
         }
     }
@@ -80,7 +80,7 @@ final class UnitRulesDeveloperTests: XCTestCase {
     // MARK: - Specific behaviour
 
     func testDerivedDataHashIsStrippedAndUnitIsPerProject() {
-        let base = "/Users/tester/Library/Developer/Xcode/DerivedData/Prunr-\(hash)"
+        let base = "/Users/tester/Library/Developer/Xcode/DerivedData/Prunr-\(xcodeHash)"
         XCTAssertEqual(key("\(base)/Build/a").rawValue, key("\(base)/Logs/b").rawValue)
         XCTAssertEqual(name("\(base)/Build/a").title, "Xcode build files · Prunr")
     }
