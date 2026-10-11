@@ -32,3 +32,7 @@
 2026-10-11 12:10 orchestrator Q5 spawn: Debug build of feat/s9-cleanup installed on the Mac (mac-queue 20261011-120614 PASS) for Merlin's review
 2026-10-11 13:30 orchestrator Q5 followup: Merlin review of v1 build: hard to read at a glance; direction = plain chronological day list; Fable proposed one 1 GB rule (docs/core-screen-simple-list-model-2026-10-11.md), mockups S1/S2
 2026-10-11 13:45 orchestrator - decided: Merlin picked the 1 GB rule (s10) and real icons now (s11, hybrid app/file icon + category fallback)
+2026-10-11 13:50 orchestrator Q5 spawn: s10 one 1 GB rule (feat/s10-one-rule) and s11 real icons (feat/s11-icons), both from feat/s9-cleanup
+- 2026-10-11 mac-queue 4432402f1 mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
+2026-10-11 14:10 orchestrator Q5 blocked: s10 (b2bf6e3) + s11 (df67108) merged into feat/v1-review (conflict in EpisodeBuilder resolved, mac-queue PASS 20261011-131629); Debug install PASS 20261011-132233 (2nd attempt, after box reset); waits for Merlin review
+2026-10-11 14:30 orchestrator Q5 followup: Merlin review of v1-review build: too heavy, opaque date headers, non-native fade, coloured tiles, heavy header; drop "free of" (menu bar shows it). Icons root cause: only 12/247 journal buckets on his Mac have unit keys (pre-update data) → category icons. Polish mockups V1–V3 spawned.
