@@ -12,7 +12,7 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Review the polished build on the Mac (W2: pure log, old category icons, soft bottom edge, This week row), then merge feat/s12-polish (contains s1–s12) into main — rec: review, then merge — branch: feat/s12-polish
+1. Review the grouped-list build on the Mac (category groups per day + drilldown, bar opens categories), then merge feat/s13-grouped (contains s1–s13) into main — rec: review, then merge — branch: feat/s13-grouped
 2. Rows of slowly growing places shift by a day as the 30-day window slides — rec: small checkpoint table (schema change) — branch: none
 
 ## Queue
