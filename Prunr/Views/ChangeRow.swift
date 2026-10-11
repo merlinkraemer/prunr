@@ -16,14 +16,7 @@ struct ChangeRow: View {
     var body: some View {
         Button(action: reveal) {
             HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(episode.category.color)
-                    .frame(width: 24, height: 24)
-                    .overlay(
-                        Image(systemName: episode.category.icon)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white)
-                    )
+                UnitIconTile(category: episode.category, source: episode.iconSource)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(episode.title)

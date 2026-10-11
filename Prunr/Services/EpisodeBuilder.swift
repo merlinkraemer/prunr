@@ -41,6 +41,8 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// A shrink whose bytes went to the Trash in the same slots: a move, not
     /// freed space.
     var isMovedToTrash = false
+    /// Where the row's icon comes from; `.category` for legacy rows.
+    var iconSource: UnitIconSource = .category
 }
 
 struct ChangeFeedDay: Identifiable, Equatable, Sendable {
@@ -477,7 +479,8 @@ enum EpisodeBuilder {
             day: day,
             time: time,
             isApproximateTime: approximate,
-            isMovedToTrash: movedToTrash
+            isMovedToTrash: movedToTrash,
+            iconSource: first.unitKey.isEmpty ? .category : UnitNamer.name(forKey: first.unitKey, home: home).icon
         )
     }
 
