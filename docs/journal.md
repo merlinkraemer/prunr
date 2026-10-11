@@ -20,3 +20,5 @@
 2026-10-11 17:00 orchestrator Q5 blocked: s2b change feed green (5ccdfeb, mac-queue PASS 20261011-054819, 168 tests); UI → waits for Merlin visual check
 2026-10-11 17:00 orchestrator Q5 answered: s2b perf question (2.4 s worst-case rebuild) → accept for now, re-measure on real data before s9
 2026-10-11 17:00 orchestrator Q5 spawn: s3 header + categories view, stacked on s2b (feat/s3-header)
+2026-10-11 17:30 orchestrator Q5 blocked: s3 header + categories green (afa47ce, mac-queue PASS 20261011-060237, 207 tests); UI → waits for Merlin
+2026-10-11 17:30 orchestrator Q5 spawn: s4 adaptive rows/30 days/states, stacked on s3 (feat/s4-feed-states)
