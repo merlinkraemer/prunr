@@ -533,12 +533,11 @@ struct MenuBarView: View {
             changesHeader
             Divider()
 
-            // Page navigation container - swaps between main/detail pages
             pageNavigationContent
+                .padding(.bottom, -SoftBottomEdge.footerHeight)
 
             Spacer(minLength: 0)
 
-            // Footer buttons (no separator)
             footerButtons
         }
     }
@@ -1233,6 +1232,7 @@ struct MenuBarView: View {
         ZStack(alignment: .top) {
             if showsCategoryOverview {
                 categoryListView
+                    .clearOfFooter()
                     .transition(.move(edge: .trailing))
             } else if let group = shownGroup {
                 ChangeGroupView(group: group)
@@ -1406,6 +1406,7 @@ struct MenuBarView: View {
         Group {
             if let error = manager.errorMessage {
                 scanErrorView(error)
+                    .clearOfFooter()
             } else {
                 ChangeFeedView(
                     result: manager.changeFeed,
@@ -1579,7 +1580,7 @@ struct MenuBarView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .frame(height: SoftBottomEdge.footerHeight)
     }
 
     @ViewBuilder

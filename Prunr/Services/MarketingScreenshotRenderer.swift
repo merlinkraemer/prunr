@@ -179,16 +179,17 @@ private struct MarketingPopoverPreview: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .softBottomEdge()
             .clipped()
-
-            HStack {
-                Image(systemName: "arrow.clockwise")
-                Spacer()
-                Image(systemName: "gearshape")
+            .overlay(alignment: .bottom) {
+                HStack {
+                    Image(systemName: "arrow.clockwise")
+                    Spacer()
+                    Image(systemName: "gearshape")
+                }
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.82))
+                .padding(.horizontal, 20)
+                .frame(height: SoftBottomEdge.footerHeight)
             }
-            .font(.system(size: 13))
-            .foregroundStyle(.white.opacity(0.82))
-            .padding(.horizontal, 20)
-            .frame(height: 38)
         }
         .frame(width: 320, height: 480)
     }

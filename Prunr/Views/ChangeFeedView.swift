@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The main list: newest day first, a plain date label per day, and under it
 /// one row per category that changed that day. Date labels scroll with the
-/// rows, and the rows fade out above the footer.
+/// rows, and the rows fade out beneath the footer.
 struct ChangeFeedView: View {
     /// Nil while the first read is in flight.
     let result: ChangeFeedResult?
@@ -21,10 +21,13 @@ struct ChangeFeedView: View {
                 ProgressView()
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clearOfFooter()
             case .failed?:
                 ChangeFeedStateView(message: ChangeFeedStateView.failedText, onRetry: onRetry)
+                    .clearOfFooter()
             case .loaded(let feed)? where feed.isDayOne(now: now):
                 ChangeFeedStateView(message: ChangeFeedStateView.dayOneText)
+                    .clearOfFooter()
             case .loaded(let feed)?:
                 ScrollView {
                     ChangeFeedRows(feed: feed, now: now, expandedDays: $expandedDays, onOpenGroup: onOpenGroup)
@@ -142,18 +145,20 @@ struct ChangeGroupRows: View {
     }
 }
 
-/// A gradient mask over a scroll view's bottom edge, so rows fade out above
-/// the footer instead of being cut off. A mask (not an overlay) keeps the
-/// panel's translucent background showing through on every macOS version.
+/// A gradient mask over a scroll view's bottom edge, so rows dissolve
+/// gradually instead of being cut off. The list runs underneath the footer,
+/// so the fade reaches zero behind it rather than at its top edge. A mask
+/// (not an overlay) keeps the panel's translucent background showing through
+/// on every macOS version.
 enum SoftBottomEdge {
-    static let height: CGFloat = 56
+    static let height: CGFloat = 96
+    static let footerHeight: CGFloat = 38
 
-    static let stops: [Gradient.Stop] = [
-        .init(color: .black, location: 0),
-        .init(color: .black.opacity(0.62), location: 0.4),
-        .init(color: .black.opacity(0.3), location: 0.68),
-        .init(color: .clear, location: 1),
-    ]
+    static let stops: [Gradient.Stop] = (0...24).map { step in
+        let t = Double(step) / 24
+        let eased = t * t * (3 - 2 * t)
+        return .init(color: .black.opacity(1 - eased), location: t)
+    }
 }
 
 extension View {
@@ -165,5 +170,9 @@ extension View {
                     .frame(height: SoftBottomEdge.height)
             }
         }
+    }
+
+    func clearOfFooter() -> some View {
+        padding(.bottom, SoftBottomEdge.footerHeight)
     }
 }
