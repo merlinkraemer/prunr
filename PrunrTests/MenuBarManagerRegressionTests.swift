@@ -249,9 +249,8 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         )
     }
 
-    /// Change-rank, absolute: a −20 GB event outranks a +2 GB one, and both
-    /// outrank a 546 GB category that didn't move.
-    func testCategoriesRankByAbsoluteChangeThenBySize() {
+    /// The categories view lists today's sizes, biggest first, whatever moved.
+    func testCategoriesSortBySizeBiggestFirst() {
         let manager = MenuBarManager()
         let gb: Int64 = 1024 * 1024 * 1024
         manager.allCategories = [
@@ -263,13 +262,13 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
 
         XCTAssertEqual(
             manager.sortedCategories.map(\.category),
-            [.developer, .downloads, .other, .audioProduction]
+            [.other, .developer, .audioProduction, .downloads]
         )
     }
 
-    /// Sub-floor movers rank with the unchanged rows (by size), but their bytes
-    /// still count toward the header.
-    func testSubFloorMoversRankBySizeAndStillCountInHeader() {
+    /// Sub-floor movers sort by size like every row, and their bytes still
+    /// count toward the category total.
+    func testSubFloorMoversSortBySizeAndStillCountInTotal() {
         let manager = MenuBarManager()
         let gb: Int64 = 1024 * 1024 * 1024
         manager.allCategories = [
@@ -280,7 +279,7 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
 
         XCTAssertEqual(
             manager.sortedCategories.map(\.category),
-            [.downloads, .other, .audioProduction]
+            [.other, .audioProduction, .downloads]
         )
         XCTAssertEqual(manager.changedCategories.map(\.category), [.downloads])
         XCTAssertEqual(manager.overallGrowthBytes, 2 * gb + 800_000 + 900_000)
@@ -298,6 +297,61 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         ]
 
         XCTAssertEqual(manager.overallGrowthBytes, -19 * gb)
+    }
+
+    // MARK: - Change list states
+
+    private static func sampleFeed() -> ChangeFeed {
+        let today = Calendar.current.startOfDay(for: Date())
+        let episode = ChangeEpisode(
+            id: "download|/Users/tester/Downloads/a.iso@0",
+            title: "Downloads · a.iso",
+            detail: nil,
+            category: .downloads,
+            rootPath: "/Users/tester/Downloads/a.iso",
+            netBytes: 2 * 1024 * 1024 * 1024,
+            grossBytes: 2 * 1024 * 1024 * 1024,
+            day: today,
+            time: Date(),
+            isApproximateTime: false
+        )
+        return ChangeFeed(days: [ChangeFeedDay(day: today, episodes: [episode])])
+    }
+
+    /// A history that cannot be read gives `.failed` and a "—" header, never
+    /// an empty list that would read as "nothing changed".
+    func testFeedReadFailureGivesFailedAndUnknownHeader() async throws {
+        let manager = MenuBarManager()
+        manager.changeFeed = .loaded(Self.sampleFeed())
+        // No database: every journal read throws.
+        try? DatabaseManager.shared.close()
+
+        await manager.refreshChangeFeed()
+
+        XCTAssertEqual(manager.changeFeed, .failed)
+        XCTAssertNotEqual(manager.changeFeed, .loaded(.empty))
+        XCTAssertEqual(WeeklyChange(manager.changeFeed), .unknown)
+        XCTAssertEqual(WeeklyChange(manager.changeFeed).amountText, "\u{2014}")
+    }
+
+    /// Starting a rescan (and the inventory reload around it) keeps the last
+    /// list on screen; only a finished read may replace it.
+    func testStartingARescanDoesNotClearTheChangeFeed() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let manager = MenuBarManager()
+            let feed = Self.sampleFeed()
+            manager.noBaseline = false
+            manager.changeFeed = .loaded(feed)
+
+            let missingRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PrunrMissing-\(UUID().uuidString)", isDirectory: true)
+            let trackedPath = TrackedPath(url: missingRoot, displayName: "Missing")
+            _ = await manager.loadInventory(trackedPathsOverride: [trackedPath])
+            XCTAssertEqual(manager.changeFeed, .loaded(feed))
+
+            await manager.loadInventoryFromLatestSnapshot(refreshedAt: Date())
+            XCTAssertEqual(manager.changeFeed, .loaded(feed))
+        }
     }
 
     func testInitialSubcategoryWarmupDoesNotRepeatSameCategorySet() {

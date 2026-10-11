@@ -293,7 +293,7 @@ struct DriveBarView: View {
             return category.displayName
         }
         if id == "outside-scan-scope" {
-            return "Outside scan scope"
+            return "Not watched"
         }
         return "Other used storage"
     }

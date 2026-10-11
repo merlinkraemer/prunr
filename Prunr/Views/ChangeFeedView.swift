@@ -3,15 +3,16 @@ import SwiftUI
 /// The main list: changes grouped under plain day labels, newest first.
 struct ChangeFeedView: View {
     /// Nil while the first read is in flight.
-    let feed: ChangeFeed?
+    let result: ChangeFeedResult?
     let onReveal: (String) -> Void
+    let onRetry: () -> Void
 
     private let calendar = Calendar.current
 
     /// Days with at least one row worth drawing. Sub-floor rows stay in the
     /// data; the floor only decides whether a line earns the pixels.
     private var visibleDays: [ChangeFeedDay] {
-        guard let feed else { return [] }
+        guard let feed = result?.feed else { return [] }
         return feed.days.compactMap { day in
             let episodes = day.episodes.filter {
                 abs($0.netBytes) >= GrowthJournalService.presentationFloorBytes
@@ -23,16 +24,28 @@ struct ChangeFeedView: View {
     var body: some View {
         let days = visibleDays
         Group {
-            if feed == nil {
+            switch result {
+            case nil:
                 ProgressView()
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if days.isEmpty {
+            case .failed?:
+                // Never an empty list on an error: say so and offer a retry.
+                VStack(spacing: 8) {
+                    Text("Couldn't read change history")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Button("Retry", action: onRetry)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .loaded? where days.isEmpty:
                 Text("Nothing notable changed this week")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            case .loaded?:
                 list(days)
             }
         }

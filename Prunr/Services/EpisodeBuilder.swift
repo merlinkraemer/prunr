@@ -54,6 +54,59 @@ struct ChangeFeed: Equatable, Sendable {
     static let empty = ChangeFeed(days: [])
 
     var isEmpty: Bool { days.isEmpty }
+
+    /// Net change of the days that start at or after `start`. With
+    /// `GrowthJournalService.weekStart` this is the header's "this week".
+    func netBytes(since start: Date) -> Int64 {
+        days
+            .filter { $0.day >= start }
+            .reduce(Int64(0)) { total, day in
+                day.episodes.reduce(total) { $0 + $1.netBytes }
+            }
+    }
+}
+
+/// What the last read of the change list produced. `nil` (no read finished
+/// yet) is unknown, and so is `.failed`; neither may ever read as zero.
+enum ChangeFeedResult: Equatable, Sendable {
+    case loaded(ChangeFeed)
+    case failed
+
+    var feed: ChangeFeed? {
+        if case .loaded(let feed) = self { return feed }
+        return nil
+    }
+}
+
+/// The header's "this week" value: unknown, no change, or a signed amount.
+enum WeeklyChange: Equatable, Sendable {
+    /// Loading or a read error. Shown as "—", never as zero.
+    case unknown
+    /// History was read and nothing above the presentation floor moved.
+    case none
+    case bytes(Int64)
+
+    init(_ result: ChangeFeedResult?, now: Date = Date(), calendar: Calendar = .current) {
+        guard let feed = result?.feed else {
+            self = .unknown
+            return
+        }
+        let net = feed.netBytes(since: GrowthJournalService.weekStart(now: now, calendar: calendar))
+        self = abs(net) < GrowthJournalService.presentationFloorBytes ? .none : .bytes(net)
+    }
+
+    /// The amount on the header's right edge: "—", "+48 GB" or "−3 GB".
+    /// `.none` has no amount; its line reads "no change this week".
+    var amountText: String? {
+        switch self {
+        case .unknown:
+            return "\u{2014}"
+        case .none:
+            return nil
+        case .bytes(let net):
+            return "\(net > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(net)))"
+        }
+    }
 }
 
 /// Turns journal slots into rows. Pure: no I/O, no database, no actor.
@@ -78,8 +131,7 @@ enum EpisodeBuilder {
 
     /// Start of the oldest day the list shows, for the SQL read.
     static func windowStart(now: Date, calendar: Calendar) -> Date {
-        let today = calendar.startOfDay(for: now)
-        return calendar.date(byAdding: .day, value: -(windowDays - 1), to: today) ?? today
+        GrowthJournalService.weekStart(now: now, calendar: calendar)
     }
 
     static func build(

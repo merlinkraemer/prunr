@@ -176,6 +176,87 @@ final class ChangeFeedStoreTests: PrunrTestCase {
         }
     }
 
+    // MARK: - This week: header, list and categories agree
+
+    /// The header number equals the sum of this week's slots and the sum of
+    /// the categories view's "this week" deltas, across several categories and
+    /// two tracked paths, with growth, shrink, a legacy row and an old spike
+    /// outside the week.
+    func testHeaderEqualsWeekSlotsAndCategoryDeltas() async throws {
+        try await withEmptyTemporaryDatabase { firstId in
+            let secondId = UUID()
+            let first = TrackedPath(id: firstId, url: URL(fileURLWithPath: "/Volumes/A"), displayName: "A")
+            let second = TrackedPath(id: secondId, url: URL(fileURLWithPath: "/Volumes/B"), displayName: "B")
+            let now = Self.wholeSecondNow()
+            let day: TimeInterval = 24 * 60 * 60
+            let gb = 1_024 * Self.mb
+            let journal = GrowthJournalService.shared
+
+            func key(_ category: GrowthCategory, _ unit: String) -> DatabaseManager.JournalDeltaKey {
+                DatabaseManager.JournalDeltaKey(category: category, subcategory: nil, unitKey: unit)
+            }
+
+            try await journal.recordDeltas(trackedPath: first, deltas: [key(.developer, "place|/Users/tester/dev/acme"): 3 * gb], at: now.addingTimeInterval(-3_600))
+            try await journal.recordDeltas(trackedPath: first, deltas: [key(.downloads, "download|/Users/tester/Downloads/a.iso"): 2 * gb], at: now.addingTimeInterval(-2 * day))
+            try await journal.recordDeltas(trackedPath: first, deltas: [key(.cachesAndSystem, ""): -1 * gb], at: now.addingTimeInterval(-3 * day))
+            try await journal.recordDeltas(trackedPath: second, deltas: [key(.mediaAndDocuments, "place|/Users/tester/Documents/Archive"): 500 * Self.mb], at: now.addingTimeInterval(-4 * day))
+            try await journal.recordDeltas(trackedPath: second, deltas: [key(.developer, "place|/Users/tester/dev/acme"): -700 * Self.mb], at: now.addingTimeInterval(-2 * 3_600))
+            // Outside the week: counted by nobody.
+            try await journal.recordDeltas(trackedPath: second, deltas: [key(.developer, "place|/Users/tester/dev/old"): 9 * gb], at: now.addingTimeInterval(-9 * day))
+
+            let expected = 3 * gb + 2 * gb - 1 * gb + 500 * Self.mb - 700 * Self.mb
+
+            let feed = try await journal.changeFeed(trackedPaths: [first, second], now: now)
+            let header = WeeklyChange(.loaded(feed), now: now)
+            XCTAssertEqual(header, .bytes(expected))
+
+            let slots = try await DatabaseManager.shared.fetchJournalSlots(
+                trackedPathIds: [firstId, secondId],
+                since: GrowthJournalService.weekStart(now: now)
+            )
+            XCTAssertEqual(slots.reduce(Int64(0)) { $0 + $1.netBytes }, expected)
+
+            var categoryTotal: Int64 = 0
+            for trackedPath in [first, second] {
+                let stories = await journal.recentGrowthStories(trackedPath: trackedPath, now: now)
+                categoryTotal += stories.values.reduce(Int64(0)) { $0 + $1.deltaBytes }
+            }
+            XCTAssertEqual(categoryTotal, expected)
+        }
+    }
+
+    /// A subcategory that shrank keeps its negative total, so the drill adds
+    /// up to its category row.
+    func testSubcategoryTotalsKeepNegativeValues() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let trackedPath = TrackedPath(id: trackedPathId, url: URL(fileURLWithPath: "/Volumes/A"), displayName: "A")
+            let now = Self.wholeSecondNow()
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [
+                    .init(category: .developer, subcategory: .docker): 400 * Self.mb,
+                    .init(category: .developer, subcategory: .nodeModules): -900 * Self.mb
+                ],
+                at: now.addingTimeInterval(-3_600)
+            )
+
+            let totals = try await DatabaseManager.shared.fetchGrowthJournalTotalsBySubcategory(
+                trackedPathId: trackedPathId,
+                category: .developer,
+                since: GrowthJournalService.weekStart(now: now)
+            )
+            XCTAssertEqual(totals[.docker], 400 * Self.mb)
+            XCTAssertEqual(totals[.nodeModules], -900 * Self.mb)
+
+            let serviceTotals = await GrowthJournalService.shared.subcategoryGrowthTotals(
+                trackedPath: trackedPath,
+                category: .developer,
+                now: now
+            )
+            XCTAssertEqual(serviceTotals.values.reduce(0, +), -500 * Self.mb)
+        }
+    }
+
     // MARK: - Upgrade day
 
     /// v20 data (buckets without a unit), then a scan after the migration: the

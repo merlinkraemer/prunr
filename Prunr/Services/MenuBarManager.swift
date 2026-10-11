@@ -118,28 +118,9 @@ final class DropdownPanel: NSPanel {
 @MainActor
 @Observable
 final class MenuBarManager: NSObject {
-    /// Change-rank: two tiers.
-    ///
-    /// 1. Rows whose |delta| clears the presentation floor, by |delta| descending.
-    /// 2. Everything else after them, by current size descending.
-    ///
-    /// Absolute, not positive-only — a −20 GB event is real information and must
-    /// not sink below a stack of +50 MB rows.
+    /// The categories view lists today's sizes, biggest first; equal sizes
+    /// sort by name. What changed is the change list's job, not this order's.
     private static func inventorySortsBefore(_ lhs: CategoryInventoryItem, _ rhs: CategoryInventoryItem) -> Bool {
-        let lhsDelta = abs(lhs.recentGrowthStory?.deltaBytes ?? 0)
-        let rhsDelta = abs(rhs.recentGrowthStory?.deltaBytes ?? 0)
-        let floor = GrowthJournalService.presentationFloorBytes
-        let lhsChanged = lhsDelta >= floor
-        let rhsChanged = rhsDelta >= floor
-
-        if lhsChanged != rhsChanged {
-            return lhsChanged
-        }
-
-        if lhsChanged && lhsDelta != rhsDelta {
-            return lhsDelta > rhsDelta
-        }
-
         if lhs.currentSizeBytes == rhs.currentSizeBytes {
             return lhs.category.displayName.localizedStandardCompare(rhs.category.displayName) == .orderedAscending
         }
@@ -204,8 +185,8 @@ final class MenuBarManager: NSObject {
     // Views read `sortedCategories` (computed from this).
     var allCategories: [CategoryInventoryItem] = []
 
-    /// One change-ranked list. There is no growing/stable partition: a row
-    /// either carries a signed delta or it doesn't.
+    /// Categories by size, biggest first. Each row carries its signed change
+    /// this week, or none.
     var sortedCategories: [CategoryInventoryItem] {
         allCategories.sorted(by: Self.inventorySortsBefore)
     }
@@ -227,9 +208,10 @@ final class MenuBarManager: NSObject {
         !allCategories.isEmpty
     }
 
-    /// The change list: one row per place and day. Nil until first read; a
-    /// failed read keeps the last list on screen.
-    var changeFeed: ChangeFeed?
+    /// The change list: one row per place and day. Nil until the first read
+    /// finishes (unknown); `.failed` when history could not be read. A rescan
+    /// never clears it: the last list stays until a new read replaces it.
+    var changeFeed: ChangeFeedResult?
     @ObservationIgnored
     private var changeFeedRefreshTask: Task<Void, Never>?
     private static let changeFeedDebounce: Duration = .seconds(2)
@@ -823,7 +805,7 @@ final class MenuBarManager: NSObject {
             CategoryInventoryItem(category: .downloads, currentSizeBytes: 7_100_000_000, recentGrowthStory: growth(.downloads, 10_000_000))
         ]
         // s9 gives the screenshot real rows; until then show the list, not a spinner.
-        changeFeed = .empty
+        changeFeed = .loaded(.empty)
         totalBytes = 2_000_000_000_000
         usedBytes = 1_389_000_000_000
         freeBytes = totalBytes - usedBytes
@@ -2325,13 +2307,15 @@ final class MenuBarManager: NSObject {
     /// so an unchanged journal does not redraw the list.
     func refreshChangeFeed() async {
         let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        let result: ChangeFeedResult
         do {
-            let feed = try await growthJournalService.changeFeed(trackedPaths: trackedPaths)
-            if feed != changeFeed {
-                changeFeed = feed
-            }
+            result = .loaded(try await growthJournalService.changeFeed(trackedPaths: trackedPaths))
         } catch {
             Self.logger.error("Failed to read change feed: \(error.localizedDescription, privacy: .public)")
+            result = .failed
+        }
+        if result != changeFeed {
+            changeFeed = result
         }
     }
 

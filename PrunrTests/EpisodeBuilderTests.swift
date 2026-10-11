@@ -334,4 +334,58 @@ final class EpisodeBuilderTests: XCTestCase {
         )
         XCTAssertEqual(EpisodeBuilder.caption(for: episode, calendar: utc), "08:40 · Application Support")
     }
+
+    // MARK: - This week (header)
+
+    func testWeekStartIsMidnightSixDaysBack() {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 9, 30, in: utc)
+        XCTAssertEqual(GrowthJournalService.weekStart(now: now, calendar: utc), date(2026, 10, 5, 0, 0, in: utc))
+        XCTAssertEqual(EpisodeBuilder.windowStart(now: now, calendar: utc), GrowthJournalService.weekStart(now: now, calendar: utc))
+    }
+
+    /// The header equals the rows of the week, signed: growth minus what was
+    /// given back.
+    func testWeeklyChangeIsTheSignedSumOfTheWeeksRows() {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let feed = build([
+            slot(Self.iso, at: date(2026, 10, 11, 14, 20, in: utc), net: 50 * Self.gb),
+            slot(Self.project, at: date(2026, 10, 7, 10, 0, in: utc), net: -2 * Self.gb, category: "developer"),
+            slot(Self.project, at: date(2026, 10, 5, 0, 10, in: utc), net: 300 * Self.mb, category: "developer")
+        ], now: now, calendar: utc)
+
+        let weekly = WeeklyChange(.loaded(feed), now: now, calendar: utc)
+        XCTAssertEqual(weekly, .bytes(48 * Self.gb + 300 * Self.mb))
+        XCTAssertEqual(weekly.amountText, "+\(formattedBytes(48 * Self.gb + 300 * Self.mb))")
+        XCTAssertEqual(WeeklyChange(.loaded(feed), now: now, calendar: utc), .bytes(feed.netBytes(since: GrowthJournalService.weekStart(now: now, calendar: utc))))
+    }
+
+    func testWeeklyChangeShrinkReadsWithMinusSign() {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let feed = build([slot(Self.iso, at: date(2026, 10, 10, 9, 0, in: utc), net: -3 * Self.gb)], now: now, calendar: utc)
+        let weekly = WeeklyChange(.loaded(feed), now: now, calendar: utc)
+        XCTAssertEqual(weekly, .bytes(-3 * Self.gb))
+        XCTAssertEqual(weekly.amountText, "\u{2212}\(formattedBytes(3 * Self.gb))")
+    }
+
+    /// Unknown is never zero: no read yet and a failed read both read "—".
+    func testWeeklyChangeIsUnknownWithoutALoadedFeed() {
+        XCTAssertEqual(WeeklyChange(nil), .unknown)
+        XCTAssertEqual(WeeklyChange(.failed), .unknown)
+        XCTAssertEqual(WeeklyChange(nil).amountText, "\u{2014}")
+        XCTAssertEqual(WeeklyChange(.failed).amountText, "\u{2014}")
+    }
+
+    /// A real zero, once history was read, is "no change this week", never "0 MB".
+    func testWeeklyChangeOfAnEmptyOrCancelledWeekIsNone() {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        XCTAssertEqual(WeeklyChange(.loaded(.empty), now: now, calendar: utc), .none)
+        XCTAssertNil(WeeklyChange(.loaded(.empty), now: now, calendar: utc).amountText)
+
+        let tiny = build([slot(Self.iso, at: date(2026, 10, 11, 9, 0, in: utc), net: 1_000)], now: now, calendar: utc)
+        XCTAssertEqual(WeeklyChange(.loaded(tiny), now: now, calendar: utc), .none)
+    }
 }

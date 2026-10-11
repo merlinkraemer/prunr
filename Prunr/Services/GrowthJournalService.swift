@@ -20,8 +20,12 @@ actor GrowthJournalService {
 
     private init() {}
 
-    private static var displayWindow: TimeInterval {
-        TimeInterval(displayWindowDays) * 24 * 60 * 60
+    /// Start of "this week": local midnight six days before `now`, so the week
+    /// is today plus the previous six whole days. The change list, the header
+    /// and the category rows all read this one window, so they always agree.
+    static func weekStart(now: Date = Date(), calendar: Calendar = .current) -> Date {
+        let today = calendar.startOfDay(for: now)
+        return calendar.date(byAdding: .day, value: -(displayWindowDays - 1), to: today) ?? today
     }
 
     func recordDeltas(
@@ -43,9 +47,10 @@ actor GrowthJournalService {
 
     /// Signed net change per category over the fixed display window.
     func recentGrowthStories(
-        trackedPath: TrackedPath
+        trackedPath: TrackedPath,
+        now: Date = Date()
     ) async -> [GrowthCategory: RecentGrowthStory] {
-        let cutoff = Date().addingTimeInterval(-Self.displayWindow)
+        let cutoff = Self.weekStart(now: now)
 
         do {
             let buckets = try await db.fetchGrowthJournalBuckets(trackedPathId: trackedPath.id, since: cutoff)
@@ -88,9 +93,10 @@ actor GrowthJournalService {
     /// a drilldown decomposes the row above it rather than reading a second clock.
     func subcategoryGrowthTotals(
         trackedPath: TrackedPath,
-        category: GrowthCategory
+        category: GrowthCategory,
+        now: Date = Date()
     ) async -> [GrowthSubcategory?: Int64] {
-        let cutoff = Date().addingTimeInterval(-Self.displayWindow)
+        let cutoff = Self.weekStart(now: now)
 
         do {
             return try await db.fetchGrowthJournalTotalsBySubcategory(
