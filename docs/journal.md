@@ -42,3 +42,4 @@
 2026-10-11 15:20 orchestrator Q5 spawn: Merlin approved W2 + icons option 1 (old coloured category glyphs, real app icon where known, no tiles, pure log); worker continues feat/s12-polish, test + Mac install
 2026-10-11 15:30 orchestrator Q5 blocked: s12 polish green (57537da, mac-queue PASS 20261011-145703, 234 tests) and installed on the Mac (20261011-150321); waits for Merlin review
 2026-10-11 16:00 orchestrator Q5 followup: Merlin review of s12 build: no hover, non-sticky dates, real bottom fade, old-app spacing, max 3 per date + Show all, category-per-day groups with drilldown, header → week by category → subcategories; mockups X1–X4 spawned; hover-with-click noted as L5
+2026-10-11 16:30 orchestrator Q5 spawn: Merlin approved X1+X2 (week breakdown dropped; This week row not clickable; bar full-width hover → categories; per-category bar hover on categories view); worker s13 on feat/s13-grouped from feat/s12-polish
