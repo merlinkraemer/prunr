@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A place's icon in the change list: the real app or file icon when one
-/// resolves, else the category symbol on its coloured tile.
+/// resolves, else the plain category symbol.
 struct UnitIconTile: View {
     let category: GrowthCategory
     let source: UnitIconSource
@@ -17,13 +17,9 @@ struct UnitIconTile: View {
                     .interpolation(.high)
                     .scaledToFit()
             } else {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(category.color)
-                    .overlay(
-                        Image(systemName: category.icon)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white)
-                    )
+                Image(systemName: category.icon)
+                    .font(.system(size: size * 0.6))
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(width: size, height: size)

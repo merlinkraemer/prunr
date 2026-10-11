@@ -21,6 +21,11 @@ final class EpisodeBuilderTests: XCTestCase {
         calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
     }
 
+    private func clock(_ date: Date, _ calendar: Calendar) -> String {
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", components.hour ?? 0, components.minute ?? 0)
+    }
+
     private func slot(
         _ unitKey: String,
         at date: Date,
@@ -71,7 +76,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(episode.rootPath, "/Users/tester/Downloads/ubuntu.iso")
         XCTAssertEqual(episode.category, .downloads)
         XCTAssertFalse(episode.isApproximateTime)
-        XCTAssertEqual(EpisodeBuilder.caption(for: episode, calendar: utc), "14:20")
+        XCTAssertEqual(clock(episode.time, utc), "14:20")
     }
 
     // MARK: - Runs and days
@@ -200,7 +205,6 @@ final class EpisodeBuilderTests: XCTestCase {
         let episode = try XCTUnwrap(feed.days.first?.episodes.first)
         XCTAssertTrue(episode.isApproximateTime)
         XCTAssertEqual(episode.time, found)
-        XCTAssertEqual(EpisodeBuilder.caption(for: episode, calendar: utc), "found by scan")
     }
 
     func testScanResidualWithRecentWindowKeepsItsTime() throws {
@@ -212,7 +216,7 @@ final class EpisodeBuilderTests: XCTestCase {
 
         let episode = try XCTUnwrap(feed.days.first?.episodes.first)
         XCTAssertFalse(episode.isApproximateTime)
-        XCTAssertEqual(EpisodeBuilder.caption(for: episode, calendar: utc), "03:10")
+        XCTAssertEqual(clock(episode.time, utc), "03:10")
     }
 
     func testWatcherPeakKeepsItsTimeNextToASmallScanResidual() throws {
@@ -281,7 +285,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(day.day, date(2026, 10, 10, 0, 0, in: losAngeles))
         XCTAssertEqual(EpisodeBuilder.dayLabel(for: day.day, calendar: losAngeles), "Sat 10 Oct")
         let episode = try XCTUnwrap(day.episodes.first)
-        XCTAssertEqual(EpisodeBuilder.caption(for: episode, calendar: losAngeles), "19:00")
+        XCTAssertEqual(clock(episode.time, losAngeles), "19:00")
 
         let utcFeed = build([slot(Self.iso, at: at, net: 1 * Self.gb)], now: now, calendar: utc)
         XCTAssertEqual(utcFeed.days.first?.day, date(2026, 10, 11, 0, 0, in: utc))
@@ -323,23 +327,6 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(label(7), "Wed 7 Oct")
         XCTAssertEqual(label(2), "Fri 2 Oct")
         XCTAssertEqual(label(28, 9), "Mon 28 Sep")
-    }
-
-    func testCaptionAddsTheNameDetail() {
-        let utc = calendar()
-        let episode = ChangeEpisode(
-            id: "x",
-            title: "Safari data",
-            detail: "Application Support",
-            category: .cachesAndSystem,
-            rootPath: "/Users/tester/Library/Application Support/Safari",
-            netBytes: Self.gb,
-            grossBytes: Self.gb,
-            day: date(2026, 10, 11, 0, 0, in: utc),
-            time: date(2026, 10, 11, 8, 40, in: utc),
-            isApproximateTime: false
-        )
-        XCTAssertEqual(EpisodeBuilder.caption(for: episode, calendar: utc), "08:40 · Application Support")
     }
 
     // MARK: - This week (header)
@@ -390,7 +377,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(WeeklyChange(.failed).amountText, "\u{2014}")
     }
 
-    /// A real zero, once history exists, is "no change this week", never "0 MB".
+    /// A real zero, once history exists, reads "No change", never "0 MB".
     func testTrueZeroReadsNoChangeThisWeekOnceHistoryExists() {
         let utc = calendar()
         let now = date(2026, 10, 11, 15, 0, in: utc)
@@ -447,7 +434,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(row.day, date(2026, 10, 6, 0, 0, in: utc))
         XCTAssertEqual(row.netBytes, 31 * Self.gb)
         XCTAssertNil(row.buildingSince)
-        XCTAssertTrue(EpisodeBuilder.caption(for: row, calendar: utc).hasPrefix("14:20"))
+        XCTAssertEqual(clock(row.time, utc), "14:20")
     }
 
     /// 250 MB a day from Fri 2 Oct: one row on Mon 5 Oct, when the place has
@@ -464,7 +451,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(row.day, date(2026, 10, 5, 0, 0, in: utc))
         XCTAssertEqual(row.netBytes, 1 * Self.gb)
         XCTAssertEqual(row.buildingSince, date(2026, 10, 2, 0, 0, in: utc))
-        XCTAssertEqual(EpisodeBuilder.caption(for: row, calendar: utc), "a little each day since Fri 2 Oct")
+        XCTAssertEqual(EpisodeBuilder.dayLabel(for: try XCTUnwrap(row.buildingSince), calendar: utc), "Fri 2 Oct")
         XCTAssertTrue(row.isGrowth)
         // The header still counts all of this week's growth.
         XCTAssertEqual(feed.weekNetBytes, 500 * Self.mb)
@@ -496,7 +483,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(feed.episodes.count, 1)
         XCTAssertEqual(row.netBytes, 2_600 * Self.mb)
         XCTAssertNil(row.buildingSince)
-        XCTAssertEqual(EpisodeBuilder.caption(for: row, calendar: utc), "15:00")
+        XCTAssertEqual(clock(row.time, utc), "15:00")
     }
 
     /// A place that gains and loses 1.2 GB day after day gets a row each time.
@@ -558,7 +545,7 @@ final class EpisodeBuilderTests: XCTestCase {
 
     private static let trash = "trash|/Users/tester/.Trash"
 
-    func testMoveToTrashIsCaptionedAndTrashGrowthIsNoRow() throws {
+    func testMoveToTrashIsMarkedAndTrashGrowthIsNoRow() throws {
         let utc = calendar()
         let now = date(2026, 10, 11, 20, 0, in: utc)
         let feed = build([
@@ -571,7 +558,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(feed.episodes.count, 1)
         XCTAssertEqual(source.netBytes, -3 * Self.gb)
         XCTAssertTrue(source.isMovedToTrash)
-        XCTAssertEqual(EpisodeBuilder.caption(for: source, calendar: utc), "14:05 · moved to Trash")
+        XCTAssertEqual(clock(source.time, utc), "14:05")
         XCTAssertEqual(feed.weekNetBytes, 0, "the sum is unchanged by the move")
         XCTAssertEqual(WeeklyChange(.loaded(feed), now: now), .none)
     }

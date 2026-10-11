@@ -2,11 +2,11 @@ import SwiftUI
 
 /// The main list: one plain chronological list, newest first, grouped into
 /// day sections with real dates. Date labels stick at the top while
-/// scrolling, and the rows fade out above the footer.
+/// scrolling, and the rows themselves fade to transparent above the footer.
 struct ChangeFeedView: View {
     /// Height of the fade above the footer; the list ends with as much space,
     /// so the last row can scroll clear of it.
-    static let fadeHeight: CGFloat = 24
+    static let fadeHeight: CGFloat = 32
 
     /// Nil while the first read is in flight.
     let result: ChangeFeedResult?
@@ -22,7 +22,6 @@ struct ChangeFeedView: View {
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed?:
-                // Never an empty list on an error: say so and offer a retry.
                 ChangeFeedStateView(message: ChangeFeedStateView.failedText, onRetry: onRetry)
             case .loaded(let feed)? where feed.isDayOne(now: now):
                 ChangeFeedStateView(message: ChangeFeedStateView.dayOneText)
@@ -31,6 +30,13 @@ struct ChangeFeedView: View {
             }
         }
     }
+
+    private static let fadeStops: [Gradient.Stop] = [
+        .init(color: .black, location: 0),
+        .init(color: .black.opacity(0.75), location: 0.3),
+        .init(color: .black.opacity(0.35), location: 0.65),
+        .init(color: .clear, location: 1),
+    ]
 
     private func list(_ feed: ChangeFeed, now: Date) -> some View {
         ScrollView {
@@ -41,7 +47,7 @@ struct ChangeFeedView: View {
         .mask(
             VStack(spacing: 0) {
                 Rectangle()
-                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                LinearGradient(stops: Self.fadeStops, startPoint: .top, endPoint: .bottom)
                     .frame(height: Self.fadeHeight)
             }
         )
@@ -76,19 +82,17 @@ struct ChangeFeedRows: View {
                     ForEach(day.episodes) { episode in
                         ChangeRow(
                             episode: episode,
-                            caption: EpisodeBuilder.caption(for: episode, calendar: calendar),
                             onReveal: onReveal
                         )
                     }
                 } header: {
                     Text(EpisodeBuilder.dayLabel(for: day.day, calendar: calendar))
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 8)
                         .padding(.top, 10)
                         .padding(.bottom, 2)
-                        .background(.bar)
                         .accessibilityAddTraits(.isHeader)
                 }
             }

@@ -322,7 +322,7 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         let monday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Mon 5 Oct" })
         XCTAssertEqual(monday.episodes.map(\.title), ["Downloads", "Mail attachments"])
         let mail = try XCTUnwrap(monday.episodes.last)
-        XCTAssertEqual(EpisodeBuilder.caption(for: mail, calendar: calendar), "a little each day since Fri 2 Oct")
+        XCTAssertEqual(EpisodeBuilder.dayLabel(for: try XCTUnwrap(mail.buildingSince), calendar: calendar), "Fri 2 Oct")
         XCTAssertTrue(feed.episodes.allSatisfy { abs($0.netBytes) >= EpisodeBuilder.rowThresholdBytes })
         XCTAssertNil(feed.quietSince(now: MarketingSample.now, calendar: calendar))
         XCTAssertFalse(feed.isShortHistory(now: MarketingSample.now, calendar: calendar))

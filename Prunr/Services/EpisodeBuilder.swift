@@ -43,7 +43,6 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// freed space.
     var isMovedToTrash = false
     /// Set when the amount built up over several days: the day it started.
-    /// The caption then reads "a little each day since Fri 2 Oct".
     var buildingSince: Date?
 
     /// Where the row's icon comes from; `.category` for legacy rows.
@@ -136,7 +135,7 @@ enum WeeklyChange: Equatable, Sendable {
     }
 
     /// The amount on the header's right edge: "—", "+48 GB" or "−3 GB".
-    /// `.none` has no amount; its line reads "no change this week".
+    /// `.none` has no amount; the header reads "No change".
     var amountText: String? {
         switch self {
         case .unknown:
@@ -166,9 +165,9 @@ func signedBytes(_ bytes: Int64) -> String {
 ///   end of a day where |count| reaches the line, that day gets one row with
 ///   the whole count, and the count starts over. Nothing resets at week ends.
 ///   A change that came and went within one day therefore has no row.
-/// - Caption: the clock time when the count started that day or more than half
-///   of it moved in one slot that day; otherwise "a little each day since
-///   <start day>". A daily-scan slot with an old window reads "found by scan".
+/// - Time: when the count started that day or more than half of it moved in
+///   one slot that day; otherwise `buildingSince` holds the start day. A
+///   daily-scan slot with an old window has only an approximate time.
 /// - Trash growth is a move and never counts; the Trash only counts shrinks,
 ///   which read "Trash emptied".
 /// - Legacy rows without a unit count per (category, subcategory).
@@ -222,7 +221,6 @@ enum EpisodeBuilder {
                 if day >= weekStart {
                     weekNet += dayNet
                 }
-                // Moving files into the Trash frees nothing: only its shrinks count.
                 let counted = isTrashPlace
                     ? daySlots.reduce(Int64(0)) { $0 + min($1.netBytes, 0) }
                     : dayNet
@@ -269,24 +267,6 @@ enum EpisodeBuilder {
     /// The real date, also for today and yesterday: "Wed 7 Oct".
     static func dayLabel(for day: Date, calendar: Calendar) -> String {
         formatter("EEE d MMM", calendar: calendar).string(from: calendar.startOfDay(for: day))
-    }
-
-    /// "14:20 · detail", "14:20 · moved to Trash", "found by scan", or "a
-    /// little each day since Fri 2 Oct".
-    static func caption(for episode: ChangeEpisode, calendar: Calendar) -> String {
-        let lead: String
-        if let since = episode.buildingSince {
-            lead = "a little each day since \(dayLabel(for: since, calendar: calendar))"
-        } else if episode.isApproximateTime {
-            lead = "found by scan"
-        } else {
-            lead = formatter("HH:mm", calendar: calendar).string(from: episode.time)
-        }
-        if episode.isMovedToTrash {
-            return "\(lead) · moved to Trash"
-        }
-        guard let detail = episode.detail, !detail.isEmpty else { return lead }
-        return "\(lead) · \(detail)"
     }
 
     /// "Nothing over 1 GB since 28 Sep".
@@ -363,7 +343,6 @@ enum EpisodeBuilder {
     ) -> ChangeEpisode {
         let first = daySlots[0]
 
-        // Peak: the day's slot with the biggest net; ties go to the later slot.
         let bySlot = Dictionary(grouping: daySlots, by: \.slot)
         let netOfSlot = bySlot.mapValues { $0.reduce(Int64(0)) { $0 + $1.netBytes } }
         let peakIndex = netOfSlot.max { lhs, rhs in
@@ -373,7 +352,6 @@ enum EpisodeBuilder {
         let peakNet = netOfSlot[peakIndex] ?? 0
         let time = peakSlots.map(\.firstAt).min() ?? first.firstAt
 
-        // One go: the count started today, or most of it moved in one slot.
         let isOneGo = countStart == day || abs(peakNet) * 2 > abs(netBytes)
         let approximate = isOneGo && peakSlots.allSatisfy { isApproximateSlot($0) }
 
@@ -398,7 +376,6 @@ enum EpisodeBuilder {
             title = "Trash emptied"
         }
 
-        // A shrink whose bytes the Trash took in the same slots is a move.
         var movedToTrash = false
         if netBytes < 0 && !isTrashPlace {
             let trashIn = Set(daySlots.map(\.slot)).reduce(Int64(0)) { $0 + (trashGrowth[$1] ?? 0) }
