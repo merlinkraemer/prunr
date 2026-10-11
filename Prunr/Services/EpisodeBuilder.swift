@@ -21,7 +21,7 @@ struct JournalSlot: Sendable, Equatable {
     let observedSince: Date?
 }
 
-/// One place's net change on one local day.
+/// One row: a place that gained or lost another 1 GB since its last row.
 struct ChangeEpisode: Identifiable, Equatable, Sendable {
     let id: String
     let title: String
@@ -29,11 +29,12 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     let category: GrowthCategory
     /// Unit root to reveal in Finder; nil for legacy category-level rows.
     let rootPath: String?
+    /// Everything since the place's last row, up to the end of `day`.
     let netBytes: Int64
     let grossBytes: Int64
-    /// Local start of the day the activity started.
+    /// Local start of the day the place crossed the line.
     let day: Date
-    /// When most of the bytes moved, or when the daily scan found them.
+    /// When most of the day's bytes moved, or when the daily scan found them.
     let time: Date
     /// True when only a daily scan saw the change, so `time` is when it was
     /// found, not when it happened.
@@ -41,6 +42,12 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// A shrink whose bytes went to the Trash in the same slots: a move, not
     /// freed space.
     var isMovedToTrash = false
+    /// Set when the amount built up over several days: the day it started.
+    /// The caption then reads "a little each day since Fri 2 Oct".
+    var buildingSince: Date?
+
+    /// Orange in the list: growth of at least the row line. Shrinks are grey.
+    var isGrowth: Bool { netBytes >= EpisodeBuilder.rowThresholdBytes }
 }
 
 struct ChangeFeedDay: Identifiable, Equatable, Sendable {
@@ -50,57 +57,23 @@ struct ChangeFeedDay: Identifiable, Equatable, Sendable {
     let episodes: [ChangeEpisode]
 }
 
-/// One 7-day stretch of the list: its notable rows by day, and everything
-/// else, which the "in N smaller changes" row carries.
-struct ChangeFeedWeek: Identifiable, Equatable, Sendable {
-    var id: Int { index }
-    /// 0 is this week (today and the previous six days), 1 the week before.
-    let index: Int
-    /// Local midnight of the oldest day in the week.
-    let start: Date
-    /// Local midnight of the newest day in the week.
-    let end: Date
+/// The change list: every row back to `GrowthJournalService.historyWindowDays`,
+/// grouped by day, and this week's measured total for the header.
+struct ChangeFeed: Equatable, Sendable {
     /// Days with rows, newest first.
     let days: [ChangeFeedDay]
-    /// Changes without a row of their own, biggest first.
-    let smaller: [ChangeEpisode]
-    /// Net change of every slot in the week.
-    let netBytes: Int64
-    /// Bytes moved in the week; sets the row cutoff.
-    let grossBytes: Int64
-    /// Smallest |net| that earned a row this week.
-    let cutoffBytes: Int64
-
-    var rows: [ChangeEpisode] { days.flatMap(\.episodes) }
-
-    /// The "smaller changes" amount: exactly the week's net minus its rows, so
-    /// rows plus this always equal the week.
-    var smallerNetBytes: Int64 {
-        netBytes - rows.reduce(Int64(0)) { $0 + $1.netBytes }
-    }
-
-    var isEmpty: Bool { days.isEmpty && smaller.isEmpty }
-}
-
-/// The change list: this week first, then older weeks back to
-/// `GrowthJournalService.historyWindowDays`.
-struct ChangeFeed: Equatable, Sendable {
-    /// Newest first; `weeks.first` is this week.
-    let weeks: [ChangeFeedWeek]
+    /// Net change of everything this week (today and the six days before),
+    /// whether it earned a row or not. The header's number.
+    let weekNetBytes: Int64
     /// When the history started (the first complete snapshot); nil if unknown.
     let watchingSince: Date?
 
-    static let empty = ChangeFeed(weeks: [], watchingSince: nil)
+    static let empty = ChangeFeed(days: [], weekNetBytes: 0, watchingSince: nil)
 
-    var thisWeek: ChangeFeedWeek? { weeks.first { $0.index == 0 } }
+    /// Every row, newest day first.
+    var episodes: [ChangeEpisode] { days.flatMap(\.episodes) }
 
-    /// Days with rows across all weeks, newest first.
-    var days: [ChangeFeedDay] { weeks.flatMap(\.days) }
-
-    /// Every change, rows and smaller ones.
-    var episodes: [ChangeEpisode] { weeks.flatMap { $0.rows + $0.smaller } }
-
-    var hasRows: Bool { weeks.contains { !$0.days.isEmpty } }
+    var hasRows: Bool { !days.isEmpty }
 
     /// Day one: nothing earned a row yet and watching started under 24 hours
     /// ago (or its start is unknown). There is no history to report yet.
@@ -115,6 +88,18 @@ struct ChangeFeed: Equatable, Sendable {
     func isShortHistory(now: Date, calendar: Calendar) -> Bool {
         guard let watchingSince else { return false }
         return watchingSince >= GrowthJournalService.historyStart(now: now, calendar: calendar)
+    }
+
+    /// The date for "Nothing over 1 GB since 28 Sep". Nil when this week has a
+    /// row. Otherwise the newest row's day, or without any row the start of
+    /// what the list can see.
+    func quietSince(now: Date, calendar: Calendar) -> Date? {
+        let weekStart = GrowthJournalService.weekStart(now: now, calendar: calendar)
+        if let newest = days.first?.day {
+            return newest >= weekStart ? nil : newest
+        }
+        let historyStart = GrowthJournalService.historyStart(now: now, calendar: calendar)
+        return max(watchingSince ?? historyStart, historyStart)
     }
 }
 
@@ -143,7 +128,7 @@ enum WeeklyChange: Equatable, Sendable {
             self = .unknown
             return
         }
-        let net = feed.thisWeek?.netBytes ?? 0
+        let net = feed.weekNetBytes
         self = abs(net) < GrowthJournalService.presentationFloorBytes ? .none : .bytes(net)
     }
 
@@ -168,38 +153,29 @@ func signedBytes(_ bytes: Int64) -> String {
 
 /// Turns journal slots into rows. Pure: no I/O, no database, no actor.
 ///
-/// Rules (docs/core-screen-episodes-prd-2026-10-11.md, "What a row is"):
-/// - Slots of one unit form runs; a gap of more than 30 minutes ends a run.
-/// - A run belongs to the local day it started, so activity past midnight stays
-///   with its start day. All runs of a unit on one day merge into one change.
-/// - The amount is the net change; changes that net to zero are dropped.
-/// - The time is the slot where most bytes moved. If that slot only holds
-///   scan residuals whose window is older than an hour, the time is approximate.
-/// - Legacy rows without a unit become one change per (category, subcategory).
+/// One rule (docs/core-screen-simple-list-model-2026-10-11.md): a place gets
+/// a row each time it has gained or lost another `rowThresholdBytes` since its
+/// last row.
+/// - Slots of one place form runs; a gap of more than 30 minutes ends a run.
+///   A run belongs to the local day it started, so activity past midnight
+///   stays with its start day.
+/// - Per place, a running count adds each day's net, oldest day first. At the
+///   end of a day where |count| reaches the line, that day gets one row with
+///   the whole count, and the count starts over. Nothing resets at week ends.
+///   A change that came and went within one day therefore has no row.
+/// - Caption: the clock time when the count started that day or more than half
+///   of it moved in one slot that day; otherwise "a little each day since
+///   <start day>". A daily-scan slot with an old window reads "found by scan".
+/// - Trash growth is a move and never counts; the Trash only counts shrinks,
+///   which read "Trash emptied".
+/// - Legacy rows without a unit count per (category, subcategory).
 ///
-/// Which changes get a row ("Which changes get their own row"):
-/// - Per week, a change needs |net| ≥ `Cutoff.threshold(grossBytes:)`.
-/// - At most `Cutoff.maxRowsPerDay` rows per day, biggest first.
-/// - Trash growth never gets a row: moving to the Trash frees nothing.
-/// - Everything else is the week's "smaller changes".
+/// The count is not stored: every build recomputes it from the shown history,
+/// so each place's count starts on the oldest shown day.
 enum EpisodeBuilder {
-    /// The adaptive row cutoff. First values, to tune with the owner.
-    enum Cutoff {
-        /// Share of the week's moved bytes, in percent.
-        static let percentOfWeekGross: Int64 = 2
-        static let floorBytes: Int64 = 250_000_000
-        static let ceilingBytes: Int64 = 2_000_000_000
-        static let maxRowsPerDay = 5
+    /// The one row line: 1 GB, decimal like every amount in the app.
+    static let rowThresholdBytes: Int64 = 1_000_000_000
 
-        /// clamp(2% × gross, 250 MB, 2 GB).
-        static func threshold(grossBytes: Int64) -> Int64 {
-            min(max(grossBytes * percentOfWeekGross / 100, floorBytes), ceilingBytes)
-        }
-    }
-
-    /// Whole local days the list covers.
-    static let historyDays = GrowthJournalService.historyWindowDays
-    static let weekDays = GrowthJournalService.displayWindowDays
     /// A scan residual whose window started more than this before the scan
     /// cannot say when the change happened.
     static let approximateAfter: TimeInterval = 60 * 60
@@ -222,99 +198,97 @@ enum EpisodeBuilder {
         home: String = UnitResolver.defaultHome,
         watchingSince: Date? = nil
     ) -> ChangeFeed {
-        let today = calendar.startOfDay(for: now)
         let oldestDay = windowStart(now: now, calendar: calendar)
-        let byUnit = Dictionary(grouping: slots, by: identity(of:))
+        let weekStart = GrowthJournalService.weekStart(now: now, calendar: calendar)
         let trashGrowth = trashGrowthBySlot(slots)
 
-        let weekCount = (historyDays + weekDays - 1) / weekDays
-        var netByWeek = [Int64](repeating: 0, count: weekCount)
-        var grossByWeek = [Int64](repeating: 0, count: weekCount)
-        var episodesByWeek = [[ChangeEpisode]](repeating: [], count: weekCount)
+        var weekNet: Int64 = 0
+        var rowsByDay: [Date: [ChangeEpisode]] = [:]
 
-        for (identity, unitSlots) in byUnit {
-            for (day, daySlots) in groupByRunStartDay(unitSlots, calendar: calendar) where day >= oldestDay {
-                let daysAgo = max(0, calendar.dateComponents([.day], from: day, to: today).day ?? 0)
-                let week = min(daysAgo / weekDays, weekCount - 1)
-                netByWeek[week] += daySlots.reduce(Int64(0)) { $0 + $1.netBytes }
-                grossByWeek[week] += daySlots.reduce(Int64(0)) { $0 + $1.grossBytes }
-                guard let episode = makeEpisode(
+        for (identity, placeSlots) in Dictionary(grouping: slots, by: identity(of:)) {
+            let isTrashPlace = placeSlots.contains { isTrash($0) }
+            var count: Int64 = 0
+            var gross: Int64 = 0
+            var countStart: Date?
+
+            let days = groupByRunStartDay(placeSlots, calendar: calendar)
+                .filter { $0.key >= oldestDay }
+                .sorted { $0.key < $1.key }
+            for (day, daySlots) in days {
+                let dayNet = daySlots.reduce(Int64(0)) { $0 + $1.netBytes }
+                if day >= weekStart {
+                    weekNet += dayNet
+                }
+                // Moving files into the Trash frees nothing: only its shrinks count.
+                let counted = isTrashPlace
+                    ? daySlots.reduce(Int64(0)) { $0 + min($1.netBytes, 0) }
+                    : dayNet
+                guard counted != 0 else { continue }
+
+                if countStart == nil {
+                    countStart = day
+                }
+                count += counted
+                gross += daySlots.reduce(Int64(0)) { $0 + $1.grossBytes }
+                if count == 0 {
+                    countStart = nil
+                    gross = 0
+                    continue
+                }
+                guard abs(count) >= rowThresholdBytes, let start = countStart else { continue }
+
+                let episode = makeEpisode(
                     identity: identity,
                     day: day,
-                    slots: daySlots,
+                    daySlots: daySlots,
+                    netBytes: count,
+                    grossBytes: gross,
+                    countStart: start,
+                    isTrashPlace: isTrashPlace,
                     trashGrowth: trashGrowth,
                     home: home
-                ) else { continue }
-                episodesByWeek[week].append(episode)
+                )
+                rowsByDay[day, default: []].append(episode)
+                count = 0
+                gross = 0
+                countStart = nil
             }
         }
 
-        let weeks = (0..<weekCount).map { index -> ChangeFeedWeek in
-            let end = calendar.date(byAdding: .day, value: -index * weekDays, to: today) ?? today
-            let start = max(
-                oldestDay,
-                calendar.date(byAdding: .day, value: -(weekDays - 1), to: end) ?? end
-            )
-            return makeWeek(
-                index: index,
-                start: start,
-                end: end,
-                episodes: episodesByWeek[index],
-                netBytes: netByWeek[index],
-                grossBytes: grossByWeek[index]
-            )
-        }
-        return ChangeFeed(weeks: weeks, watchingSince: watchingSince)
+        let days = rowsByDay
+            .map { day, rows in ChangeFeedDay(day: day, episodes: rows.sorted(by: newestFirst)) }
+            .sorted { $0.day > $1.day }
+        return ChangeFeed(days: days, weekNetBytes: weekNet, watchingSince: watchingSince)
     }
 
     // MARK: - Labels
 
-    /// "Today", "Yesterday", a weekday name within the last 7 days, then "3 Oct".
-    static func dayLabel(for day: Date, now: Date, calendar: Calendar) -> String {
-        let today = calendar.startOfDay(for: now)
-        let start = calendar.startOfDay(for: day)
-        let daysAgo = calendar.dateComponents([.day], from: start, to: today).day ?? 0
-        switch daysAgo {
-        case 0:
-            return "Today"
-        case 1:
-            return "Yesterday"
-        case 2...6:
-            return formatter("EEEE", calendar: calendar).string(from: start)
-        default:
-            return formatter("d MMM", calendar: calendar).string(from: start)
-        }
+    /// The real date, also for today and yesterday: "Wed 7 Oct".
+    static func dayLabel(for day: Date, calendar: Calendar) -> String {
+        formatter("EEE d MMM", calendar: calendar).string(from: calendar.startOfDay(for: day))
     }
 
-    /// "14:20 · detail", "14:20 · moved to Trash", or "found 03:10 · daily
-    /// check" for approximate times.
+    /// "14:20 · detail", "14:20 · moved to Trash", "found by scan", or "a
+    /// little each day since Fri 2 Oct".
     static func caption(for episode: ChangeEpisode, calendar: Calendar) -> String {
-        let clock = formatter("HH:mm", calendar: calendar).string(from: episode.time)
-        if episode.isApproximateTime {
-            return "found \(clock) · daily check"
+        let lead: String
+        if let since = episode.buildingSince {
+            lead = "a little each day since \(dayLabel(for: since, calendar: calendar))"
+        } else if episode.isApproximateTime {
+            lead = "found by scan"
+        } else {
+            lead = formatter("HH:mm", calendar: calendar).string(from: episode.time)
         }
         if episode.isMovedToTrash {
-            return "\(clock) · moved to Trash"
+            return "\(lead) · moved to Trash"
         }
-        guard let detail = episode.detail, !detail.isEmpty else { return clock }
-        return "\(clock) · \(detail)"
+        guard let detail = episode.detail, !detail.isEmpty else { return lead }
+        return "\(lead) · \(detail)"
     }
 
-    /// "in 9 smaller changes".
-    static func smallerChangesTitle(count: Int) -> String {
-        "in \(count) smaller \(count == 1 ? "change" : "changes")"
-    }
-
-    /// The week's days: "5 – 11 Oct", "28 Sep – 4 Oct", or "3 Oct" for a
-    /// one-day stretch.
-    static func weekSpanLabel(for week: ChangeFeedWeek, calendar: Calendar) -> String {
-        let dayMonth = formatter("d MMM", calendar: calendar)
-        guard !calendar.isDate(week.start, inSameDayAs: week.end) else {
-            return dayMonth.string(from: week.end)
-        }
-        let sameMonth = calendar.isDate(week.start, equalTo: week.end, toGranularity: .month)
-        let first = sameMonth ? formatter("d", calendar: calendar).string(from: week.start) : dayMonth.string(from: week.start)
-        return "\(first) \u{2013} \(dayMonth.string(from: week.end))"
+    /// "Nothing over 1 GB since 28 Sep".
+    static func quietLabel(since date: Date, calendar: Calendar) -> String {
+        "Nothing over 1 GB since \(formatter("d MMM", calendar: calendar).string(from: date))"
     }
 
     /// "Watching since 3 Oct".
@@ -342,48 +316,6 @@ enum EpisodeBuilder {
             growth[slot.slot, default: 0] += slot.netBytes
         }
         return growth.filter { $0.value > 0 }
-    }
-
-    /// Picks the week's rows: above the cutoff, not Trash growth, and at most
-    /// `maxRowsPerDay` per day, biggest first. The rest is "smaller changes".
-    private static func makeWeek(
-        index: Int,
-        start: Date,
-        end: Date,
-        episodes: [ChangeEpisode],
-        netBytes: Int64,
-        grossBytes: Int64
-    ) -> ChangeFeedWeek {
-        let cutoff = Cutoff.threshold(grossBytes: grossBytes)
-        var rowsByDay: [Date: [ChangeEpisode]] = [:]
-        var smaller: [ChangeEpisode] = []
-
-        for (day, dayEpisodes) in Dictionary(grouping: episodes, by: \.day) {
-            var rowCount = 0
-            for episode in dayEpisodes.sorted(by: biggestFirst) {
-                let isTrashGrowth = episode.category == .trash && episode.netBytes > 0
-                if !isTrashGrowth, abs(episode.netBytes) >= cutoff, rowCount < Cutoff.maxRowsPerDay {
-                    rowsByDay[day, default: []].append(episode)
-                    rowCount += 1
-                } else {
-                    smaller.append(episode)
-                }
-            }
-        }
-
-        let days = rowsByDay
-            .map { day, rows in ChangeFeedDay(day: day, episodes: rows.sorted(by: newestFirst)) }
-            .sorted { $0.day > $1.day }
-        return ChangeFeedWeek(
-            index: index,
-            start: start,
-            end: end,
-            days: days,
-            smaller: smaller.sorted(by: biggestFirst),
-            netBytes: netBytes,
-            grossBytes: grossBytes,
-            cutoffBytes: cutoff
-        )
     }
 
     /// Splits a unit's slots into runs and buckets each run under the local day
@@ -418,24 +350,29 @@ enum EpisodeBuilder {
     private static func makeEpisode(
         identity: String,
         day: Date,
-        slots: [JournalSlot],
+        daySlots: [JournalSlot],
+        netBytes: Int64,
+        grossBytes: Int64,
+        countStart: Date,
+        isTrashPlace: Bool,
         trashGrowth: [Int64: Int64],
         home: String
-    ) -> ChangeEpisode? {
-        let net = slots.reduce(Int64(0)) { $0 + $1.netBytes }
-        guard net != 0, let first = slots.first else { return nil }
-        let gross = slots.reduce(Int64(0)) { $0 + $1.grossBytes }
+    ) -> ChangeEpisode {
+        let first = daySlots[0]
 
-        // Peak: the slot where most bytes moved; ties go to the later slot.
-        let bySlot = Dictionary(grouping: slots, by: \.slot)
-        let peakIndex = bySlot.max { lhs, rhs in
-            let lhsGross = lhs.value.reduce(Int64(0)) { $0 + $1.grossBytes }
-            let rhsGross = rhs.value.reduce(Int64(0)) { $0 + $1.grossBytes }
-            return lhsGross == rhsGross ? lhs.key < rhs.key : lhsGross < rhsGross
+        // Peak: the day's slot with the biggest net; ties go to the later slot.
+        let bySlot = Dictionary(grouping: daySlots, by: \.slot)
+        let netOfSlot = bySlot.mapValues { $0.reduce(Int64(0)) { $0 + $1.netBytes } }
+        let peakIndex = netOfSlot.max { lhs, rhs in
+            abs(lhs.value) == abs(rhs.value) ? lhs.key < rhs.key : abs(lhs.value) < abs(rhs.value)
         }?.key ?? first.slot
         let peakSlots = bySlot[peakIndex] ?? [first]
+        let peakNet = netOfSlot[peakIndex] ?? 0
         let time = peakSlots.map(\.firstAt).min() ?? first.firstAt
-        let approximate = peakSlots.allSatisfy { isApproximateSlot($0) }
+
+        // One go: the count started today, or most of it moved in one slot.
+        let isOneGo = countStart == day || abs(peakNet) * 2 > abs(netBytes)
+        let approximate = isOneGo && peakSlots.allSatisfy { isApproximateSlot($0) }
 
         var title: String
         let detail: String?
@@ -454,16 +391,15 @@ enum EpisodeBuilder {
             rootPath = UnitKey(rawValue: first.unitKey)?.rootPath
         }
 
-        let isTrashUnit = isTrash(first)
-        if isTrashUnit && net < 0 {
+        if isTrashPlace {
             title = "Trash emptied"
         }
 
         // A shrink whose bytes the Trash took in the same slots is a move.
         var movedToTrash = false
-        if net < 0 && !isTrashUnit {
-            let trashIn = Set(slots.map(\.slot)).reduce(Int64(0)) { $0 + (trashGrowth[$1] ?? 0) }
-            movedToTrash = trashIn * 100 >= -net * trashMovePercent
+        if netBytes < 0 && !isTrashPlace {
+            let trashIn = Set(daySlots.map(\.slot)).reduce(Int64(0)) { $0 + (trashGrowth[$1] ?? 0) }
+            movedToTrash = trashIn * 100 >= -netBytes * trashMovePercent
         }
 
         return ChangeEpisode(
@@ -472,12 +408,13 @@ enum EpisodeBuilder {
             detail: detail,
             category: category,
             rootPath: rootPath,
-            netBytes: net,
-            grossBytes: gross,
+            netBytes: netBytes,
+            grossBytes: grossBytes,
             day: day,
             time: time,
             isApproximateTime: approximate,
-            isMovedToTrash: movedToTrash
+            isMovedToTrash: movedToTrash,
+            buildingSince: isOneGo ? nil : countStart
         )
     }
 
@@ -505,12 +442,6 @@ enum EpisodeBuilder {
 
     private static func newestFirst(_ lhs: ChangeEpisode, _ rhs: ChangeEpisode) -> Bool {
         lhs.time == rhs.time ? lhs.id < rhs.id : lhs.time > rhs.time
-    }
-
-    private static func biggestFirst(_ lhs: ChangeEpisode, _ rhs: ChangeEpisode) -> Bool {
-        let lhsSize = abs(lhs.netBytes)
-        let rhsSize = abs(rhs.netBytes)
-        return lhsSize == rhsSize ? lhs.id < rhs.id : lhsSize > rhsSize
     }
 
     private static func formatter(_ format: String, calendar: Calendar) -> DateFormatter {

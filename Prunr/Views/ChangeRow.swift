@@ -40,8 +40,8 @@ struct ChangeRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(amountText)
-                    .font(.system(size: 13, weight: episode.netBytes > 0 ? .semibold : .medium, design: .monospaced))
-                    .foregroundStyle(episode.netBytes > 0 ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                    .font(.system(size: 13, weight: episode.isGrowth ? .semibold : .medium, design: .monospaced))
+                    .foregroundStyle(episode.isGrowth ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
                     .fixedSize()
             }

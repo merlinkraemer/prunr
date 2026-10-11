@@ -87,7 +87,7 @@ final class ChangeFeedStoreTests: PrunrTestCase {
 
             let feed = try await GrowthJournalService.shared.changeFeed(trackedPaths: [trackedPath], now: now)
             let day = try XCTUnwrap(feed.days.first)
-            XCTAssertEqual(EpisodeBuilder.dayLabel(for: day.day, now: now, calendar: .current), "Today")
+            XCTAssertEqual(day.day, Calendar.current.startOfDay(for: now))
             let episode = try XCTUnwrap(day.episodes.first)
             XCTAssertEqual(episode.title, "Downloads · \(name)")
             XCTAssertEqual(episode.netBytes, size)
@@ -138,22 +138,22 @@ final class ChangeFeedStoreTests: PrunrTestCase {
             let key = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil, unitKey: unit)
             let now = Date()
 
-            try await GrowthJournalService.shared.recordDeltas(trackedPath: first, deltas: [key: 300 * Self.mb], at: now)
-            try await GrowthJournalService.shared.recordDeltas(trackedPath: second, deltas: [key: 200 * Self.mb], at: now)
+            try await GrowthJournalService.shared.recordDeltas(trackedPath: first, deltas: [key: 1_200 * Self.mb], at: now)
+            try await GrowthJournalService.shared.recordDeltas(trackedPath: second, deltas: [key: 800 * Self.mb], at: now)
 
             let slots = try await DatabaseManager.shared.fetchJournalSlots(
                 trackedPathIds: [firstId, secondId],
                 since: now.addingTimeInterval(-3_600)
             )
             XCTAssertEqual(slots.count, 1, "SQL pre-aggregation merges both paths into one slot")
-            XCTAssertEqual(slots.first?.netBytes, 500 * Self.mb)
-            XCTAssertEqual(slots.first?.grossBytes, 500 * Self.mb)
+            XCTAssertEqual(slots.first?.netBytes, 2_000 * Self.mb)
+            XCTAssertEqual(slots.first?.grossBytes, 2_000 * Self.mb)
 
             let feed = try await GrowthJournalService.shared.changeFeed(trackedPaths: [first, second], now: now)
-            XCTAssertEqual(feed.days.flatMap(\.episodes).map(\.netBytes), [500 * Self.mb])
+            XCTAssertEqual(feed.episodes.map(\.netBytes), [2_000 * Self.mb])
 
             let onlyFirst = try await GrowthJournalService.shared.changeFeed(trackedPaths: [first], now: now)
-            XCTAssertEqual(onlyFirst.days.flatMap(\.episodes).map(\.netBytes), [300 * Self.mb])
+            XCTAssertEqual(onlyFirst.episodes.map(\.netBytes), [1_200 * Self.mb])
         }
     }
 
@@ -332,9 +332,9 @@ final class ChangeFeedStoreTests: PrunrTestCase {
         XCTAssertEqual(buckets.reduce(Int64(0)) { $0 + $1.deltaBytes }, authoritative)
 
         let feed = try await GrowthJournalService.shared.changeFeed(trackedPaths: [trackedPath])
-        let episodes = feed.episodes
-        XCTAssertFalse(episodes.isEmpty)
-        XCTAssertTrue(episodes.allSatisfy { $0.rootPath == nil }, "no unit-keyed rows on the update day")
+        // A few MB stay under the 1 GB row line, but the header counts them.
+        XCTAssertEqual(feed.weekNetBytes, authoritative)
+        XCTAssertTrue(feed.episodes.allSatisfy { $0.rootPath == nil }, "no unit-keyed rows on the update day")
     }
 
     /// Rows written before v22 read back with an empty unit, and the identity
@@ -411,7 +411,9 @@ final class ChangeFeedStoreTests: PrunrTestCase {
                     // Spread each unit's minutes across the week, distinct per unit.
                     let minute = (unit * 7 + index * (windowMinutes / bucketsPerUnit)) % windowMinutes
                     let bucketStart = since.addingTimeInterval(TimeInterval(minute * 60))
-                    let delta = Int64((index % 3 == 0 ? -1 : 1) * (1_000 + unit + index) * 1_024)
+                    // Tens of MB per bucket, a third of them shrinks: most units
+                    // cross the 1 GB line once or twice in the window.
+                    let delta = Int64((index % 3 == 0 ? -1 : 1) * (10 + unit % 90 + index)) * 1_000_000
                     try statement.execute(arguments: [trackedPathId, bucketStart, "developer", delta, unitKey])
                 }
             }

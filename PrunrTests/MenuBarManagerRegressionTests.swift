@@ -307,25 +307,28 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         )
     }
 
-    /// The marketing screenshot's sample week adds up like the real list: the
-    /// header's +48 GB is the rows plus "in 9 smaller changes +4.3 GB", and the
-    /// days read Today, Wednesday, Tuesday, Monday, Sunday.
-    func testMarketingSampleWeekAddsUpAndReadsAsTheNewScreen() throws {
+    /// The marketing screenshot's sample reads like mockup S1: real dates from
+    /// Wed 7 Oct back, Mail's slow growth with its range caption, and a header
+    /// of +48 GB that the categories view adds up to.
+    func testMarketingSampleReadsAsTheNewScreen() throws {
         let feed = MarketingSample.feed
-        let week = try XCTUnwrap(feed.thisWeek)
+        let calendar = Calendar.current
 
         XCTAssertEqual(WeeklyChange(.loaded(feed), now: MarketingSample.now), .bytes(48_000_000_000))
-        XCTAssertEqual(week.smaller.count, 9)
-        XCTAssertEqual(week.smallerNetBytes, 4_300_000_000)
         XCTAssertEqual(
-            week.days.map { EpisodeBuilder.dayLabel(for: $0.day, now: MarketingSample.now, calendar: .current) },
-            ["Today", "Wednesday", "Tuesday", "Monday", "Sunday"]
+            feed.days.map { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) },
+            ["Wed 7 Oct", "Tue 6 Oct", "Mon 5 Oct", "Sun 4 Oct", "Thu 1 Oct"]
         )
-        XCTAssertEqual(week.days.first?.episodes.map(\.title), ["Mail attachments", "Final Cut Pro render files · Wedding Edit"])
-        XCTAssertFalse(feed.isShortHistory(now: MarketingSample.now, calendar: .current))
+        let monday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Mon 5 Oct" })
+        XCTAssertEqual(monday.episodes.map(\.title), ["Downloads", "Mail attachments"])
+        let mail = try XCTUnwrap(monday.episodes.last)
+        XCTAssertEqual(EpisodeBuilder.caption(for: mail, calendar: calendar), "a little each day since Fri 2 Oct")
+        XCTAssertTrue(feed.episodes.allSatisfy { abs($0.netBytes) >= EpisodeBuilder.rowThresholdBytes })
+        XCTAssertNil(feed.quietSince(now: MarketingSample.now, calendar: calendar))
+        XCTAssertFalse(feed.isShortHistory(now: MarketingSample.now, calendar: calendar))
 
         let categories = MarketingSample.categories(endedAt: MarketingSample.now)
-        XCTAssertEqual(categories.reduce(Int64(0)) { $0 + $1.growthDeltaBytes }, week.netBytes)
+        XCTAssertEqual(categories.reduce(Int64(0)) { $0 + $1.growthDeltaBytes }, feed.weekNetBytes)
         let tracked = categories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
         XCTAssertEqual(MarketingSample.totalBytes - MarketingSample.freeBytes - tracked, 122_400_000_000)
     }
@@ -346,17 +349,11 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             time: Date(),
             isApproximateTime: false
         )
-        let week = ChangeFeedWeek(
-            index: 0,
-            start: today,
-            end: today,
+        return ChangeFeed(
             days: [ChangeFeedDay(day: today, episodes: [episode])],
-            smaller: [],
-            netBytes: episode.netBytes,
-            grossBytes: episode.grossBytes,
-            cutoffBytes: EpisodeBuilder.Cutoff.floorBytes
+            weekNetBytes: episode.netBytes,
+            watchingSince: today
         )
-        return ChangeFeed(weeks: [week], watchingSince: today)
     }
 
     /// A history that cannot be read gives `.failed` and a "—" header, never

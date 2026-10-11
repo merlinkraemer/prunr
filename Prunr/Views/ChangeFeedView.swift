@@ -1,9 +1,12 @@
 import SwiftUI
 
-/// The main list: this week's notable changes under plain day labels, newest
-/// first, each week ending with its "smaller changes" row, then older weeks.
+/// The main list: one plain chronological list, newest first, grouped into
+/// day sections with real dates. Date labels stick at the top while
+/// scrolling, and the rows fade out above the footer.
 struct ChangeFeedView: View {
-    static let calmText = "Nothing notable changed this week"
+    /// Height of the fade above the footer; the list ends with as much space,
+    /// so the last row can scroll clear of it.
+    static let fadeHeight: CGFloat = 24
 
     /// Nil while the first read is in flight.
     let result: ChangeFeedResult?
@@ -32,15 +35,23 @@ struct ChangeFeedView: View {
     private func list(_ feed: ChangeFeed, now: Date) -> some View {
         ScrollView {
             ChangeFeedRows(feed: feed, now: now, onReveal: onReveal)
+                .padding(.bottom, Self.fadeHeight)
         }
         .hiddenScrollIndicators()
+        .mask(
+            VStack(spacing: 0) {
+                Rectangle()
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: Self.fadeHeight)
+            }
+        )
     }
 }
 
-/// The list's rows without the scroll view: calm line, day labels, rows, each
-/// week's "smaller changes" row and the "Watching since" marker. The
-/// marketing renderer lays these out directly, since `ImageRenderer` leaves
-/// AppKit-backed scroll views blank.
+/// The list's rows without the scroll view: the "Nothing over 1 GB since"
+/// line, day sections with sticky date labels, and the "Watching since"
+/// marker. The marketing renderer lays these out directly, since
+/// `ImageRenderer` leaves AppKit-backed scroll views blank.
 struct ChangeFeedRows: View {
     let feed: ChangeFeed
     let now: Date
@@ -49,30 +60,19 @@ struct ChangeFeedRows: View {
     private let calendar = Calendar.current
 
     var body: some View {
-        // This week always shows (calm line at least); older weeks only when
-        // something moved in them.
-        let weeks = feed.weeks.filter { $0.index == 0 || !$0.isEmpty }
-        LazyVStack(alignment: .leading, spacing: 0) {
-            if feed.thisWeek?.days.isEmpty ?? true {
-                Text(ChangeFeedView.calmText)
+        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+            if let since = feed.quietSince(now: now, calendar: calendar) {
+                Text(EpisodeBuilder.quietLabel(since: since, calendar: calendar))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 8)
                     .padding(.top, 8)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 2)
             }
 
-            ForEach(weeks) { week in
-                ForEach(week.days) { day in
-                    Text(EpisodeBuilder.dayLabel(for: day.day, now: now, calendar: calendar))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.top, isFirstLabel(day, in: week) ? 4 : 12)
-                        .padding(.bottom, 2)
-                        .accessibilityAddTraits(.isHeader)
-
+            ForEach(feed.days) { day in
+                Section {
                     ForEach(day.episodes) { episode in
                         ChangeRow(
                             episode: episode,
@@ -80,14 +80,16 @@ struct ChangeFeedRows: View {
                             onReveal: onReveal
                         )
                     }
-                }
-
-                if !week.smaller.isEmpty {
-                    ChangeTailRow(
-                        count: week.smaller.count,
-                        netBytes: week.smallerNetBytes,
-                        caption: EpisodeBuilder.weekSpanLabel(for: week, calendar: calendar)
-                    )
+                } header: {
+                    Text(EpisodeBuilder.dayLabel(for: day.day, calendar: calendar))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 10)
+                        .padding(.bottom, 2)
+                        .background(.bar)
+                        .accessibilityAddTraits(.isHeader)
                 }
             }
 
@@ -101,11 +103,6 @@ struct ChangeFeedRows: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-    }
-
-    /// The very first day label sits tight under the header.
-    private func isFirstLabel(_ day: ChangeFeedDay, in week: ChangeFeedWeek) -> Bool {
-        week.index == 0 && week.days.first?.day == day.day
+        .padding(.bottom, 6)
     }
 }

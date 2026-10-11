@@ -197,64 +197,48 @@ private struct MarketingPopoverPreview: View {
 }
 
 /// Privacy-safe sample content for the marketing screenshot: a busy week on a
-/// 2 TB Mac with 19 GB left. Fixed to Friday 9 Oct 2026, 16:40 local time, so
-/// the day labels read Today, Wednesday, Tuesday, Monday and Sunday.
+/// 2 TB Mac with 19 GB left, as in mockup S1. Fixed to Thursday 8 Oct 2026,
+/// 09:12 local time, so the days read Wed 7 Oct back to Thu 1 Oct.
 enum MarketingSample {
     static let totalBytes: Int64 = 2_000_000_000_000
     static let freeBytes: Int64 = 19_000_000_000
+    /// The header: everything this week, rows or not.
+    static let weekNetBytes: Int64 = 48_000_000_000
 
     private static let calendar = Calendar.current
 
-    static let now: Date = date(day: 9, hour: 16, minute: 40)
+    static let now: Date = date(day: 8, hour: 9, minute: 12)
     /// Long before the shown 30 days, so the list has no "Watching since" end.
     static let watchingSince: Date = date(month: 8, day: 1, hour: 9, minute: 0)
 
-    /// Today first, then Wednesday back to Sunday (Thursday was quiet).
-    static let thisWeekRows: [ChangeEpisode] = [
+    /// Newest first. Mail built up over days; the rest moved in one go.
+    static let rows: [ChangeEpisode] = [
+        episode("xcode", "Xcode build files", detail: "Prunr", .developer,
+                "/Users/sample/Library/Developer/Xcode/DerivedData", 9_000_000_000, day: 7, hour: 17, minute: 5),
+        episode("docker", "Docker disk", detail: nil, .developer,
+                "/Users/sample/Library/Containers/com.docker.docker", 31_000_000_000, day: 6, hour: 14, minute: 20),
+        episode("iso", "Downloads", detail: "ubuntu-24.04.1-desktop-amd64.iso", .downloads,
+                "/Users/sample/Downloads/ubuntu-24.04.1-desktop-amd64.iso", 5_000_000_000, day: 5, hour: 21, minute: 40),
         episode("mail", "Mail attachments", detail: nil, .mediaAndDocuments,
-                "/Users/sample/Library/Mail", 600_000_000, day: 9, hour: 15, minute: 10),
-        episode("fcp", "Final Cut Pro render files · Wedding Edit", detail: "Ceremony", .mediaAndDocuments,
-                "/Users/sample/Movies/Wedding Edit.fcpbundle", 2_100_000_000, day: 9, hour: 11, minute: 45),
-        episode("xcode", "Xcode build files · Prunr", detail: nil, .developer,
-                "/Users/sample/Library/Developer/Xcode/DerivedData", 9_000_000_000, day: 7, hour: 14, minute: 20),
-        episode("docker", "Docker disk", detail: "images, containers, volumes", .developer,
-                "/Users/sample/Library/Containers/com.docker.docker", 31_000_000_000, day: 6, hour: 10, minute: 5),
-        episode("iso", "Downloads · ubuntu.iso", detail: nil, .downloads,
-                "/Users/sample/Downloads/ubuntu.iso", 5_000_000_000, day: 5, hour: 21, minute: 30),
+                "/Users/sample/Library/Mail", 1_000_000_000, day: 5, hour: 18, minute: 0,
+                buildingSince: date(day: 2, hour: 0, minute: 0)),
         episode("trash", "Trash emptied", detail: nil, .trash,
-                "/Users/sample/.Trash", -4_000_000_000, day: 4, hour: 18, minute: 0)
+                "/Users/sample/.Trash", -4_000_000_000, day: 4, hour: 10, minute: 15),
+        episode("photos", "Photos library", detail: nil, .mediaAndDocuments,
+                "/Users/sample/Pictures/Photos Library.photoslibrary", 2_400_000_000, day: 1, hour: 20, minute: 30)
     ]
 
-    /// Nine smaller changes, +4.3 GB together.
-    static let thisWeekSmaller: [ChangeEpisode] = (0..<9).map { index in
-        episode("small-\(index)", "Smaller change \(index + 1)", detail: nil, .cachesAndSystem,
-                nil, index == 0 ? 700_000_000 : 450_000_000, day: 9 - index % 6, hour: 12, minute: 0)
-    }
-
-    /// This week only: +48 GB, the rows plus "in 9 smaller changes +4.3 GB".
     static let feed: ChangeFeed = {
-        let today = calendar.startOfDay(for: now)
-        let all = thisWeekRows + thisWeekSmaller
-        let days = Dictionary(grouping: thisWeekRows, by: \.day)
+        let days = Dictionary(grouping: rows, by: \.day)
             .map { ChangeFeedDay(day: $0.key, episodes: $0.value.sorted { $0.time > $1.time }) }
             .sorted { $0.day > $1.day }
-        let week = ChangeFeedWeek(
-            index: 0,
-            start: calendar.date(byAdding: .day, value: -6, to: today) ?? today,
-            end: today,
-            days: days,
-            smaller: thisWeekSmaller,
-            netBytes: all.reduce(Int64(0)) { $0 + $1.netBytes },
-            grossBytes: all.reduce(Int64(0)) { $0 + abs($1.netBytes) },
-            cutoffBytes: EpisodeBuilder.Cutoff.ceilingBytes
-        )
-        return ChangeFeed(weeks: [week], watchingSince: watchingSince)
+        return ChangeFeed(days: days, weekNetBytes: weekNetBytes, watchingSince: watchingSince)
     }()
 
     /// The categories view behind the header. Sizes add up to 1,858.6 GB, so
     /// "Not watched" carries the other 122.4 GB; the changes add up to the week.
     static func categories(endedAt now: Date) -> [CategoryInventoryItem] {
-        let weekStart = feed.thisWeek?.start ?? now
+        let weekStart = GrowthJournalService.weekStart(now: now, calendar: calendar)
         func item(_ category: GrowthCategory, _ size: Int64, _ delta: Int64?) -> CategoryInventoryItem {
             CategoryInventoryItem(
                 category: category,
@@ -289,7 +273,8 @@ enum MarketingSample {
         _ netBytes: Int64,
         day: Int,
         hour: Int,
-        minute: Int
+        minute: Int,
+        buildingSince: Date? = nil
     ) -> ChangeEpisode {
         let time = date(day: day, hour: hour, minute: minute)
         return ChangeEpisode(
@@ -302,10 +287,12 @@ enum MarketingSample {
             grossBytes: abs(netBytes),
             day: calendar.startOfDay(for: time),
             time: time,
-            isApproximateTime: false
+            isApproximateTime: false,
+            buildingSince: buildingSince
         )
     }
 }
+
 
 private struct MarketingDrilldownPreview: View {
     private let rows: [(title: String, size: String, growth: String, icon: String)] = [

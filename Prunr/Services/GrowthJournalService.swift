@@ -73,7 +73,7 @@ actor GrowthJournalService {
     }
 
     /// The change list across all tracked paths: the journal read as 30-minute
-    /// slots and grouped into one row per place and day. Runs on this actor,
+    /// slots, with a row each time a place moved another 1 GB. Runs on this actor,
     /// off the main thread. Throws when history cannot be read.
     ///
     /// `watchingSince` is when the history started. Without it, the oldest
