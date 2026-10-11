@@ -12,7 +12,7 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Core-screen direction (6 mockups, artifact in Q4) — rec: 1 Ledger + free-GB glyph — branch: none
+1. Approve core-screen PRD (docs/core-screen-episodes-prd-2026-10-11.md) and lift the "no code until core screen settled" lane rule — rec: approve, start s1 (scan keeps change times, no UI) — branch: none
 2. Untracked `.agents/skills/ship-alpha/` and `docs/next-weeks-brief-2026-10-03.html` — rec: commit both — branch: main
 
 ## Queue
@@ -36,14 +36,21 @@ validation: none.
 do not touch: delete nothing on the Mac.
 
 ### Q4 Core-screen design prep [landed] [box]
-result: 6 mockups + verdicts at https://claude.ai/artifact/UGa7vWtZTh1LmtKvLEVfMX (rec: 1 Ledger + glyph from 5).
+result: design settled on G3 (day-grouped list of named changes) after 8 rounds; mockups https://claude.ai/artifact/UGa7vWtZTh1LmtKvLEVfMX; PRD docs/core-screen-episodes-prd-2026-10-11.md (9 slices).
 goal: one-page brief for Merlin's design session: the "growth as a sentence" lens, 3 concrete core-screen variants, from docs/product-definition-notes-2026-09-06.md and growth-framing-2026-08-21.md.
 acceptance: docs/core-screen-brief-<date>.md, on a branch, unlanded (taste stays Merlin's).
 validation: none.
 do not touch: app code, website.
 
+### Q5 Build core screen per PRD [blocked] [mac]
+goal: slices s1→s9 of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice.
+acceptance: per slice in the PRD; `make test` green via mac-queue.
+validation: mac-queue test Prunr on the slice branch.
+do not touch: release/appcast/workflows; nothing user-visible lands without Merlin (holiday 10-30→11-16: nothing lands).
+blocked on: Waiting on Merlin #1.
+
 ## Rundown
 - Moved from the Mac: main @ f616b88, 4 branches, 2 untracked files, notes, memory. Matches the Mac.
 - Website builds on lab2; API tests 5/5. Preview ports 5180 (dev) / 4180 (review).
-- Core screen: 3 research + 2 design + 1 critic passes → 6 mockups; waiting on your pick.
+- Core screen settled (G3); PRD written and Fable-reviewed; waiting on approval to start coding.
 - Next: Q1 result (Mac test run), then Q2.

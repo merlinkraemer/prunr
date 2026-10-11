@@ -8,3 +8,4 @@
 2026-10-11 11:00 orchestrator Q4 followup: mockups rejected; Fable model (episodes, named places, 30d list + 7d net) in docs/core-screen-communication-model-2026-10-11.md
 2026-10-11 12:00 orchestrator Q4 followup: Merlin picked episode list (E1); Fable refined layout (E5) in artifact, review in docs/core-screen-layout-review-2026-10-11.md
 2026-10-11 13:30 orchestrator Q4 followup: row layouts C/D/F rejected; Fable G1-G3 (icon+time fused, eyebrow, Finder groups) published; analysis docs/core-screen-row-analysis-2026-10-11.md
+2026-10-11 15:00 orchestrator Q4 landed: core screen settled on G3; PRD docs/core-screen-episodes-prd-2026-10-11.md (Opus draft, Fable review applied). Q5 queued, blocked on approval
