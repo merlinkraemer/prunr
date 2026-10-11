@@ -12,7 +12,8 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Untracked `.agents/skills/ship-alpha/` and `docs/next-weeks-brief-2026-10-03.html` — rec: commit both — branch: main
+1. Core-screen direction (6 mockups, artifact in Q4) — rec: 1 Ledger + free-GB glyph — branch: none
+2. Untracked `.agents/skills/ship-alpha/` and `docs/next-weeks-brief-2026-10-03.html` — rec: commit both — branch: main
 
 ## Queue
 
@@ -34,7 +35,8 @@ acceptance: note in place, list in STATE.md.
 validation: none.
 do not touch: delete nothing on the Mac.
 
-### Q4 Core-screen design prep [queued] [box]
+### Q4 Core-screen design prep [landed] [box]
+result: 6 mockups + verdicts at https://claude.ai/artifact/UGa7vWtZTh1LmtKvLEVfMX (rec: 1 Ledger + glyph from 5).
 goal: one-page brief for Merlin's design session: the "growth as a sentence" lens, 3 concrete core-screen variants, from docs/product-definition-notes-2026-09-06.md and growth-framing-2026-08-21.md.
 acceptance: docs/core-screen-brief-<date>.md, on a branch, unlanded (taste stays Merlin's).
 validation: none.
@@ -43,4 +45,5 @@ do not touch: app code, website.
 ## Rundown
 - Moved from the Mac: main @ f616b88, 4 branches, 2 untracked files, notes, memory. Matches the Mac.
 - Website builds on lab2; API tests 5/5. Preview ports 5180 (dev) / 4180 (review).
+- Core screen: 3 research + 2 design + 1 critic passes → 6 mockups; waiting on your pick.
 - Next: Q1 result (Mac test run), then Q2.
