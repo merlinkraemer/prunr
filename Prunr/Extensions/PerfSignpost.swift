@@ -322,7 +322,7 @@ final class DiagnosticsReporter {
         block += "app=\(Self.appVersion) macOS=\(ProcessInfo.processInfo.operatingSystemVersionString)\n"
         block += Self.scopeSummary(for: ctx) + "\n"
         block += "disk: used=\(bytes(ctx.usedBytes)) total=\(bytes(ctx.totalBytes)) free=\(bytes(ctx.freeBytes))\n"
-        block += "inventory: categories=\(ctx.categoryCount) growing=\(ctx.growingCount) stable=\(ctx.stableCount)\n"
+        block += Self.inventorySummary(for: ctx) + "\n"
         block += "state: fullScanRunning=\(ctx.fullScanRunning) pendingRecentChanges=\(ctx.pendingRecentChanges) noBaseline=\(ctx.noBaseline) lastFullScan=\(lastScan)\n"
         block += "watcher: pendingPaths=\(ctx.pendingRecentChangePathCount) requiresFullRefresh=\(ctx.pendingRecentChangeRequiresFullRefresh) dirtyReason=\(ctx.pendingDirtyReason ?? "none") reconciliationNeeded=\(ctx.needsAuthoritativeReconciliation) processing=\(ctx.isProcessingRecentChanges) dirtyScheduled=\(ctx.dirtyRefreshScheduled) dirtyCycles=\(ctx.dirtyRootConsecutiveCount) lastScheduledDelay=\(ctx.scheduledRecentChangeRefreshDelay.map { "\(Int($0))s" } ?? "none") scheduledIn=\(remaining(ctx.scheduledRecentChangeRefreshAt)) lastEventAge=\(elapsed(ctx.lastFileEventAt)) refresh(schedule/executed/rescheduled)=\(ctx.recentChangeRefreshScheduleCount)/\(ctx.recentChangeRefreshExecutionCount)/\(ctx.recentChangeRefreshRescheduleCount)\n"
         block += "process: residentMem=\(memMB)MB cpuNow=\(String(format: "%.1f", ProcessCPU.usagePercent()))%\n"
@@ -410,6 +410,10 @@ final class DiagnosticsReporter {
     /// only aggregate counts and permission state.
     static func scopeSummary(for context: DiagnosticsAppContext) -> String {
         "scope: roots=\(context.scopePathCount) enabled=\(context.enabledPathCount) watched=\(context.watchedPathCount) protectedTraversal=\(context.protectedTraversalConfirmed)"
+    }
+
+    static func inventorySummary(for context: DiagnosticsAppContext) -> String {
+        "inventory: categories=\(context.categoryCount) growing=\(context.growingCount) stable=\(context.stableCount)"
     }
 
     enum ScanOutcome {

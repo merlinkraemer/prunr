@@ -5,7 +5,7 @@ import AppKit
 struct CategoryGrowthListView: View {
     private let pageTopInset: CGFloat = 2
 
-    /// One change-ranked list: rows that moved first, then the rest by size.
+    /// Categories by size, biggest first (`MenuBarManager.sortedCategories`).
     let categories: [CategoryInventoryItem]
 
     /// Supplemental rows for storage that appears in the drive bar but has no category drill-down
@@ -311,8 +311,6 @@ struct CategoryGrowthListView: View {
         Group {
             if !isDataReady && categories.isEmpty {
                 categoryListSkeletonView
-            } else if categories.isEmpty {
-                emptyStateView
             } else {
                 VStack(spacing: 0) {
                     ScrollView {
@@ -738,7 +736,7 @@ struct CategoryGrowthListView: View {
         manager.completeInitialSubcategoryWarmup()
     }
 
-    // MARK: - Empty State
+    // MARK: - Skeletons
 
     private var categoryListSkeletonView: some View {
         ScrollView {
@@ -780,35 +778,6 @@ struct CategoryGrowthListView: View {
         .padding(.bottom, pageTopInset)
     }
 
-    private var emptyStateView: some View {
-        stableEmptyStateView
-    }
-
-    private var stableEmptyStateView: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(Color.green.opacity(0.1))
-                    .frame(width: 64, height: 64)
-
-                Image(systemName: "checkmark")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(.green)
-            }
-
-            VStack(spacing: 4) {
-                Text("Your disk is stable")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.primary)
-
-                Text("Nothing significant has changed recently")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: maxHeight)
-        .padding(.vertical, 20)
-    }
 }
 
 // MARK: - Category Inventory Row
