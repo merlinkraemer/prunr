@@ -50,9 +50,11 @@ extension UnitRules {
         },
         name: { root in
             guard let rel = root.relative, rel.count >= 6, let game = UnitNamer.displayComponent(rel[5]) else {
-                return UnitName(title: "Steam", category: .other)
+                return UnitName(title: "Steam", category: .other, icon: .steam)
             }
-            return UnitName(title: "\(game) \u{00B7} Steam", category: GrowthCategory.categorize(path: root.path))
+            return UnitName(
+                title: "\(game) \u{00B7} Steam", category: GrowthCategory.categorize(path: root.path), icon: .steam
+            )
         }
     )
 
@@ -66,7 +68,7 @@ extension UnitRules {
             return path.homeRoot(depth: index + 1)
         },
         name: { root in
-            UnitName(title: "Mail attachments", category: GrowthCategory.categorize(path: root.path))
+            UnitName(title: "Mail attachments", category: GrowthCategory.categorize(path: root.path), icon: .mail)
         }
     )
 
@@ -79,7 +81,9 @@ extension UnitRules {
             return path.homeRoot(depth: 3)
         },
         name: { root in
-            UnitName(title: "Messages attachments", category: GrowthCategory.categorize(path: root.path))
+            UnitName(
+                title: "Messages attachments", category: GrowthCategory.categorize(path: root.path), icon: .messages
+            )
         }
     )
 
@@ -110,15 +114,18 @@ extension UnitRules {
             let category = GrowthCategory.categorize(path: root.path)
             switch rel[1].lowercased() {
             case "mail":
-                return UnitName(title: "Mail", category: category)
+                return UnitName(title: "Mail", category: category, icon: .mail)
             case "messages":
-                return UnitName(title: "Messages", category: category)
+                return UnitName(title: "Messages", category: category, icon: .messages)
             case "caches":
                 guard rel.count >= 3, let app = UnitNamer.appDisplayName(rel[2]) else { return nil }
-                return UnitName(title: "\(app) cache", detail: "Caches", category: category)
+                return UnitName(title: "\(app) cache", detail: "Caches", category: category, icon: .libraryItem(rel[2]))
             case "containers", "group containers":
                 guard rel.count >= 3, let app = UnitNamer.appDisplayName(rel[2]) else { return nil }
-                return UnitName(title: "\(app) data", detail: UnitNamer.displayComponent(rel[1]), category: category)
+                return UnitName(
+                    title: "\(app) data", detail: UnitNamer.displayComponent(rel[1]), category: category,
+                    icon: .libraryItem(rel[2])
+                )
             default:
                 return nil
             }

@@ -16,7 +16,9 @@ final class UnitResolverTests: XCTestCase {
 
     func testDownloadItemIsItsOwnUnit() {
         XCTAssertEqual(key("/Users/tester/Downloads/ubuntu.iso"), "download|/Users/tester/Downloads/ubuntu.iso")
-        XCTAssertEqual(name("/Users/tester/Downloads/ubuntu.iso"), UnitName(title: "Downloads · ubuntu.iso", category: .downloads))
+        XCTAssertEqual(name("/Users/tester/Downloads/ubuntu.iso"), UnitName(
+            title: "Downloads · ubuntu.iso", category: .downloads, icon: .file(path: "/Users/tester/Downloads/ubuntu.iso")
+        ))
     }
 
     func testFilesInsideDownloadedFolderBelongToThatFolder() {
@@ -144,7 +146,7 @@ final class UnitResolverTests: XCTestCase {
         let realHome = FileManager.default.homeDirectoryForCurrentUser.path
         let path = realHome + "/Downloads/thing.dmg"
         XCTAssertEqual(UnitResolver.resolve(path: path), "download|" + path)
-        XCTAssertEqual(UnitNamer.name(path: path), UnitName(title: "Downloads · thing.dmg", category: .downloads))
+        XCTAssertEqual(UnitNamer.name(path: path), UnitName(title: "Downloads · thing.dmg", category: .downloads, icon: .file(path: path)))
     }
 
     // MARK: - Guard: no hashes or bundle ids in names

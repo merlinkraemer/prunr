@@ -46,6 +46,9 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// The caption then reads "a little each day since Fri 2 Oct".
     var buildingSince: Date?
 
+    /// Where the row's icon comes from; `.category` for legacy rows.
+    var iconSource: UnitIconSource = .category
+
     /// Orange in the list: growth of at least the row line. Shrinks are grey.
     var isGrowth: Bool { netBytes >= EpisodeBuilder.rowThresholdBytes }
 }
@@ -414,7 +417,8 @@ enum EpisodeBuilder {
             time: time,
             isApproximateTime: approximate,
             isMovedToTrash: movedToTrash,
-            buildingSince: isOneGo ? nil : countStart
+            buildingSince: isOneGo ? nil : countStart,
+            iconSource: first.unitKey.isEmpty ? .category : UnitNamer.name(forKey: first.unitKey, home: home).icon
         )
     }
 
