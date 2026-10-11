@@ -1445,7 +1445,6 @@ struct MenuBarView: View {
             } else {
                 ChangeFeedView(
                     result: manager.changeFeed,
-                    onReveal: { path in manager.revealInFinder(path: path) },
                     onRetry: { Task { await manager.refreshChangeFeed() } }
                 )
             }

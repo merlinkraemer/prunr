@@ -1,11 +1,11 @@
 import SwiftUI
 
 /// A place's icon in the change list: the real app or file icon when one
-/// resolves, else the plain category symbol.
+/// resolves, else the category symbol in its colour, both without a tile.
 struct UnitIconTile: View {
     let category: GrowthCategory
     let source: UnitIconSource
-    var size: CGFloat = 24
+    var size: CGFloat = 20
 
     @State private var resolvedIcon: NSImage?
 
@@ -18,8 +18,8 @@ struct UnitIconTile: View {
                     .scaledToFit()
             } else {
                 Image(systemName: category.icon)
-                    .font(.system(size: size * 0.6))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 15))
+                    .foregroundStyle(category.color)
             }
         }
         .frame(width: size, height: size)

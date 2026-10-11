@@ -173,8 +173,7 @@ private struct MarketingPopoverPreview: View {
 
             ChangeFeedRows(
                 feed: manager.changeFeed?.feed ?? .empty,
-                now: MarketingSample.now,
-                onReveal: { _ in }
+                now: MarketingSample.now
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()
