@@ -2,15 +2,14 @@ import SwiftUI
 
 /// The main list: one plain chronological list, newest first, grouped into
 /// day sections with real dates. Date labels stick at the top while
-/// scrolling, and the rows themselves fade to transparent above the footer.
+/// scrolling, and the rows soften into the background above the footer.
 struct ChangeFeedView: View {
-    /// Height of the fade above the footer; the list ends with as much space,
-    /// so the last row can scroll clear of it.
+    /// Height of the soft edge above the footer; the list ends with as much
+    /// space, so the last row can scroll clear of it.
     static let fadeHeight: CGFloat = 32
 
     /// Nil while the first read is in flight.
     let result: ChangeFeedResult?
-    let onReveal: (String) -> Void
     let onRetry: () -> Void
 
     var body: some View {
@@ -31,27 +30,39 @@ struct ChangeFeedView: View {
         }
     }
 
+    @ViewBuilder
+    private func list(_ feed: ChangeFeed, now: Date) -> some View {
+        if #available(macOS 26.0, *) {
+            ScrollView {
+                ChangeFeedRows(feed: feed, now: now)
+            }
+            .hiddenScrollIndicators()
+            .safeAreaBar(edge: .bottom, spacing: 0) {
+                Color.clear.frame(height: Self.fadeHeight)
+            }
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
+        } else {
+            ScrollView {
+                ChangeFeedRows(feed: feed, now: now)
+                    .padding(.bottom, Self.fadeHeight)
+            }
+            .hiddenScrollIndicators()
+            .mask(
+                VStack(spacing: 0) {
+                    Rectangle()
+                    LinearGradient(stops: Self.fadeStops, startPoint: .top, endPoint: .bottom)
+                        .frame(height: Self.fadeHeight)
+                }
+            )
+        }
+    }
+
     private static let fadeStops: [Gradient.Stop] = [
         .init(color: .black, location: 0),
         .init(color: .black.opacity(0.75), location: 0.3),
         .init(color: .black.opacity(0.35), location: 0.65),
         .init(color: .clear, location: 1),
     ]
-
-    private func list(_ feed: ChangeFeed, now: Date) -> some View {
-        ScrollView {
-            ChangeFeedRows(feed: feed, now: now, onReveal: onReveal)
-                .padding(.bottom, Self.fadeHeight)
-        }
-        .hiddenScrollIndicators()
-        .mask(
-            VStack(spacing: 0) {
-                Rectangle()
-                LinearGradient(stops: Self.fadeStops, startPoint: .top, endPoint: .bottom)
-                    .frame(height: Self.fadeHeight)
-            }
-        )
-    }
 }
 
 /// The list's rows without the scroll view: the "Nothing over 1 GB since"
@@ -61,7 +72,6 @@ struct ChangeFeedView: View {
 struct ChangeFeedRows: View {
     let feed: ChangeFeed
     let now: Date
-    let onReveal: (String) -> Void
 
     private let calendar = Calendar.current
 
@@ -80,10 +90,7 @@ struct ChangeFeedRows: View {
             ForEach(feed.days) { day in
                 Section {
                     ForEach(day.episodes) { episode in
-                        ChangeRow(
-                            episode: episode,
-                            onReveal: onReveal
-                        )
+                        ChangeRow(episode: episode)
                     }
                 } header: {
                     Text(EpisodeBuilder.dayLabel(for: day.day, calendar: calendar))
@@ -91,8 +98,8 @@ struct ChangeFeedRows: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 8)
-                        .padding(.top, 10)
-                        .padding(.bottom, 2)
+                        .padding(.top, 12)
+                        .padding(.bottom, 4)
                         .accessibilityAddTraits(.isHeader)
                 }
             }
