@@ -16,3 +16,4 @@
 2026-10-11 16:00 orchestrator Q5 blocked: s1 scan residual green (f15e350, mac-queue PASS 20261011-052340) but schema/scan logic = must-ask; branch feat/s1-scan-residual waits for Merlin
 2026-10-11 16:20 orchestrator Q5 landed: s7 media names (84bfbd9, mac-queue PASS) merged; followup noted: any '<X> Project' folder reads as Ableton project
 2026-10-11 16:30 orchestrator Q5 landed: s6 app/cache names (7533497, mac-queue PASS) merged; orchestrator fixed one stale UnitResolverTests assertion (Widget data -> Widget cache)
+2026-10-11 16:50 orchestrator Q5 landed: s5 developer names (8f17bbd) merged after combined test with s6/s7 (mac-queue PASS 20261011-054540)
