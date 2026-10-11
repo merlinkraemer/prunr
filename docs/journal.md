@@ -38,3 +38,4 @@
 2026-10-11 14:30 orchestrator Q5 followup: Merlin review of v1-review build: too heavy, opaque date headers, non-native fade, coloured tiles, heavy header; drop "free of" (menu bar shows it). Icons root cause: only 12/247 journal buckets on his Mac have unit keys (pre-update data) → category icons. Polish mockups V1–V3 spawned.
 2026-10-11 15:00 orchestrator Q5 spawn: s12 polish (V1 rows single-line, no tiles, no date band, native bottom edge, header bar + divider + This week row, no free-of), branch feat/s12-polish from feat/v1-review
 2026-10-11 15:05 orchestrator Q5 dropped: s12 polish build stopped at Merlin's request (mockups first); partial branch feat/s12-polish (2 commits, untested) parked
+2026-10-11 15:10 orchestrator Q5 decided: list is a pure log for v1 (no click/hover); cleanup awareness (gone rows, current size) noted as PRD L4
