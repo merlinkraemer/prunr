@@ -1,6 +1,6 @@
 # Core screen: a list of things that happened
 **Date:** 2026-10-11
-**Status:** in-progress (approved 2026-10-11; drilldown moved out of v1)
+**Status:** in-progress (approved 2026-10-11; drilldown moved out of v1; list rule revised after v1 review, see Revision)
 
 ## Problem
 
@@ -249,8 +249,32 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
 ### Later (after v1, not needed for the core screen)
 - **L0: click a change to see where it landed** (was s8; moved out of v1 on 2026-10-11 so the core list ships first). Full spec kept below.
 - **L1: exact per-change detail for all 30 days.** Depends on L0. A `growthJournalDetail` table (per bucket, unit and top 20 children) written on every delta path, so L0 can show exactly what changed in any episode, not only recent ones.
-- **L2: real icons.** `CacheApplicationIconResolver` (`CategoryGrowthListView.swift:1189`) for bundle-id units, and `NSWorkspace.icon(forFile:)` for bundles and download items, cached per unit. Depends on s6.
+- **L2: real icons** (pulled into v1 as s11). `CacheApplicationIconResolver` (`CategoryGrowthListView.swift:1189`) for bundle-id units, and `NSWorkspace.icon(forFile:)` for bundles and download items, cached per unit. Depends on s6.
 - **L3: more names.** Logic, iMovie, Music library, TV. Depends on s7.
+
+## Revision 2026-10-11 (after Merlin's review of the v1 build)
+
+v1 was hard to read at a glance (weekly blocks, "smaller changes" rows, scan rows with fake times). Decided:
+
+**List.** One plain chronological list, newest first, grouped into day sections with real dates ("Wed 7 Oct"). Days with no rows don't appear. No week labels, no day sums, no quiet/busy framing, no "smaller changes" rows. It scrolls; date labels stick at the top while scrolling and a fade sits above the footer so nothing looks cut off. Header, footer, categories view, onboarding and the manual-scan card are unchanged.
+
+**One rule for rows (replaces the adaptive cutoff, 5/day cap and weekly tail).** A place gets a row each time it has gained or lost another 1 GB since its last row. A big event crosses the line the same day and shows its clock time. Slow growth crosses after some days and gets one row on the day it crossed, with the whole amount since its last row and the caption "a little each day since Fri 2 Oct". The header stays the measured weekly total; rows are "everything that reached 1 GB", so they no longer sum to the header. If no row appeared in the last 7 days, one muted line: "Nothing over 1 GB since 28 Sep". Rows found only by a scan say "found by scan" instead of a clock time. Orange only for growth of 1 GB or more; shrinks grey; no dimmed older rows. Trash moves never show as growth; "Trash emptied" is a grey row. Details: [core-screen-simple-list-model-2026-10-11.md](core-screen-simple-list-model-2026-10-11.md).
+
+**Icons (L2 pulled into v1).** Each place has an icon source: the real app icon when the place belongs to a known app (Xcode, Docker, Mail, Photos, Final Cut Pro, Ableton Live, Steam games, app containers/caches by bundle id), the file's own icon for a single downloaded file, else the existing category symbol. Icons are resolved lazily and cached per place; a missing app falls back to the category symbol.
+
+### s10: One 1 GB rule and a plain day list
+- **outcome:** The list shows a row each time a place moves another 1 GB, grouped by real dates, with no week blocks or "smaller changes" rows.
+- **depends_on:** [s9]
+- **likely_files:** `Prunr/Services/EpisodeBuilder.swift`, `Prunr/Views/ChangeFeedView.swift`, `Prunr/Views/ChangeTailRow.swift` (delete), `Prunr/Views/ChangeFeedStateView.swift`, `Prunr/Services/GrowthJournalService.swift`, `Prunr/Services/MarketingScreenshotRenderer.swift`, `PrunrTests/EpisodeBuilderTests.swift`
+- **acceptance:** big event → one same-day row with time; 250 MB/day for 5 days → one row on the crossing day with the range caption; ±1 GB churn rows; "Nothing over 1 GB since" line; scan-found caption; Trash move/empty; orange threshold; 30-day window. **(owner visual)** sticky dates, fade, look against mockup S1/S2.
+
+### s11: Real icons per place
+- **outcome:** Rows show the real app icon or file icon where the place is known, and the category symbol otherwise.
+- **depends_on:** [s9]
+- **likely_files:** `Prunr/Models/UnitNamer.swift` (icon source on `UnitName`), `Prunr/Models/UnitRules+*.swift`, new `Prunr/Services/UnitIconResolver.swift`, `Prunr/Views/ChangeRow.swift` (icon view only), `PrunrTests/UnitIconTests.swift`
+- **acceptance:** icon-source mapping tests per pack (Xcode, Docker, Mail, Photos, Final Cut, Ableton, Steam, bundle-id containers, a download file, fallback); resolver caches per place and falls back when the app isn't installed. **(owner visual)** icons in the list.
+
+Order: s10 ‖ s11 (s11 touches only the icon view in ChangeRow), then merge both onto the v1 stack.
 
 ## Dependency graph
 

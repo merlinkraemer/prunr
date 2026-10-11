@@ -25,3 +25,10 @@
 2026-10-11 18:00 orchestrator Q5 blocked: s4 adaptive rows/30d/states green (5cc040f, mac-queue PASS 20261011-062635, 223 tests); UI → waits for Merlin
 2026-10-11 18:00 orchestrator Q5 followup: s4 left tests writing real UserDefaults, no panel Stop during manual scan, measure line missing → folded into s9 (same scope)
 2026-10-11 18:00 orchestrator Q5 spawn: s9 remove old overview + followups, stacked on s4 (feat/s9-cleanup)
+2026-10-11 18:10 orchestrator Q5 decided: Merlin keeps onboarding + manual-scan full-screen card as before; s9 restores the card s4 removed (no footer Stop)
+2026-10-11 19:00 orchestrator Q5 blocked: s9 cleanup green (b15237e, mac-queue PASS 20261011-071132, 225 tests); full v1 stack in feat/s9-cleanup waits for Merlin review; measure 4.5 s worst case
+2026-10-11 19:00 orchestrator - cleanup: removed finished worktrees and merged/agent branches; stacked slice branches kept
+- 2026-10-11 mac-queue b15237e8d mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
+2026-10-11 12:10 orchestrator Q5 spawn: Debug build of feat/s9-cleanup installed on the Mac (mac-queue 20261011-120614 PASS) for Merlin's review
+2026-10-11 13:30 orchestrator Q5 followup: Merlin review of v1 build: hard to read at a glance; direction = plain chronological day list; Fable proposed one 1 GB rule (docs/core-screen-simple-list-model-2026-10-11.md), mockups S1/S2
+2026-10-11 13:45 orchestrator - decided: Merlin picked the 1 GB rule (s10) and real icons now (s11, hybrid app/file icon + category fallback)
