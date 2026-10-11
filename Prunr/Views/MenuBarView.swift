@@ -526,7 +526,6 @@ struct MenuBarView: View {
 
     private var mainCategoryView: some View {
         VStack(spacing: 0) {
-            // Storage bar, free space and this week - ALWAYS visible (outside page navigation)
             changesHeader
             Divider()
 
@@ -1050,8 +1049,6 @@ struct MenuBarView: View {
     /// bar's segments drill into their category as before.
     private var changesHeader: some View {
         ChangesHeaderView(
-            freeBytes: manager.freeBytes,
-            totalBytes: manager.totalBytes,
             weekly: WeeklyChange(manager.changeFeed),
             onOpen: showsCategoryOverview ? nil : { setShowsCategoryOverview(true) }
         ) {

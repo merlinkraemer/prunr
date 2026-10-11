@@ -156,8 +156,6 @@ private struct MarketingPopoverPreview: View {
     var body: some View {
         VStack(spacing: 0) {
             ChangesHeaderView(
-                freeBytes: manager.freeBytes,
-                totalBytes: manager.totalBytes,
                 weekly: WeeklyChange(manager.changeFeed, now: MarketingSample.now),
                 onOpen: nil
             ) {
@@ -181,7 +179,6 @@ private struct MarketingPopoverPreview: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()
 
-            // The idle footer: refresh, an empty status, settings.
             HStack {
                 Image(systemName: "arrow.clockwise")
                 Spacer()
