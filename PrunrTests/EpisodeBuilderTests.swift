@@ -583,7 +583,8 @@ final class EpisodeBuilderTests: XCTestCase {
             slot(Self.trash, at: date(2026, 10, 11, 18, 0, in: utc), net: 2 * Self.gb, category: "trash")
         ], now: now, calendar: utc)
 
-        let source = try XCTUnwrap(feed.thisWeek?.rows.first { $0.category == .developer })
+        let source = try XCTUnwrap(feed.thisWeek?.rows.first { $0.netBytes < 0 })
+        XCTAssertEqual(source.netBytes, -3 * Self.gb)
         XCTAssertFalse(source.isMovedToTrash)
     }
 
