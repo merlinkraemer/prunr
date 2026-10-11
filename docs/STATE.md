@@ -12,8 +12,7 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Review core-screen v1 on the Mac, then merge the stack s1→s2b→s3→s4→s9 into main (data migration v21/v22 + new main screen) — green, 225 tests — rec: install a Debug build via `mac-queue add … feat/s9-cleanup mac-install Prunr`, check the 7 owner visual checks, then fast-forward main to feat/s9-cleanup — branch: feat/s9-cleanup (contains all)
-2. Feed rebuild cost: 4.5 s on a worst-case 200k-bucket fixture (73% in EpisodeBuilder) — rec: re-measure on your real data after install; optimise only if it shows — branch: none
+(none — s10 + s11 running; next: one Debug install with both for review)
 
 ## Queue
 
@@ -43,9 +42,9 @@ acceptance: docs/core-screen-brief-<date>.md, on a branch, unlanded (taste stays
 validation: none.
 do not touch: app code, website.
 
-### Q5 Build core screen per PRD [blocked] [mac]
+### Q5 Build core screen per PRD [running] [mac]
 goal: v1 slices of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice. Order {s1, s2a} → {s2b, s5, s6, s7} → s3 → s4 → s9. Drilldown (L0) after v1.
-landed: s2a, s5, s6, s7. done on branch, waiting for review: s1, s2b, s3, s4, s9 (all in feat/s9-cleanup).
+landed: s2a, s5, s6, s7. on branch: s1–s9 (feat/s9-cleanup, installed on Mac, reviewed: too hard to read). running: s10 1 GB rule + day list, s11 real icons (both on top of s9).
 followup: feed rebuild ~2.4 s on a worst-case 200k-bucket fixture; accepted for now (off main thread, debounced), re-measure on real alpha data before s9.
 acceptance: per slice in the PRD; `make test` green via mac-queue.
 validation: mac-queue test Prunr on the slice branch.
