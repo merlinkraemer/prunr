@@ -27,13 +27,17 @@ actor GrowthJournalService {
     func recordDeltas(
         trackedPath: TrackedPath,
         deltas: [DatabaseManager.JournalDeltaKey: Int64],
-        at date: Date = Date()
+        at date: Date = Date(),
+        source: GrowthJournalBucket.Source = .watch,
+        observedSince: Date? = nil
     ) async throws {
         let bucketStart = floorToMinute(date)
         try await db.upsertGrowthJournalBuckets(
             trackedPathId: trackedPath.id,
             bucketStart: bucketStart,
-            deltas: deltas
+            deltas: deltas,
+            source: source,
+            observedSince: observedSince
         )
     }
 

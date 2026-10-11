@@ -40,6 +40,18 @@ struct GrowthJournalBucket: Codable, Identifiable, Sendable, Equatable, Hashable
     let category: String
     let subcategory: String
     let deltaBytes: Int64
+    /// Which writer recorded the bucket.
+    let source: Source
+    /// For `scan` buckets: start of the window the scan reconciled. The change
+    /// happened somewhere in `(observedSince, bucketStart]`.
+    let observedSince: Date?
+
+    enum Source: String, Codable, Sendable {
+        /// Recorded by the realtime watcher at the time the change happened.
+        case watch
+        /// Residual a full scan found that the watcher missed.
+        case scan
+    }
 }
 
 struct WorkingSetEntry: Codable, Identifiable, Sendable, Equatable, Hashable, FetchableRecord {

@@ -86,6 +86,12 @@ final class DatabaseManager {
             throw DatabaseError.notInitialized
         }
 
+        try Self.makeMigrator().migrate(dbPool)
+    }
+
+    /// The full migration list. Exposed so tests can migrate a fixture database
+    /// up to an older version, seed legacy rows, and then finish the migration.
+    static func makeMigrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
         // Migration v1: Create initial schema
@@ -489,7 +495,24 @@ final class DatabaseManager {
             }
         }
 
-        try migrator.migrate(dbPool)
+        // Migration v21: Tag journal buckets by writer. Watcher buckets keep the
+        // time a change happened; a full scan only adds the residual the watcher
+        // missed, tagged 'scan' with the window it covers (`observedSince`).
+        migrator.registerMigration("v21_journal_source") { db in
+            try db.alter(table: "growthJournalBucket") { t in
+                t.add(column: "source", .text)
+                    .notNull()
+                    .defaults(to: GrowthJournalBucket.Source.watch.rawValue)
+                t.add(column: "observedSince", .datetime)
+            }
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_growthJournalBucket_identity")
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_growthJournalBucket_identity
+                ON growthJournalBucket(trackedPathId, bucketStart, category, subcategory, source)
+                """)
+        }
+
+        return migrator
     }
 }
 
@@ -593,23 +616,6 @@ extension DatabaseManager {
             try db.execute(
                 sql: "DELETE FROM growthJournalBucket WHERE trackedPathId = ?",
                 arguments: [trackedPathId.uuidString]
-            )
-        }
-    }
-
-    /// Deletes journal buckets strictly newer than `date` for a tracked path.
-    /// Used by a full scan to reclaim the provisional realtime deltas covering its
-    /// window before recording the authoritative snapshot delta — preventing the
-    /// realtime and snapshot writers from double-counting the same growth.
-    func deleteGrowthJournalBuckets(trackedPathId: UUID, newerThan date: Date) async throws {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        try await dbPool.write { db in
-            try db.execute(
-                sql: "DELETE FROM growthJournalBucket WHERE trackedPathId = ? AND bucketStart > ?",
-                arguments: [trackedPathId.uuidString, date]
             )
         }
     }
@@ -2247,7 +2253,9 @@ extension DatabaseManager {
     func upsertGrowthJournalBuckets(
         trackedPathId: UUID,
         bucketStart: Date,
-        deltas: [JournalDeltaKey: Int64]
+        deltas: [JournalDeltaKey: Int64],
+        source: GrowthJournalBucket.Source = .watch,
+        observedSince: Date? = nil
     ) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
@@ -2260,10 +2268,13 @@ extension DatabaseManager {
         try await dbPool.write { db in
             let statement = try db.makeStatement(
                 sql: """
-                    INSERT INTO growthJournalBucket (trackedPathId, bucketStart, category, subcategory, deltaBytes)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(trackedPathId, bucketStart, category, subcategory)
-                    DO UPDATE SET deltaBytes = deltaBytes + excluded.deltaBytes
+                    INSERT INTO growthJournalBucket
+                        (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, observedSince)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(trackedPathId, bucketStart, category, subcategory, source)
+                    DO UPDATE SET
+                        deltaBytes = deltaBytes + excluded.deltaBytes,
+                        observedSince = COALESCE(observedSince, excluded.observedSince)
                     """
             )
 
@@ -2273,7 +2284,9 @@ extension DatabaseManager {
                     bucketStart,
                     key.category.rawValue,
                     key.subcategory?.rawValue ?? "",
-                    deltaBytes
+                    deltaBytes,
+                    source.rawValue,
+                    observedSince
                 ])
             }
         }
@@ -2313,6 +2326,51 @@ extension DatabaseManager {
                     """,
                 arguments: [trackedPathIdString]
             )
+        }
+    }
+
+    /// Signed journal totals per (category, subcategory) for buckets in
+    /// `(from, to]`, across every source. A full scan uses this to compute the
+    /// residual its authoritative delta adds on top of what is already recorded.
+    func fetchGrowthJournalTotalsByKey(
+        trackedPathId: UUID,
+        from: Date,
+        to: Date
+    ) async throws -> [JournalDeltaKey: Int64] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT category, subcategory, COALESCE(SUM(deltaBytes), 0) AS totalDelta
+                    FROM growthJournalBucket
+                    WHERE trackedPathId = ? AND bucketStart > ? AND bucketStart <= ?
+                    GROUP BY category, subcategory
+                    """,
+                arguments: [trackedPathIdString, from, to]
+            )
+
+            var result: [JournalDeltaKey: Int64] = [:]
+            for row in rows {
+                guard
+                    let rawCategory: String = row["category"],
+                    let category = GrowthCategory(rawValue: rawCategory)
+                else {
+                    continue
+                }
+
+                let rawSubcategory: String? = row["subcategory"]
+                let subcategory = rawSubcategory.flatMap { GrowthSubcategory(rawValue: $0) }
+                let totalDelta: Int64 = row["totalDelta"] ?? 0
+                result[JournalDeltaKey(category: category, subcategory: subcategory), default: 0] += totalDelta
+            }
+
+            return result
         }
     }
 
