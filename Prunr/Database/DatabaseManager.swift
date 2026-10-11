@@ -2549,17 +2549,17 @@ extension DatabaseManager {
                 arguments: [trackedPathIdString, category.rawValue, since]
             )
 
+            // Signed: a subcategory that shrank keeps its negative total, so the
+            // drill decomposes the category row instead of only its growth.
             var result: [GrowthSubcategory?: Int64] = [:]
             for row in rows {
                 let rawSubcategory: String? = row["subcategory"]
                 let subcategory = rawSubcategory.flatMap { GrowthSubcategory(rawValue: $0) }
                 let totalDelta: Int64 = row["totalDelta"] ?? 0
-                if totalDelta > 0 {
-                    result[subcategory, default: 0] += totalDelta
-                }
+                result[subcategory, default: 0] += totalDelta
             }
 
-            return result
+            return result.filter { $0.value != 0 }
         }
     }
 
