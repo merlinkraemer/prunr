@@ -17,7 +17,7 @@ final class UnitRulesMediaTests: XCTestCase {
     func testPhotosLibraryTakesBundleAsRoot() {
         let path = "/Users/tester/Pictures/Photos Library.photoslibrary/originals/A/IMG_0001.heic"
         XCTAssertEqual(key(path), "photos-library|/Users/tester/Pictures/Photos Library.photoslibrary")
-        XCTAssertEqual(name(path), UnitName(title: "Photos library", category: .mediaAndDocuments))
+        XCTAssertEqual(name(path), UnitName(title: "Photos library", category: .mediaAndDocuments, icon: .photos))
     }
 
     func testCustomPhotosLibraryNameIsShown() {
@@ -62,7 +62,7 @@ final class UnitRulesMediaTests: XCTestCase {
     func testFinalCutLibraryTakesBundleAsRoot() {
         let path = "/Users/tester/Movies/Trip.fcpbundle/2024-05-01/Original Media/clip.mov"
         XCTAssertEqual(key(path), "fcp-library|/Users/tester/Movies/Trip.fcpbundle")
-        XCTAssertEqual(name(path), UnitName(title: "Final Cut Pro library · Trip", category: .mediaAndDocuments))
+        XCTAssertEqual(name(path), UnitName(title: "Final Cut Pro library · Trip", category: .mediaAndDocuments, icon: .finalCutPro))
     }
 
     func testFinalCutRenderAndCacheFoldersReadAsRenderFiles() {
@@ -71,7 +71,10 @@ final class UnitRulesMediaTests: XCTestCase {
             XCTAssertEqual(key(path), "fcp-render|/Users/tester/Movies/Trip.fcpbundle/2024-05-01/\(folder)", folder)
             XCTAssertEqual(
                 name(path),
-                UnitName(title: "Final Cut Pro render files · Trip", detail: "2024-05-01", category: .mediaAndDocuments),
+                UnitName(
+                    title: "Final Cut Pro render files · Trip", detail: "2024-05-01",
+                    category: .mediaAndDocuments, icon: .finalCutPro
+                ),
                 folder
             )
         }
@@ -82,13 +85,13 @@ final class UnitRulesMediaTests: XCTestCase {
     func testAbletonProjectFolder() {
         let path = "/Users/tester/Music/Ableton/Night Drive Project/Samples/Recorded/take1.wav"
         XCTAssertEqual(key(path), "ableton-project|/Users/tester/Music/Ableton/Night Drive Project")
-        XCTAssertEqual(name(path), UnitName(title: "Ableton project · Night Drive", category: .audioProduction))
+        XCTAssertEqual(name(path), UnitName(title: "Ableton project · Night Drive", category: .audioProduction, icon: .abletonLive))
     }
 
     func testAbletonSetParentResolvesToProject() {
         let path = "/Users/tester/Audio Production/Tracks/Lost Signal/Lost Signal.als"
         XCTAssertEqual(key(path), "ableton-project|/Users/tester/Audio Production/Tracks/Lost Signal")
-        XCTAssertEqual(name(path), UnitName(title: "Ableton project · Lost Signal", category: .audioProduction))
+        XCTAssertEqual(name(path), UnitName(title: "Ableton project · Lost Signal", category: .audioProduction, icon: .abletonLive))
     }
 
     func testBothAbletonFormsGiveSameName() {
@@ -105,7 +108,7 @@ final class UnitRulesMediaTests: XCTestCase {
     func testAbletonUserLibrary() {
         let path = "/Users/tester/Music/Ableton/User Library/Samples/Imported/kick.wav"
         XCTAssertEqual(key(path), "ableton-library|/Users/tester/Music/Ableton/User Library")
-        XCTAssertEqual(name(path), UnitName(title: "Ableton library", category: .audioProduction))
+        XCTAssertEqual(name(path), UnitName(title: "Ableton library", category: .audioProduction, icon: .abletonLive))
     }
 
     func testSetDirectlyInHomeIsNotAProject() {
