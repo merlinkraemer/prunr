@@ -40,7 +40,7 @@ struct ChangesHeaderView<Bar: View>: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("This week")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
                 Spacer(minLength: 0)
                 Text(weekly.amountText ?? "No change")
                     .monospacedDigit()
