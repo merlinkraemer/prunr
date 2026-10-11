@@ -12,8 +12,8 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Review v1 + 1 GB rule + real icons on the Mac (Debug build installed 2026-10-11), then merge feat/v1-review (contains s1–s11) into main — rec: review, then merge — branch: feat/v1-review
-2. Rows of slowly growing places shift by a day as the 30-day window slides (no stored running total) — rec: add a small checkpoint table (schema change) — branch: none
+1. Review the polished build on the Mac (W2: pure log, old category icons, soft bottom edge, This week row), then merge feat/s12-polish (contains s1–s12) into main — rec: review, then merge — branch: feat/s12-polish
+2. Rows of slowly growing places shift by a day as the 30-day window slides — rec: small checkpoint table (schema change) — branch: none
 
 ## Queue
 

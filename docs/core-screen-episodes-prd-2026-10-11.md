@@ -249,6 +249,7 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
 ### Later (after v1, not needed for the core screen)
 - **L0: click a change to see where it landed** (was s8; moved out of v1 on 2026-10-11 so the core list ships first). Full spec kept below.
 - **L4: cleanup awareness (later).** The list is a pure log of what was added when; a place may since be gone. Later: grey out rows whose place no longer exists, and/or show each place's current size next to what it added. Decided 2026-10-11: pure log for v1, no click affordance.
+- **L5: hover only with a click action (later).** Hover highlights suggest "click me"; v1 has no hover anywhere. Bring hover back only together with real click actions.
 - **L1: exact per-change detail for all 30 days.** Depends on L0. A `growthJournalDetail` table (per bucket, unit and top 20 children) written on every delta path, so L0 can show exactly what changed in any episode, not only recent ones.
 - **L2: real icons** (pulled into v1 as s11). `CacheApplicationIconResolver` (`CategoryGrowthListView.swift:1189`) for bundle-id units, and `NSWorkspace.icon(forFile:)` for bundles and download items, cached per unit. Depends on s6.
 - **L3: more names.** Logic, iMovie, Music library, TV. Depends on s7.
