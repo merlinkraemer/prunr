@@ -3,7 +3,7 @@ import XCTest
 
 final class UnitRulesDeveloperTests: XCTestCase {
     private let home = "/Users/tester"
-    private let xcodeHash ="bkgqxrtyuiopasdfghjklzxcvbnm"
+    private let xcodeHash = "bkgqxrtyuiopasdfghjklzxcvbnm"
 
     private func key(_ path: String) -> UnitKey {
         UnitResolver.resolveKey(path: path, home: home)

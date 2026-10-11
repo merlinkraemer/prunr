@@ -15,3 +15,4 @@
 2026-10-11 16:00 orchestrator Q5 landed: s2a unit names (c46d469, mac-queue PASS 20261011-052455) merged to main
 2026-10-11 16:00 orchestrator Q5 blocked: s1 scan residual green (f15e350, mac-queue PASS 20261011-052340) but schema/scan logic = must-ask; branch feat/s1-scan-residual waits for Merlin
 - 2026-10-11 mac-queue 942f75e5a test-Prunr FAIL: 10-xcodegen=PASS 20-test-Prunr=FAIL(65)
+- 2026-10-11 mac-queue eeb9a3665 test-Prunr FAIL: 10-xcodegen=PASS 20-test-Prunr=FAIL(65)
