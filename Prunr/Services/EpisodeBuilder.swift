@@ -43,6 +43,7 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// freed space.
     var isMovedToTrash = false
     /// Set when the amount built up over several days: the day it started.
+    /// The caption then reads "a little each day since Fri 2 Oct".
     var buildingSince: Date?
 
     /// Where the row's icon comes from; `.category` for legacy rows.
@@ -57,6 +58,32 @@ struct ChangeFeedDay: Identifiable, Equatable, Sendable {
     let day: Date
     /// Newest first.
     let episodes: [ChangeEpisode]
+
+    /// One group per category with rows this day, biggest change first.
+    var groups: [ChangeGroup] {
+        Dictionary(grouping: episodes, by: \.category)
+            .map { ChangeGroup(day: day, category: $0.key, episodes: $0.value) }
+            .sorted { lhs, rhs in
+                let lhsSize = abs(lhs.netBytes)
+                let rhsSize = abs(rhs.netBytes)
+                return lhsSize == rhsSize ? lhs.category.rawValue < rhs.category.rawValue : lhsSize > rhsSize
+            }
+    }
+}
+
+/// One category's rows on one day: a main-list row that opens them.
+struct ChangeGroup: Identifiable, Equatable, Sendable {
+    let day: Date
+    let category: GrowthCategory
+    /// Newest first.
+    let episodes: [ChangeEpisode]
+
+    var id: String { "\(category.rawValue)@\(Int64(day.timeIntervalSince1970))" }
+
+    var netBytes: Int64 { episodes.reduce(Int64(0)) { $0 + $1.netBytes } }
+
+    /// Orange in the list: growth of at least the row line. Shrinks are grey.
+    var isGrowth: Bool { netBytes >= EpisodeBuilder.rowThresholdBytes }
 }
 
 /// The change list: every row back to `GrowthJournalService.historyWindowDays`,
@@ -165,9 +192,9 @@ func signedBytes(_ bytes: Int64) -> String {
 ///   end of a day where |count| reaches the line, that day gets one row with
 ///   the whole count, and the count starts over. Nothing resets at week ends.
 ///   A change that came and went within one day therefore has no row.
-/// - Time: when the count started that day or more than half of it moved in
-///   one slot that day; otherwise `buildingSince` holds the start day. A
-///   daily-scan slot with an old window has only an approximate time.
+/// - Caption: the clock time when the count started that day or more than half
+///   of it moved in one slot that day; otherwise "a little each day since
+///   <start day>". A daily-scan slot with an old window reads "found by scan".
 /// - Trash growth is a move and never counts; the Trash only counts shrinks,
 ///   which read "Trash emptied".
 /// - Legacy rows without a unit count per (category, subcategory).
@@ -267,6 +294,24 @@ enum EpisodeBuilder {
     /// The real date, also for today and yesterday: "Wed 7 Oct".
     static func dayLabel(for day: Date, calendar: Calendar) -> String {
         formatter("EEE d MMM", calendar: calendar).string(from: calendar.startOfDay(for: day))
+    }
+
+    /// "14:20 · detail", "14:20 · moved to Trash", "found by scan", or "a
+    /// little each day since Fri 2 Oct".
+    static func caption(for episode: ChangeEpisode, calendar: Calendar) -> String {
+        let lead: String
+        if let since = episode.buildingSince {
+            lead = "a little each day since \(dayLabel(for: since, calendar: calendar))"
+        } else if episode.isApproximateTime {
+            lead = "found by scan"
+        } else {
+            lead = formatter("HH:mm", calendar: calendar).string(from: episode.time)
+        }
+        if episode.isMovedToTrash {
+            return "\(lead) · moved to Trash"
+        }
+        guard let detail = episode.detail, !detail.isEmpty else { return lead }
+        return "\(lead) · \(detail)"
     }
 
     /// "Nothing over 1 GB since 28 Sep".

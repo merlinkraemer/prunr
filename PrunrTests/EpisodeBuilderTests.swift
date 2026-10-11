@@ -699,4 +699,112 @@ final class EpisodeBuilderTests: XCTestCase {
 
         XCTAssertEqual(UserDefaults.standard.object(forKey: HistoryStart.defaultsKey) as? Date, realBefore)
     }
+
+    // MARK: - Captions (drilldown second line)
+
+    private func episode(
+        _ id: String,
+        _ category: GrowthCategory,
+        _ net: Int64,
+        at time: Date,
+        detail: String? = nil,
+        calendar: Calendar,
+        approximate: Bool = false,
+        movedToTrash: Bool = false,
+        buildingSince: Date? = nil
+    ) -> ChangeEpisode {
+        ChangeEpisode(
+            id: id,
+            title: id,
+            detail: detail,
+            category: category,
+            rootPath: nil,
+            netBytes: net,
+            grossBytes: abs(net),
+            day: calendar.startOfDay(for: time),
+            time: time,
+            isApproximateTime: approximate,
+            isMovedToTrash: movedToTrash,
+            buildingSince: buildingSince
+        )
+    }
+
+    func testCaptionReadsTimeAndDetail() {
+        let utc = calendar()
+        let row = episode("Safari data", .cachesAndSystem, Self.gb, at: date(2026, 10, 11, 8, 40, in: utc),
+                          detail: "Application Support", calendar: utc)
+        XCTAssertEqual(EpisodeBuilder.caption(for: row, calendar: utc), "08:40 · Application Support")
+    }
+
+    func testCaptionForScanBuildUpAndTrashMove() {
+        let utc = calendar()
+        let at = date(2026, 10, 5, 14, 5, in: utc)
+        let scanned = episode("a", .developer, Self.gb, at: at, detail: "ignored", calendar: utc, approximate: true)
+        XCTAssertEqual(EpisodeBuilder.caption(for: scanned, calendar: utc), "found by scan · ignored")
+
+        let slow = episode("b", .mediaAndDocuments, Self.gb, at: at, calendar: utc,
+                           buildingSince: date(2026, 10, 2, 0, 0, in: utc))
+        XCTAssertEqual(EpisodeBuilder.caption(for: slow, calendar: utc), "a little each day since Fri 2 Oct")
+
+        let moved = episode("c", .downloads, -3 * Self.gb, at: at, detail: "ignored", calendar: utc, movedToTrash: true)
+        XCTAssertEqual(EpisodeBuilder.caption(for: moved, calendar: utc), "14:05 · moved to Trash")
+    }
+
+    func testBuiltRowsKeepTheirCaption() throws {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let found = date(2026, 10, 11, 3, 0, in: utc)
+        let feed = build([
+            slot(Self.iso, at: found, net: 2 * Self.gb, source: .scan, observedSince: date(2026, 10, 10, 3, 0, in: utc))
+        ], now: now, calendar: utc)
+        let row = try XCTUnwrap(feed.episodes.first)
+        XCTAssertEqual(EpisodeBuilder.caption(for: row, calendar: utc), "found by scan")
+    }
+
+    // MARK: - Groups (main list)
+
+    func testDayGroupsOneRowPerCategoryBiggestFirst() throws {
+        let utc = calendar()
+        let at = date(2026, 10, 5, 12, 0, in: utc)
+        let day = ChangeFeedDay(day: utc.startOfDay(for: at), episodes: [
+            episode("xcode", .developer, 1_300 * Self.mb, at: at.addingTimeInterval(300), calendar: utc),
+            episode("iso", .downloads, 5 * Self.gb, at: at.addingTimeInterval(200), calendar: utc),
+            episode("node", .developer, 800 * Self.mb, at: at.addingTimeInterval(100), calendar: utc),
+            episode("mail", .mediaAndDocuments, 1_400 * Self.mb, at: at, calendar: utc)
+        ])
+
+        let groups = day.groups
+        XCTAssertEqual(groups.map(\.category), [.downloads, .developer, .mediaAndDocuments])
+        let developer = try XCTUnwrap(groups.first { $0.category == .developer })
+        XCTAssertEqual(developer.netBytes, 2_100 * Self.mb)
+        XCTAssertEqual(developer.episodes.map(\.id), ["xcode", "node"], "rows stay newest first")
+        XCTAssertEqual(developer.day, day.day)
+        XCTAssertTrue(developer.isGrowth)
+    }
+
+    func testGroupIsOrangeOnlyForGrowthOfOneGigabyte() {
+        let utc = calendar()
+        let at = date(2026, 10, 5, 12, 0, in: utc)
+        func group(_ nets: [Int64]) -> ChangeGroup {
+            ChangeGroup(
+                day: utc.startOfDay(for: at),
+                category: .developer,
+                episodes: nets.enumerated().map { episode("\($0.offset)", .developer, $0.element, at: at, calendar: utc) }
+            )
+        }
+        XCTAssertTrue(group([Self.gb]).isGrowth)
+        XCTAssertFalse(group([2 * Self.gb, -1_500 * Self.mb]).isGrowth)
+        XCTAssertFalse(group([-4 * Self.gb]).isGrowth)
+        XCTAssertEqual(group([2 * Self.gb, -1_500 * Self.mb]).netBytes, 500 * Self.mb)
+    }
+
+    func testGroupIDsDifferPerCategoryAndDay() {
+        let utc = calendar()
+        let monday = date(2026, 10, 5, 0, 0, in: utc)
+        let tuesday = date(2026, 10, 6, 0, 0, in: utc)
+        let a = ChangeGroup(day: monday, category: .developer, episodes: [])
+        let b = ChangeGroup(day: tuesday, category: .developer, episodes: [])
+        let c = ChangeGroup(day: monday, category: .downloads, episodes: [])
+        XCTAssertEqual(Set([a.id, b.id, c.id]).count, 3)
+    }
 }
