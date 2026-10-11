@@ -22,3 +22,6 @@
 2026-10-11 17:00 orchestrator Q5 spawn: s3 header + categories view, stacked on s2b (feat/s3-header)
 2026-10-11 17:30 orchestrator Q5 blocked: s3 header + categories green (afa47ce, mac-queue PASS 20261011-060237, 207 tests); UI → waits for Merlin
 2026-10-11 17:30 orchestrator Q5 spawn: s4 adaptive rows/30 days/states, stacked on s3 (feat/s4-feed-states)
+2026-10-11 18:00 orchestrator Q5 blocked: s4 adaptive rows/30d/states green (5cc040f, mac-queue PASS 20261011-062635, 223 tests); UI → waits for Merlin
+2026-10-11 18:00 orchestrator Q5 followup: s4 left tests writing real UserDefaults, no panel Stop during manual scan, measure line missing → folded into s9 (same scope)
+2026-10-11 18:00 orchestrator Q5 spawn: s9 remove old overview + followups, stacked on s4 (feat/s9-cleanup)

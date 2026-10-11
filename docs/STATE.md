@@ -14,7 +14,7 @@ AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane r
 ## Waiting on Merlin
 1. Merge s1 (daily scan keeps change times; schema migration v21) — green on Mac — rec: merge — branch: feat/s1-scan-residual
 2. Review s2b on the Mac (new day-grouped list replaces the category overview; UI) — green on Mac, 168 tests — rec: look at it via a Debug install, then merge with s1 — branch: feat/s2b-change-feed
-3. Review s3 header + categories view (UI) — green, 207 tests — rec: review with s2b — branch: feat/s3-header (stacked)
+3. Review s3 header + s4 adaptive rows/30 days/states (UI) — green, 223 tests — rec: review the whole stack in one Debug install after s9 — branches: feat/s3-header, feat/s4-feed-states (stacked)
 
 ## Queue
 
@@ -46,7 +46,7 @@ do not touch: app code, website.
 
 ### Q5 Build core screen per PRD [running] [mac]
 goal: v1 slices of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice. Order {s1, s2a} → {s2b, s5, s6, s7} → s3 → s4 → s9. Drilldown (L0) after v1.
-landed: s2a, s5, s6, s7. waiting: s1, s2b, s3 (Waiting #1, #2). running: s4 (stacked on s3).
+landed: s2a, s5, s6, s7. waiting: s1, s2b, s3, s4 (Waiting #1–#3). running: s9 (stacked on s4).
 followup: feed rebuild ~2.4 s on a worst-case 200k-bucket fixture; accepted for now (off main thread, debounced), re-measure on real alpha data before s9.
 acceptance: per slice in the PRD; `make test` green via mac-queue.
 validation: mac-queue test Prunr on the slice branch.
