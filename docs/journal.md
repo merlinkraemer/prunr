@@ -28,3 +28,5 @@
 2026-10-11 18:10 orchestrator Q5 decided: Merlin keeps onboarding + manual-scan full-screen card as before; s9 restores the card s4 removed (no footer Stop)
 2026-10-11 19:00 orchestrator Q5 blocked: s9 cleanup green (b15237e, mac-queue PASS 20261011-071132, 225 tests); full v1 stack in feat/s9-cleanup waits for Merlin review; measure 4.5 s worst case
 2026-10-11 19:00 orchestrator - cleanup: removed finished worktrees and merged/agent branches; stacked slice branches kept
+- 2026-10-11 mac-queue b15237e8d mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
+2026-10-11 12:10 orchestrator Q5 spawn: Debug build of feat/s9-cleanup installed on the Mac (mac-queue 20261011-120614 PASS) for Merlin's review
