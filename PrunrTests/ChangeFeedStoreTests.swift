@@ -332,7 +332,7 @@ final class ChangeFeedStoreTests: PrunrTestCase {
         XCTAssertEqual(buckets.reduce(Int64(0)) { $0 + $1.deltaBytes }, authoritative)
 
         let feed = try await GrowthJournalService.shared.changeFeed(trackedPaths: [trackedPath])
-        let episodes = feed.days.flatMap(\.episodes)
+        let episodes = feed.episodes
         XCTAssertFalse(episodes.isEmpty)
         XCTAssertTrue(episodes.allSatisfy { $0.rootPath == nil }, "no unit-keyed rows on the update day")
     }
@@ -426,7 +426,7 @@ final class ChangeFeedStoreTests: PrunrTestCase {
                 try DatabaseManager.fetchJournalSlots(db: db, trackedPathIds: trackedPathIds, since: since)
             }
             let feed = EpisodeBuilder.build(slots: slots, now: now, calendar: calendar)
-            return (slots.count, feed.days.reduce(0) { $0 + $1.episodes.count })
+            return (slots.count, feed.episodes.count)
         }
 
         let started = Date()

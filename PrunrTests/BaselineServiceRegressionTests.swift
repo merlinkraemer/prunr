@@ -103,15 +103,50 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
     }
 
     @MainActor
-    func testRetentionSettingIsClampedToDisplayWindow() {
+    func testRetentionSettingIsClampedToHistoryWindow() {
         let previous = SettingsStore.shared.categoryHistoryRetentionDays
         defer { SettingsStore.shared.categoryHistoryRetentionDays = previous }
 
         SettingsStore.shared.categoryHistoryRetentionDays = 3
-        XCTAssertEqual(
-            SettingsStore.shared.categoryHistoryRetentionDays,
-            GrowthJournalService.displayWindowDays
-        )
+        XCTAssertEqual(SettingsStore.shared.categoryHistoryRetentionDays, 30)
+        SettingsStore.shared.categoryHistoryRetentionDays = 7
+        XCTAssertEqual(SettingsStore.shared.categoryHistoryRetentionDays, 30)
+        XCTAssertEqual(GrowthJournalService.historyWindowDays, 30)
+    }
+
+    /// Buckets older than 30 local days are pruned (here by the startup
+    /// maintenance step), even with a retention setting of 7; the 30 days
+    /// the list shows stay.
+    func testStartupPruneKeepsThirtyLocalDaysWithSevenDayRetention() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let trackedPath = self.makeTrackedPath(trackedPathId)
+            let calendar = Calendar.current
+            let now = Date()
+            let today = calendar.startOfDay(for: now)
+            func daysAgo(_ days: Int) -> Date {
+                calendar.date(byAdding: .hour, value: 12, to: calendar.date(byAdding: .day, value: -days, to: today)!)!
+            }
+            let key = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil)
+            try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 1_000], at: daysAgo(8))
+            try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 2_000], at: daysAgo(29))
+            try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 4_000], at: daysAgo(30))
+            try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 8_000], at: daysAgo(45))
+
+            // Not read: the feed's window starts at local midnight 29 days back.
+            let slots = try await DatabaseManager.shared.fetchJournalSlots(
+                trackedPathIds: [trackedPathId],
+                since: EpisodeBuilder.windowStart(now: now, calendar: calendar)
+            )
+            XCTAssertEqual(Set(slots.map(\.netBytes)), [1_000, 2_000])
+
+            let previous = await MainActor.run { SettingsStore.shared.categoryHistoryRetentionDays }
+            await MainActor.run { SettingsStore.shared.categoryHistoryRetentionDays = 7 }
+            await DatabaseCleanupService.shared.pruneGrowthJournal(now: now)
+            await MainActor.run { SettingsStore.shared.categoryHistoryRetentionDays = previous }
+
+            let left = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertEqual(Set(left.map(\.deltaBytes)), [1_000, 2_000])
+        }
     }
     func testAcceptGrowthPromotesWorkingSetWithoutFilesystemFreeSpace() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in

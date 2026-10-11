@@ -137,6 +137,9 @@ actor DatabaseCleanupService {
         }
 
         _ = try? await cleanupAbandonedSnapshots()
+        // Journal pruning otherwise runs only after a full scan; at startup it
+        // keeps the history at its window even when no scan has run for days.
+        await pruneGrowthJournal()
 
         let appVersion = currentAppVersion()
         let lastVersion = UserDefaults.standard.string(forKey: Self.appVersionKey)
@@ -172,6 +175,13 @@ actor DatabaseCleanupService {
 
         UserDefaults.standard.set(appVersion, forKey: Self.appVersionKey)
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.startupCleanupTimestampKey)
+    }
+
+    /// Deletes journal buckets past the retention setting, never inside the
+    /// change list's 30-day history (`GrowthJournalService.prune` clamps).
+    func pruneGrowthJournal(now: Date = Date()) async {
+        let retentionDays = await SettingsStore.shared.categoryHistoryRetentionDays
+        await GrowthJournalService.shared.prune(retentionDays: retentionDays, now: now)
     }
 
     /// Deletes snapshots left behind by process death during a full scan.

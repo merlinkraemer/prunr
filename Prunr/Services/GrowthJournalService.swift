@@ -11,6 +11,10 @@ actor GrowthJournalService {
     /// number counts.
     static let displayWindowDays = 7
 
+    /// Whole local days of history the change list reaches back: this week
+    /// plus the older weeks below it. Also the floor for journal pruning.
+    static let historyWindowDays = 30
+
     /// Presentation floor. Deltas smaller than this are not *rendered*, but they
     /// remain part of every sum — the floor never drops data from the arithmetic.
     static let presentationFloorBytes: Int64 = 1 * 1024 * 1024
@@ -26,6 +30,13 @@ actor GrowthJournalService {
     static func weekStart(now: Date = Date(), calendar: Calendar = .current) -> Date {
         let today = calendar.startOfDay(for: now)
         return calendar.date(byAdding: .day, value: -(displayWindowDays - 1), to: today) ?? today
+    }
+
+    /// Start of the oldest day the change list shows: local midnight
+    /// `historyWindowDays - 1` days before `now`.
+    static func historyStart(now: Date = Date(), calendar: Calendar = .current) -> Date {
+        let today = calendar.startOfDay(for: now)
+        return calendar.date(byAdding: .day, value: -(historyWindowDays - 1), to: today) ?? today
     }
 
     func recordDeltas(
@@ -64,14 +75,30 @@ actor GrowthJournalService {
     /// The change list across all tracked paths: the journal read as 30-minute
     /// slots and grouped into one row per place and day. Runs on this actor,
     /// off the main thread. Throws when history cannot be read.
+    ///
+    /// `watchingSince` is when the history started. Without it, the oldest
+    /// complete snapshot of these paths is used.
     func changeFeed(
         trackedPaths: [TrackedPath],
         now: Date = Date(),
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        watchingSince: Date? = nil
     ) async throws -> ChangeFeed {
+        let ids = trackedPaths.map(\.id)
         let since = EpisodeBuilder.windowStart(now: now, calendar: calendar)
-        let slots = try await db.fetchJournalSlots(trackedPathIds: trackedPaths.map(\.id), since: since)
-        return EpisodeBuilder.build(slots: slots, now: now, calendar: calendar)
+        let slots = try await db.fetchJournalSlots(trackedPathIds: ids, since: since)
+        let start: Date?
+        if let watchingSince {
+            start = watchingSince
+        } else {
+            start = try await db.fetchOldestCompleteSnapshotDate(trackedPathIds: ids)
+        }
+        return EpisodeBuilder.build(slots: slots, now: now, calendar: calendar, watchingSince: start)
+    }
+
+    /// The oldest complete snapshot of these paths, for `HistoryStart`.
+    func oldestCompleteSnapshotDate(trackedPaths: [TrackedPath]) async throws -> Date? {
+        try await db.fetchOldestCompleteSnapshotDate(trackedPathIds: trackedPaths.map(\.id))
     }
 
     func deltasSinceLastSnapshot(
@@ -110,15 +137,16 @@ actor GrowthJournalService {
         }
     }
 
-    /// Deletes buckets older than the retention window.
+    /// Deletes buckets older than the retention window, counted in whole local
+    /// days like the change list.
     ///
-    /// Clamped to at least `displayWindowDays` — pruning inside the display
-    /// window would silently shrink the on-screen number with no filesystem
+    /// Clamped to at least `historyWindowDays` — pruning inside the shown
+    /// history would silently shrink the on-screen numbers with no filesystem
     /// activity, which is the decay bug this design exists to remove.
-    func prune(retentionDays: Int) async {
-        let clampedDays = max(retentionDays, Self.displayWindowDays)
-        let retentionWindow = TimeInterval(clampedDays) * 24 * 60 * 60
-        let cutoff = Date().addingTimeInterval(-retentionWindow)
+    func prune(retentionDays: Int, now: Date = Date(), calendar: Calendar = .current) async {
+        let clampedDays = max(retentionDays, Self.historyWindowDays)
+        let today = calendar.startOfDay(for: now)
+        let cutoff = calendar.date(byAdding: .day, value: -(clampedDays - 1), to: today) ?? today
 
         do {
             try await db.pruneGrowthJournalBuckets(olderThan: cutoff)
@@ -169,5 +197,31 @@ actor GrowthJournalService {
         let timeInterval = date.timeIntervalSinceReferenceDate
         let floored = floor(timeInterval / 60.0) * 60.0
         return Date(timeIntervalSinceReferenceDate: floored)
+    }
+}
+
+/// When the change history started ("Watching since 3 Oct").
+///
+/// Taken from the first complete snapshot, and remembered: snapshot cleanup
+/// deletes snapshots past the retention window, which would otherwise move the
+/// start forward and claim a short history after 30 days of watching.
+enum HistoryStart {
+    static let defaultsKey = "changeHistoryStartedAt"
+
+    /// The earlier of the remembered start and `oldestSnapshot`, remembered for
+    /// next time. Nil when neither is known.
+    static func remember(oldestSnapshot: Date?, defaults: UserDefaults = .standard) -> Date? {
+        let stored = defaults.object(forKey: defaultsKey) as? Date
+        guard let start = [stored, oldestSnapshot].compactMap({ $0 }).min() else { return nil }
+        if start != stored {
+            defaults.set(start, forKey: defaultsKey)
+        }
+        return start
+    }
+
+    /// Forgets the start; called when the baseline is reset and history
+    /// starts over.
+    static func reset(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: defaultsKey)
     }
 }

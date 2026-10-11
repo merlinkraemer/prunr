@@ -315,7 +315,17 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             time: Date(),
             isApproximateTime: false
         )
-        return ChangeFeed(days: [ChangeFeedDay(day: today, episodes: [episode])])
+        let week = ChangeFeedWeek(
+            index: 0,
+            start: today,
+            end: today,
+            days: [ChangeFeedDay(day: today, episodes: [episode])],
+            smaller: [],
+            netBytes: episode.netBytes,
+            grossBytes: episode.grossBytes,
+            cutoffBytes: EpisodeBuilder.Cutoff.floorBytes
+        )
+        return ChangeFeed(weeks: [week], watchingSince: today)
     }
 
     /// A history that cannot be read gives `.failed` and a "—" header, never

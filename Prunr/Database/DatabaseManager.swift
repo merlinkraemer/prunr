@@ -2487,6 +2487,29 @@ extension DatabaseManager {
         }
     }
 
+    /// When the oldest complete snapshot of the given paths was taken: the
+    /// start of the change history. Nil when none of them has one.
+    func fetchOldestCompleteSnapshotDate(trackedPathIds: [UUID]) async throws -> Date? {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+        guard !trackedPathIds.isEmpty else { return nil }
+        let placeholders = Array(repeating: "?", count: trackedPathIds.count).joined(separator: ",")
+        var arguments: [DatabaseValueConvertible?] = trackedPathIds.map { $0.uuidString }
+        arguments.append(Snapshot.Lifecycle.complete.rawValue)
+
+        return try await dbPool.read { db in
+            try Date.fetchOne(
+                db,
+                sql: """
+                    SELECT MIN(createdAt) FROM snapshot
+                    WHERE trackedPathId IN (\(placeholders)) AND lifecycle = ?
+                    """,
+                arguments: StatementArguments(arguments)
+            )
+        }
+    }
+
     func fetchGrowthJournalTotalsByCategory(
         trackedPathId: UUID,
         since: Date

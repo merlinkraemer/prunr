@@ -380,7 +380,9 @@ struct MenuBarView: View {
             }
 
             Group {
-                if manager.isLoading && !manager.isAutoScanning {
+                // Only the first scan takes over the panel. A rescan keeps the
+                // last list and header on screen; the footer says "Scanning…".
+                if manager.isLoading && !manager.isAutoScanning && manager.noBaseline {
                     manualScanLoadingView
                 } else if isBootstrapping && !manager.hasDisplayableInventory {
                     initialLoadView

@@ -233,6 +233,7 @@ actor BaselineService {
             }
         }
         try await db.clearRealtimeData()
+        HistoryStart.reset()
     }
 
     // MARK: - Growth List

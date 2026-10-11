@@ -805,7 +805,7 @@ final class MenuBarManager: NSObject {
             CategoryInventoryItem(category: .downloads, currentSizeBytes: 7_100_000_000, recentGrowthStory: growth(.downloads, 10_000_000))
         ]
         // s9 gives the screenshot real rows; until then show the list, not a spinner.
-        changeFeed = .loaded(.empty)
+        changeFeed = .loaded(ChangeFeed(weeks: [], watchingSince: baselineDate))
         totalBytes = 2_000_000_000_000
         usedBytes = 1_389_000_000_000
         freeBytes = totalBytes - usedBytes
@@ -2309,7 +2309,12 @@ final class MenuBarManager: NSObject {
         let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         let result: ChangeFeedResult
         do {
-            result = .loaded(try await growthJournalService.changeFeed(trackedPaths: trackedPaths))
+            let oldestSnapshot = try await growthJournalService.oldestCompleteSnapshotDate(trackedPaths: trackedPaths)
+            let watchingSince = HistoryStart.remember(oldestSnapshot: oldestSnapshot)
+            result = .loaded(try await growthJournalService.changeFeed(
+                trackedPaths: trackedPaths,
+                watchingSince: watchingSince
+            ))
         } catch {
             Self.logger.error("Failed to read change feed: \(error.localizedDescription, privacy: .public)")
             result = .failed

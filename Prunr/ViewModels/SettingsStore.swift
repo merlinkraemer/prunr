@@ -97,12 +97,12 @@ final class SettingsStore {
     /// Category history retention period in days (default 30).
     ///
     /// Governs journal pruning only — never what the UI's fixed display window
-    /// reports. Clamped to at least `GrowthJournalService.displayWindowDays` so
+    /// reports. Clamped to at least `GrowthJournalService.historyWindowDays` so
     /// retention can never truncate data that is still on screen.
     var categoryHistoryRetentionDays: Int {
         didSet {
             // Assigning inside didSet does not re-enter it, so persist `clamped`.
-            let clamped = max(categoryHistoryRetentionDays, GrowthJournalService.displayWindowDays)
+            let clamped = max(categoryHistoryRetentionDays, GrowthJournalService.historyWindowDays)
             if clamped != categoryHistoryRetentionDays {
                 categoryHistoryRetentionDays = clamped
             }
@@ -229,7 +229,7 @@ final class SettingsStore {
         let savedRetentionDays = UserDefaults.standard.integer(forKey: Keys.categoryHistoryRetentionDays)
         self.categoryHistoryRetentionDays = max(
             savedRetentionDays > 0 ? savedRetentionDays : Self.defaultCategoryHistoryRetentionDays,
-            GrowthJournalService.displayWindowDays
+            GrowthJournalService.historyWindowDays
         )
 
         let savedAutomaticFullScanHours = UserDefaults.standard.integer(forKey: Keys.automaticFullScanIntervalHours)
