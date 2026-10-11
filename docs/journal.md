@@ -14,3 +14,9 @@
 2026-10-11 15:35 orchestrator Q5 spawn: workers s1 (feat/s1-scan-residual) and s2a (feat/s2a-unit-names), worktrees, validation via mac-queue
 2026-10-11 16:00 orchestrator Q5 landed: s2a unit names (c46d469, mac-queue PASS 20261011-052455) merged to main
 2026-10-11 16:00 orchestrator Q5 blocked: s1 scan residual green (f15e350, mac-queue PASS 20261011-052340) but schema/scan logic = must-ask; branch feat/s1-scan-residual waits for Merlin
+2026-10-11 16:20 orchestrator Q5 landed: s7 media names (84bfbd9, mac-queue PASS) merged; followup noted: any '<X> Project' folder reads as Ableton project
+2026-10-11 16:30 orchestrator Q5 landed: s6 app/cache names (7533497, mac-queue PASS) merged; orchestrator fixed one stale UnitResolverTests assertion (Widget data -> Widget cache)
+2026-10-11 16:50 orchestrator Q5 landed: s5 developer names (8f17bbd) merged after combined test with s6/s7 (mac-queue PASS 20261011-054540)
+2026-10-11 17:00 orchestrator Q5 blocked: s2b change feed green (5ccdfeb, mac-queue PASS 20261011-054819, 168 tests); UI → waits for Merlin visual check
+2026-10-11 17:00 orchestrator Q5 answered: s2b perf question (2.4 s worst-case rebuild) → accept for now, re-measure on real data before s9
+2026-10-11 17:00 orchestrator Q5 spawn: s3 header + categories view, stacked on s2b (feat/s3-header)
