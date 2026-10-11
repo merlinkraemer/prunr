@@ -13,6 +13,7 @@ AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane r
 
 ## Waiting on Merlin
 1. Merge s1 (daily scan keeps change times; schema migration v21) — green on Mac — rec: merge — branch: feat/s1-scan-residual
+2. Review s2b on the Mac (new day-grouped list replaces the category overview; UI) — green on Mac, 168 tests — rec: look at it via a Debug install, then merge with s1 — branch: feat/s2b-change-feed
 
 ## Queue
 
@@ -44,7 +45,8 @@ do not touch: app code, website.
 
 ### Q5 Build core screen per PRD [running] [mac]
 goal: v1 slices of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice. Order {s1, s2a} → {s2b, s5, s6, s7} → s3 → s4 → s9. Drilldown (L0) after v1.
-landed: s2a, s5, s6, s7. waiting: s1 (Waiting #1). running: s2b (stacked on s1).
+landed: s2a, s5, s6, s7. waiting: s1, s2b (Waiting #1, #2). running: s3 (stacked on s2b).
+followup: feed rebuild ~2.4 s on a worst-case 200k-bucket fixture; accepted for now (off main thread, debounced), re-measure on real alpha data before s9.
 acceptance: per slice in the PRD; `make test` green via mac-queue.
 validation: mac-queue test Prunr on the slice branch.
 do not touch: release/appcast/workflows; nothing user-visible lands without Merlin (holiday 10-30→11-16: nothing lands).
