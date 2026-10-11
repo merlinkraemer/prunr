@@ -102,7 +102,7 @@ final class UnitResolverTests: XCTestCase {
         XCTAssertEqual(name("/Users/tester/Library/Group Containers/group.com.apple.notes/db").title, "Notes data")
         XCTAssertEqual(name("/Users/tester/Library/Group Containers/UBF8T346G9.Office/x").title, "Office data")
         XCTAssertEqual(name("/Users/tester/Library/Preferences/com.apple.finder.plist").title, "Finder data")
-        XCTAssertEqual(name("/Users/tester/Library/Caches/com.example.Widget/blob").title, "Widget data")
+        XCTAssertEqual(name("/Users/tester/Library/Caches/com.example.Widget/blob").title, "Widget cache")
     }
 
     func testLibraryAreaAndLibraryItself() {
