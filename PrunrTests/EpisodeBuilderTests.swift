@@ -681,4 +681,18 @@ final class EpisodeBuilderTests: XCTestCase {
         HistoryStart.reset(defaults: defaults)
         XCTAssertEqual(HistoryStart.remember(oldestSnapshot: later, defaults: defaults), later)
     }
+
+    /// Tests run inside the app: the default store must be the test suite, so
+    /// nothing a test does reaches the owner's real "Watching since".
+    func testHistoryStartNeverWritesTheRealDefaultsUnderTests() {
+        let realBefore = UserDefaults.standard.object(forKey: HistoryStart.defaultsKey) as? Date
+        defer { HistoryStart.reset() }
+
+        XCTAssertFalse(HistoryStart.store === UserDefaults.standard)
+        let early = date(1990, 1, 1, 0, 0, in: calendar())
+        XCTAssertEqual(HistoryStart.remember(oldestSnapshot: early), early)
+        HistoryStart.reset()
+
+        XCTAssertEqual(UserDefaults.standard.object(forKey: HistoryStart.defaultsKey) as? Date, realBefore)
+    }
 }

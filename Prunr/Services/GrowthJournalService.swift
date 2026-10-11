@@ -207,10 +207,24 @@ actor GrowthJournalService {
 /// start forward and claim a short history after 30 days of watching.
 enum HistoryStart {
     static let defaultsKey = "changeHistoryStartedAt"
+    static let testSuiteName = "com.prunr.tests.history-start"
+
+    /// Where the start is kept. Unit tests run inside the app against
+    /// temporary databases, so under XCTest this is a throwaway suite, emptied
+    /// at launch: a test must never move the owner's real "Watching since".
+    static let store: UserDefaults = {
+        let environment = ProcessInfo.processInfo.environment
+        let isTestRun = environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestSessionIdentifier"] != nil
+            || environment["XCTestBundlePath"] != nil
+        guard isTestRun, let suite = UserDefaults(suiteName: testSuiteName) else { return .standard }
+        suite.removePersistentDomain(forName: testSuiteName)
+        return suite
+    }()
 
     /// The earlier of the remembered start and `oldestSnapshot`, remembered for
     /// next time. Nil when neither is known.
-    static func remember(oldestSnapshot: Date?, defaults: UserDefaults = .standard) -> Date? {
+    static func remember(oldestSnapshot: Date?, defaults: UserDefaults = HistoryStart.store) -> Date? {
         let stored = defaults.object(forKey: defaultsKey) as? Date
         guard let start = [stored, oldestSnapshot].compactMap({ $0 }).min() else { return nil }
         if start != stored {
@@ -221,7 +235,7 @@ enum HistoryStart {
 
     /// Forgets the start; called when the baseline is reset and history
     /// starts over.
-    static func reset(defaults: UserDefaults = .standard) {
+    static func reset(defaults: UserDefaults = HistoryStart.store) {
         defaults.removeObject(forKey: defaultsKey)
     }
 }
