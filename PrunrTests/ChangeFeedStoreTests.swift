@@ -207,13 +207,14 @@ final class ChangeFeedStoreTests: PrunrTestCase {
         do {
             let queue = try DatabaseQueue(path: dbPath)
             try DatabaseManager.makeMigrator().migrate(queue, upTo: "v20_add_snapshot_lifecycle")
-            try queue.write { db in
+            let filePath = file.path
+            try await queue.write { db in
                 try db.execute(
                     sql: "INSERT INTO snapshot (createdAt, trackedPathId, lifecycle) VALUES (?, ?, 'complete')",
                     arguments: [windowStart, trackedPathId.uuidString]
                 )
                 let snapshotId = db.lastInsertedRowID
-                try db.execute(sql: "INSERT INTO paths (path) VALUES (?)", arguments: [file.path])
+                try db.execute(sql: "INSERT INTO paths (path) VALUES (?)", arguments: [filePath])
                 let pathId = db.lastInsertedRowID
                 try db.execute(
                     sql: "INSERT INTO snapshotEntry (snapshotId, pathId, sizeBytes) VALUES (?, ?, ?)",
