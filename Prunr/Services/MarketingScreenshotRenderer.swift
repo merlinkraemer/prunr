@@ -155,10 +155,7 @@ private struct MarketingPopoverPreview: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ChangesHeaderView(
-                weekly: WeeklyChange(manager.changeFeed, now: MarketingSample.now),
-                onOpen: nil
-            ) {
+            ChangesHeaderView(onOpenBar: nil) {
                 DriveBarView(
                     totalBytes: manager.totalBytes,
                     usedBytes: manager.usedBytes,
@@ -167,15 +164,20 @@ private struct MarketingPopoverPreview: View {
                     highlightedSegmentID: .constant(nil),
                     disableHover: true
                 )
+            } row: {
+                WeeklyChangeRow(weekly: WeeklyChange(manager.changeFeed, now: MarketingSample.now))
             }
 
             Divider().overlay(.white.opacity(0.13))
 
             ChangeFeedRows(
                 feed: manager.changeFeed?.feed ?? .empty,
-                now: MarketingSample.now
+                now: MarketingSample.now,
+                expandedDays: .constant([]),
+                onOpenGroup: { _ in }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .softBottomEdge()
             .clipped()
 
             HStack {
@@ -207,17 +209,25 @@ enum MarketingSample {
     /// Long before the shown 30 days, so the list has no "Watching since" end.
     static let watchingSince: Date = date(month: 8, day: 1, hour: 9, minute: 0)
 
-    /// Newest first. Mail built up over days; the rest moved in one go.
+    /// Newest first. Mail built up over days; the rest moved in one go. Each
+    /// category's rows this week add up to its change in `categories`, and
+    /// Monday has four categories, so it shows "Show all (4)".
     static let rows: [ChangeEpisode] = [
         episode("xcode", "Xcode build files", detail: "Prunr", .developer,
-                "/Users/sample/Library/Developer/Xcode/DerivedData", 9_000_000_000, day: 7, hour: 17, minute: 5),
+                "/Users/sample/Library/Developer/Xcode/DerivedData", 6_900_000_000, day: 7, hour: 17, minute: 5),
         episode("docker", "Docker disk", detail: nil, .developer,
                 "/Users/sample/Library/Containers/com.docker.docker", 31_000_000_000, day: 6, hour: 14, minute: 20),
+        episode("recordings", "Screen recordings", detail: "Movies", .mediaAndDocuments,
+                "/Users/sample/Movies", 1_200_000_000, day: 6, hour: 11, minute: 30),
         episode("iso", "Downloads", detail: "ubuntu-24.04.1-desktop-amd64.iso", .downloads,
                 "/Users/sample/Downloads/ubuntu-24.04.1-desktop-amd64.iso", 5_000_000_000, day: 5, hour: 21, minute: 40),
+        episode("safari", "Safari data", detail: "Caches", .cachesAndSystem,
+                "/Users/sample/Library/Caches/com.apple.Safari", 4_300_000_000, day: 5, hour: 19, minute: 30),
         episode("mail", "Mail attachments", detail: nil, .mediaAndDocuments,
-                "/Users/sample/Library/Mail", 1_000_000_000, day: 5, hour: 18, minute: 0,
+                "/Users/sample/Library/Mail", 1_500_000_000, day: 5, hour: 18, minute: 0,
                 buildingSince: date(day: 2, hour: 0, minute: 0)),
+        episode("node", "node_modules", detail: "acme", .developer,
+                "/Users/sample/dev/acme/node_modules", 2_100_000_000, day: 5, hour: 9, minute: 5),
         episode("trash", "Trash emptied", detail: nil, .trash,
                 "/Users/sample/.Trash", -4_000_000_000, day: 4, hour: 10, minute: 15),
         episode("photos", "Photos library", detail: nil, .mediaAndDocuments,

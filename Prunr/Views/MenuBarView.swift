@@ -34,6 +34,10 @@ struct MenuBarView: View {
     /// The change list is the root page; the category overview and its drill
     /// sit one level below it.
     @State private var showsCategoryOverview = false
+    /// The day group open below the change list, if any.
+    @State private var openGroup: ChangeGroup? = nil
+    @State private var expandedFeedDays: Set<Date> = []
+    @State private var feedScrollAnchor: Date? = nil
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
     @State private var headerWidth: CGFloat = 0
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
@@ -1045,14 +1049,27 @@ struct MenuBarView: View {
 
     // MARK: - Header (Always Visible)
 
-    /// Clicking the header opens the categories view; once it is open the
-    /// bar's segments drill into their category as before.
+    /// Clicking the bar area opens the categories view; once it is open the
+    /// bar's segments hover and drill into their category as before. The row
+    /// under the bar is "This week" on the change list, else a title row.
     private var changesHeader: some View {
         ChangesHeaderView(
-            weekly: WeeklyChange(manager.changeFeed),
-            onOpen: showsCategoryOverview ? nil : { setShowsCategoryOverview(true) }
+            onOpenBar: showsCategoryOverview ? nil : { setShowsCategoryOverview(true) }
         ) {
             driveBar
+        } row: {
+            if showsCategoryOverview {
+                headerNavigationView
+            } else if let group = shownGroup {
+                HeaderTitleRow(
+                    title: group.category.displayName,
+                    category: group.category,
+                    backHint: "Return to the change list",
+                    onBack: closeGroup
+                )
+            } else {
+                WeeklyChangeRow(weekly: WeeklyChange(manager.changeFeed))
+            }
         }
     }
 
@@ -1151,7 +1168,7 @@ struct MenuBarView: View {
     }
 
     private var shouldDisableDriveBarHover: Bool {
-        focusedDriveBarCategory != nil
+        !showsCategoryOverview || focusedDriveBarCategory != nil
     }
 
     private func refreshScanAccess() {
@@ -1209,23 +1226,18 @@ struct MenuBarView: View {
 
     // MARK: - Page Navigation Content
 
-    /// The change list is the root page. The categories view (with its own
-    /// back header and the category → subcategory → files drill) slides in
-    /// from the right over it.
+    /// The change list is the root page. The categories view (with the
+    /// category → subcategory → files drill) and a day group's rows slide in
+    /// from the right over it; their title rows live in the header.
     private var pageNavigationContent: some View {
         ZStack(alignment: .top) {
             if showsCategoryOverview {
-                VStack(spacing: 0) {
-                    headerNavigationView
-                        .zIndex(1)
-                    if currentHeaderScreen.level == .overview {
-                        Divider()
-                            .padding(.horizontal, 18)
-                    }
-                    categoryListView
-                        .padding(.top, 0)
-                }
-                .transition(.move(edge: .trailing))
+                categoryListView
+                    .transition(.move(edge: .trailing))
+            } else if let group = shownGroup {
+                ChangeGroupView(group: group)
+                    .id(group.id)
+                    .transition(.move(edge: .trailing))
             } else {
                 changeFeedView
                     .transition(.move(edge: .leading))
@@ -1235,8 +1247,14 @@ struct MenuBarView: View {
         .clipped()
         .background(
             DrilldownBackSwipeBridge(
-                isEnabled: canNavigateBackFromDrilldown,
-                onSwipeBack: navigateBackFromDrilldown
+                isEnabled: canNavigateBackFromDrilldown || isShowingGroup,
+                onSwipeBack: {
+                    if isShowingGroup {
+                        closeGroup()
+                    } else {
+                        navigateBackFromDrilldown()
+                    }
+                }
             )
         )
         .frame(maxHeight: .infinity, alignment: .top)
@@ -1288,28 +1306,7 @@ struct MenuBarView: View {
         .onDisappear {
             synchronizeVisibleHeaderToCurrent()
         }
-        .background {
-            ZStack {
-                headerView(for: .overview)
-                if let firstCategory = GrowthCategory.allCases.first {
-                    headerView(for: HeaderScreen(
-                        level: .category,
-                        category: CategoryInventoryItem(category: firstCategory, currentSizeBytes: 0),
-                        subcategory: nil
-                    ))
-                    headerView(for: HeaderScreen(
-                        level: .files,
-                        category: CategoryInventoryItem(category: firstCategory, currentSizeBytes: 0),
-                        subcategory: nil
-                    ))
-                }
-            }
-            .frame(width: 0, height: 0)
-            .opacity(0)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
-        .frame(height: 44)
+        .frame(height: HeaderRowMetrics.height)
     }
 
     @ViewBuilder
@@ -1379,7 +1376,7 @@ struct MenuBarView: View {
 
     private func headerPage(for screen: HeaderScreen, width: CGFloat) -> some View {
         headerView(for: screen)
-            .frame(width: width, height: 44, alignment: .center)
+            .frame(width: width, height: HeaderRowMetrics.height, alignment: .center)
     }
 
     /// The categories view's own header: a back arrow to the change list.
@@ -1400,40 +1397,7 @@ struct MenuBarView: View {
     }
 
     private func navigationHeader(title: String, backHint: String, onBack: @escaping () -> Void) -> some View {
-        HStack(spacing: 0) {
-            // Back button — fixed width for centering balance
-            Button(action: onBack) {
-                ZStack(alignment: .leading) {
-                    // A clear shape makes the full target participate in
-                    // AppKit hit testing while leaving the rendered button unchanged.
-                    Color.clear
-                        .frame(width: 44, height: 44)
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.blue)
-                        .frame(width: 32, height: 32)
-                        .offset(y: -2)
-                }
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back")
-            .accessibilityHint(backHint)
-
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .offset(y: -2)
-
-            // Balance spacer matches back button width
-            Color.clear
-                .frame(width: 44)
-        }
-        .padding(.horizontal, 12)
-        .frame(maxHeight: .infinity, alignment: .center)
+        HeaderTitleRow(title: title, backHint: backHint, onBack: onBack)
     }
 
     // MARK: - Change Feed
@@ -1445,9 +1409,38 @@ struct MenuBarView: View {
             } else {
                 ChangeFeedView(
                     result: manager.changeFeed,
+                    expandedDays: $expandedFeedDays,
+                    scrollAnchor: $feedScrollAnchor,
+                    onOpenGroup: openChangeGroup,
                     onRetry: { Task { await manager.refreshChangeFeed() } }
                 )
             }
+        }
+    }
+
+    /// The open group as the latest change list has it, so a refresh while it
+    /// is open shows the new rows; the opened copy if the group is gone.
+    private var shownGroup: ChangeGroup? {
+        guard let openGroup else { return nil }
+        let fresh = manager.changeFeed?.feed?.days
+            .first { $0.day == openGroup.day }?
+            .groups.first { $0.id == openGroup.id }
+        return fresh ?? openGroup
+    }
+
+    private var isShowingGroup: Bool {
+        openGroup != nil && !showsCategoryOverview
+    }
+
+    private func openChangeGroup(_ group: ChangeGroup) {
+        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+            openGroup = group
+        }
+    }
+
+    private func closeGroup() {
+        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+            openGroup = nil
         }
     }
 
@@ -1462,6 +1455,8 @@ struct MenuBarView: View {
         }
         withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
             showsCategoryOverview = shows
+            openGroup = nil
+            highlightedStorageSegmentID = nil
         }
         synchronizeVisibleHeaderToCurrent()
     }
@@ -1589,7 +1584,11 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var footerStatusText: some View {
-        if manager.showsUpdateAvailableBanner {
+        if isShowingGroup, let group = shownGroup {
+            Text(EpisodeBuilder.dayLabel(for: group.day, calendar: .current))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        } else if manager.showsUpdateAvailableBanner {
             HStack(spacing: 8) {
                 Circle()
                     .fill(Color.blue)

@@ -307,9 +307,10 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         )
     }
 
-    /// The marketing screenshot's sample reads like mockup S1: real dates from
-    /// Wed 7 Oct back, Mail's slow growth with its range caption, and a header
-    /// of +48 GB that the categories view adds up to.
+    /// The marketing screenshot's sample reads like mockup X1: real dates from
+    /// Wed 7 Oct back, one group per category a day, Monday with four groups
+    /// (so "Show all (4)"), Mail's slow growth caption, and a header of +48 GB
+    /// that the categories view and the week's groups add up to.
     func testMarketingSampleReadsAsTheNewScreen() throws {
         let feed = MarketingSample.feed
         let calendar = Calendar.current
@@ -320,9 +321,17 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             ["Wed 7 Oct", "Tue 6 Oct", "Mon 5 Oct", "Sun 4 Oct", "Thu 1 Oct"]
         )
         let monday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Mon 5 Oct" })
-        XCTAssertEqual(monday.episodes.map(\.title), ["Downloads", "Mail attachments"])
-        let mail = try XCTUnwrap(monday.episodes.last)
-        XCTAssertEqual(EpisodeBuilder.dayLabel(for: try XCTUnwrap(mail.buildingSince), calendar: calendar), "Fri 2 Oct")
+        XCTAssertEqual(monday.groups.map(\.category), [.downloads, .cachesAndSystem, .developer, .mediaAndDocuments])
+        XCTAssertGreaterThan(monday.groups.count, ChangeFeedRows.collapsedGroupLimit)
+        let mail = try XCTUnwrap(monday.episodes.first { $0.title == "Mail attachments" })
+        XCTAssertEqual(EpisodeBuilder.caption(for: mail, calendar: calendar), "a little each day since Fri 2 Oct")
+
+        let weekStart = GrowthJournalService.weekStart(now: MarketingSample.now, calendar: calendar)
+        let weekGroups = feed.days.filter { $0.day >= weekStart }.flatMap(\.groups)
+        for item in MarketingSample.categories(endedAt: MarketingSample.now) {
+            let rows = weekGroups.filter { $0.category == item.category }.reduce(Int64(0)) { $0 + $1.netBytes }
+            XCTAssertEqual(rows, item.growthDeltaBytes, item.category.displayName)
+        }
         XCTAssertTrue(feed.episodes.allSatisfy { abs($0.netBytes) >= EpisodeBuilder.rowThresholdBytes })
         XCTAssertNil(feed.quietSince(now: MarketingSample.now, calendar: calendar))
         XCTAssertFalse(feed.isShortHistory(now: MarketingSample.now, calendar: calendar))
