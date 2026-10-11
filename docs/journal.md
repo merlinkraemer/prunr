@@ -39,3 +39,4 @@
 2026-10-11 15:00 orchestrator Q5 spawn: s12 polish (V1 rows single-line, no tiles, no date band, native bottom edge, header bar + divider + This week row, no free-of), branch feat/s12-polish from feat/v1-review
 2026-10-11 15:05 orchestrator Q5 dropped: s12 polish build stopped at Merlin's request (mockups first); partial branch feat/s12-polish (2 commits, untested) parked
 2026-10-11 15:10 orchestrator Q5 decided: list is a pure log for v1 (no click/hover); cleanup awareness (gone rows, current size) noted as PRD L4
+2026-10-11 15:20 orchestrator Q5 spawn: Merlin approved W2 + icons option 1 (old coloured category glyphs, real app icon where known, no tiles, pure log); worker continues feat/s12-polish, test + Mac install
