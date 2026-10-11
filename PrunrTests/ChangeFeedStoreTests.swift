@@ -429,11 +429,21 @@ final class ChangeFeedStoreTests: PrunrTestCase {
             return (slots.count, feed.episodes.count)
         }
 
-        let started = Date()
-        let counts = try readAndBuild()
-        let elapsedMs = Date().timeIntervalSince(started) * 1_000
-        print("CHANGE_FEED_MEASURE buckets=\(bucketCount) slots=\(counts.slots) rows=\(counts.rows) first_run_ms=\(String(format: "%.1f", elapsedMs))")
-        XCTAssertGreaterThan(counts.rows, 0)
+        // First run, timed per phase: the SQL read, then the pure build.
+        let readStarted = Date()
+        let slots = try dbPool.read { db in
+            try DatabaseManager.fetchJournalSlots(db: db, trackedPathIds: trackedPathIds, since: since)
+        }
+        let buildStarted = Date()
+        let feed = EpisodeBuilder.build(slots: slots, now: now, calendar: calendar)
+        let finished = Date()
+        func ms(_ from: Date, _ to: Date) -> String { String(format: "%.1f", to.timeIntervalSince(from) * 1_000) }
+        let line = "CHANGE_FEED_MEASURE window_days=\(GrowthJournalService.historyWindowDays) buckets=\(bucketCount) slots=\(slots.count) rows=\(feed.episodes.count) sql_ms=\(ms(readStarted, buildStarted)) build_ms=\(ms(buildStarted, finished)) first_run_ms=\(ms(readStarted, finished))"
+        // Both streams, so the line reaches the xcodebuild log whichever one
+        // the runner keeps.
+        print(line)
+        NSLog("%@", line)
+        XCTAssertGreaterThan(feed.episodes.count, 0)
 
         measure {
             _ = try? readAndBuild()
