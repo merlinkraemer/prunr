@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor [menuBarManager] in
                 await menuBarManager.configureMonitoringOnLaunch()
             }
+            menuBarManager.scheduleQueryPlannerOptimization()
             Task.detached(priority: .utility) {
                 await DatabaseCleanupService.shared.performStartupMaintenance()
             }

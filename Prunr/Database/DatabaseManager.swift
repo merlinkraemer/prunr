@@ -1369,6 +1369,26 @@ extension DatabaseManager {
         }
     }
 
+    /// Refreshes planner statistics with a bounded sample per index.
+    func optimizeQueryPlanner() async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA analysis_limit = 400")
+            // System SQLite before 3.46 ignores the 0x10000 "check all tables" bit and
+            // only analyzes tables this connection queried, so it would never seed stats.
+            let hasStatistics = try Bool.fetchOne(db, sql: """
+                SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1')
+                """) ?? false
+            if !hasStatistics {
+                try db.execute(sql: "ANALYZE")
+            }
+            try db.execute(sql: "PRAGMA optimize = 0x10002")
+        }
+    }
+
     // MARK: - Category Snapshot
 
     /// Writes a category total to the categorySnapshot table
