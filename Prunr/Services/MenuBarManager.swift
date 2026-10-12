@@ -206,6 +206,10 @@ final class MenuBarManager: NSObject {
     /// finishes (unknown); `.failed` when history could not be read. A rescan
     /// never clears it: the last list stays until a new read replaces it.
     var changeFeed: ChangeFeedResult?
+    /// Free space the snapshots of the primary path recorded, read with the
+    /// change list. Nil until read or when the read failed: past dates then
+    /// show no value.
+    var storageHistory: StorageHistory?
     @ObservationIgnored
     private var changeFeedRefreshTask: Task<Void, Never>?
     private static let changeFeedDebounce: Duration = .seconds(2)
@@ -2299,6 +2303,24 @@ final class MenuBarManager: NSObject {
         }
         if result != changeFeed {
             changeFeed = result
+        }
+        await refreshStorageHistory()
+    }
+
+    private func refreshStorageHistory() async {
+        let history: StorageHistory?
+        if let trackedPath = primaryTrackedPath() {
+            do {
+                history = try await growthJournalService.storageHistory(trackedPath: trackedPath)
+            } catch {
+                Self.logger.error("Failed to read storage history: \(error.localizedDescription, privacy: .public)")
+                history = nil
+            }
+        } else {
+            history = .empty
+        }
+        if history != storageHistory {
+            storageHistory = history
         }
     }
 

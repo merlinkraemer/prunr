@@ -96,6 +96,12 @@ actor GrowthJournalService {
         return EpisodeBuilder.build(slots: slots, now: now, calendar: calendar, watchingSince: start)
     }
 
+    /// The free space every kept snapshot of this path recorded, for the
+    /// header's used storage at a past date.
+    func storageHistory(trackedPath: TrackedPath) async throws -> StorageHistory {
+        StorageHistory(records: try await db.fetchRecordedFreeSpace(trackedPathId: trackedPath.id))
+    }
+
     /// The oldest complete snapshot of these paths, for `HistoryStart`.
     func oldestCompleteSnapshotDate(trackedPaths: [TrackedPath]) async throws -> Date? {
         try await db.fetchOldestCompleteSnapshotDate(trackedPathIds: trackedPaths.map(\.id))
@@ -237,5 +243,44 @@ enum HistoryStart {
     /// starts over.
     static func reset(defaults: UserDefaults = HistoryStart.store) {
         defaults.removeObject(forKey: defaultsKey)
+    }
+}
+
+/// Volume free space as one snapshot recorded it when its scan started.
+struct FreeSpaceRecord: Equatable, Sendable {
+    let recordedAt: Date
+    let freeBytes: Int64
+}
+
+/// Used storage on a past day: capacity minus the free space of the last
+/// snapshot recorded on or before that day.
+struct RecordedStorage: Equatable, Sendable {
+    let usedBytes: Int64
+    let recordedAt: Date
+    /// False when the day had no snapshot and an older day's value stands in.
+    let isFromThatDay: Bool
+}
+
+/// Free space as the kept snapshots recorded it. Never derived from rows:
+/// a day without a snapshot reads the nearest older one, and a day before
+/// the first snapshot has no value.
+struct StorageHistory: Equatable, Sendable {
+    /// Oldest first.
+    let records: [FreeSpaceRecord]
+
+    static let empty = StorageHistory(records: [])
+
+    func usedStorage(atEndOf day: Date, capacityBytes: Int64, calendar: Calendar = .current) -> RecordedStorage? {
+        guard capacityBytes > 0 else { return nil }
+        let dayStart = calendar.startOfDay(for: day)
+        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart),
+              let record = records.last(where: { $0.recordedAt < dayEnd }) else {
+            return nil
+        }
+        return RecordedStorage(
+            usedBytes: max(0, capacityBytes - record.freeBytes),
+            recordedAt: record.recordedAt,
+            isFromThatDay: record.recordedAt >= dayStart
+        )
     }
 }

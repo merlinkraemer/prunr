@@ -2487,6 +2487,26 @@ extension DatabaseManager {
         }
     }
 
+    /// The volume free space each complete snapshot of this path recorded,
+    /// oldest first. Snapshots without a recorded value are left out.
+    func fetchRecordedFreeSpace(trackedPathId: UUID) async throws -> [FreeSpaceRecord] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT createdAt, freeBytes FROM snapshot
+                    WHERE trackedPathId = ? AND lifecycle = ? AND freeBytes IS NOT NULL
+                    ORDER BY createdAt ASC, id ASC
+                    """,
+                arguments: [trackedPathId.uuidString, Snapshot.Lifecycle.complete.rawValue]
+            ).map { FreeSpaceRecord(recordedAt: $0["createdAt"], freeBytes: $0["freeBytes"]) }
+        }
+    }
+
     /// When the oldest complete snapshot of the given paths was taken: the
     /// start of the change history. Nil when none of them has one.
     func fetchOldestCompleteSnapshotDate(trackedPathIds: [UUID]) async throws -> Date? {
