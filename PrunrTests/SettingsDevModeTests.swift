@@ -63,6 +63,66 @@ final class SettingsDevModeTests: PrunrTestCase {
         XCTAssertEqual(defaults.object(forKey: DevMode.defaultsKey) as? Bool, false)
     }
 
+    func testBalanceHeaderDefaultsOffInEveryBuild() {
+        XCTAssertFalse(DevMode.resolveBalanceHeader(arguments: [], defaults: defaults))
+        XCTAssertFalse(DevMode(defaults: defaults, arguments: [], isDebugBuild: true).showsBalanceHeader)
+        XCTAssertFalse(DevMode(defaults: defaults, arguments: [], isDebugBuild: false).showsBalanceHeader)
+    }
+
+    func testBalanceHeaderFollowsStoredValueAndLaunchArgument() {
+        defaults.set(true, forKey: DevMode.balanceHeaderKey)
+        XCTAssertTrue(DevMode.resolveBalanceHeader(arguments: [], defaults: defaults))
+        XCTAssertFalse(DevMode.resolveBalanceHeader(arguments: ["Prunr", "-balanceHeader", "NO"], defaults: defaults))
+
+        defaults.set(false, forKey: DevMode.balanceHeaderKey)
+        XCTAssertTrue(DevMode.resolveBalanceHeader(arguments: ["Prunr", "-balanceHeader", "YES"], defaults: defaults))
+        XCTAssertFalse(DevMode.resolveBalanceHeader(arguments: ["Prunr", "-devMode", "YES"], defaults: defaults))
+    }
+
+    func testSettingBalanceHeaderStoresValue() {
+        let devMode = DevMode(defaults: defaults, arguments: [], isDebugBuild: true)
+        devMode.setShowsBalanceHeader(true)
+        XCTAssertTrue(devMode.showsBalanceHeader)
+        XCTAssertEqual(defaults.object(forKey: DevMode.balanceHeaderKey) as? Bool, true)
+
+        devMode.setShowsBalanceHeader(false)
+        XCTAssertFalse(devMode.showsBalanceHeader)
+        XCTAssertEqual(defaults.object(forKey: DevMode.balanceHeaderKey) as? Bool, false)
+    }
+
+    func testHeaderRowIsThisWeekWhileBalanceFlagIsOff() {
+        let feed = MarketingSample.feed
+        let scrolledDay = feed.days.last?.day
+        let row = ChangeListHeaderRow.make(
+            showsBalance: false,
+            feedResult: .loaded(feed),
+            scrollAnchor: scrolledDay,
+            history: nil,
+            usedBytes: MarketingSample.usedBytes,
+            capacityBytes: MarketingSample.totalBytes,
+            now: MarketingSample.now
+        )
+
+        XCTAssertEqual(row, .thisWeek(WeeklyChange(.loaded(feed), now: MarketingSample.now)))
+        XCTAssertEqual(row, .thisWeek(.bytes(MarketingSample.weekNetBytes)))
+        XCTAssertNil(row.historicUsedBytes)
+    }
+
+    func testHeaderRowIsStorageBalanceWhileFlagIsOn() {
+        let feed = MarketingSample.feed
+        let row = ChangeListHeaderRow.make(
+            showsBalance: true,
+            feedResult: .loaded(feed),
+            scrollAnchor: nil,
+            history: nil,
+            usedBytes: MarketingSample.usedBytes,
+            capacityBytes: MarketingSample.totalBytes,
+            now: MarketingSample.now
+        )
+
+        XCTAssertEqual(row, .balance(.current(usedBytes: MarketingSample.usedBytes, capacityBytes: MarketingSample.totalBytes)))
+    }
+
     func testSettingsTabsHideDeveloperUnlessDevMode() {
         XCTAssertEqual(SettingsTab.visibleTabs(devMode: false), [.general, .folder, .feedback])
         XCTAssertEqual(SettingsTab.visibleTabs(devMode: true), [.general, .folder, .feedback, .developer])

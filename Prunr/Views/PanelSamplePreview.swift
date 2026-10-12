@@ -30,10 +30,7 @@ struct PanelSamplePreview: View {
                     disableHover: true
                 )
             } row: {
-                StorageBalanceRow(
-                    balance: .current(usedBytes: MarketingSample.usedBytes, capacityBytes: MarketingSample.totalBytes),
-                    onNow: {}
-                )
+                WeeklyChangeRow(weekly: WeeklyChange(.loaded(MarketingSample.feed), now: MarketingSample.now))
             }
 
             Divider()

@@ -1090,7 +1090,7 @@ struct MenuBarView: View {
 
     /// Clicking the bar area opens the categories view; once it is open the
     /// bar's segments hover and drill into their category as before. The row
-    /// under the bar is the used storage on the change list, else a title row.
+    /// under the bar is "This week" on the change list, else a title row.
     private var changesHeader: some View {
         ChangesHeaderView(
             onOpenBar: showsCategoryOverview ? nil : { setShowsCategoryOverview(true) }
@@ -1107,15 +1107,21 @@ struct MenuBarView: View {
                     onBack: closeGroup
                 )
             } else {
-                StorageBalanceRow(balance: storageBalance, onNow: scrollFeedToTop)
+                switch changeListHeaderRow {
+                case .thisWeek(let weekly):
+                    WeeklyChangeRow(weekly: weekly)
+                case .balance(let balance):
+                    StorageBalanceRow(balance: balance, onNow: scrollFeedToTop)
+                }
             }
         }
     }
 
-    private var storageBalance: StorageBalance {
-        StorageBalance.make(
+    private var changeListHeaderRow: ChangeListHeaderRow {
+        ChangeListHeaderRow.make(
+            showsBalance: devMode.showsBalanceHeader,
+            feedResult: manager.changeFeed,
             scrollAnchor: feedScrollAnchor,
-            feed: manager.changeFeed?.feed,
             history: manager.storageHistory,
             usedBytes: manager.usedBytes,
             capacityBytes: manager.totalBytes
@@ -1125,7 +1131,7 @@ struct MenuBarView: View {
     /// The bar shows a past date's level only under that date's header row.
     private var driveBarHistoricUsedBytes: Int64? {
         guard !showsCategoryOverview, shownGroup == nil else { return nil }
-        return storageBalance.historicUsedBytes
+        return changeListHeaderRow.historicUsedBytes
     }
 
     private func scrollFeedToTop() {

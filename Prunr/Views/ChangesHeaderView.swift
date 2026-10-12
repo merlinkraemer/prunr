@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The header above every list: the coloured storage bar, a hairline, then one
-/// row in a fixed place: the used storage on the change list, or a title row with a
+/// row in a fixed place: "This week" on the change list, or a title row with a
 /// back button. While `onOpenBar` is set, the bar area is one button with a row
 /// hover that opens the categories view; otherwise the bar's own segments work.
 struct ChangesHeaderView<Bar: View, Row: View>: View {
@@ -57,6 +57,87 @@ struct ChangesHeaderView<Bar: View, Row: View>: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 10)
+    }
+}
+
+/// "This week" with the signed weekly amount on the right. Not clickable.
+struct WeeklyChangeRow: View {
+    let weekly: WeeklyChange
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("This week")
+                .foregroundStyle(.primary)
+            Spacer(minLength: 0)
+            Text(weekly.amountText ?? "No change")
+                .monospacedDigit()
+                .foregroundStyle(amountStyle)
+                .fixedSize()
+        }
+        .font(.system(size: 13))
+        .lineLimit(1)
+        .padding(.horizontal, 18)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var amountStyle: AnyShapeStyle {
+        switch weekly {
+        case .bytes(let net) where net >= EpisodeBuilder.rowThresholdBytes:
+            return AnyShapeStyle(Color.orange)
+        case .bytes:
+            return AnyShapeStyle(.primary)
+        case .unknown, .none:
+            return AnyShapeStyle(.secondary)
+        }
+    }
+
+    private var accessibilityText: String {
+        switch weekly {
+        case .unknown:
+            return "Change this week unknown"
+        case .none:
+            return "No change this week"
+        case .bytes(let net):
+            return "This week \(net > 0 ? "up" : "down") \(formattedBytes(abs(net)))"
+        }
+    }
+}
+
+/// The change list's row under the bar: "This week", or the scroll-linked
+/// storage balance while `DevMode.showsBalanceHeader` is on.
+enum ChangeListHeaderRow: Equatable {
+    case thisWeek(WeeklyChange)
+    case balance(StorageBalance)
+
+    static func make(
+        showsBalance: Bool,
+        feedResult: ChangeFeedResult?,
+        scrollAnchor: Date?,
+        history: StorageHistory?,
+        usedBytes: Int64,
+        capacityBytes: Int64,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> ChangeListHeaderRow {
+        guard showsBalance else {
+            return .thisWeek(WeeklyChange(feedResult, now: now))
+        }
+        return .balance(StorageBalance.make(
+            scrollAnchor: scrollAnchor,
+            feed: feedResult?.feed,
+            history: history,
+            usedBytes: usedBytes,
+            capacityBytes: capacityBytes,
+            now: now,
+            calendar: calendar
+        ))
+    }
+
+    /// The bar's past fill; only the balance row moves it.
+    var historicUsedBytes: Int64? {
+        if case .balance(let balance) = self { return balance.historicUsedBytes }
+        return nil
     }
 }
 

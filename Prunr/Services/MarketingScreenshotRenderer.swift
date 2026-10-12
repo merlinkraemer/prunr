@@ -165,10 +165,7 @@ private struct MarketingPopoverPreview: View {
                     disableHover: true
                 )
             } row: {
-                StorageBalanceRow(
-                    balance: .current(usedBytes: manager.usedBytes, capacityBytes: manager.totalBytes),
-                    onNow: {}
-                )
+                WeeklyChangeRow(weekly: WeeklyChange(manager.changeFeed, now: MarketingSample.now))
             }
 
             Divider().overlay(.white.opacity(0.13))
