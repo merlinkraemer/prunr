@@ -333,6 +333,11 @@ struct MenuBarView: View {
         return options
     }
 
+    private func closePopoverAndOpenFolderSettings() {
+        manager.closePopover()
+        SettingsWindowController.shared.showFolder()
+    }
+
     private func closePopoverAndOpenSettings() {
         // Close the popover first via manager to ensure state sync
         manager.closePopover()
@@ -382,10 +387,6 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if hasRequiredScanAccess == false && !manager.noBaseline {
-                additionalAccessBanner
-            }
-
             Group {
                 switch devMode.panelPreview {
                 case .live:
@@ -1272,29 +1273,6 @@ struct MenuBarView: View {
         }
     }
 
-    private var additionalAccessBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "lock.shield")
-                .font(.system(size: 11))
-                .foregroundStyle(.orange)
-
-            Text("Extra macOS privacy access may be required")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.primary)
-
-            Spacer()
-
-            Button("Open") {
-                openScanAccessSettings()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.12))
-    }
-
     // MARK: - Page Navigation Content
 
     /// The change list is the root page. The categories view (with the
@@ -1746,7 +1724,7 @@ struct MenuBarView: View {
             }
             .font(.system(size: 11))
         case .foldersNotReadable:
-            Button(action: closePopoverAndOpenSettings) {
+            Button(action: closePopoverAndOpenFolderSettings) {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 9))

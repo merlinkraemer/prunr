@@ -63,6 +63,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
         window.orderFrontRegardless()
     }
 
+    func showFolder() {
+        select(.folder)
+        show()
+    }
+
     func showFeedback() {
         select(.feedback)
         show()
