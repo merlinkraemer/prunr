@@ -143,38 +143,73 @@ actor BaselineService {
         // On first scan (previousSnapshotId == nil) this block is skipped entirely —
         // no calculateDeltas call and no journal recording, so first-scan cost is
         // scan + insert only, with no expensive diff computation.
-        if let previousSnapshotId {
-            // The realtime watcher has been recording provisional deltas into the
-            // journal since the previous snapshot. The snapshot delta below measures
-            // the same window authoritatively, so reclaim those provisional buckets
-            // first — otherwise both writers accumulate and growth double-counts
-            // every reconciliation cycle. Buckets at/under the previous snapshot's
-            // time (earlier authoritative deltas) are preserved.
-            if let previousSnapshotDate = previousSnapshots.first?.createdAt {
-                try await db.deleteGrowthJournalBuckets(
-                    trackedPathId: trackedPath.id,
-                    newerThan: previousSnapshotDate
-                )
-            }
+        if let previous = previousSnapshots.first, let previousSnapshotId {
+            // The realtime watcher already recorded most of this window's changes
+            // at the time they happened. Keep those timestamps and add only the
+            // residual the watcher missed (or over-counted), so the window total
+            // still equals the authoritative snapshot delta without double-counting.
+            // The window is (previous scan start, this scan start]; watcher refreshes
+            // wait while a full scan runs, so later changes belong to the next window.
             let deltas = try await db.calculateDeltas(beforeId: previousSnapshotId, afterId: snapshotId)
-            if !deltas.isEmpty {
-                var deltasByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
-                for delta in deltas {
-                    let category = GrowthCategory.categorize(path: delta.path)
-                    let subcategory = GrowthCategory.subcategorize(path: delta.path)
-                    let key = DatabaseManager.JournalDeltaKey(category: category, subcategory: subcategory)
-                    deltasByKey[key, default: 0] += delta.changeBytes
+            var authoritativeByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+            for delta in deltas {
+                let category = GrowthCategory.categorize(path: delta.path)
+                let subcategory = GrowthCategory.subcategorize(path: delta.path)
+                let key = DatabaseManager.JournalDeltaKey(
+                    category: category,
+                    subcategory: subcategory,
+                    unitKey: UnitResolver.resolve(path: delta.path)
+                )
+                authoritativeByKey[key, default: 0] += delta.changeBytes
+            }
+
+            var recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
+                trackedPathId: trackedPath.id,
+                from: previous.createdAt,
+                to: snapshot.createdAt
+            )
+
+            // Coarse grain: if the window still holds buckets without a unit
+            // (written before v22), per-unit residuals would show every change the
+            // old watcher recorded as a fake "found" row. Reconcile at category
+            // grain instead and write the residual without a unit.
+            if recordedByKey.keys.contains(where: { $0.unitKey.isEmpty }) {
+                authoritativeByKey = Self.coarsened(authoritativeByKey)
+                recordedByKey = Self.coarsened(recordedByKey)
+            }
+
+            var residualByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+            for key in Set(authoritativeByKey.keys).union(recordedByKey.keys) {
+                let residual = (authoritativeByKey[key] ?? 0) - (recordedByKey[key] ?? 0)
+                if residual != 0 {
+                    residualByKey[key] = residual
                 }
+            }
+
+            if !residualByKey.isEmpty {
                 try await growthJournalService.recordDeltas(
                     trackedPath: trackedPath,
-                    deltas: deltasByKey,
-                    at: snapshot.createdAt
+                    deltas: residualByKey,
+                    at: snapshot.createdAt,
+                    source: .scan,
+                    observedSince: previous.createdAt
                 )
             }
         }
 
         return snapshot
     }
+
+    private static func coarsened(
+        _ deltas: [DatabaseManager.JournalDeltaKey: Int64]
+    ) -> [DatabaseManager.JournalDeltaKey: Int64] {
+        var result: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+        for (key, bytes) in deltas {
+            result[key.coarse, default: 0] += bytes
+        }
+        return result
+    }
+
     /// Checks whether at least one snapshot exists.
     ///
     /// - Returns: `true` if a snapshot exists
@@ -198,6 +233,7 @@ actor BaselineService {
             }
         }
         try await db.clearRealtimeData()
+        HistoryStart.reset()
     }
 
     // MARK: - Growth List

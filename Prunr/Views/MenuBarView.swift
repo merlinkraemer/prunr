@@ -30,7 +30,14 @@ struct MenuBarView: View {
         return nil
     }()
     @State private var drillTransitionCoordinator = DrilldownTransitionCoordinator()
-    @State private var displayedHeader = HeaderScreen.overview
+    @State private var displayedHeader = HeaderScreen.feed
+    /// The change list is the root page; the category overview and its drill
+    /// sit one level below it.
+    @State private var showsCategoryOverview = false
+    /// The day group open below the change list, if any.
+    @State private var openGroup: ChangeGroup? = nil
+    @State private var expandedFeedDays: Set<Date> = []
+    @State private var feedScrollAnchor: Date? = nil
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
     @State private var headerWidth: CGFloat = 0
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
@@ -108,6 +115,7 @@ struct MenuBarView: View {
     }
 
     private enum HeaderLevel: Int {
+        case feed
         case overview
         case category
         case files
@@ -118,6 +126,7 @@ struct MenuBarView: View {
         let category: CategoryInventoryItem?
         let subcategory: SubcategoryGroup?
 
+        static let feed = HeaderScreen(level: .feed, category: nil, subcategory: nil)
         static let overview = HeaderScreen(level: .overview, category: nil, subcategory: nil)
 
         static func == (lhs: HeaderScreen, rhs: HeaderScreen) -> Bool {
@@ -126,6 +135,8 @@ struct MenuBarView: View {
 
         var id: String {
             switch level {
+            case .feed:
+                return "feed"
             case .overview:
                 return "overview"
             case .category:
@@ -373,6 +384,9 @@ struct MenuBarView: View {
             }
 
             Group {
+                // A manual scan takes over the panel with its progress card and
+                // Stop. The change list is kept underneath, never cleared, so it
+                // returns with the same or newer rows once the scan ends.
                 if manager.isLoading && !manager.isAutoScanning {
                     manualScanLoadingView
                 } else if isBootstrapping && !manager.hasDisplayableInventory {
@@ -419,6 +433,7 @@ struct MenuBarView: View {
             guard isShown else { return }
             synchronizeVisibleHeaderToCurrent()
             synchronizeVisibleOnboardingToCurrent()
+            Task { await manager.refreshChangeFeed() }
         }
         .task {
             if manager.hasDisplayableInventory {
@@ -447,6 +462,7 @@ struct MenuBarView: View {
 
             if !manager.noBaseline {
                 await manager.loadInventoryFromLatestSnapshotIfStale()
+                await manager.refreshChangeFeed()
             }
         }
         .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
@@ -514,16 +530,14 @@ struct MenuBarView: View {
 
     private var mainCategoryView: some View {
         VStack(spacing: 0) {
-            // Storage bar - ALWAYS visible (outside page navigation)
-            driveBarSection
+            changesHeader
             Divider()
 
-            // Page navigation container - swaps between main/detail pages
             pageNavigationContent
+                .padding(.bottom, -SoftBottomEdge.footerHeight)
 
             Spacer(minLength: 0)
 
-            // Footer buttons (no separator)
             footerButtons
         }
     }
@@ -1032,9 +1046,33 @@ struct MenuBarView: View {
         }
     }
 
-    // MARK: - Drive Bar Section (Always Visible)
+    // MARK: - Header (Always Visible)
 
-    private var driveBarSection: some View {
+    /// Clicking the bar area opens the categories view; once it is open the
+    /// bar's segments hover and drill into their category as before. The row
+    /// under the bar is "This week" on the change list, else a title row.
+    private var changesHeader: some View {
+        ChangesHeaderView(
+            onOpenBar: showsCategoryOverview ? nil : { setShowsCategoryOverview(true) }
+        ) {
+            driveBar
+        } row: {
+            if showsCategoryOverview {
+                headerNavigationView
+            } else if let group = shownGroup {
+                HeaderTitleRow(
+                    title: group.category.displayName,
+                    category: group.category,
+                    backHint: "Return to the change list",
+                    onBack: closeGroup
+                )
+            } else {
+                WeeklyChangeRow(weekly: WeeklyChange(manager.changeFeed))
+            }
+        }
+    }
+
+    private var driveBar: some View {
         DriveBarView(
             totalBytes: manager.totalBytes,
             usedBytes: manager.usedBytes,
@@ -1048,8 +1086,6 @@ struct MenuBarView: View {
             focusedIconColor: focusedDriveBarCategory?.category.color ?? .secondary,
             disableHover: shouldDisableDriveBarHover
         )
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     private var driveBarSegments: [DriveBarSegment] {
@@ -1093,7 +1129,7 @@ struct MenuBarView: View {
         return [
             SupplementalInventoryItem(
                 id: outsideScopeSegmentID,
-                title: "Outside Scan Scope",
+                title: "Not watched",
                 icon: "square.dashed",
                 currentSizeBytes: outsideScanScopeBytes,
                 badgeText: "Not scanned"
@@ -1101,18 +1137,11 @@ struct MenuBarView: View {
         ]
     }
 
-    /// Signed net change across every category over the fixed display window.
-    private var overallGrowthBytes: Int64 {
-        manager.overallGrowthBytes
-    }
-
-    /// Constant, never a computed relative date — the value and the label must
-    /// read the same clock.
-    private var growthWindowLabel: String {
-        "last \(GrowthJournalService.displayWindowDays) days"
-    }
-
     private var currentHeaderScreen: HeaderScreen {
+        guard showsCategoryOverview else {
+            return .feed
+        }
+
         guard let category = manager.selectedInventoryCategory, manager.isDrilledDown else {
             return .overview
         }
@@ -1138,7 +1167,7 @@ struct MenuBarView: View {
     }
 
     private var shouldDisableDriveBarHover: Bool {
-        focusedDriveBarCategory != nil
+        !showsCategoryOverview || focusedDriveBarCategory != nil
     }
 
     private func refreshScanAccess() {
@@ -1196,21 +1225,36 @@ struct MenuBarView: View {
 
     // MARK: - Page Navigation Content
 
+    /// The change list is the root page. The categories view (with the
+    /// category → subcategory → files drill) and a day group's rows slide in
+    /// from the right over it; their title rows live in the header.
     private var pageNavigationContent: some View {
-        VStack(spacing: 0) {
-            headerNavigationView
-                .zIndex(1)
-            if currentHeaderScreen.level == .overview {
-                Divider()
-                    .padding(.horizontal, 18)
+        ZStack(alignment: .top) {
+            if showsCategoryOverview {
+                categoryListView
+                    .clearOfFooter()
+                    .transition(.move(edge: .trailing))
+            } else if let group = shownGroup {
+                ChangeGroupView(group: group)
+                    .id(group.id)
+                    .transition(.move(edge: .trailing))
+            } else {
+                changeFeedView
+                    .transition(.move(edge: .leading))
             }
-            categoryListView
-                .padding(.top, 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .clipped()
         .background(
             DrilldownBackSwipeBridge(
-                isEnabled: canNavigateBackFromDrilldown,
-                onSwipeBack: navigateBackFromDrilldown
+                isEnabled: canNavigateBackFromDrilldown || isShowingGroup,
+                onSwipeBack: {
+                    if isShowingGroup {
+                        closeGroup()
+                    } else {
+                        navigateBackFromDrilldown()
+                    }
+                }
             )
         )
         .frame(maxHeight: .infinity, alignment: .top)
@@ -1262,35 +1306,16 @@ struct MenuBarView: View {
         .onDisappear {
             synchronizeVisibleHeaderToCurrent()
         }
-        .background {
-            ZStack {
-                headerView(for: .overview)
-                if let firstCategory = GrowthCategory.allCases.first {
-                    headerView(for: HeaderScreen(
-                        level: .category,
-                        category: CategoryInventoryItem(category: firstCategory, currentSizeBytes: 0),
-                        subcategory: nil
-                    ))
-                    headerView(for: HeaderScreen(
-                        level: .files,
-                        category: CategoryInventoryItem(category: firstCategory, currentSizeBytes: 0),
-                        subcategory: nil
-                    ))
-                }
-            }
-            .frame(width: 0, height: 0)
-            .opacity(0)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
-        .frame(height: 44)
+        .frame(height: HeaderRowMetrics.height)
     }
 
     @ViewBuilder
     private func headerView(for screen: HeaderScreen) -> some View {
         switch screen.level {
-        case .overview:
-            overviewHeader
+        case .feed, .overview:
+            // `.feed` only renders while the categories page slides out, so it
+            // keeps the categories header instead of going blank.
+            categoriesHeader
                 .transition(.identity)
         case .category, .files:
             if let category = resolvedHeaderCategory(for: screen) {
@@ -1351,88 +1376,110 @@ struct MenuBarView: View {
 
     private func headerPage(for screen: HeaderScreen, width: CGFloat) -> some View {
         headerView(for: screen)
-            .frame(width: width, height: 44, alignment: .center)
+            .frame(width: width, height: HeaderRowMetrics.height, alignment: .center)
     }
 
-    /// The overview summary keeps the window label separate from its signed
-    /// total so the change reads like a section heading rather than a badge.
-    private var overviewHeader: some View {
-        let net = overallGrowthBytes
-        let isBelowFloor = abs(net) < GrowthJournalService.presentationFloorBytes
-        let isGrowth = net > 0
-        let tint: Color = isGrowth ? .orange : .green
-
-        return HStack {
-            Text("7-day change")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            HStack(spacing: 5) {
-                if !isBelowFloor {
-                    Image(systemName: isGrowth ? "arrow.up.right" : "arrow.down.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(tint)
-                }
-
-                Text(isBelowFloor ? "0 MB" : "\(isGrowth ? "+" : "\u{2212}")\(formattedBytes(abs(net)))")
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-            }
-        }
-        .padding(.horizontal, 18)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(headerAccessibilityLabel(net: net, isBelowFloor: isBelowFloor))
-    }
-
-    private func headerAccessibilityLabel(net: Int64, isBelowFloor: Bool) -> String {
-        if isBelowFloor {
-            return "No net change over the \(growthWindowLabel)"
-        }
-        let direction = net > 0 ? "up" : "down"
-        return "\(direction) \(formattedBytes(abs(net))) over the \(growthWindowLabel)"
+    /// The categories view's own header: a back arrow to the change list.
+    private var categoriesHeader: some View {
+        navigationHeader(
+            title: "Categories",
+            backHint: "Return to the change list",
+            onBack: { setShowsCategoryOverview(false) }
+        )
     }
 
     private func drillDownHeader(category: CategoryInventoryItem, subcategory: SubcategoryGroup?) -> some View {
-        let headerName = subcategory?.displayName ?? category.category.displayName
+        navigationHeader(
+            title: subcategory?.displayName ?? category.category.displayName,
+            backHint: "Return to category overview",
+            onBack: navigateBackFromDrilldown
+        )
+    }
 
-        return HStack(spacing: 0) {
-            // Back button — fixed width for centering balance
-            Button(action: navigateBackFromDrilldown) {
-                ZStack(alignment: .leading) {
-                    // A clear shape makes the full target participate in
-                    // AppKit hit testing while leaving the rendered button unchanged.
-                    Color.clear
-                        .frame(width: 44, height: 44)
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.blue)
-                        .frame(width: 32, height: 32)
-                        .offset(y: -2)
-                }
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
+    private func navigationHeader(title: String, backHint: String, onBack: @escaping () -> Void) -> some View {
+        HeaderTitleRow(title: title, backHint: backHint, onBack: onBack)
+    }
+
+    // MARK: - Change Feed
+
+    private var changeFeedView: some View {
+        Group {
+            if let error = manager.errorMessage {
+                scanErrorView(error)
+                    .clearOfFooter()
+            } else {
+                ChangeFeedView(
+                    result: manager.changeFeed,
+                    expandedDays: $expandedFeedDays,
+                    scrollAnchor: $feedScrollAnchor,
+                    onOpenGroup: openChangeGroup,
+                    onRetry: { Task { await manager.refreshChangeFeed() } }
+                )
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back")
-            .accessibilityHint("Return to category overview")
-
-            Text(headerName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .offset(y: -2)
-
-            // Balance spacer matches back button width
-            Color.clear
-                .frame(width: 44)
         }
-        .padding(.horizontal, 12)
-        .frame(maxHeight: .infinity, alignment: .center)
+    }
+
+    /// The open group as the latest change list has it, so a refresh while it
+    /// is open shows the new rows; the opened copy if the group is gone.
+    private var shownGroup: ChangeGroup? {
+        guard let openGroup else { return nil }
+        let fresh = manager.changeFeed?.feed?.days
+            .first { $0.day == openGroup.day }?
+            .groups.first { $0.id == openGroup.id }
+        return fresh ?? openGroup
+    }
+
+    private var isShowingGroup: Bool {
+        openGroup != nil && !showsCategoryOverview
+    }
+
+    private func openChangeGroup(_ group: ChangeGroup) {
+        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+            openGroup = group
+        }
+    }
+
+    private func closeGroup() {
+        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+            openGroup = nil
+        }
+    }
+
+    private func setShowsCategoryOverview(_ shows: Bool) {
+        guard showsCategoryOverview != shows else { return }
+        if !shows {
+            drillTransitionCoordinator.cancelAndReset()
+            manager.selectedSubcategory = nil
+            manager.selectedInventoryCategory = nil
+            manager.isSubcategoryDrillDown = false
+            manager.isDrilledDown = false
+        }
+        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+            showsCategoryOverview = shows
+            openGroup = nil
+            highlightedStorageSegmentID = nil
+        }
+        synchronizeVisibleHeaderToCurrent()
+    }
+
+    private func scanErrorView(_ error: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 24))
+                .foregroundStyle(.orange)
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Retry") {
+                Task {
+                    await manager.loadInventory()
+                }
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
     }
 
     // MARK: - Category List View
@@ -1440,24 +1487,7 @@ struct MenuBarView: View {
     private var categoryListView: some View {
         Group {
             if let error = manager.errorMessage {
-                // Error message
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.orange)
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    Button("Retry") {
-                        Task {
-                            await manager.loadInventory()
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
+                scanErrorView(error)
             } else {
                 CategoryGrowthListView(
                     categories: manager.sortedCategories,
@@ -1550,12 +1580,16 @@ struct MenuBarView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .frame(height: SoftBottomEdge.footerHeight)
     }
 
     @ViewBuilder
     private var footerStatusText: some View {
-        if manager.showsUpdateAvailableBanner {
+        if isShowingGroup, let group = shownGroup {
+            Text(EpisodeBuilder.dayLabel(for: group.day, calendar: .current))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        } else if manager.showsUpdateAvailableBanner {
             HStack(spacing: 8) {
                 Circle()
                     .fill(Color.blue)

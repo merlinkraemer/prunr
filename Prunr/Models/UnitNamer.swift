@@ -6,13 +6,74 @@ struct UnitName: Equatable, Sendable {
     let title: String
     /// Optional muted detail for the caption, e.g. "Application Support".
     let detail: String?
-    /// Category whose icon the row uses.
+    /// Category whose symbol the row uses when `icon` can't be shown.
     let category: GrowthCategory
+    /// Where the row's real icon comes from; `.category` uses the category symbol.
+    let icon: UnitIconSource
 
-    init(title: String, detail: String? = nil, category: GrowthCategory) {
+    init(title: String, detail: String? = nil, category: GrowthCategory, icon: UnitIconSource = .category) {
         self.title = title
         self.detail = detail
         self.category = category
+        self.icon = icon
+    }
+}
+
+/// Where a place's icon comes from. Resolved lazily by `UnitIconResolver`, which
+/// falls back to the category symbol when the app or file isn't there.
+enum UnitIconSource: Hashable, Sendable {
+    /// The category symbol on its coloured tile.
+    case category
+    /// The icon of the installed app with this bundle id.
+    case app(bundleIdentifier: String)
+    /// The file's own icon (a single download).
+    case file(path: String)
+
+    static let xcode = UnitIconSource.app(bundleIdentifier: "com.apple.dt.Xcode")
+    static let docker = UnitIconSource.app(bundleIdentifier: "com.docker.docker")
+    static let mail = UnitIconSource.app(bundleIdentifier: "com.apple.mail")
+    static let messages = UnitIconSource.app(bundleIdentifier: "com.apple.MobileSMS")
+    static let photos = UnitIconSource.app(bundleIdentifier: "com.apple.Photos")
+    static let finalCutPro = UnitIconSource.app(bundleIdentifier: "com.apple.FinalCut")
+    static let abletonLive = UnitIconSource.app(bundleIdentifier: "com.ableton.live")
+    static let steam = UnitIconSource.app(bundleIdentifier: "com.valvesoftware.steam")
+
+    /// The app behind a `~/Library/<Area>/<item>` folder or file when the item is
+    /// a bundle id: `com.apple.Safari`, `group.com.apple.notes`,
+    /// `UBF8T346G9.com.microsoft.teams`, `com.apple.finder.plist`. Else `.category`.
+    static func libraryItem(_ item: String) -> UnitIconSource {
+        var identifier = item
+        if identifier.lowercased().hasPrefix("group.") {
+            identifier = String(identifier.dropFirst("group.".count))
+        }
+        if let teamPrefix = identifier.range(of: "^[A-Z0-9]{10}\\.", options: .regularExpression) {
+            identifier.removeSubrange(teamPrefix)
+        }
+        if let dot = identifier.lastIndex(of: "."),
+           UnitNamer.identifierFileExtensions.contains(identifier[identifier.index(after: dot)...].lowercased()) {
+            identifier = String(identifier[..<dot])
+        }
+        return app(ifBundleIdentifier: identifier, minimumSegments: 3)
+    }
+
+    /// The app behind an iCloud container folder: `iCloud~com~culturedcode~ThingsMac`
+    /// → `com.culturedcode.ThingsMac`, `com~apple~Pages` → `com.apple.Pages`,
+    /// `27N4MQEA55~pro~writer` → `pro.writer`. Else `.category`.
+    static func icloudContainer(_ container: String) -> UnitIconSource {
+        var segments = container.split(separator: "~").map(String.init)
+        if segments.first?.lowercased() == "icloud" { segments.removeFirst() }
+        if let first = segments.first, first.range(of: "^[A-Z0-9]{10}$", options: .regularExpression) != nil {
+            segments.removeFirst()
+        }
+        return app(ifBundleIdentifier: segments.joined(separator: "."), minimumSegments: 2)
+    }
+
+    private static func app(ifBundleIdentifier text: String, minimumSegments: Int) -> UnitIconSource {
+        let segments = text.split(separator: ".", omittingEmptySubsequences: false)
+        let isIdentifier = segments.count >= minimumSegments && segments.allSatisfy { segment in
+            !segment.isEmpty && segment.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+        }
+        return isIdentifier ? .app(bundleIdentifier: text) : .category
     }
 }
 
@@ -39,7 +100,7 @@ enum UnitNamer {
 
         let title = sanitize(raw.title)
         let detail = raw.detail.map { sanitize($0) }.flatMap { $0.isEmpty ? nil : $0 }
-        return UnitName(title: title.isEmpty ? "Files" : title, detail: detail, category: raw.category)
+        return UnitName(title: title.isEmpty ? "Files" : title, detail: detail, category: raw.category, icon: raw.icon)
     }
 
     /// Resolves and names a path in one step.
@@ -114,7 +175,7 @@ enum UnitNamer {
     /// 32 or more hex characters, with one leading separator.
     private static let hexRunRegex = try! NSRegularExpression(pattern: "[-_.]?[0-9A-Fa-f]{32,}")
 
-    private static let identifierFileExtensions: Set<String> = [
+    static let identifierFileExtensions: Set<String> = [
         "plist", "savedstate", "binarycookies", "log", "db", "sqlite", "json", "lock"
     ]
 
@@ -160,7 +221,7 @@ extension UnitRules {
                   let item = UnitNamer.displayComponent(UnitRules.strippingPartialDownloadSuffix(relative[1])) else {
                 return UnitName(title: "Downloads", category: .downloads)
             }
-            return UnitName(title: "Downloads · \(item)", category: .downloads)
+            return UnitName(title: "Downloads · \(item)", category: .downloads, icon: .file(path: root.path))
         }
     )
 
@@ -183,7 +244,9 @@ extension UnitRules {
             guard relative.count >= 3, let item = UnitNamer.appDisplayName(relative[2]) else {
                 return UnitName(title: area, category: category)
             }
-            return UnitName(title: "\(item) data", detail: area, category: category)
+            return UnitName(
+                title: "\(item) data", detail: area, category: category, icon: .libraryItem(relative[2])
+            )
         }
     )
 

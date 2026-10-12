@@ -49,9 +49,9 @@ extension UnitRules {
         name: { root in
             let stem = mediaStem(root.components.last, suffix: ".photoslibrary")
             guard let stem, !["photos library", "photos"].contains(stem.lowercased()) else {
-                return UnitName(title: "Photos library", category: .mediaAndDocuments)
+                return UnitName(title: "Photos library", category: .mediaAndDocuments, icon: .photos)
             }
-            return UnitName(title: "Photos library · \(stem)", category: .mediaAndDocuments)
+            return UnitName(title: "Photos library · \(stem)", category: .mediaAndDocuments, icon: .photos)
         }
     )
 
@@ -74,7 +74,9 @@ extension UnitRules {
             guard let bundle = lower.firstIndex(where: { $0.hasSuffix(".fcpbundle") }),
                   let library = mediaStem(root.components[bundle], suffix: ".fcpbundle") else { return nil }
             let event = root.components.count - bundle >= 3 ? UnitNamer.displayComponent(root.components[bundle + 1]) : nil
-            return UnitName(title: "Final Cut Pro render files · \(library)", detail: event, category: .mediaAndDocuments)
+            return UnitName(
+                title: "Final Cut Pro render files · \(library)", detail: event, category: .mediaAndDocuments, icon: .finalCutPro
+            )
         }
     )
 
@@ -86,9 +88,9 @@ extension UnitRules {
         },
         name: { root in
             guard let library = mediaStem(root.components.last, suffix: ".fcpbundle") else {
-                return UnitName(title: "Final Cut Pro library", category: .mediaAndDocuments)
+                return UnitName(title: "Final Cut Pro library", category: .mediaAndDocuments, icon: .finalCutPro)
             }
-            return UnitName(title: "Final Cut Pro library · \(library)", category: .mediaAndDocuments)
+            return UnitName(title: "Final Cut Pro library · \(library)", category: .mediaAndDocuments, icon: .finalCutPro)
         }
     )
 
@@ -124,7 +126,8 @@ extension UnitRules {
             guard let relative = root.relative, relative.count >= 3 else { return nil }
             return UnitName(
                 title: "\(icloudContainerAppName(relative[2])) in iCloud",
-                category: .mediaAndDocuments
+                category: .mediaAndDocuments,
+                icon: .icloudContainer(relative[2])
             )
         }
     )
@@ -146,7 +149,8 @@ extension UnitRules {
             return UnitName(
                 title: "Ableton library",
                 detail: isPacks ? "factory packs" : nil,
-                category: .audioProduction
+                category: .audioProduction,
+                icon: .abletonLive
             )
         }
     )
@@ -179,7 +183,7 @@ extension UnitRules {
         guard let last = root.components.last else { return nil }
         let name = abletonProjectName(last) ?? UnitNamer.displayComponent(last)
         guard let name else { return nil }
-        return UnitName(title: "Ableton project · \(name)", category: .audioProduction)
+        return UnitName(title: "Ableton project · \(name)", category: .audioProduction, icon: .abletonLive)
     }
 
     /// "Song Project" → "Song"; nil when the component is not a project folder.

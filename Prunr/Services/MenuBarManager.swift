@@ -118,28 +118,9 @@ final class DropdownPanel: NSPanel {
 @MainActor
 @Observable
 final class MenuBarManager: NSObject {
-    /// Change-rank: two tiers.
-    ///
-    /// 1. Rows whose |delta| clears the presentation floor, by |delta| descending.
-    /// 2. Everything else after them, by current size descending.
-    ///
-    /// Absolute, not positive-only — a −20 GB event is real information and must
-    /// not sink below a stack of +50 MB rows.
+    /// The categories view lists today's sizes, biggest first; equal sizes
+    /// sort by name. What changed is the change list's job, not this order's.
     private static func inventorySortsBefore(_ lhs: CategoryInventoryItem, _ rhs: CategoryInventoryItem) -> Bool {
-        let lhsDelta = abs(lhs.recentGrowthStory?.deltaBytes ?? 0)
-        let rhsDelta = abs(rhs.recentGrowthStory?.deltaBytes ?? 0)
-        let floor = GrowthJournalService.presentationFloorBytes
-        let lhsChanged = lhsDelta >= floor
-        let rhsChanged = rhsDelta >= floor
-
-        if lhsChanged != rhsChanged {
-            return lhsChanged
-        }
-
-        if lhsChanged && lhsDelta != rhsDelta {
-            return lhsDelta > rhsDelta
-        }
-
         if lhs.currentSizeBytes == rhs.currentSizeBytes {
             return lhs.category.displayName.localizedStandardCompare(rhs.category.displayName) == .orderedAscending
         }
@@ -204,20 +185,14 @@ final class MenuBarManager: NSObject {
     // Views read `sortedCategories` (computed from this).
     var allCategories: [CategoryInventoryItem] = []
 
-    /// One change-ranked list. There is no growing/stable partition: a row
-    /// either carries a signed delta or it doesn't.
+    /// Categories by size, biggest first. Each row carries its signed change
+    /// this week, or none.
     var sortedCategories: [CategoryInventoryItem] {
         allCategories.sorted(by: Self.inventorySortsBefore)
     }
 
-    /// Signed net change across **all** categories over the display window.
-    /// This is the headline number; the rows decompose it.
-    var overallGrowthBytes: Int64 {
-        allCategories.reduce(Int64(0)) { $0 + ($1.recentGrowthStory?.deltaBytes ?? 0) }
-    }
-
     /// Categories whose |delta| clears the presentation floor, i.e. the rows
-    /// that actually render a delta line.
+    /// that render a change line. Feeds the diagnostics growing/stable counts.
     var changedCategories: [CategoryInventoryItem] {
         sortedCategories.filter {
             abs($0.recentGrowthStory?.deltaBytes ?? 0) >= GrowthJournalService.presentationFloorBytes
@@ -226,6 +201,14 @@ final class MenuBarManager: NSObject {
     var hasDisplayableInventory: Bool {
         !allCategories.isEmpty
     }
+
+    /// The change list: one row per place and day. Nil until the first read
+    /// finishes (unknown); `.failed` when history could not be read. A rescan
+    /// never clears it: the last list stays until a new read replaces it.
+    var changeFeed: ChangeFeedResult?
+    @ObservationIgnored
+    private var changeFeedRefreshTask: Task<Void, Never>?
+    private static let changeFeedDebounce: Duration = .seconds(2)
     var reconciliationResult: DiskAccountingResult? = nil // Free-space accounting data
     var isDrilledDown: Bool = false // Tracks if user is in category detail view (ISS-037)
     var selectedInventoryCategory: CategoryInventoryItem? = nil // New inventory-based drill-down selection
@@ -793,31 +776,14 @@ final class MenuBarManager: NSObject {
     /// Supplies stable, privacy-safe content for the marketing screenshot renderer.
     /// This never touches the user's database or tracked paths.
     func applyScreenshotPreviewContent() {
-        let now = Date()
-        let baselineDate = Calendar.current.date(byAdding: .day, value: -4, to: now) ?? now
+        let now = MarketingSample.now
+        let baselineDate = MarketingSample.watchingSince
 
-        func growth(_ category: GrowthCategory, _ bytes: Int64) -> RecentGrowthStory {
-            RecentGrowthStory(
-                category: category,
-                subcategory: nil,
-                deltaBytes: bytes,
-                startedAt: baselineDate,
-                endedAt: now
-            )
-        }
-
-        allCategories = [
-            CategoryInventoryItem(category: .audioProduction, currentSizeBytes: 522_400_000_000, recentGrowthStory: nil),
-            CategoryInventoryItem(category: .other, currentSizeBytes: 421_100_000_000, recentGrowthStory: growth(.other, 151_000_000)),
-            CategoryInventoryItem(category: .cachesAndSystem, currentSizeBytes: 228_200_000_000, recentGrowthStory: growth(.cachesAndSystem, 1_400_000_000)),
-            CategoryInventoryItem(category: .mediaAndDocuments, currentSizeBytes: 119_500_000_000, recentGrowthStory: growth(.mediaAndDocuments, 9_000_000_000)),
-            CategoryInventoryItem(category: .developer, currentSizeBytes: 71_500_000_000, recentGrowthStory: growth(.developer, 4_900_000_000)),
-            CategoryInventoryItem(category: .applications, currentSizeBytes: 18_900_000_000, recentGrowthStory: nil),
-            CategoryInventoryItem(category: .downloads, currentSizeBytes: 7_100_000_000, recentGrowthStory: growth(.downloads, 10_000_000))
-        ]
-        totalBytes = 2_000_000_000_000
-        usedBytes = 1_389_000_000_000
-        freeBytes = totalBytes - usedBytes
+        allCategories = MarketingSample.categories(endedAt: now)
+        changeFeed = .loaded(MarketingSample.feed)
+        totalBytes = MarketingSample.totalBytes
+        freeBytes = MarketingSample.freeBytes
+        usedBytes = totalBytes - freeBytes
         monitoredPathSizeBytes = usedBytes
         growthBaselineDate = baselineDate
         noBaseline = false
@@ -840,7 +806,11 @@ final class MenuBarManager: NSObject {
 
     @discardableResult
     private func generateDiagnosticsReport(revealInFinder: Bool) -> URL? {
-        let context = DiagnosticsAppContext(
+        perfMeter.generateReport(context: makeDiagnosticsContext(), revealInFinder: revealInFinder)
+    }
+
+    func makeDiagnosticsContext() -> DiagnosticsAppContext {
+        DiagnosticsAppContext(
             scopePathCount: SettingsStore.shared.enabledTrackedPaths.count,
             enabledPathCount: enabledPathCount,
             watchedPathCount: watchedPaths.count,
@@ -869,7 +839,6 @@ final class MenuBarManager: NSObject {
             noBaseline: noBaseline,
             lastFullScanCompletedAt: lastFullScanCompletedAt
         )
-        return perfMeter.generateReport(context: context, revealInFinder: revealInFinder)
     }
 
     func prepareDiagnosticsAttachment() -> Data? {
@@ -2296,6 +2265,41 @@ final class MenuBarManager: NSObject {
         }
 
         reconcileDrillDownSelection()
+        // Every journal write (watcher refresh, full scan, accept) ends in an
+        // inventory reload, so this is where the change list follows it.
+        scheduleChangeFeedRefresh()
+    }
+
+    /// Recomputes the change list after journal writes, debounced so a burst
+    /// of watcher refreshes costs one read.
+    func scheduleChangeFeedRefresh() {
+        changeFeedRefreshTask?.cancel()
+        changeFeedRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.changeFeedDebounce)
+            guard !Task.isCancelled else { return }
+            await self?.refreshChangeFeed()
+        }
+    }
+
+    /// Reads the change list now. The value is replaced only when it differs,
+    /// so an unchanged journal does not redraw the list.
+    func refreshChangeFeed() async {
+        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
+        let result: ChangeFeedResult
+        do {
+            let oldestSnapshot = try await growthJournalService.oldestCompleteSnapshotDate(trackedPaths: trackedPaths)
+            let watchingSince = HistoryStart.remember(oldestSnapshot: oldestSnapshot)
+            result = .loaded(try await growthJournalService.changeFeed(
+                trackedPaths: trackedPaths,
+                watchingSince: watchingSince
+            ))
+        } catch {
+            Self.logger.error("Failed to read change feed: \(error.localizedDescription, privacy: .public)")
+            result = .failed
+        }
+        if result != changeFeed {
+            changeFeed = result
+        }
     }
 
     private func clearInventoryState() {
@@ -2319,6 +2323,7 @@ final class MenuBarManager: NSObject {
             liveWorkingSetDrillDownCategories = []
             initialSubcategoryWarmupRequestSignature = nil
         }
+        scheduleChangeFeedRefresh()
     }
 
     private func shouldUseWorkingSetForSubcategoryDetails(_ category: GrowthCategory) -> Bool {

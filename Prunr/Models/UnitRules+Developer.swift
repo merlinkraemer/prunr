@@ -59,16 +59,16 @@ extension UnitRules {
         name: { root in
             guard let rel = root.relative, rel.count >= 5,
                   let project = strippingXcodeHash(rel[4]) else {
-                return UnitName(title: "Xcode build files", category: .developer)
+                return UnitName(title: "Xcode build files", category: .developer, icon: .xcode)
             }
-            return UnitName(title: "Xcode build files · \(project)", category: .developer)
+            return UnitName(title: "Xcode build files · \(project)", category: .developer, icon: .xcode)
         }
     )
 
     static let xcodeArchivesRule = UnitRule(
         kind: .xcodeArchives,
         resolve: { path in xcodeArea(path) == "archives" ? path.homeRoot(depth: 4) : nil },
-        name: { _ in UnitName(title: "Xcode archives", category: .developer) }
+        name: { _ in UnitName(title: "Xcode archives", category: .developer, icon: .xcode) }
     )
 
     /// "iOS DeviceSupport", "watchOS DeviceSupport", "tvOS DeviceSupport".
@@ -78,7 +78,7 @@ extension UnitRules {
             guard let area = xcodeArea(path), area.hasSuffix("devicesupport") else { return nil }
             return path.homeRoot(depth: 4)
         },
-        name: { _ in UnitName(title: "Xcode device support", category: .developer) }
+        name: { _ in UnitName(title: "Xcode device support", category: .developer, icon: .xcode) }
     )
 
     static let xcodeSimulatorRule = UnitRule(
@@ -88,7 +88,7 @@ extension UnitRules {
                   rel[0] == "library", rel[1] == "developer", rel[2] == "coresimulator" else { return nil }
             return path.homeRoot(depth: 3)
         },
-        name: { _ in UnitName(title: "Xcode simulators", category: .developer) }
+        name: { _ in UnitName(title: "Xcode simulators", category: .developer, icon: .xcode) }
     )
 
     /// Xcode appends a 28 letter hash to the project name ("Prunr-bkgqx..."). Nil
@@ -119,13 +119,13 @@ extension UnitRules {
             }
             return nil
         },
-        name: { _ in UnitName(title: "Docker disk", detail: dockerDetail, category: .developer) }
+        name: { _ in UnitName(title: "Docker disk", detail: dockerDetail, category: .developer, icon: .docker) }
     )
 
     static let colimaRule = UnitRule(
         kind: .colima,
         resolve: { path in path.lowercasedRelative?.first == ".colima" ? path.homeRoot(depth: 1) : nil },
-        name: { _ in UnitName(title: "Docker disk · Colima", detail: dockerDetail, category: .developer) }
+        name: { _ in UnitName(title: "Docker disk · Colima", detail: dockerDetail, category: .developer, icon: .docker) }
     )
 
     // MARK: Model stores and package caches

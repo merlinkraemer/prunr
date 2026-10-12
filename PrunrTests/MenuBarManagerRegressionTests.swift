@@ -249,9 +249,8 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         )
     }
 
-    /// Change-rank, absolute: a −20 GB event outranks a +2 GB one, and both
-    /// outrank a 546 GB category that didn't move.
-    func testCategoriesRankByAbsoluteChangeThenBySize() {
+    /// The categories view lists today's sizes, biggest first, whatever moved.
+    func testCategoriesSortBySizeBiggestFirst() {
         let manager = MenuBarManager()
         let gb: Int64 = 1024 * 1024 * 1024
         manager.allCategories = [
@@ -263,13 +262,13 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
 
         XCTAssertEqual(
             manager.sortedCategories.map(\.category),
-            [.developer, .downloads, .other, .audioProduction]
+            [.other, .developer, .audioProduction, .downloads]
         )
     }
 
-    /// Sub-floor movers rank with the unchanged rows (by size), but their bytes
-    /// still count toward the header.
-    func testSubFloorMoversRankBySizeAndStillCountInHeader() {
+    /// Sub-floor movers sort by size like every row, and their bytes still
+    /// count toward the category total.
+    func testSubFloorMoversSortBySizeAndStillCountInTotal() {
         let manager = MenuBarManager()
         let gb: Int64 = 1024 * 1024 * 1024
         manager.allCategories = [
@@ -280,15 +279,15 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
 
         XCTAssertEqual(
             manager.sortedCategories.map(\.category),
-            [.downloads, .other, .audioProduction]
+            [.other, .audioProduction, .downloads]
         )
         XCTAssertEqual(manager.changedCategories.map(\.category), [.downloads])
-        XCTAssertEqual(manager.overallGrowthBytes, 2 * gb + 800_000 + 900_000)
         XCTAssertNil(manager.allCategories.first { $0.category == .other }?.renderableGrowthDeltaBytes)
     }
 
-    /// Delete 20 GB from one category, add 1 GB to another → header −19 GB.
-    func testHeaderIsSignedSumOfAllCategoryDeltas() {
+    /// The diagnostics report keeps its growth and stable counts after the
+    /// old overview is gone: categories that moved this week vs the rest.
+    func testDiagnosticsReportKeepsGrowingAndStableCounts() {
         let manager = MenuBarManager()
         let gb: Int64 = 1024 * 1024 * 1024
         manager.allCategories = [
@@ -297,7 +296,109 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             item(.other, size: 400 * gb)
         ]
 
-        XCTAssertEqual(manager.overallGrowthBytes, -19 * gb)
+        let context = manager.makeDiagnosticsContext()
+
+        XCTAssertEqual(context.categoryCount, 3)
+        XCTAssertEqual(context.growingCount, 2)
+        XCTAssertEqual(context.stableCount, 1)
+        XCTAssertEqual(
+            DiagnosticsReporter.inventorySummary(for: context),
+            "inventory: categories=3 growing=2 stable=1"
+        )
+    }
+
+    /// The marketing screenshot's sample reads like mockup X1: real dates from
+    /// Wed 7 Oct back, one group per category a day, Monday with four groups
+    /// (so "Show all (4)"), Mail's slow growth caption, and a header of +48 GB
+    /// that the categories view and the week's groups add up to.
+    func testMarketingSampleReadsAsTheNewScreen() throws {
+        let feed = MarketingSample.feed
+        let calendar = Calendar.current
+
+        XCTAssertEqual(WeeklyChange(.loaded(feed), now: MarketingSample.now), .bytes(48_000_000_000))
+        XCTAssertEqual(
+            feed.days.map { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) },
+            ["Wed 7 Oct", "Tue 6 Oct", "Mon 5 Oct", "Sun 4 Oct", "Thu 1 Oct"]
+        )
+        let monday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Mon 5 Oct" })
+        XCTAssertEqual(monday.groups.map(\.category), [.downloads, .cachesAndSystem, .developer, .mediaAndDocuments])
+        XCTAssertGreaterThan(monday.groups.count, ChangeFeedRows.collapsedGroupLimit)
+        let mail = try XCTUnwrap(monday.episodes.first { $0.title == "Mail attachments" })
+        XCTAssertEqual(EpisodeBuilder.caption(for: mail, calendar: calendar), "a little each day since Fri 2 Oct")
+
+        let weekStart = GrowthJournalService.weekStart(now: MarketingSample.now, calendar: calendar)
+        let weekGroups = feed.days.filter { $0.day >= weekStart }.flatMap(\.groups)
+        for item in MarketingSample.categories(endedAt: MarketingSample.now) {
+            let rows = weekGroups.filter { $0.category == item.category }.reduce(Int64(0)) { $0 + $1.netBytes }
+            XCTAssertEqual(rows, item.growthDeltaBytes, item.category.displayName)
+        }
+        XCTAssertTrue(feed.episodes.allSatisfy { abs($0.netBytes) >= EpisodeBuilder.rowThresholdBytes })
+        XCTAssertNil(feed.quietSince(now: MarketingSample.now, calendar: calendar))
+        XCTAssertFalse(feed.isShortHistory(now: MarketingSample.now, calendar: calendar))
+
+        let categories = MarketingSample.categories(endedAt: MarketingSample.now)
+        XCTAssertEqual(categories.reduce(Int64(0)) { $0 + $1.growthDeltaBytes }, feed.weekNetBytes)
+        let tracked = categories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
+        XCTAssertEqual(MarketingSample.totalBytes - MarketingSample.freeBytes - tracked, 122_400_000_000)
+    }
+
+    // MARK: - Change list states
+
+    private static func sampleFeed() -> ChangeFeed {
+        let today = Calendar.current.startOfDay(for: Date())
+        let episode = ChangeEpisode(
+            id: "download|/Users/tester/Downloads/a.iso@0",
+            title: "Downloads · a.iso",
+            detail: nil,
+            category: .downloads,
+            rootPath: "/Users/tester/Downloads/a.iso",
+            netBytes: 2 * 1024 * 1024 * 1024,
+            grossBytes: 2 * 1024 * 1024 * 1024,
+            day: today,
+            time: Date(),
+            isApproximateTime: false
+        )
+        return ChangeFeed(
+            days: [ChangeFeedDay(day: today, episodes: [episode])],
+            weekNetBytes: episode.netBytes,
+            watchingSince: today
+        )
+    }
+
+    /// A history that cannot be read gives `.failed` and a "—" header, never
+    /// an empty list that would read as "nothing changed".
+    func testFeedReadFailureGivesFailedAndUnknownHeader() async throws {
+        let manager = MenuBarManager()
+        manager.changeFeed = .loaded(Self.sampleFeed())
+        // No database: every journal read throws.
+        try? DatabaseManager.shared.close()
+
+        await manager.refreshChangeFeed()
+
+        XCTAssertEqual(manager.changeFeed, .failed)
+        XCTAssertNotEqual(manager.changeFeed, .loaded(.empty))
+        XCTAssertEqual(WeeklyChange(manager.changeFeed), .unknown)
+        XCTAssertEqual(WeeklyChange(manager.changeFeed).amountText, "\u{2014}")
+    }
+
+    /// Starting a rescan (and the inventory reload around it) keeps the last
+    /// list on screen; only a finished read may replace it.
+    func testStartingARescanDoesNotClearTheChangeFeed() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let manager = MenuBarManager()
+            let feed = Self.sampleFeed()
+            manager.noBaseline = false
+            manager.changeFeed = .loaded(feed)
+
+            let missingRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PrunrMissing-\(UUID().uuidString)", isDirectory: true)
+            let trackedPath = TrackedPath(url: missingRoot, displayName: "Missing")
+            _ = await manager.loadInventory(trackedPathsOverride: [trackedPath])
+            XCTAssertEqual(manager.changeFeed, .loaded(feed))
+
+            await manager.loadInventoryFromLatestSnapshot(refreshedAt: Date())
+            XCTAssertEqual(manager.changeFeed, .loaded(feed))
+        }
     }
 
     func testInitialSubcategoryWarmupDoesNotRepeatSameCategorySet() {
