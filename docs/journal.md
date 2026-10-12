@@ -53,3 +53,4 @@
 2026-10-12 05:25 orchestrator - landed on Mac: settings (s14) + balance (s15) combined in feat/review-s14-s15 (mac-queue PASS 20261012-050224), Debug install PASS (isolated queue, battery override on Merlin's go); waits for review
 2026-10-12 06:00 orchestrator - decided: Merlin approved beta flow F1–F5 (↗/↘ arrows, hover Finder icon replaces amount, categories by size, footer states; idle footer default 'Updated N min ago'); build waits for balance-flag worker
 2026-10-12 06:20 orchestrator - landed on branch: balance header behind flag 'balanceHeader' (default off), This week back (656ade9, mac-queue PASS 20261012-052558, 266 tests) → feat/review-s14-s15; spawn s16 beta flow F1–F5 (feat/s16-beta-flow)
+2026-10-12 06:45 orchestrator - landed on branch: s16 beta flow (b9452fd, mac-queue PASS 20261012-054608, 272 tests), installed (20261012-055216); skipped footer states: Catching up (no state), Update ready (Sparkle has no download state)

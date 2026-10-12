@@ -12,8 +12,9 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Rows of slowly growing places shift by a day as the 30-day window slides — rec: small checkpoint table (schema change) — branch: none
-2. Top number (bank-balance idea) and settings review — mockups in progress — branch: none
+1. Review the beta-flow build on the Mac (settings rework, balance flag off, ↗/↘, Finder hover, categories by size, footer states), then merge feat/s16-beta-flow into main — rec: review, then merge — branch: feat/s16-beta-flow
+2. Full Disk Access shown twice (top banner + footer) — rec: drop the top banner — branch: none
+3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 
 ## Queue
 
