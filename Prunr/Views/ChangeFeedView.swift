@@ -12,6 +12,7 @@ struct ChangeFeedView: View {
     /// back lands where the list was. The header shows this day's storage.
     @Binding var scrollAnchor: Date?
     let onOpenGroup: (ChangeGroup) -> Void
+    let onReveal: (String) -> Void
     let onRetry: () -> Void
 
     var body: some View {
@@ -31,7 +32,13 @@ struct ChangeFeedView: View {
                     .clearOfFooter()
             case .loaded(let feed)?:
                 ScrollView {
-                    ChangeFeedRows(feed: feed, now: now, expandedDays: $expandedDays, onOpenGroup: onOpenGroup)
+                    ChangeFeedRows(
+                        feed: feed,
+                        now: now,
+                        expandedDays: $expandedDays,
+                        onOpenGroup: onOpenGroup,
+                        onReveal: onReveal
+                    )
                         .padding(.bottom, SoftBottomEdge.height)
                 }
                 .hiddenScrollIndicators()
@@ -63,6 +70,7 @@ struct ChangeFeedRows: View {
     let now: Date
     @Binding var expandedDays: Set<Date>
     let onOpenGroup: (ChangeGroup) -> Void
+    let onReveal: (String) -> Void
 
     private let calendar = Calendar.current
 
@@ -113,7 +121,7 @@ struct ChangeFeedRows: View {
                 .accessibilityAddTraits(.isHeader)
 
             ForEach(shown) { group in
-                ChangeGroupRow(group: group) { onOpenGroup(group) }
+                ChangeGroupRow(group: group, onOpen: { onOpenGroup(group) }, onReveal: onReveal)
             }
 
             if isCollapsed {

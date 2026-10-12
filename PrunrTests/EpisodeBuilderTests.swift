@@ -708,6 +708,7 @@ final class EpisodeBuilderTests: XCTestCase {
         _ net: Int64,
         at time: Date,
         detail: String? = nil,
+        rootPath: String? = nil,
         calendar: Calendar,
         approximate: Bool = false,
         movedToTrash: Bool = false,
@@ -718,7 +719,7 @@ final class EpisodeBuilderTests: XCTestCase {
             title: id,
             detail: detail,
             category: category,
-            rootPath: nil,
+            rootPath: rootPath,
             netBytes: net,
             grossBytes: abs(net),
             day: calendar.startOfDay(for: time),
@@ -810,6 +811,64 @@ final class EpisodeBuilderTests: XCTestCase {
         let b = ChangeGroup(day: tuesday, category: .developer, episodes: [])
         let c = ChangeGroup(day: monday, category: .downloads, episodes: [])
         XCTAssertEqual(Set([a.id, b.id, c.id]).count, 3)
+    }
+
+    private func group(_ places: [(id: String, rootPath: String?)]) -> ChangeGroup {
+        let utc = calendar()
+        let at = date(2026, 10, 5, 12, 0, in: utc)
+        return ChangeGroup(
+            day: utc.startOfDay(for: at),
+            category: .developer,
+            episodes: places.map { episode($0.id, .developer, Self.gb, at: at, rootPath: $0.rootPath, calendar: utc) }
+        )
+    }
+
+    func testOnePlaceGroupShowsThePlaceAndRevealsIt() {
+        let single = group([("xcode", "/Users/tester/Library/Developer/Xcode/DerivedData")])
+        XCTAssertEqual(single.soloPlace?.id, "xcode")
+        XCTAssertEqual(single.rowKind, .single(rootPath: "/Users/tester/Library/Developer/Xcode/DerivedData"))
+    }
+
+    func testGroupWithSeveralPlacesOpensWhenAnyHasAPath() {
+        XCTAssertEqual(group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")]).rowKind, .multi)
+        XCTAssertEqual(group([("a", nil), ("b", "/Users/tester/b")]).rowKind, .multi)
+        XCTAssertNil(group([("a", "/Users/tester/a"), ("b", nil)]).soloPlace)
+    }
+
+    func testGroupsWithoutAnyPathAreInert() {
+        let legacy = group([("Files in your folders", nil)])
+        XCTAssertEqual(legacy.rowKind, .inert)
+        XCTAssertEqual(legacy.soloPlace?.id, "Files in your folders")
+        XCTAssertEqual(group([("a", nil), ("b", nil)]).rowKind, .inert)
+    }
+
+    func testHoverSwapsTheChevronForShowInFinderOnlyOnOnePlaceRows() {
+        let single = ChangeGroupRowKind.single(rootPath: "/Users/tester/a")
+        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: single, isHovering: false), .chevron)
+        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: single, isHovering: true), .revealInFinder)
+        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: .multi, isHovering: false), .chevron)
+        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: .multi, isHovering: true), .chevron)
+        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: .inert, isHovering: false), ChangeGroupRow.TrailingGlyph.none)
+        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: .inert, isHovering: true), ChangeGroupRow.TrailingGlyph.none)
+    }
+
+    func testRowClickRevealsOnePlaceOpensSeveralAndIgnoresInert() {
+        var opened = 0
+        var revealed: [String] = []
+        let open = { opened += 1 }
+        let reveal = { (path: String) in revealed.append(path) }
+
+        ChangeGroupRow.perform(.single(rootPath: "/Users/tester/a"), onOpen: open, onReveal: reveal)
+        XCTAssertEqual(revealed, ["/Users/tester/a"])
+        XCTAssertEqual(opened, 0)
+
+        ChangeGroupRow.perform(.multi, onOpen: open, onReveal: reveal)
+        XCTAssertEqual(opened, 1)
+        XCTAssertEqual(revealed.count, 1)
+
+        ChangeGroupRow.perform(.inert, onOpen: open, onReveal: reveal)
+        XCTAssertEqual(opened, 1)
+        XCTAssertEqual(revealed.count, 1)
     }
 
     // MARK: - Arrows and the storage balance

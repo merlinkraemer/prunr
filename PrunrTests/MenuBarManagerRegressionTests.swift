@@ -308,8 +308,9 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
     }
 
     /// The marketing screenshot's sample reads like mockup X1: real dates from
-    /// Wed 7 Oct back, one group per category a day, Monday with four groups
-    /// (so "Show all (4)"), Mail's slow growth caption, and a header of +48 GB
+    /// Wed 7 Oct back, one group per category a day, Monday with four
+    /// one-place groups (so "Show all (4)"), Tuesday's two-place Developer
+    /// group, Mail's slow growth caption, and a header of +48 GB
     /// that the categories view and the week's groups add up to.
     func testMarketingSampleReadsAsTheNewScreen() throws {
         let feed = MarketingSample.feed
@@ -323,6 +324,11 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         let monday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Mon 5 Oct" })
         XCTAssertEqual(monday.groups.map(\.category), [.downloads, .cachesAndSystem, .developer, .mediaAndDocuments])
         XCTAssertGreaterThan(monday.groups.count, ChangeFeedRows.collapsedGroupLimit)
+        XCTAssertTrue(monday.groups.allSatisfy { $0.soloPlace != nil })
+        let tuesday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Tue 6 Oct" })
+        let developer = try XCTUnwrap(tuesday.groups.first { $0.category == .developer })
+        XCTAssertEqual(developer.rowKind, .multi)
+        XCTAssertEqual(developer.episodes.count, 2)
         let mail = try XCTUnwrap(monday.episodes.first { $0.title == "Mail attachments" })
         XCTAssertNotNil(mail.buildingSince)
         XCTAssertNil(EpisodeBuilder.timeCaption(for: mail, calendar: calendar))

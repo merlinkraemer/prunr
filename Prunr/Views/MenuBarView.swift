@@ -1465,6 +1465,7 @@ struct MenuBarView: View {
                     expandedDays: $expandedFeedDays,
                     scrollAnchor: $feedScrollAnchor,
                     onOpenGroup: openChangeGroup,
+                    onReveal: revealPlace,
                     onRetry: { Task { await manager.refreshChangeFeed() } }
                 )
             }
