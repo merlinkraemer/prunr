@@ -49,3 +49,4 @@
 2026-10-12 04:10 orchestrator - spawn: mockups Y1/Y2 (top number) + settings review (docs/settings-review-2026-10-12.md) and mockups Z1–Z3 incl. hidden Developer tab, published page 'Top number + settings'
 - 2026-10-12 mac-queue 7cd03508c test-Prunr PASS: 10-xcodegen=PASS 20-test-Prunr=PASS
 2026-10-12 04:30 orchestrator - spawn: s14 settings rework + Developer tab (feat/s14-settings; tab 'Folder' instead of 'Watching', keep Change… + folder name in copy); balance mockups B1–B3 (used storage top right, ↑↓ arrows)
+2026-10-12 05:00 orchestrator - spawn: s15 balance header C3 (used of capacity, scroll-linked historic values from snapshots, bar shows historic fill, Now ↑) + ↑/↓ row arrows (feat/s15-balance)
