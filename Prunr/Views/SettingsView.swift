@@ -139,12 +139,6 @@ private enum SettingsDates {
     }
 }
 
-private func formattedBytes(_ bytes: Int64) -> String {
-    let formatter = ByteCountFormatter()
-    formatter.countStyle = .file
-    return formatter.string(fromByteCount: bytes)
-}
-
 // MARK: - General
 
 private struct GeneralSettingsTab: View {
