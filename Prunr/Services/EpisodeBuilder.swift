@@ -161,7 +161,7 @@ enum WeeklyChange: Equatable, Sendable {
         self = abs(net) < GrowthJournalService.presentationFloorBytes ? .none : .bytes(net)
     }
 
-    /// The amount on the header's right edge: "—", "+48 GB" or "−3 GB".
+    /// The amount on the header's right edge: "—", "↗ 48 GB" or "↘ 3 GB".
     /// `.none` has no amount; the header reads "No change".
     var amountText: String? {
         switch self {
@@ -170,14 +170,9 @@ enum WeeklyChange: Equatable, Sendable {
         case .none:
             return nil
         case .bytes(let net):
-            return signedBytes(net)
+            return arrowBytes(net)
         }
     }
-}
-
-/// "+2 GB" or "−3 GB".
-func signedBytes(_ bytes: Int64) -> String {
-    "\(bytes > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(bytes)))"
 }
 
 /// Turns journal slots into rows. Pure: no I/O, no database, no actor.

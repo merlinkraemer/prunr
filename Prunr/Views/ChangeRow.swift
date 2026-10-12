@@ -52,9 +52,9 @@ func changeAmountStyle(_ netBytes: Int64) -> AnyShapeStyle {
     return netBytes < 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary)
 }
 
-/// "↑ 9.0 GB" for growth, "↓ 4.0 GB" for a shrink.
+/// "↗ 9.0 GB" for growth, "↘ 4.0 GB" for a shrink.
 func arrowBytes(_ bytes: Int64) -> String {
-    "\(bytes < 0 ? "\u{2193}" : "\u{2191}") \(formattedBytes(abs(bytes)))"
+    "\(bytes < 0 ? "\u{2198}" : "\u{2197}") \(formattedBytes(abs(bytes)))"
 }
 
 /// The amount as VoiceOver reads it: "up 9.0 GB" or "down 4.0 GB".

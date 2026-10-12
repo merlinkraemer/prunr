@@ -356,17 +356,17 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(feed.weekNetBytes, expected)
         let weekly = WeeklyChange(.loaded(feed), now: now)
         XCTAssertEqual(weekly, .bytes(expected))
-        XCTAssertEqual(weekly.amountText, "+\(formattedBytes(expected))")
+        XCTAssertEqual(weekly.amountText, "\u{2197} \(formattedBytes(expected))")
         XCTAssertEqual(feed.episodes.map(\.netBytes), [50 * Self.gb, -2 * Self.gb, 7 * Self.gb])
     }
 
-    func testWeeklyChangeShrinkReadsWithMinusSign() {
+    func testWeeklyChangeShrinkReadsWithDownArrow() {
         let utc = calendar()
         let now = date(2026, 10, 11, 15, 0, in: utc)
         let feed = build([slot(Self.iso, at: date(2026, 10, 10, 9, 0, in: utc), net: -3 * Self.gb)], now: now, calendar: utc)
         let weekly = WeeklyChange(.loaded(feed), now: now)
         XCTAssertEqual(weekly, .bytes(-3 * Self.gb))
-        XCTAssertEqual(weekly.amountText, "\u{2212}\(formattedBytes(3 * Self.gb))")
+        XCTAssertEqual(weekly.amountText, "\u{2198} \(formattedBytes(3 * Self.gb))")
     }
 
     /// Unknown is never zero: no read yet and a failed read both read "—".
@@ -811,9 +811,9 @@ final class EpisodeBuilderTests: XCTestCase {
     // MARK: - Arrows and the storage balance
 
     func testRowAmountsReadWithArrows() {
-        XCTAssertEqual(arrowBytes(9 * Self.gb), "\u{2191} \(formattedBytes(9 * Self.gb))")
-        XCTAssertEqual(arrowBytes(-4 * Self.gb), "\u{2193} \(formattedBytes(4 * Self.gb))")
-        XCTAssertEqual(arrowBytes(300 * Self.mb), "\u{2191} \(formattedBytes(300 * Self.mb))")
+        XCTAssertEqual(arrowBytes(9 * Self.gb), "\u{2197} \(formattedBytes(9 * Self.gb))")
+        XCTAssertEqual(arrowBytes(-4 * Self.gb), "\u{2198} \(formattedBytes(4 * Self.gb))")
+        XCTAssertEqual(arrowBytes(300 * Self.mb), "\u{2197} \(formattedBytes(300 * Self.mb))")
         XCTAssertEqual(spokenChangeAmount(-4 * Self.gb), "down \(formattedBytes(4 * Self.gb))")
     }
 
