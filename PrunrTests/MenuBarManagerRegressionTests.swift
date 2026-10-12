@@ -324,7 +324,8 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         XCTAssertEqual(monday.groups.map(\.category), [.downloads, .cachesAndSystem, .developer, .mediaAndDocuments])
         XCTAssertGreaterThan(monday.groups.count, ChangeFeedRows.collapsedGroupLimit)
         let mail = try XCTUnwrap(monday.episodes.first { $0.title == "Mail attachments" })
-        XCTAssertEqual(EpisodeBuilder.caption(for: mail, calendar: calendar), "a little each day since Fri 2 Oct")
+        XCTAssertNotNil(mail.buildingSince)
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: mail, calendar: calendar))
 
         let weekStart = GrowthJournalService.weekStart(now: MarketingSample.now, calendar: calendar)
         let weekGroups = feed.days.filter { $0.day >= weekStart }.flatMap(\.groups)

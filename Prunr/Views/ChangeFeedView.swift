@@ -130,10 +130,11 @@ struct ChangeFeedRows: View {
 /// One day's rows for one category: the drilldown under the main list.
 struct ChangeGroupView: View {
     let group: ChangeGroup
+    let onReveal: (String) -> Void
 
     var body: some View {
         ScrollView {
-            ChangeGroupRows(group: group)
+            ChangeGroupRows(group: group, onReveal: onReveal)
                 .padding(.bottom, SoftBottomEdge.height)
         }
         .hiddenScrollIndicators()
@@ -144,11 +145,12 @@ struct ChangeGroupView: View {
 /// The drilldown's rows without the scroll view, newest first.
 struct ChangeGroupRows: View {
     let group: ChangeGroup
+    let onReveal: (String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(group.episodes) { episode in
-                ChangeRow(episode: episode)
+                ChangeRow(episode: episode, onReveal: onReveal)
             }
         }
         .padding(.top, 6)

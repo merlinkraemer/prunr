@@ -729,28 +729,32 @@ final class EpisodeBuilderTests: XCTestCase {
         )
     }
 
-    func testCaptionReadsTimeAndDetail() {
+    func testPlaceRowTitleJoinsDetailAndCaptionIsOnlyTheTime() {
         let utc = calendar()
         let row = episode("Safari data", .cachesAndSystem, Self.gb, at: date(2026, 10, 11, 8, 40, in: utc),
                           detail: "Application Support", calendar: utc)
-        XCTAssertEqual(EpisodeBuilder.caption(for: row, calendar: utc), "08:40 · Application Support")
+        XCTAssertEqual(EpisodeBuilder.rowTitle(for: row), "Safari data · Application Support")
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "08:40")
+
+        let plain = episode("Docker disk", .developer, Self.gb, at: date(2026, 10, 11, 8, 40, in: utc), calendar: utc)
+        XCTAssertEqual(EpisodeBuilder.rowTitle(for: plain), "Docker disk")
     }
 
-    func testCaptionForScanBuildUpAndTrashMove() {
+    func testPlaceRowHasNoCaptionWithoutAKnownTime() {
         let utc = calendar()
         let at = date(2026, 10, 5, 14, 5, in: utc)
         let scanned = episode("a", .developer, Self.gb, at: at, detail: "ignored", calendar: utc, approximate: true)
-        XCTAssertEqual(EpisodeBuilder.caption(for: scanned, calendar: utc), "found by scan · ignored")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: scanned, calendar: utc))
 
         let slow = episode("b", .mediaAndDocuments, Self.gb, at: at, calendar: utc,
                            buildingSince: date(2026, 10, 2, 0, 0, in: utc))
-        XCTAssertEqual(EpisodeBuilder.caption(for: slow, calendar: utc), "a little each day since Fri 2 Oct")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: slow, calendar: utc))
 
-        let moved = episode("c", .downloads, -3 * Self.gb, at: at, detail: "ignored", calendar: utc, movedToTrash: true)
-        XCTAssertEqual(EpisodeBuilder.caption(for: moved, calendar: utc), "14:05 · moved to Trash")
+        let moved = episode("c", .downloads, -3 * Self.gb, at: at, calendar: utc, movedToTrash: true)
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: moved, calendar: utc), "14:05")
     }
 
-    func testBuiltRowsKeepTheirCaption() throws {
+    func testRowsFoundByScanHaveNoTime() throws {
         let utc = calendar()
         let now = date(2026, 10, 11, 15, 0, in: utc)
         let found = date(2026, 10, 11, 3, 0, in: utc)
@@ -758,7 +762,7 @@ final class EpisodeBuilderTests: XCTestCase {
             slot(Self.iso, at: found, net: 2 * Self.gb, source: .scan, observedSince: date(2026, 10, 10, 3, 0, in: utc))
         ], now: now, calendar: utc)
         let row = try XCTUnwrap(feed.episodes.first)
-        XCTAssertEqual(EpisodeBuilder.caption(for: row, calendar: utc), "found by scan")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: row, calendar: utc))
     }
 
     // MARK: - Groups (main list)

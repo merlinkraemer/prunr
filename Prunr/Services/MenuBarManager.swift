@@ -655,6 +655,13 @@ final class MenuBarManager: NSObject {
     private var consecutiveFailedFullScans = 0
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
+    private(set) var lastManualRefreshAt: Date?
+
+    /// When the shown data was last brought up to date: a scan, a watcher
+    /// refresh or a manual refresh, whichever came last.
+    var updatedAt: Date? {
+        [lastAutomaticScanAt, lastDetectedChangeAt, lastManualRefreshAt].compactMap { $0 }.max()
+    }
     private var isUnderDiskPressure = false
     private var lastFileEventAt: Date?
     var hasPendingRecentChanges = false
@@ -1107,6 +1114,7 @@ final class MenuBarManager: NSObject {
         pendingRecentChangePaths.removeAll()
         pendingRecentChangeRequiresFullRefresh = false
         lastDetectedChangeAt = nil
+        lastManualRefreshAt = nil
         lastAutomaticScanAt = nil
         hasIncrementalDeltasSinceSnapshot = false
         liveWorkingSetDrillDownCategories = []
@@ -1591,6 +1599,7 @@ final class MenuBarManager: NSObject {
         recentChangeTask = nil
         configureFileWatcherIfNeeded()
         await performRecentChangeRefresh(allowFullRefresh: false)
+        lastManualRefreshAt = Date()
     }
 
     /// Silently reconciles the working set against a fresh full scan.

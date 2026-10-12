@@ -1,46 +1,99 @@
 import SwiftUI
 
-/// One change in a day group: icon, name over a muted caption ("14:20 ·
-/// detail", "found by scan", "a little each day since Fri 2 Oct"), and the
-/// amount with its direction arrow on the right. Not clickable.
+/// One place in a day group's drilldown: icon, the place on a single line
+/// with the clock time under it when known, and the amount flush right.
+/// Hovering swaps the amount for a Show in Finder glyph in the same spot;
+/// clicking reveals the place. Rows without a place on disk are plain.
 struct ChangeRow: View {
     let episode: ChangeEpisode
+    let onReveal: (String) -> Void
     var calendar: Calendar = .current
 
+    @State private var isHovering = false
+
     var body: some View {
+        if let rootPath = episode.rootPath {
+            Button { onReveal(rootPath) } label: {
+                content(showsReveal: isHovering)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isHovering = hovering
+                }
+            }
+            .help("Show in Finder")
+            .accessibilityHint("Shows this place in Finder")
+            .accessibilityAddTraits(.isButton)
+        } else {
+            content(showsReveal: false)
+        }
+    }
+
+    private func content(showsReveal: Bool) -> some View {
         HStack(spacing: 10) {
             UnitIconTile(category: episode.category, source: episode.iconSource, size: 18)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(episode.title)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text(caption)
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                if let time {
+                    Text(time)
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(amountText)
-                .font(.system(size: 13).monospacedDigit())
-                .foregroundStyle(changeAmountStyle(episode.netBytes))
-                .lineLimit(1)
-                .fixedSize()
+            ZStack(alignment: .trailing) {
+                Text(arrowBytes(episode.netBytes))
+                    .font(.system(size: 13).monospacedDigit())
+                    .foregroundStyle(changeAmountStyle(episode.netBytes))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .opacity(showsReveal ? 0 : 1)
+
+                RevealInFinderGlyph()
+                    .opacity(showsReveal ? 1 : 0)
+            }
         }
         .padding(.horizontal, 12)
-        .frame(height: 44)
+        .frame(height: time == nil ? 34 : 44)
+        .background(ListRowHoverBackground(isHovering: showsReveal))
         .padding(.horizontal, 6)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(episode.title), \(caption), \(spokenChangeAmount(episode.netBytes))")
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
     }
 
-    private var caption: String { EpisodeBuilder.caption(for: episode, calendar: calendar) }
+    private var title: String { EpisodeBuilder.rowTitle(for: episode) }
 
-    private var amountText: String { arrowBytes(episode.netBytes) }
+    private var time: String? { EpisodeBuilder.timeCaption(for: episode, calendar: calendar) }
+
+    private var accessibilityText: String {
+        [title, time, spokenChangeAmount(episode.netBytes)].compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
+/// A folder with a small arrow out of its corner: "Show in Finder".
+struct RevealInFinderGlyph: View {
+    var body: some View {
+        Image(systemName: "folder")
+            .font(.system(size: 14))
+            .foregroundStyle(.primary)
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .offset(x: 3, y: 2)
+            }
+            .padding(.trailing, 3)
+            .accessibilityHidden(true)
+    }
 }
 
 /// Orange for growth of at least the row line, grey for shrinks, primary for

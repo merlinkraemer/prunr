@@ -291,22 +291,17 @@ enum EpisodeBuilder {
         formatter("EEE d MMM", calendar: calendar).string(from: calendar.startOfDay(for: day))
     }
 
-    /// "14:20 · detail", "14:20 · moved to Trash", "found by scan", or "a
-    /// little each day since Fri 2 Oct".
-    static func caption(for episode: ChangeEpisode, calendar: Calendar) -> String {
-        let lead: String
-        if let since = episode.buildingSince {
-            lead = "a little each day since \(dayLabel(for: since, calendar: calendar))"
-        } else if episode.isApproximateTime {
-            lead = "found by scan"
-        } else {
-            lead = formatter("HH:mm", calendar: calendar).string(from: episode.time)
-        }
-        if episode.isMovedToTrash {
-            return "\(lead) · moved to Trash"
-        }
-        guard let detail = episode.detail, !detail.isEmpty else { return lead }
-        return "\(lead) · \(detail)"
+    /// A place row's single title line: "Xcode build files · Prunr".
+    static func rowTitle(for episode: ChangeEpisode) -> String {
+        guard let detail = episode.detail, !detail.isEmpty else { return episode.title }
+        return "\(episode.title) · \(detail)"
+    }
+
+    /// "14:20" when the clock time of the change is known; nil when a daily
+    /// scan found it or it built up over several days.
+    static func timeCaption(for episode: ChangeEpisode, calendar: Calendar) -> String? {
+        guard !episode.isApproximateTime, episode.buildingSince == nil else { return nil }
+        return formatter("HH:mm", calendar: calendar).string(from: episode.time)
     }
 
     /// "Nothing over 1 GB since 28 Sep".

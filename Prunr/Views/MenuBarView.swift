@@ -62,7 +62,9 @@ struct MenuBarView: View {
         return false
     }()
     @State private var developerFolderExists = false
-    @State private var footerBackgroundScanPulse = false
+    @State private var isRefreshRequested = false
+    @State private var footerNotice: String? = nil
+    @State private var footerNoticeTask: Task<Void, Never>? = nil
 
     private let outsideScopeSegmentID = "outside-scan-scope"
 
@@ -1305,7 +1307,7 @@ struct MenuBarView: View {
                     .clearOfFooter()
                     .transition(.move(edge: .trailing))
             } else if let group = shownGroup {
-                ChangeGroupView(group: group)
+                ChangeGroupView(group: group, onReveal: revealPlace)
                     .id(group.id)
                     .transition(.move(edge: .trailing))
             } else {
@@ -1459,8 +1461,9 @@ struct MenuBarView: View {
     }
 
     private func drillDownHeader(category: CategoryInventoryItem, subcategory: SubcategoryGroup?) -> some View {
-        navigationHeader(
+        HeaderTitleRow(
             title: subcategory?.displayName ?? category.category.displayName,
+            category: category.category,
             backHint: "Return to category overview",
             onBack: navigateBackFromDrilldown
         )
@@ -1601,20 +1604,20 @@ struct MenuBarView: View {
 
             HStack {
                 Button {
-                    Task { await manager.checkGrowth() }
+                    Task { await refreshNow() }
                 } label: {
-                    Image(systemName: manager.isCheckingGrowth ? "arrow.trianglehead.2.clockwise.rotate.90" : "arrow.clockwise")
+                    Image(systemName: isRefreshing ? "arrow.trianglehead.2.clockwise.rotate.90" : "arrow.clockwise")
                         .font(.system(size: 13))
                         .frame(width: 26, height: 26)
                         .background(
                             Circle()
                                 .fill(refreshHover ? Color.gray.opacity(0.12) : Color.clear)
                         )
-                        .foregroundStyle(manager.isCheckingGrowth ? .secondary : .primary)
+                        .foregroundStyle(isRefreshing ? .secondary : .primary)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(manager.isLoading || manager.isAutoScanning || manager.isCheckingGrowth)
+                .disabled(manager.isLoading || manager.isAutoScanning || isRefreshing)
                 .accessibilityLabel("Refresh recent changes")
                 .accessibilityHint("Run a lightweight refresh without a full scan")
                 .onHover { hovering in
@@ -1654,13 +1657,108 @@ struct MenuBarView: View {
         .frame(height: SoftBottomEdge.footerHeight)
     }
 
+    private var isRefreshing: Bool {
+        isRefreshRequested || manager.isCheckingGrowth
+    }
+
+    /// Runs the lightweight refresh and rereads the list. The footer says
+    /// "Refreshing…" for at least a moment, so a quick refresh still shows.
+    private func refreshNow() async {
+        guard !isRefreshRequested else { return }
+        isRefreshRequested = true
+        let started = Date()
+        await manager.checkGrowth()
+        await manager.refreshChangeFeed()
+        let remaining = 0.7 - Date().timeIntervalSince(started)
+        if remaining > 0 {
+            try? await Task.sleep(for: .seconds(remaining))
+        }
+        isRefreshRequested = false
+    }
+
+    private func retryAfterFailure() {
+        Task {
+            if shownErrorMessage != nil {
+                await manager.loadInventory()
+            }
+            await manager.refreshChangeFeed()
+        }
+    }
+
+    private func revealPlace(_ path: String) {
+        guard FileManager.default.fileExists(atPath: path) else {
+            showFooterNotice("No longer on disk")
+            return
+        }
+        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+    }
+
+    private func showFooterNotice(_ text: String) {
+        footerNoticeTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.15)) {
+            footerNotice = text
+        }
+        footerNoticeTask = Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.15)) {
+                footerNotice = nil
+            }
+        }
+    }
+
+    private var footerStatus: FooterStatus {
+        let activity = manager.footerActivity
+        return FooterStatus.resolve(
+            notice: footerNotice,
+            refreshFailed: shownErrorMessage != nil || shownChangeFeed == .failed,
+            scanText: activity.isFullScan ? activity.text : nil,
+            isRefreshing: isRefreshing,
+            foldersNotReadable: !manager.isGrowthTrackingActive || hasRequiredScanAccess == false,
+            updateAvailable: manager.showsUpdateAvailableBanner,
+            groupDay: isShowingGroup ? shownGroup?.day : nil,
+            preview: devMode.panelPreview,
+            updatedAt: manager.updatedAt
+        )
+    }
+
     @ViewBuilder
     private var footerStatusText: some View {
-        if isShowingGroup, let group = shownGroup {
-            Text(EpisodeBuilder.dayLabel(for: group.day, calendar: .current))
+        let status = footerStatus
+        switch status {
+        case .refreshFailed:
+            HStack(spacing: 4) {
+                Text(status.text())
+                    .foregroundStyle(.secondary)
+                Text("\u{00B7}")
+                    .foregroundStyle(.tertiary)
+                Button("Retry", action: retryAfterFailure)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+            }
+            .font(.system(size: 11))
+        case .scanning, .refreshing:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text(status.text())
+                    .foregroundStyle(.secondary)
+            }
+            .font(.system(size: 11))
+        case .foldersNotReadable:
+            Button(action: closePopoverAndOpenSettings) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.orange)
+                    Text(status.text())
+                        .foregroundStyle(.secondary)
+                }
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        } else if manager.showsUpdateAvailableBanner {
+            }
+            .buttonStyle(.plain)
+            .help("Prunr can't read some folders. Grant Full Disk Access in Folder settings.")
+        case .updateAvailable:
             HStack(spacing: 8) {
                 Circle()
                     .fill(Color.blue)
@@ -1669,7 +1767,7 @@ struct MenuBarView: View {
                 Button {
                     manager.checkForUpdates()
                 } label: {
-                    Text("Update available")
+                    Text(status.text())
                         .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
@@ -1686,52 +1784,18 @@ struct MenuBarView: View {
                 .accessibilityLabel("Dismiss update notice")
             }
             .font(.system(size: 11))
-        } else if !manager.isGrowthTrackingActive {
-            // Broken state: the engine can't see changes. Speak up loudly —
-            // otherwise this looks identical to a quiet, healthy drive.
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.orange)
-                Text("Not tracking — needs Full Disk Access")
-                    .foregroundStyle(.orange)
-            }
-            .font(.system(size: 11))
-            .help("Growth can't be detected for this scope. Grant Full Disk Access in Settings so Prunr can track changes.")
-        } else if manager.footerActivity != .idle {
-            let activity = manager.footerActivity
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(Color.secondary.opacity(activity.isFullScan && footerBackgroundScanPulse ? 0.78 : 0.55))
-                    .frame(width: 5, height: 5)
-                    .scaleEffect(activity.isFullScan && footerBackgroundScanPulse ? 1.0 : 0.82)
-                Text(activity.text)
+        case .updated:
+            TimelineView(.everyMinute) { context in
+                Text(status.text(now: context.date))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .opacity(activity.isFullScan && footerBackgroundScanPulse ? 0.96 : 0.72)
             }
-            .font(.system(size: 11))
-            .onAppear {
-                footerBackgroundScanPulse = false
-                if activity.isFullScan {
-                    withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
-                        footerBackgroundScanPulse = true
-                    }
-                }
-            }
-            .onChange(of: activity.isFullScan) { _, isFullScan in
-                footerBackgroundScanPulse = false
-                if isFullScan {
-                    withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
-                        footerBackgroundScanPulse = true
-                    }
-                }
-            }
-            .onDisappear {
-                footerBackgroundScanPulse = false
-            }
-        } else {
-            // Healthy idle state: leave the footer empty.
+        case .none:
             Color.clear.frame(height: 1)
+        case .notice, .groupDay, .preview:
+            Text(status.text())
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
         }
     }
 
