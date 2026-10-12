@@ -50,3 +50,4 @@
 - 2026-10-12 mac-queue 7cd03508c test-Prunr PASS: 10-xcodegen=PASS 20-test-Prunr=PASS
 2026-10-12 04:30 orchestrator - spawn: s14 settings rework + Developer tab (feat/s14-settings; tab 'Folder' instead of 'Watching', keep Change… + folder name in copy); balance mockups B1–B3 (used storage top right, ↑↓ arrows)
 2026-10-12 05:00 orchestrator - spawn: s15 balance header C3 (used of capacity, scroll-linked historic values from snapshots, bar shows historic fill, Now ↑) + ↑/↓ row arrows (feat/s15-balance)
+2026-10-12 05:25 orchestrator - landed on Mac: settings (s14) + balance (s15) combined in feat/review-s14-s15 (mac-queue PASS 20261012-050224), Debug install PASS (isolated queue, battery override on Merlin's go); waits for review
