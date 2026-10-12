@@ -180,18 +180,30 @@ private struct MarketingPopoverPreview: View {
             .softBottomEdge()
             .clipped()
             .overlay(alignment: .bottom) {
-                HStack {
-                    Image(systemName: "arrow.clockwise")
-                    Spacer()
-                    Image(systemName: "gearshape")
-                }
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.82))
-                .padding(.horizontal, 20)
-                .frame(height: SoftBottomEdge.footerHeight)
+                MarketingFooter()
             }
         }
         .frame(width: 320, height: 480)
+    }
+}
+
+/// The footer as the idle panel shows it: refresh, "Updated 2 min ago", settings.
+private struct MarketingFooter: View {
+    var body: some View {
+        ZStack {
+            Text(MarketingSample.footerStatus.text(now: MarketingSample.now))
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.52))
+            HStack {
+                Image(systemName: "arrow.clockwise")
+                Spacer()
+                Image(systemName: "gearshape")
+            }
+            .font(.system(size: 13))
+            .foregroundStyle(.white.opacity(0.82))
+        }
+        .padding(.horizontal, 20)
+        .frame(height: SoftBottomEdge.footerHeight)
     }
 }
 
@@ -208,6 +220,7 @@ enum MarketingSample {
     private static let calendar = Calendar.current
 
     static let now: Date = date(day: 8, hour: 9, minute: 12)
+    static let footerStatus = FooterStatus.resolve(updatedAt: now.addingTimeInterval(-2 * 60))
     /// Long before the shown 30 days, so the list has no "Watching since" end.
     static let watchingSince: Date = date(month: 8, day: 1, hour: 9, minute: 0)
 
@@ -245,6 +258,15 @@ enum MarketingSample {
 
     /// The categories view behind the header. Sizes add up to 1,858.6 GB, so
     /// "Not watched" carries the other 122.4 GB; the changes add up to the week.
+    /// The Developer subcategories in the drilldown scene, biggest first.
+    static let developerSubcategories: [(title: String, bytes: Int64, icon: String)] = [
+        ("Docker", 64_000_000_000, "shippingbox.fill"),
+        ("Xcode", 48_000_000_000, "hammer.fill"),
+        ("node_modules", 31_000_000_000, "cube.box.fill"),
+        ("Other dev files", 21_800_000_000, "doc.fill"),
+        ("Python", 18_000_000_000, "chevron.left.forwardslash.chevron.right")
+    ]
+
     static func categories(endedAt now: Date) -> [CategoryInventoryItem] {
         let weekStart = GrowthJournalService.weekStart(now: now, calendar: calendar)
         func item(_ category: GrowthCategory, _ size: Int64, _ delta: Int64?) -> CategoryInventoryItem {
@@ -303,14 +325,6 @@ enum MarketingSample {
 
 
 private struct MarketingDrilldownPreview: View {
-    private let rows: [(title: String, size: String, growth: String, icon: String)] = [
-        ("node_modules", "24.6 GB", "+2.2 GB", "shippingbox.fill"),
-        ("Build Artifacts", "18.3 GB", "+1.7 GB", "hammer.fill"),
-        ("Git Repositories", "13.1 GB", "+620 MB", "point.3.connected.trianglepath.dotted"),
-        ("Python Environments", "9.8 GB", "+280 MB", "chevron.left.forwardslash.chevron.right"),
-        ("Databases", "5.7 GB", "+90 MB", "cylinder.fill")
-    ]
-
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 2) {
@@ -331,50 +345,50 @@ private struct MarketingDrilldownPreview: View {
                     .font(.system(size: 11, weight: .bold))
                     .frame(width: 26)
                 Spacer()
-                Label("Developer", systemImage: "hammer.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
+                Label {
+                    Text(GrowthCategory.developer.displayName)
+                } icon: {
+                    Image(systemName: GrowthCategory.developer.icon)
+                        .foregroundStyle(GrowthCategory.developer.color)
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.92))
                 Spacer()
                 Color.clear.frame(width: 26)
             }
             .foregroundStyle(.white.opacity(0.72))
             .padding(.horizontal, 12)
-            .frame(height: 44)
+            .frame(height: HeaderRowMetrics.height)
+
+            Divider().overlay(.white.opacity(0.13))
 
             VStack(spacing: 0) {
-                ForEach(rows, id: \.title) { row in
+                ForEach(MarketingSample.developerSubcategories, id: \.title) { row in
                     HStack(spacing: 10) {
                         Image(systemName: row.icon)
                             .font(.system(size: 14))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.white.opacity(0.6))
                             .frame(width: 18)
                         Text(row.title)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.92))
                         Spacer(minLength: 4)
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(row.size)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            Label(row.growth, systemImage: "arrow.up.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.orange)
-                        }
-                        .foregroundStyle(.white.opacity(0.88))
+                        Text(CategorySizes.sizeText(row.bytes))
+                            .font(.system(size: 13).monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.88))
                         Image(systemName: "chevron.right")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.34))
                     }
                     .padding(.horizontal, 18)
-                    .frame(height: 44)
+                    .frame(height: 34)
                 }
             }
+            .padding(.top, 6)
 
             Spacer(minLength: 0)
 
-            Text("Developer tools · 71.5 GB")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.52))
-                .frame(height: 50)
+            MarketingFooter()
         }
         .frame(width: 320, height: 480)
     }
