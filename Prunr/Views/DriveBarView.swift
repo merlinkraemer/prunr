@@ -35,6 +35,10 @@ struct DriveBarView: View {
     /// When true, disables hover interactions on the bar segments
     var disableHover: Bool = false
 
+    /// Used storage recorded at a past date. When set, the fill shows that
+    /// level and a faint marker keeps today's level.
+    var historicUsedBytes: Int64? = nil
+
     /// Bar height
     private let barHeight: CGFloat = 12
     private let segmentSpacing: CGFloat = 1
@@ -84,9 +88,20 @@ struct DriveBarView: View {
 
     private var barContent: some View {
         GeometryReader { geometry in
+            let currentWidth = geometry.size.width * presentedUsedFraction
+            let usedWidth = shownUsedWidth(currentWidth: currentWidth, barWidth: geometry.size.width)
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: barHeight / 2)
                     .fill(Color.gray.opacity(0.15))
+
+                if historicUsedBytes != nil, currentWidth - usedWidth > segmentSpacing {
+                    UnevenRoundedRectangle(
+                        cornerRadii: .init(bottomTrailing: barHeight / 2, topTrailing: barHeight / 2)
+                    )
+                    .fill(Color.primary.opacity(0.12))
+                    .frame(width: currentWidth - usedWidth - segmentSpacing)
+                    .offset(x: usedWidth + segmentSpacing)
+                }
 
                 if visibleSegments.isEmpty {
                     RoundedRectangle(cornerRadius: barHeight / 2)
@@ -97,9 +112,8 @@ struct DriveBarView: View {
                                 endPoint: .trailing
                             )
                         )
-                        .frame(width: geometry.size.width * presentedUsedFraction)
+                        .frame(width: usedWidth)
                 } else {
-                    let usedWidth = geometry.size.width * presentedUsedFraction
                     let availableSegmentWidth = max(0, usedWidth - (segmentSpacing * CGFloat(max(0, renderedSegments.count - 1))))
                     HStack(spacing: segmentSpacing) {
                         ForEach(renderedSegments) { segment in
@@ -130,8 +144,26 @@ struct DriveBarView: View {
                     .clipShape(RoundedRectangle(cornerRadius: barHeight / 2))
                 }
             }
+            .overlay(alignment: .leading) {
+                if historicUsedBytes != nil {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Color.primary.opacity(0.55))
+                        .frame(width: 1.5, height: barHeight + 5)
+                        .offset(x: max(0, currentWidth - 0.75))
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .frame(height: barHeight)
+        .animation(.easeInOut(duration: 0.2), value: historicUsedBytes)
+    }
+
+    /// The fill's width: today's level, or the recorded past level scaled
+    /// against it so both read on the same presented scale.
+    private func shownUsedWidth(currentWidth: CGFloat, barWidth: CGFloat) -> CGFloat {
+        guard let historicUsedBytes, usedBytes > 0 else { return currentWidth }
+        let ratio = CGFloat(Double(max(0, historicUsedBytes)) / Double(usedBytes))
+        return min(barWidth, currentWidth * ratio)
     }
 
     // MARK: - Private Helpers

@@ -8,7 +8,7 @@ struct ChangeFeedView: View {
     let result: ChangeFeedResult?
     @Binding var expandedDays: Set<Date>
     /// The day at the top of the list, kept while a group is open so going
-    /// back lands where the list was.
+    /// back lands where the list was. The header shows this day's storage.
     @Binding var scrollAnchor: Date?
     let onOpenGroup: (ChangeGroup) -> Void
     let onRetry: () -> Void
@@ -49,6 +49,15 @@ struct ChangeFeedRows: View {
     /// Groups a day shows before its "Show all (N)" row.
     static let collapsedGroupLimit = 3
 
+    /// Scroll id of the "Nothing over 1 GB since" line above the first day.
+    static let quietLineID = Date.distantFuture
+
+    /// The scroll id at the very top of the list: the quiet line when it is
+    /// shown, else the newest day.
+    static func topAnchor(for feed: ChangeFeed, now: Date, calendar: Calendar = .current) -> Date? {
+        feed.quietSince(now: now, calendar: calendar) == nil ? feed.days.first?.day : quietLineID
+    }
+
     let feed: ChangeFeed
     let now: Date
     @Binding var expandedDays: Set<Date>
@@ -66,6 +75,7 @@ struct ChangeFeedRows: View {
                     .padding(.horizontal, 18)
                     .padding(.top, 8)
                     .padding(.bottom, 2)
+                    .id(Self.quietLineID)
             }
 
             ForEach(feed.days) { day in
