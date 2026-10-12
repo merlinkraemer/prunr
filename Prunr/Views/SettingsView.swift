@@ -728,6 +728,20 @@ private struct DeveloperSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section {
+                Toggle("Storage balance header", isOn: Binding(
+                    get: { devMode.showsBalanceHeader },
+                    set: { devMode.setShowsBalanceHeader($0) }
+                ))
+                .toggleStyle(.switch)
+            } header: {
+                Text("Experiments")
+            } footer: {
+                Text("Replaces This week with used storage that follows the scrolled date.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Data") {
                 SettingsRow(title: "History start", detail: watchingSinceText) {
                     Button("Reset") {

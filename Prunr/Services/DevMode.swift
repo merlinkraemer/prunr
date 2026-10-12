@@ -43,6 +43,7 @@ enum PanelPreview: String, CaseIterable, Identifiable {
 @Observable
 final class DevMode {
     nonisolated static let defaultsKey = "devMode"
+    nonisolated static let balanceHeaderKey = "balanceHeader"
     static let shared = DevMode()
 
     nonisolated static var isDebugBuild: Bool {
@@ -57,6 +58,8 @@ final class DevMode {
 
     private(set) var isEnabled: Bool
 
+    private(set) var showsBalanceHeader: Bool
+
     var panelPreview: PanelPreview = .live
 
     init(
@@ -66,16 +69,21 @@ final class DevMode {
     ) {
         self.defaults = defaults
         isEnabled = Self.resolve(arguments: arguments, defaults: defaults, isDebugBuild: isDebugBuild)
+        showsBalanceHeader = Self.resolveBalanceHeader(arguments: arguments, defaults: defaults)
     }
 
     nonisolated static func resolve(arguments: [String], defaults: UserDefaults, isDebugBuild: Bool) -> Bool {
-        if let fromArguments = launchArgument(in: arguments) {
+        if let fromArguments = launchArgument(defaultsKey, in: arguments) {
             return fromArguments
         }
         if let stored = defaults.object(forKey: defaultsKey) as? Bool {
             return stored
         }
         return isDebugBuild
+    }
+
+    nonisolated static func resolveBalanceHeader(arguments: [String], defaults: UserDefaults) -> Bool {
+        launchArgument(balanceHeaderKey, in: arguments) ?? defaults.bool(forKey: balanceHeaderKey)
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -92,8 +100,14 @@ final class DevMode {
         setEnabled(!isEnabled)
     }
 
-    private nonisolated static func launchArgument(in arguments: [String]) -> Bool? {
-        guard let flagIndex = arguments.lastIndex(of: "-\(defaultsKey)"),
+    func setShowsBalanceHeader(_ shows: Bool) {
+        guard shows != showsBalanceHeader else { return }
+        showsBalanceHeader = shows
+        defaults.set(shows, forKey: Self.balanceHeaderKey)
+    }
+
+    private nonisolated static func launchArgument(_ key: String, in arguments: [String]) -> Bool? {
+        guard let flagIndex = arguments.lastIndex(of: "-\(key)"),
               flagIndex + 1 < arguments.count else { return nil }
         switch arguments[flagIndex + 1].lowercased() {
         case "yes", "true", "1": return true
