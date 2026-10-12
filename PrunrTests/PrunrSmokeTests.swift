@@ -147,7 +147,7 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyScanRulesSelectionMigratesToScanScope() {
+    func testLegacyScanRulesSelectionMigratesToFolder() {
         let key = "settingsSelectedTab"
         let originalValue = UserDefaults.standard.object(forKey: key)
         defer {
@@ -160,7 +160,7 @@ final class PrunrSmokeTests: XCTestCase {
 
         UserDefaults.standard.set(2, forKey: key)
 
-        XCTAssertEqual(SettingsSelectionModel().tab, .scanScope)
+        XCTAssertEqual(SettingsSelectionModel(devMode: false).tab, .folder)
     }
 
     func testDownloadsPathsCategorizeAsDownloads() {

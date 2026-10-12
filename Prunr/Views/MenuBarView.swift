@@ -10,6 +10,7 @@ struct MenuBarView: View {
     @Bindable var manager: MenuBarManager
 
     @State private var settingsStore = SettingsStore.shared
+    @State private var devMode = DevMode.shared
     @State private var settingsHover = false
     @State private var refreshHover = false
     @State private var hasRequiredScanAccess: Bool? = nil
@@ -384,20 +385,19 @@ struct MenuBarView: View {
             }
 
             Group {
-                // A manual scan takes over the panel with its progress card and
-                // Stop. The change list is kept underneath, never cleared, so it
-                // returns with the same or newer rows once the scan ends.
-                if manager.isLoading && !manager.isAutoScanning {
-                    manualScanLoadingView
-                } else if isBootstrapping && !manager.hasDisplayableInventory {
-                    initialLoadView
-                } else if manager.noBaseline {
+                switch devMode.panelPreview {
+                case .live:
+                    liveContent
+                case .onboarding:
                     setupOnboardingView
-                } else {
-                    VStack(spacing: 0) {
-                        // Main category view with monitoring path header
-                        mainCategoryView
-                    }
+                        .allowsHitTesting(false)
+                case .scanning:
+                    scanningPreviewView
+                        .allowsHitTesting(false)
+                case .dayOne, .error:
+                    mainCategoryView
+                case .sample:
+                    PanelSamplePreview()
                 }
             }
         }
@@ -475,6 +475,46 @@ struct MenuBarView: View {
                 selectedOnboardingPage = newValue
             }
         }
+    }
+
+    @ViewBuilder
+    private var liveContent: some View {
+        // A manual scan takes over the panel with its progress card and
+        // Stop. The change list is kept underneath, never cleared, so it
+        // returns with the same or newer rows once the scan ends.
+        if manager.isLoading && !manager.isAutoScanning {
+            manualScanLoadingView
+        } else if isBootstrapping && !manager.hasDisplayableInventory {
+            initialLoadView
+        } else if manager.noBaseline {
+            setupOnboardingView
+        } else {
+            mainCategoryView
+        }
+    }
+
+    private var shownChangeFeed: ChangeFeedResult? {
+        devMode.panelPreview.changeFeed(over: manager.changeFeed)
+    }
+
+    private var shownErrorMessage: String? {
+        devMode.panelPreview.errorMessage(over: manager.errorMessage)
+    }
+
+    private var scanFolderName: ScanFolderName {
+        ScanFolderName(path: settingsStore.mainBasePath)
+    }
+
+    private var scanningPreviewView: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            scanStatusCard(clampedProgress: 0.42, showStopButton: true)
+                .padding(.horizontal, 16)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 18)
     }
 
     private var initialLoadView: some View {
@@ -1067,7 +1107,7 @@ struct MenuBarView: View {
                     onBack: closeGroup
                 )
             } else {
-                WeeklyChangeRow(weekly: WeeklyChange(manager.changeFeed))
+                WeeklyChangeRow(weekly: WeeklyChange(shownChangeFeed))
             }
         }
     }
@@ -1404,12 +1444,13 @@ struct MenuBarView: View {
 
     private var changeFeedView: some View {
         Group {
-            if let error = manager.errorMessage {
+            if let error = shownErrorMessage {
                 scanErrorView(error)
                     .clearOfFooter()
             } else {
                 ChangeFeedView(
-                    result: manager.changeFeed,
+                    result: shownChangeFeed,
+                    scanFolder: scanFolderName,
                     expandedDays: $expandedFeedDays,
                     scrollAnchor: $feedScrollAnchor,
                     onOpenGroup: openChangeGroup,
@@ -1423,7 +1464,7 @@ struct MenuBarView: View {
     /// is open shows the new rows; the opened copy if the group is gone.
     private var shownGroup: ChangeGroup? {
         guard let openGroup else { return nil }
-        let fresh = manager.changeFeed?.feed?.days
+        let fresh = shownChangeFeed?.feed?.days
             .first { $0.day == openGroup.day }?
             .groups.first { $0.id == openGroup.id }
         return fresh ?? openGroup
@@ -1486,7 +1527,7 @@ struct MenuBarView: View {
 
     private var categoryListView: some View {
         Group {
-            if let error = manager.errorMessage {
+            if let error = shownErrorMessage {
                 scanErrorView(error)
             } else {
                 CategoryGrowthListView(

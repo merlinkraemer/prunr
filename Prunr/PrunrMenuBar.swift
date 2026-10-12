@@ -78,7 +78,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             checkForUpdatesInBackground: { [updaterController] in
                 updaterController.updater.checkForUpdatesInBackground()
-            }
+            },
+            settings: MenuBarManager.UpdaterSettings(
+                automaticallyChecks: { [updaterController] in
+                    updaterController.updater.automaticallyChecksForUpdates
+                },
+                setAutomaticallyChecks: { [updaterController] enabled in
+                    updaterController.updater.automaticallyChecksForUpdates = enabled
+                }
+            )
         )
     }
 }

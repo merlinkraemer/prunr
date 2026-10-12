@@ -233,6 +233,10 @@ enum HistoryStart {
         return start
     }
 
+    static func stored(defaults: UserDefaults = HistoryStart.store) -> Date? {
+        defaults.object(forKey: defaultsKey) as? Date
+    }
+
     /// Forgets the start; called when the baseline is reset and history
     /// starts over.
     static func reset(defaults: UserDefaults = HistoryStart.store) {

@@ -117,9 +117,9 @@ private struct MarketingScreenshotCanvas: View {
         case .settings:
             MarketingSettingsPreview()
                 .marketingGlass(cornerRadius: 22)
-                .frame(width: 520, height: 480)
+                .frame(width: 560, height: 480)
                 .scaleEffect(1.22, anchor: .topTrailing)
-                .frame(width: 680, height: 620, alignment: .topTrailing)
+                .frame(width: 690, height: 620, alignment: .topTrailing)
         }
     }
 }
@@ -201,6 +201,7 @@ private struct MarketingPopoverPreview: View {
 enum MarketingSample {
     static let totalBytes: Int64 = 2_000_000_000_000
     static let freeBytes: Int64 = 19_000_000_000
+    static var usedBytes: Int64 { totalBytes - freeBytes }
     /// The header: everything this week, rows or not.
     static let weekNetBytes: Int64 = 48_000_000_000
 
@@ -380,12 +381,18 @@ private struct MarketingDrilldownPreview: View {
 }
 
 private struct MarketingSettingsPreview: View {
+    private var versionText: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "Prunr \(short) (\(build))"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 24) {
-                settingsTab("gear", title: "General", selected: true)
-                settingsTab("folder", title: "Scan Scope", selected: false)
-                settingsTab("wrench.and.screwdriver", title: "Troubleshooting", selected: false)
+                ForEach(SettingsTab.visibleTabs(devMode: false), id: \.self) { tab in
+                    settingsTab(tab.systemImage, title: tab.title, selected: tab == .general)
+                }
             }
             .padding(.horizontal, 28)
             .frame(height: 94)
@@ -393,62 +400,81 @@ private struct MarketingSettingsPreview: View {
             Divider().overlay(.white.opacity(0.13))
 
             VStack(alignment: .leading, spacing: 18) {
-                Text("General")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.94))
-
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("Startup")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.52))
+                section("Startup") {
                     HStack {
-                        Label("Launch Prunr at Login", systemImage: "power")
+                        Text("Launch Prunr at login")
                             .font(.system(size: 13, weight: .medium))
                         Spacer()
-                        Capsule()
-                            .fill(.blue)
-                            .frame(width: 38, height: 22)
-                            .overlay(alignment: .trailing) {
-                                Circle().fill(.white).padding(3)
-                            }
+                        toggle
                     }
-                    .foregroundStyle(.white.opacity(0.9))
-                    .padding(14)
-                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
 
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("Updates")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.52))
+                section("Updates") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Check for updates automatically")
+                                .font(.system(size: 13, weight: .medium))
+                            Spacer()
+                            toggle
+                        }
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(versionText)
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("Up to date.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.white.opacity(0.52))
+                            }
+                            Spacer()
+                            Text("Check Now")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                }
+
+                section("History") {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Keep Prunr up to date")
+                            Text("Prunr keeps \(GrowthJournalService.historyWindowDays) days of changes")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Automatically checks for new versions")
+                            Text("Older days drop off the list on their own.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.white.opacity(0.52))
                         }
                         Spacer()
-                        Text("Check Now")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.blue)
+                        Text(EpisodeBuilder.watchingSinceLabel(MarketingSample.watchingSince, calendar: .current))
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.52))
                     }
-                    .padding(14)
-                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
 
                 Spacer()
             }
+            .foregroundStyle(.white.opacity(0.9))
             .padding(28)
-
-            Divider().overlay(.white.opacity(0.13))
-            Text("Prunr alpha · Version 0.1.5")
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.46))
-                .frame(height: 38)
         }
-        .frame(width: 520, height: 480)
+        .frame(width: 560, height: 480)
+    }
+
+    private var toggle: some View {
+        Capsule()
+            .fill(.blue)
+            .frame(width: 38, height: 22)
+            .overlay(alignment: .trailing) {
+                Circle().fill(.white).padding(3)
+            }
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.52))
+            content()
+                .padding(14)
+                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
     }
 
     private func settingsTab(_ icon: String, title: String, selected: Bool) -> some View {

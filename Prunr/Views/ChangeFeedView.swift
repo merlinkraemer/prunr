@@ -6,6 +6,7 @@ import SwiftUI
 struct ChangeFeedView: View {
     /// Nil while the first read is in flight.
     let result: ChangeFeedResult?
+    let scanFolder: ScanFolderName
     @Binding var expandedDays: Set<Date>
     /// The day at the top of the list, kept while a group is open so going
     /// back lands where the list was.
@@ -26,7 +27,7 @@ struct ChangeFeedView: View {
                 ChangeFeedStateView(message: ChangeFeedStateView.failedText, onRetry: onRetry)
                     .clearOfFooter()
             case .loaded(let feed)? where feed.isDayOne(now: now):
-                ChangeFeedStateView(message: ChangeFeedStateView.dayOneText)
+                ChangeFeedStateView(message: ChangeFeedStateView.dayOneText(folder: scanFolder))
                     .clearOfFooter()
             case .loaded(let feed)?:
                 ScrollView {

@@ -5,27 +5,27 @@ extension Notification.Name {
     static let focusFeedback = Notification.Name("com.prunr.focusFeedback")
 }
 
-/// One settings pane. The tab bar itself is a native `NSToolbar` (preference
-/// style, big icons) driven by `SettingsWindowController`; this enum is the
-/// shared source of truth for the panes and their toolbar items.
 enum SettingsTab: Int, CaseIterable {
-    case general
-    case scanScope
-    case troubleshooting = 3
+    case general = 0
+    case folder = 1
+    case feedback = 3
+    case developer = 4
 
     var title: String {
         switch self {
         case .general: return "General"
-        case .scanScope: return "Scan Scope"
-        case .troubleshooting: return "Troubleshooting"
+        case .folder: return "Folder"
+        case .feedback: return "Feedback"
+        case .developer: return "Developer"
         }
     }
 
     var systemImage: String {
         switch self {
         case .general: return "gear"
-        case .scanScope: return "folder"
-        case .troubleshooting: return "wrench.and.screwdriver"
+        case .folder: return "folder"
+        case .feedback: return "bubble.left"
+        case .developer: return "hammer"
         }
     }
 
@@ -36,11 +36,18 @@ enum SettingsTab: Int, CaseIterable {
     static func from(toolbarIdentifier identifier: NSToolbarItem.Identifier) -> SettingsTab? {
         allCases.first { $0.toolbarIdentifier == identifier }
     }
+
+    static func visibleTabs(devMode: Bool) -> [SettingsTab] {
+        devMode ? allCases : allCases.filter { $0 != .developer }
+    }
+
+    static func restored(rawValue: Int, devMode: Bool) -> SettingsTab {
+        let legacyScanRules = 2
+        let tab = rawValue == legacyScanRules ? .folder : (SettingsTab(rawValue: rawValue) ?? .general)
+        return visibleTabs(devMode: devMode).contains(tab) ? tab : .general
+    }
 }
 
-/// Tracks the selected settings pane. The `NSToolbar` writes to it (AppKit) and
-/// `SettingsView` observes it (SwiftUI), so the SwiftUI tree stays alive across
-/// tab switches and per-pane state (e.g. pending scope changes) is preserved.
 @MainActor
 @Observable
 final class SettingsSelectionModel {
@@ -48,43 +55,43 @@ final class SettingsSelectionModel {
         didSet { UserDefaults.standard.set(tab.rawValue, forKey: "settingsSelectedTab") }
     }
 
-    init() {
-        let raw = UserDefaults.standard.integer(forKey: "settingsSelectedTab")
-        // Scan Rules used raw value 2. Keep people who last opened it in the
-        // now-consolidated Scan Scope tab instead of stranding them on General.
-        tab = raw == 2 ? .scanScope : (SettingsTab(rawValue: raw) ?? .general)
+    convenience init() {
+        self.init(devMode: DevMode.shared.isEnabled)
+    }
+
+    init(devMode: Bool) {
+        tab = SettingsTab.restored(
+            rawValue: UserDefaults.standard.integer(forKey: "settingsSelectedTab"),
+            devMode: devMode
+        )
     }
 }
 
-/// Content for the currently-selected settings pane. The tab bar lives on the
-/// window's `NSToolbar` (see `SettingsWindowController`), not in here, so we get
-/// the native System-Settings-style icon tab bar without a SwiftUI `Settings`
-/// scene (which would reintroduce the idle-layout hosting views from bug #9).
 struct SettingsView: View {
     @State private var settingsStore = SettingsStore.shared
-    @State private var scanService = ScanService.shared
+    @State private var devMode = DevMode.shared
     let selection: SettingsSelectionModel
     @State private var isApplyingScopeChanges = false
 
-    var body: some View {
-        VStack(spacing: 0) {
-            if scanService.isScanning {
-                scanActivityBanner
-            }
+    private var shownTab: SettingsTab {
+        SettingsTab.visibleTabs(devMode: devMode.isEnabled).contains(selection.tab) ? selection.tab : .general
+    }
 
-            Group {
-                switch selection.tab {
-                case .general:
-                    GeneralSettingsTab(settingsStore: settingsStore)
-                case .scanScope:
-                    ScanScopeSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
-                case .troubleshooting:
-                    TroubleshootingSettingsTab()
-                }
+    var body: some View {
+        Group {
+            switch shownTab {
+            case .general:
+                GeneralSettingsTab(settingsStore: settingsStore)
+            case .folder:
+                FolderSettingsTab(settingsStore: settingsStore, isApplyingScopeChanges: $isApplyingScopeChanges)
+            case .feedback:
+                FeedbackSettingsTab()
+            case .developer:
+                DeveloperSettingsTab()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 520, height: 480)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: 560, height: 480)
         .disabled(isApplyingScopeChanges)
         .overlay {
             if isApplyingScopeChanges {
@@ -94,12 +101,377 @@ struct SettingsView: View {
             }
         }
     }
+}
+
+private struct SettingsRow<Trailing: View>: View {
+    let title: String
+    var detail: String? = nil
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            trailing()
+        }
+    }
+}
+
+private enum SettingsDates {
+    static func relative(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.doesRelativeDateFormatting = true
+        return formatter.string(from: date)
+    }
+
+    static func watchingSince(feed: ChangeFeedResult?) -> Date? {
+        feed?.feed?.watchingSince ?? HistoryStart.stored()
+    }
+}
+
+private func formattedBytes(_ bytes: Int64) -> String {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .file
+    return formatter.string(fromByteCount: bytes)
+}
+
+// MARK: - General
+
+private struct GeneralSettingsTab: View {
+    @Bindable var settingsStore: SettingsStore
+    @State private var manager = MenuBarManager.shared
+    @State private var checksAutomatically = MenuBarManager.shared?.automaticallyChecksForUpdates ?? false
+    @State private var showStartOverConfirmation = false
+    @State private var isStartingOver = false
+    @State private var startOverNotice = ""
+
+    private var isUpdaterAvailable: Bool {
+        manager?.isUpdaterAvailable == true
+    }
+
+    private var versionText: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        return "Prunr \(short) (\(build))"
+    }
+
+    private var updateStatusText: String? {
+        guard isUpdaterAvailable, let manager else { return nil }
+        if manager.isUpdateAvailable, let version = manager.availableUpdateShortVersion {
+            return "Version \(version) is available."
+        }
+        guard let lastCheck = manager.lastUpdateCheckDate else { return "Not checked yet." }
+        return "Up to date. Last checked \(SettingsDates.relative(lastCheck))."
+    }
+
+    private var watchingSince: Date? {
+        SettingsDates.watchingSince(feed: manager?.changeFeed)
+    }
+
+    var body: some View {
+        Form {
+            Section("Startup") {
+                Toggle("Launch Prunr at login", isOn: $settingsStore.launchAtLogin)
+                    .toggleStyle(.switch)
+            }
+
+            Section("Updates") {
+                if isUpdaterAvailable {
+                    Toggle("Check for updates automatically", isOn: $checksAutomatically)
+                        .toggleStyle(.switch)
+                        .onChange(of: checksAutomatically) { _, enabled in
+                            manager?.automaticallyChecksForUpdates = enabled
+                        }
+                }
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(versionText)
+                            .onTapGesture {
+                                if NSEvent.modifierFlags.contains(.option) {
+                                    DevMode.shared.toggle()
+                                }
+                            }
+                        if let updateStatusText {
+                            Text(updateStatusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if isUpdaterAvailable {
+                        Button("Check Now") {
+                            manager?.checkForUpdates()
+                        }
+                    }
+                }
+            }
+
+            Section("History") {
+                SettingsRow(
+                    title: "Prunr keeps \(GrowthJournalService.historyWindowDays) days of changes",
+                    detail: "Older days drop off the list on their own."
+                ) {
+                    if let watchingSince {
+                        Text(EpisodeBuilder.watchingSinceLabel(watchingSince, calendar: .current))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                SettingsRow(
+                    title: "Start over",
+                    detail: startOverNotice.isEmpty ? "Clears the change history. Your folder stays the same." : startOverNotice
+                ) {
+                    Button(isStartingOver ? "Starting Over…" : "Start Over…") {
+                        showStartOverConfirmation = true
+                    }
+                    .disabled(isStartingOver)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .hiddenScrollIndicators()
+        .onAppear {
+            checksAutomatically = manager?.automaticallyChecksForUpdates ?? false
+        }
+        .confirmationDialog(
+            "Start over?",
+            isPresented: $showStartOverConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Start Over", role: .destructive) {
+                startOver()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This clears the change history. Your folder stays the same.")
+        }
+    }
+
+    private func startOver() {
+        isStartingOver = true
+        startOverNotice = ""
+
+        Task {
+            if let manager {
+                await manager.performReset()
+            } else {
+                try? await BaselineService.shared.resetBaseline()
+            }
+            isStartingOver = false
+            startOverNotice = "History cleared. Run a scan to start again."
+        }
+    }
+}
+
+// MARK: - Folder
+
+private struct FolderSettingsTab: View {
+    @Bindable var settingsStore: SettingsStore
+    @State private var manager = MenuBarManager.shared
+    @State private var baselineService = BaselineService.shared
+    @State private var scanService = ScanService.shared
+    @State private var permissionsService = PermissionsService.shared
+    @State private var showingBasePathPicker = false
+    @Binding var isApplyingScopeChanges: Bool
+    @State private var showApplyConfirmation = false
+    @State private var showingAppliedNotice = false
+    @State private var applyStatusText = ""
+    @State private var hasRequiredScanAccess: Bool? = nil
+    @State private var blockedScanAccessLocations: [String] = []
+    @State private var permissionRefreshTask: Task<Void, Never>? = nil
+
+    private var isScanInProgress: Bool {
+        scanService.isScanning
+    }
+
+    private var folder: ScanFolderName {
+        ScanFolderName(path: settingsStore.mainBasePath)
+    }
+
+    private var accessDetail: String {
+        guard hasRequiredScanAccess == false else {
+            return "Lets Prunr see Mail, Messages and Safari data in \(folder.phrase)."
+        }
+        guard !blockedScanAccessLocations.isEmpty else {
+            return "Needed to see Mail, Messages and Safari data in \(folder.phrase)."
+        }
+        return "Still blocked: \(blockedScanAccessLocations.prefix(4).joined(separator: ", "))"
+    }
+
+    private var outsideFolderBytes: Int64 {
+        guard let manager else { return 0 }
+        let inside = manager.sortedCategories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
+        return max(0, manager.usedBytes - inside)
+    }
+
+    var body: some View {
+        ZStack {
+            VStack(spacing: 0) {
+                if isScanInProgress {
+                    scanActivityBanner
+                }
+
+                Form {
+                    Section {
+                        HStack(spacing: 10) {
+                            Image(systemName: folder.isHome ? "house.fill" : "folder.fill")
+                                .foregroundStyle(.blue)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(folder.title)
+                                Text(folder.displayPath)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+
+                            Spacer(minLength: 8)
+
+                            Button("Change…") {
+                                showingBasePathPicker = true
+                            }
+                            .disabled(isScanInProgress)
+                        }
+                    } header: {
+                        Text("Folder")
+                    } footer: {
+                        Text("Prunr lists what grows inside this folder. Changing it starts the history over.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Section("Access") {
+                        SettingsRow(title: "Full Disk Access", detail: accessDetail) {
+                            switch hasRequiredScanAccess {
+                            case true?:
+                                Label("Granted", systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            case false?:
+                                Button("Open Privacy Settings") {
+                                    openScanAccessSettings()
+                                }
+                                .buttonStyle(.borderedProminent)
+                            case nil:
+                                EmptyView()
+                            }
+                        }
+                    }
+
+                    Section("Not watched") {
+                        if outsideFolderBytes > 0 {
+                            SettingsRow(
+                                title: "\(formattedBytes(outsideFolderBytes)) outside \(folder.phrase)",
+                                detail: "Shown as the last row in Categories."
+                            ) {
+                                Text("System, apps, other users")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("Everything on this disk is inside \(folder.phrase).")
+                        }
+                    }
+                }
+                .formStyle(.grouped)
+                .hiddenScrollIndicators()
+
+                if settingsStore.hasPendingScopeChanges && !isApplyingScopeChanges {
+                    Divider()
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+
+                        Text(isScanInProgress
+                             ? "Apply is available when the current scan finishes."
+                             : "Changing the folder starts your history over.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Button("Apply") {
+                            showApplyConfirmation = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isScanInProgress)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.orange.opacity(0.08))
+                }
+
+                if showingAppliedNotice {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Folder changed. History starts over.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+            }
+            .disabled(isApplyingScopeChanges)
+
+            if isApplyingScopeChanges {
+                applyingOverlay
+            }
+        }
+        .fileImporter(
+            isPresented: $showingBasePathPicker,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                settingsStore.setMainBasePath(url)
+            }
+        }
+        .confirmationDialog(
+            "Change the folder?",
+            isPresented: $showApplyConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Change and Start Over", role: .destructive) {
+                applyFolderChange()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Changing the folder starts your history over.")
+        }
+        .onAppear {
+            refreshScanAccess()
+        }
+        .onDisappear {
+            permissionRefreshTask?.cancel()
+        }
+        .onChange(of: settingsStore.enabledTrackedPaths) { _, _ in
+            refreshScanAccess()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshScanAccess()
+        }
+    }
 
     private var scanActivityBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 11))
-            Text("Scan running — scan scope changes are available when it finishes.")
+            Text("Scan running. You can change the folder when it finishes.")
                 .font(.system(size: 11))
             Spacer()
         }
@@ -112,69 +484,111 @@ struct SettingsView: View {
             Divider()
         }
     }
-}
 
-// MARK: - General Tab
+    private var applyingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.08)
+                .ignoresSafeArea()
 
-private struct GeneralSettingsTab: View {
-    @Bindable var settingsStore: SettingsStore
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.blue)
 
-    private var appVersionText: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
-        return "Version \(short) (\(build))"
-    }
+                    Text("Starting over")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
 
-    var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section("Startup") {
-                    Toggle("Launch Prunr at Login", isOn: $settingsStore.launchAtLogin)
-                        .toggleStyle(.switch)
+                    Spacer()
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
 
-                if MenuBarManager.shared?.isUpdaterAvailable == true {
-                    Section("Updates") {
-                        Button("Check for Updates…") {
-                            MenuBarManager.shared?.checkForUpdates()
-                        }
-                        .buttonStyle(.bordered)
-                    }
+                Divider()
+
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.large)
+
+                    Text(applyStatusText.isEmpty ? "Clearing the old history." : applyStatusText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 240)
+
+                    Text("Run a new scan from the menu bar to start watching.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 240)
                 }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
             }
-            .formStyle(.grouped)
-            .hiddenScrollIndicators()
-
-            Spacer(minLength: 0)
-
-            Divider()
-
-            Text(appVersionText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+            .frame(maxWidth: 320)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .shadow(radius: 8)
+            )
+            .padding(20)
         }
     }
+
+    private func applyFolderChange() {
+        isApplyingScopeChanges = true
+        applyStatusText = "Clearing the old history."
+
+        Task {
+            if (try? await performFolderChange()) != nil {
+                settingsStore.clearPendingScopeChanges()
+                showingAppliedNotice = true
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    showingAppliedNotice = false
+                }
+            }
+            isApplyingScopeChanges = false
+        }
+    }
+
+    private func performFolderChange() async throws {
+        if let manager {
+            applyStatusText = "Switching folders."
+            try await manager.applyScopeChanges()
+        } else {
+            try await baselineService.resetBaseline()
+            applyStatusText = "Cleaning up."
+            await DatabaseCleanupService.shared.performAutoCleanup()
+        }
+    }
+
+    private func refreshScanAccess() {
+        let roots = settingsStore.enabledTrackedPaths.map(\.url.standardizedFileURL)
+        permissionRefreshTask?.cancel()
+        permissionRefreshTask = Task {
+            let report = await permissionsService.evaluateScanScopeAccessAsync(scanRootURLs: roots)
+            guard !Task.isCancelled else { return }
+            hasRequiredScanAccess = report.isGranted
+            blockedScanAccessLocations = report.blockedLocations
+        }
+    }
+
+    private func openScanAccessSettings() {
+        Task { await permissionsService.requestFullDiskAccess() }
+    }
 }
 
-// MARK: - Troubleshooting Tab
+// MARK: - Feedback
 
-private struct TroubleshootingSettingsTab: View {
-    @State private var baselineService = BaselineService.shared
+private struct FeedbackSettingsTab: View {
     @State private var feedbackMessage = ""
     @State private var feedbackEmail = ""
     @State private var feedbackNotice = ""
     @State private var feedbackNoticeIsError = false
     @State private var diagnosticsNotice = ""
-    @State private var diagnosticsNoticeIsError = false
     @State private var isSendingFeedback = false
-    @State private var isResetting = false
-    @State private var isCompactingDatabase = false
-    @State private var showDeleteSnapshotsConfirmation = false
-    @State private var compactedNotice = ""
-    @State private var compactedNoticeIsError = false
-    @State private var resetNotice = ""
     @FocusState private var feedbackFocused: Bool
 
     var body: some View {
@@ -212,87 +626,24 @@ private struct TroubleshootingSettingsTab: View {
                         .font(.caption)
                         .foregroundStyle(feedbackNoticeIsError ? .red : .green)
                 }
-
-                if feedbackNoticeIsError {
-                    Button("Reveal Diagnostics Report in Finder") {
-                        _ = MenuBarManager.shared?.generateDiagnosticsReport()
-                    }
-                }
             }
 
-            Section("Diagnostics") {
-                Button {
+            Section {
+                Button("Show Diagnostics Report in Finder") {
                     let url = MenuBarManager.shared?.generateDiagnosticsReport()
-                    if url != nil {
-                        diagnosticsNotice = "Report saved and revealed in Finder. Send it over to help diagnose CPU issues."
-                        diagnosticsNoticeIsError = false
-                    } else {
-                        diagnosticsNotice = "Could not write diagnostics report."
-                        diagnosticsNoticeIsError = true
-                    }
-                } label: {
-                    Label("Generate Diagnostics Report", systemImage: "stethoscope")
+                    diagnosticsNotice = url == nil ? "Could not write the diagnostics report." : ""
                 }
+                .buttonStyle(.link)
 
-                if !diagnosticsNotice.isEmpty {
-                    Text(diagnosticsNotice)
-                        .font(.caption)
-                        .foregroundStyle(diagnosticsNoticeIsError ? .red : .secondary)
-                }
-            }
-
-            Section("Data Maintenance") {
-                Text("Prunr automatically keeps its data tidy. Use these only when troubleshooting.")
+                Text(diagnosticsNotice.isEmpty
+                     ? "A diagnostics report is attached to your feedback automatically."
+                     : diagnosticsNotice)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Button {
-                    compactDatabase()
-                } label: {
-                    Label(
-                        isCompactingDatabase ? "Compacting Database…" : "Compact Database",
-                        systemImage: "externaldrive.badge.timemachine"
-                    )
-                }
-                .disabled(isResetting || isCompactingDatabase)
-
-                if !compactedNotice.isEmpty {
-                    Text(compactedNotice)
-                        .font(.caption)
-                        .foregroundStyle(compactedNoticeIsError ? .red : .green)
-                }
-
-                Button(role: .destructive) {
-                    showDeleteSnapshotsConfirmation = true
-                } label: {
-                    Label(
-                        isResetting ? "Resetting Prunr…" : "Reset Prunr Data",
-                        systemImage: "trash"
-                    )
-                }
-                .disabled(isResetting || isCompactingDatabase)
-
-                if !resetNotice.isEmpty {
-                    Text(resetNotice)
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                }
+                    .foregroundStyle(diagnosticsNotice.isEmpty ? .secondary : Color.red)
             }
         }
         .formStyle(.grouped)
         .hiddenScrollIndicators()
-        .confirmationDialog(
-            "Reset Prunr data?",
-            isPresented: $showDeleteSnapshotsConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Reset Prunr Data", role: .destructive) {
-                resetSnapshots()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This deletes saved snapshots and growth history. Your scan folders stay selected.")
-        }
         .onReceive(NotificationCenter.default.publisher(for: .focusFeedback)) { _ in
             feedbackFocused = true
         }
@@ -302,7 +653,7 @@ private struct TroubleshootingSettingsTab: View {
         let message = feedbackMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
         guard let diagnostics = MenuBarManager.shared?.prepareDiagnosticsAttachment() else {
-            feedbackNotice = "Could not prepare diagnostics. Reveal the report in Finder and send it manually."
+            feedbackNotice = "Could not prepare diagnostics. Show the report in Finder and send it manually."
             feedbackNoticeIsError = true
             return
         }
@@ -321,450 +672,163 @@ private struct TroubleshootingSettingsTab: View {
                 feedbackNotice = "Feedback sent. Thank you."
                 feedbackNoticeIsError = false
             } catch {
-                // Keep message/email so the user can retry; always surface mailto fallback.
                 feedbackNotice = FeedbackServiceError.userFacingMessage(for: error)
                 feedbackNoticeIsError = true
             }
             isSendingFeedback = false
         }
     }
+}
+
+// MARK: - Developer
+
+private struct DeveloperSettingsTab: View {
+    @State private var devMode = DevMode.shared
+    @State private var manager = MenuBarManager.shared
+    @State private var scanService = ScanService.shared
+    @State private var perfLogging = PerfLogging.isEnabled()
+    @State private var isCompacting = false
+    @State private var databaseNotice = ""
+    @State private var diagnosticsNotice = ""
+    @State private var databaseBytes: Int64? = nil
+
+    private var databaseURL: URL? {
+        DatabaseManager.shared.databasePath.map { URL(fileURLWithPath: $0) }
+    }
+
+    private var databaseDetail: String {
+        guard let databaseURL else { return "Not open" }
+        let folder = ScanFolderName(path: databaseURL.deletingLastPathComponent().path).displayPath
+        guard let databaseBytes else { return folder }
+        return "\(folder) · \(formattedBytes(databaseBytes))"
+    }
+
+    private var watchingSinceText: String {
+        guard let since = SettingsDates.watchingSince(feed: manager?.changeFeed) else { return "Not started" }
+        return EpisodeBuilder.watchingSinceLabel(since, calendar: .current)
+    }
+
+    private var lastFullScanText: String {
+        guard let date = manager?.lastFullScanCompletedAt else { return "No full scan yet" }
+        return "Last full scan \(SettingsDates.relative(date))"
+    }
+
+    private var isScanBusy: Bool {
+        scanService.isScanning || manager?.isLoading == true || manager?.isAutoScanning == true
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Show in panel", selection: $devMode.panelPreview) {
+                    ForEach(PanelPreview.allCases) { preview in
+                        Text(preview.title).tag(preview)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Panel preview")
+            } footer: {
+                Text("Overrides what the panel shows until you pick Live or quit. No data is touched.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Data") {
+                SettingsRow(title: "History start", detail: watchingSinceText) {
+                    Button("Reset") {
+                        HistoryStart.reset()
+                        Task { await manager?.refreshChangeFeed() }
+                    }
+                }
+
+                SettingsRow(title: "Full scan", detail: lastFullScanText) {
+                    Button("Scan Now") {
+                        Task { _ = await manager?.loadInventory() }
+                    }
+                    .disabled(isScanBusy)
+                }
+
+                SettingsRow(title: "Database", detail: databaseNotice.isEmpty ? databaseDetail : databaseNotice) {
+                    HStack(spacing: 8) {
+                        Button(isCompacting ? "Compacting…" : "Compact") {
+                            compactDatabase()
+                        }
+                        .disabled(isCompacting)
+
+                        Button("Show in Finder") {
+                            if let databaseURL {
+                                NSWorkspace.shared.activateFileViewerSelecting([databaseURL])
+                            }
+                        }
+                        .disabled(databaseURL == nil)
+                    }
+                }
+            }
+
+            Section("Diagnostics") {
+                Toggle("Perf logging", isOn: $perfLogging)
+                    .toggleStyle(.switch)
+                    .onChange(of: perfLogging) { _, enabled in
+                        PerfLogging.setEnabled(enabled)
+                    }
+
+                SettingsRow(title: "Diagnostics report", detail: diagnosticsNotice.isEmpty ? nil : diagnosticsNotice) {
+                    HStack(spacing: 8) {
+                        Button("Copy") {
+                            copyDiagnostics()
+                        }
+                        Button("Show Log") {
+                            _ = manager?.generateDiagnosticsReport()
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .hiddenScrollIndicators()
+        .onAppear {
+            refreshDatabaseSize()
+        }
+    }
+
+    private func refreshDatabaseSize() {
+        guard let path = databaseURL?.path else {
+            databaseBytes = nil
+            return
+        }
+        databaseBytes = [path, path + "-wal"].reduce(Int64(0)) { total, filePath in
+            let size = (try? FileManager.default.attributesOfItem(atPath: filePath)[.size] as? Int64) ?? 0
+            return total + size
+        }
+    }
 
     private func compactDatabase() {
-        isCompactingDatabase = true
-        compactedNotice = ""
-        compactedNoticeIsError = false
+        isCompacting = true
+        databaseNotice = ""
 
         Task {
             do {
                 let report = try await DatabaseCleanupService.shared.compactDatabaseNow()
                 let reclaimed = max(0, report.dbBytesBefore - report.dbBytesAfter)
                     + max(0, report.walBytesBefore - report.walBytesAfter)
-                compactedNotice = "Reclaimed \(formattedBytes(reclaimed))."
-                compactedNoticeIsError = false
+                databaseNotice = "Reclaimed \(formattedBytes(reclaimed))."
             } catch {
-                compactedNotice = error.localizedDescription
-                compactedNoticeIsError = true
+                databaseNotice = error.localizedDescription
             }
-            isCompactingDatabase = false
+            refreshDatabaseSize()
+            isCompacting = false
         }
     }
 
-    private func resetSnapshots() {
-        isResetting = true
-        resetNotice = ""
-
-        Task {
-            if let manager = MenuBarManager.shared {
-                await manager.performReset()
-            } else {
-                try? await baselineService.resetBaseline()
-            }
-            isResetting = false
-            resetNotice = "Prunr data reset. Run a scan to start fresh."
+    private func copyDiagnostics() {
+        guard let data = manager?.prepareDiagnosticsAttachment() else {
+            diagnosticsNotice = "Could not write the diagnostics report."
+            return
         }
-    }
-
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
-    }
-}
-
-// MARK: - Scan Scope Tab
-
-private struct ScanScopeSettingsTab: View {
-    @Bindable var settingsStore: SettingsStore
-    @State private var manager = MenuBarManager.shared
-    @State private var baselineService = BaselineService.shared
-    @State private var scanService = ScanService.shared
-    @State private var permissionsService = PermissionsService.shared
-    @State private var showingBasePathPicker = false
-    @Binding var isApplyingScopeChanges: Bool
-    @State private var showApplyConfirmation = false
-    @State private var showingAppliedNotice = false
-    @State private var applyStatusText = ""
-    @State private var showsAllCommonPaths = false
-    @State private var hasRequiredScanAccess = false
-    @State private var blockedScanAccessLocations: [String] = []
-    @State private var permissionRefreshTask: Task<Void, Never>? = nil
-    private let initialCommonPathLimit = 5
-
-    private var isScanInProgress: Bool {
-        scanService.isScanning
-    }
-
-    private var additionalCommonPaths: [TrackedPath] {
-        settingsStore.availableCommonPaths
-            .filter { !settingsStore.isCoveredByMainScope($0) }
-            .sorted { lhs, rhs in
-                let lhsSelected = settingsStore.isCommonPathSelected(lhs)
-                let rhsSelected = settingsStore.isCommonPathSelected(rhs)
-                if lhsSelected != rhsSelected { return lhsSelected }
-                if lhs.isRecommendedExtra != rhs.isRecommendedExtra {
-                    return lhs.isRecommendedExtra
-                }
-                return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
-            }
-    }
-
-    private var visibleCommonPaths: [TrackedPath] {
-        guard !showsAllCommonPaths else { return additionalCommonPaths }
-
-        let selected = additionalCommonPaths.filter(settingsStore.isCommonPathSelected)
-        let unselected = additionalCommonPaths.filter { !settingsStore.isCommonPathSelected($0) }
-        return selected + unselected.prefix(max(0, initialCommonPathLimit - selected.count))
-    }
-
-    private var hiddenCommonPathCount: Int {
-        max(0, additionalCommonPaths.count - visibleCommonPaths.count)
-    }
-
-    var body: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        GroupBox("Primary Scan Folder") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                if isScanInProgress {
-                                    Label("Scan is running. Scope controls are temporarily locked.", systemImage: "lock.fill")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                HStack(spacing: 10) {
-                                    Image(systemName: "externaldrive.fill")
-                                        .foregroundStyle(.blue)
-
-                                    Text(settingsStore.mainBasePath)
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-
-                                    Spacer()
-
-                                    Button("Change") {
-                                        showingBasePathPicker = true
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .disabled(isScanInProgress)
-                                }
-                            }
-                            .padding(.top, 4)
-                        }
-
-                        GroupBox("Scan Coverage") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                if outsideScanScopeBytes > 0 {
-                                    Label(
-                                        "\(formattedBytes(outsideScanScopeBytes)) outside scan scope",
-                                        systemImage: "square.dashed"
-                                    )
-                                    .foregroundStyle(.secondary)
-
-                                } else {
-                                    Label("All detected storage is inside the scan scope", systemImage: "checkmark.circle.fill")
-                                        .foregroundStyle(.green)
-                                }
-                            }
-                            .padding(.top, 4)
-                        }
-
-                        GroupBox("Scan Access") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Label(
-                                    hasRequiredScanAccess
-                                        ? "Prunr can access this scan scope"
-                                        : "Prunr needs access to part of this scan scope",
-                                    systemImage: hasRequiredScanAccess ? "checkmark.circle.fill" : "shield.fill"
-                                )
-                                .foregroundStyle(hasRequiredScanAccess ? .green : .orange)
-
-                                if !hasRequiredScanAccess && !blockedScanAccessLocations.isEmpty {
-                                    Text("Still blocked: \(blockedScanAccessLocations.prefix(4).joined(separator: ", "))")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                if !hasRequiredScanAccess {
-                                    Button("Open Privacy Settings") {
-                                        openScanAccessSettings()
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                }
-                            }
-                            .padding(.top, 4)
-                        }
-
-                        GroupBox("Additional Locations") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Add storage outside your primary folder. Subfolders are already included.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-
-                                if additionalCommonPaths.isEmpty {
-                                    Text("All available common locations are already included in your scan folder.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    ForEach(visibleCommonPaths) { path in
-                                        commonPathToggle(for: path)
-                                    }
-
-                                    if hiddenCommonPathCount > 0 {
-                                        Button {
-                                            withAnimation(.snappy(duration: 0.2)) {
-                                                showsAllCommonPaths = true
-                                            }
-                                        } label: {
-                                            Label("Show \(hiddenCommonPathCount) more locations", systemImage: "chevron.down")
-                                        }
-                                        .buttonStyle(.plain)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.blue)
-                                    } else if showsAllCommonPaths, additionalCommonPaths.count > initialCommonPathLimit {
-                                        Button {
-                                            withAnimation(.snappy(duration: 0.2)) {
-                                                showsAllCommonPaths = false
-                                            }
-                                        } label: {
-                                            Label("Show fewer locations", systemImage: "chevron.up")
-                                        }
-                                        .buttonStyle(.plain)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.blue)
-                                    }
-                                }
-                            }
-                            .padding(.top, 4)
-                        }
-                    }
-                    .padding()
-                }
-                .hiddenScrollIndicators()
-
-            if settingsStore.hasPendingScopeChanges && !isApplyingScopeChanges {
-                Divider()
-
-                    HStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-
-                        Text("Scope changed. Apply to reset snapshots and start fresh.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Spacer()
-
-                        Button {
-                            showApplyConfirmation = true
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark.circle")
-                                Text("Apply")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isScanInProgress)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(Color.orange.opacity(0.08))
-                }
-
-                if settingsStore.hasPendingScopeChanges && isScanInProgress {
-                    HStack(spacing: 8) {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(.secondary)
-                        Text("Apply is available when the current scan finishes.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-
-                if showingAppliedNotice {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Text("Scope applied. Snapshot reloaded.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-            }
-            .disabled(isApplyingScopeChanges)
-
-            if isApplyingScopeChanges {
-                ZStack {
-                    Color.black.opacity(0.08)
-                        .ignoresSafeArea()
-
-                    VStack(spacing: 0) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.blue)
-
-                            Text("Resetting snapshots")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.primary)
-
-                            Spacer()
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-
-                        Divider()
-
-                        VStack(spacing: 12) {
-                            ProgressView()
-                                .controlSize(.large)
-
-                            Text(applyStatusText.isEmpty ? "Cleaning data and preparing for a new scan." : applyStatusText)
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: 240)
-
-                            Text("Run a new scan from the menu bar to rebuild your baseline.")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: 240)
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 16)
-                    }
-                    .frame(maxWidth: 320)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(nsColor: .windowBackgroundColor))
-                            .shadow(radius: 8)
-                    )
-                    .padding(20)
-                }
-            }
-        }
-        .fileImporter(
-            isPresented: $showingBasePathPicker,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                settingsStore.setMainBasePath(url)
-            }
-        }
-        .confirmationDialog(
-            "Apply scope changes?",
-            isPresented: $showApplyConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Apply and Reset Snapshots", role: .destructive) {
-                isApplyingScopeChanges = true
-                applyStatusText = "Resetting old snapshots..."
-
-                Task {
-                    do {
-                        if let manager = MenuBarManager.shared {
-                            applyStatusText = "Applying new scope..."
-                            try await manager.applyScopeChanges()
-                        } else {
-                            try await baselineService.resetBaseline()
-                            applyStatusText = "Cleaning up..."
-                            await DatabaseCleanupService.shared.performAutoCleanup()
-                        }
-
-                        settingsStore.clearPendingScopeChanges()
-                        showingAppliedNotice = true
-                        Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            showingAppliedNotice = false
-                        }
-                    } catch {
-                        // Keep existing scope pending if apply fails
-                    }
-
-                    isApplyingScopeChanges = false
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Changing scan scope can invalidate previous comparisons. Applying will delete existing snapshots.")
-        }
-        .onAppear {
-            refreshScanAccess()
-        }
-        .onDisappear {
-            permissionRefreshTask?.cancel()
-        }
-        .onChange(of: settingsStore.enabledTrackedPaths) { _, _ in
-            refreshScanAccess()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshScanAccess()
-        }
-    }
-
-    @ViewBuilder
-    private func commonPathToggle(for path: TrackedPath) -> some View {
-        Toggle(isOn: Binding(
-            get: { settingsStore.isCommonPathSelected(path) },
-            set: { selected in
-                settingsStore.setCommonPathSelected(path, selected: selected)
-            }
-        )) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(path.displayName)
-                        .font(.system(size: 13, weight: .medium))
-                    Text(path.url.path)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer(minLength: 0)
-            }
-        }
-        .toggleStyle(.switch)
-        .disabled(isScanInProgress)
-    }
-
-    private func refreshScanAccess() {
-        let roots = settingsStore.enabledTrackedPaths.map(\.url.standardizedFileURL)
-        permissionRefreshTask?.cancel()
-        permissionRefreshTask = Task {
-            let report = await permissionsService.evaluateScanScopeAccessAsync(scanRootURLs: roots)
-            guard !Task.isCancelled else { return }
-            hasRequiredScanAccess = report.isGranted
-            blockedScanAccessLocations = report.blockedLocations
-        }
-    }
-
-    private var trackedInventoryBytes: Int64 {
-        manager?.sortedCategories.reduce(Int64(0)) { $0 + $1.currentSizeBytes } ?? 0
-    }
-
-    private var outsideScanScopeBytes: Int64 {
-        guard let manager else { return 0 }
-        return max(0, manager.usedBytes - trackedInventoryBytes)
-    }
-
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
-    }
-
-    private func openScanAccessSettings() {
-        Task { await permissionsService.requestFullDiskAccess() }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(String(decoding: data, as: UTF8.self), forType: .string)
+        diagnosticsNotice = "Copied to the clipboard."
     }
 }
 

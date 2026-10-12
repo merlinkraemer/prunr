@@ -159,6 +159,8 @@ final class MenuBarManager: NSObject {
     private var checkForUpdatesHandler: ((Any?) -> Void)?
     @ObservationIgnored
     private var checkForUpdatesInBackgroundHandler: (() -> Void)?
+    @ObservationIgnored
+    private var updaterSettings: UpdaterSettings?
     private static let sparkleLastCheckTimeKey = "SULastCheckTime"
     private static let panelOpenUpdateCheckCooldown: TimeInterval = 60 * 60
     var isUpdaterAvailable = false
@@ -612,7 +614,7 @@ final class MenuBarManager: NSObject {
     /// Rolling diagnostics recorder — surfaces sustained FSEvents/refresh churn
     /// and CPU that the "constant CPU" alpha report points at. Appends periodic
     /// summaries to `~/Library/Logs/Prunr/diagnostics.log`; the tester can hand us
-    /// that file from Settings → Troubleshooting → Generate Diagnostics Report.
+    /// that file from Settings → Feedback → Show Diagnostics Report.
     @ObservationIgnored
     private let perfMeter = DiagnosticsReporter.shared
 
@@ -644,7 +646,7 @@ final class MenuBarManager: NSObject {
     /// A dirty watcher signal survives active scans and full-scan cooldowns.
     /// It is cleared only after a successful authoritative refresh begins.
     private(set) var needsAuthoritativeReconciliation = false
-    private var lastFullScanCompletedAt: Date?
+    private(set) var lastFullScanCompletedAt: Date?
     private var lastFullScanAttemptAt: Date?
     private var consecutiveFailedFullScans = 0
     private(set) var lastAutomaticScanAt: Date?
@@ -892,17 +894,13 @@ final class MenuBarManager: NSObject {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
-        let troubleshootingMenu = NSMenu(title: "Troubleshooting")
         let feedbackItem = NSMenuItem(
             title: "Send Feedback…",
             action: #selector(openFeedback),
             keyEquivalent: ""
         )
         feedbackItem.target = self
-        troubleshootingMenu.addItem(feedbackItem)
-        let troubleshootingItem = NSMenuItem(title: "Troubleshooting", action: nil, keyEquivalent: "")
-        troubleshootingItem.submenu = troubleshootingMenu
-        menu.addItem(troubleshootingItem)
+        menu.addItem(feedbackItem)
 
         let checkForUpdatesItem = NSMenuItem(
             title: "Check for Updates…",
@@ -983,12 +981,28 @@ final class MenuBarManager: NSObject {
         SettingsWindowController.shared.showFeedback()
     }
 
+    struct UpdaterSettings {
+        let automaticallyChecks: () -> Bool
+        let setAutomaticallyChecks: (Bool) -> Void
+    }
+
+    var automaticallyChecksForUpdates: Bool {
+        get { updaterSettings?.automaticallyChecks() ?? false }
+        set { updaterSettings?.setAutomaticallyChecks(newValue) }
+    }
+
+    var lastUpdateCheckDate: Date? {
+        UserDefaults.standard.object(forKey: Self.sparkleLastCheckTimeKey) as? Date
+    }
+
     func configureUpdater(
         checkForUpdates: @escaping (Any?) -> Void,
-        checkForUpdatesInBackground: (() -> Void)? = nil
+        checkForUpdatesInBackground: (() -> Void)? = nil,
+        settings: UpdaterSettings? = nil
     ) {
         checkForUpdatesHandler = checkForUpdates
         checkForUpdatesInBackgroundHandler = checkForUpdatesInBackground
+        updaterSettings = settings
         isUpdaterAvailable = true
         checkForUpdatesMenuItem?.isEnabled = true
         notifyUpdateNotAvailable()
@@ -997,6 +1011,7 @@ final class MenuBarManager: NSObject {
     func disableUpdater() {
         checkForUpdatesHandler = nil
         checkForUpdatesInBackgroundHandler = nil
+        updaterSettings = nil
         isUpdaterAvailable = false
         isUpdateAvailable = false
         availableUpdateShortVersion = nil
@@ -2597,7 +2612,7 @@ final class MenuBarManager: NSObject {
             return
         }
 
-        let lastCheck = UserDefaults.standard.object(forKey: Self.sparkleLastCheckTimeKey) as? Date
+        let lastCheck = lastUpdateCheckDate
         if let lastCheck,
            Date().timeIntervalSince(lastCheck) < Self.panelOpenUpdateCheckCooldown {
             return

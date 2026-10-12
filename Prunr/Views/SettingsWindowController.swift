@@ -2,31 +2,39 @@ import AppKit
 import SwiftUI
 
 /// Hosts the settings window with a native `NSToolbar` (preference style) as the
-/// tab bar — the System-Settings look with large icons + labels.
-///
-/// We deliberately do NOT use SwiftUI's `Settings` scene: that scene creates
-/// hosting views that participate in the Core Animation display cycle and caused
-/// continuous idle layout passes (bug #9). Instead the app is pure AppKit and we
-/// build this window on demand. The toolbar (AppKit) drives a shared
-/// `SettingsSelectionModel`, and a single long-lived `NSHostingController`
-/// renders the selected pane via `SettingsView`, so SwiftUI state survives tab
-/// switches.
+/// tab bar. SwiftUI's `Settings` scene is avoided because its hosting views
+/// caused continuous idle layout passes (bug #9).
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     static let shared = SettingsWindowController()
 
     private var window: NSWindow?
     private let selection = SettingsSelectionModel()
+    private var devModeObserver: NSObjectProtocol?
 
-    private override init() { super.init() }
+    private override init() {
+        super.init()
+        devModeObserver = NotificationCenter.default.addObserver(
+            forName: .devModeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.syncToolbarWithDevMode()
+            }
+        }
+    }
 
-    /// Show (or focus, if already open) the settings window.
     func show() {
         if let window {
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             window.orderFrontRegardless()
             return
+        }
+
+        if !visibleTabs.contains(selection.tab) {
+            selection.tab = .general
         }
 
         let hosting = NSHostingController(rootView: SettingsView(selection: selection))
@@ -56,24 +64,47 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
     }
 
     func showFeedback() {
-        selection.tab = .troubleshooting
-        window?.toolbar?.selectedItemIdentifier = SettingsTab.troubleshooting.toolbarIdentifier
+        select(.feedback)
         show()
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .focusFeedback, object: nil)
         }
     }
 
-    @objc private func selectTab(_ sender: NSToolbarItem) {
-        guard let tab = SettingsTab.from(toolbarIdentifier: sender.itemIdentifier) else { return }
+    private var visibleTabs: [SettingsTab] {
+        SettingsTab.visibleTabs(devMode: DevMode.shared.isEnabled)
+    }
+
+    private func select(_ tab: SettingsTab) {
         selection.tab = tab
         window?.toolbar?.selectedItemIdentifier = tab.toolbarIdentifier
+    }
+
+    private func syncToolbarWithDevMode() {
+        if !visibleTabs.contains(selection.tab) {
+            select(.general)
+        }
+        guard let toolbar = window?.toolbar else { return }
+
+        let wanted = visibleTabs.map(\.toolbarIdentifier)
+        for index in toolbar.items.indices.reversed() where !wanted.contains(toolbar.items[index].itemIdentifier) {
+            toolbar.removeItem(at: index)
+        }
+        for (index, identifier) in wanted.enumerated()
+        where !toolbar.items.map(\.itemIdentifier).contains(identifier) {
+            toolbar.insertItem(withItemIdentifier: identifier, at: index)
+        }
+        toolbar.selectedItemIdentifier = selection.tab.toolbarIdentifier
+    }
+
+    @objc private func selectTab(_ sender: NSToolbarItem) {
+        guard let tab = SettingsTab.from(toolbarIdentifier: sender.itemIdentifier) else { return }
+        select(tab)
     }
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        // Drop the reference so the next open builds a fresh window.
         window = nil
     }
 
@@ -94,14 +125,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        SettingsTab.allCases.map(\.toolbarIdentifier)
+        visibleTabs.map(\.toolbarIdentifier)
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
+        SettingsTab.allCases.map(\.toolbarIdentifier)
     }
 
     func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
+        SettingsTab.allCases.map(\.toolbarIdentifier)
     }
 }
