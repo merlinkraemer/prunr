@@ -1816,6 +1816,15 @@ final class MenuBarManager: NSObject {
         }
     }
 
+    /// The first open warms only the largest category: warming every visible
+    /// one at once makes them contend for the same rows and slows the one opened.
+    nonisolated static func initialWarmupCategory(in items: [CategoryInventoryItem]) -> GrowthCategory? {
+        items.reduce(nil as CategoryInventoryItem?) { largest, item in
+            guard let largest else { return item }
+            return item.currentSizeBytes > largest.currentSizeBytes ? item : largest
+        }?.category
+    }
+
     func preloadInitialSubcategoryBreakdownsIfNeeded(for categories: [GrowthCategory]) {
         guard !hasCompletedInitialSubcategoryWarmup else { return }
 
