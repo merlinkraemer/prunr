@@ -703,10 +703,14 @@ struct CategoryGrowthListView: View {
         }
     }
 
+    private var warmupCategories: [GrowthCategory] {
+        MenuBarManager.initialWarmupCategory(in: visibleCategories).map { [$0] } ?? []
+    }
+
     private func preloadVisibleCategoriesIfNeeded() {
         guard !manager.hasCompletedInitialSubcategoryWarmup else { return }
         guard !manager.isAnalyzingChanges else { return }
-        let categories = visibleCategories.map(\.category)
+        let categories = warmupCategories
         guard !categories.isEmpty else { return }
 
         guard !categories.allSatisfy({ manager.isSubcategoryBreakdownReady(for: $0) }) else {
@@ -719,7 +723,7 @@ struct CategoryGrowthListView: View {
 
     private func updateStartupWarmupStateIfNeeded() {
         guard !manager.hasCompletedInitialSubcategoryWarmup else { return }
-        let categories = visibleCategories.map(\.category)
+        let categories = warmupCategories
         guard !categories.isEmpty else { return }
         guard categories.allSatisfy({ manager.isSubcategoryBreakdownReady(for: $0) }) else { return }
         manager.completeInitialSubcategoryWarmup()

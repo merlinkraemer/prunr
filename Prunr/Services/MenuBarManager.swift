@@ -644,6 +644,8 @@ final class MenuBarManager: NSObject {
     nonisolated(unsafe) private var reconciliationBackstopTask: Task<Void, Never>?
     @ObservationIgnored
     nonisolated(unsafe) private var deferredAutoCleanupTask: Task<Void, Never>?
+    @ObservationIgnored
+    private(set) var queryPlannerOptimizationTask: Task<Void, Never>?
     private(set) var isInventoryRefreshInProgress = false
     private var pendingRecentChangePaths: Set<URL> = []
     private var pendingRecentChangeRequiresFullRefresh = false
@@ -1416,6 +1418,7 @@ final class MenuBarManager: NSObject {
 
         if !completedSnapshotsByPath.isEmpty && !wasCancelled {
             await growthJournalService.prune(retentionDays: SettingsStore.shared.categoryHistoryRetentionDays)
+            scheduleQueryPlannerOptimization()
             scheduleDeferredAutoCleanup()
         }
 
@@ -1811,6 +1814,13 @@ final class MenuBarManager: NSObject {
                 _ = await loadSubcategoryBreakdown(for: category)
             }
         }
+    }
+
+    nonisolated static func initialWarmupCategory(in items: [CategoryInventoryItem]) -> GrowthCategory? {
+        items.reduce(nil as CategoryInventoryItem?) { largest, item in
+            guard let largest else { return item }
+            return item.currentSizeBytes > largest.currentSizeBytes ? item : largest
+        }?.category
     }
 
     func preloadInitialSubcategoryBreakdownsIfNeeded(for categories: [GrowthCategory]) {
@@ -3643,6 +3653,19 @@ final class MenuBarManager: NSObject {
 
         lastFileEventAt = Date()
         enqueuePendingRecentChangePaths(fallbackPaths, source: "requiresFullRescan")
+    }
+
+    func scheduleQueryPlannerOptimization() {
+        let logger = Self.logger
+        queryPlannerOptimizationTask = Task.detached(priority: .utility) {
+            do {
+                try await Perf.measure("query-planner-optimize") {
+                    try await DatabaseManager.shared.optimizeQueryPlanner()
+                }
+            } catch {
+                logger.error("Query planner optimize failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     private func scheduleDeferredAutoCleanup() {

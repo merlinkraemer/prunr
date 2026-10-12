@@ -1085,17 +1085,37 @@ extension DatabaseManager {
 
         let subcategoryValue = subcategory?.rawValue ?? ""
         return try await dbPool.read { db in
-            try SnapshotEntryWithPath.fetchAll(db, sql: """
-                SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
-                FROM snapshotEntry se
-                JOIN pathClassification pc ON pc.pathId = se.pathId
-                JOIN paths p ON p.id = se.pathId
-                WHERE se.snapshotId = ? AND pc.category = ? AND pc.subcategory = ?
-                ORDER BY se.sizeBytes DESC, p.path ASC
-                LIMIT ? OFFSET ?
-                """, arguments: [snapshotId, category.rawValue, subcategoryValue, limit, offset])
+            try SnapshotEntryWithPath.fetchAll(
+                db,
+                sql: Self.snapshotEntriesByClassificationSQL,
+                arguments: [snapshotId, category.rawValue, subcategoryValue, limit, offset]
+            )
         }
     }
+
+    // SQLite planner quirk: without sqlite_stat1 it drives these joins from the
+    // entry table's snapshotId/trackedPathId index, i.e. every row of the tracked
+    // path. CROSS JOIN pins pathClassification as the outer loop so its covering
+    // (category, subcategory, pathId) index picks the few matching paths first.
+    static let snapshotEntriesByClassificationSQL = """
+        SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
+        FROM pathClassification pc
+        CROSS JOIN snapshotEntry se ON se.pathId = pc.pathId
+        JOIN paths p ON p.id = se.pathId
+        WHERE se.snapshotId = ? AND pc.category = ? AND pc.subcategory = ?
+        ORDER BY se.sizeBytes DESC, p.path ASC
+        LIMIT ? OFFSET ?
+        """
+
+    static let workingSetEntriesByClassificationSQL = """
+        SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
+        FROM pathClassification pc
+        CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
+        JOIN paths p ON p.id = wse.pathId
+        WHERE wse.trackedPathId = ? AND pc.category = ? AND pc.subcategory = ?
+        ORDER BY wse.sizeBytes DESC, p.path ASC
+        LIMIT ? OFFSET ?
+        """
 
     func fetchWorkingSetEntriesByClassification(
         trackedPathId: UUID,
@@ -1110,15 +1130,11 @@ extension DatabaseManager {
 
         let subcategoryValue = subcategory?.rawValue ?? ""
         return try await dbPool.read { db in
-            try SnapshotEntryWithPath.fetchAll(db, sql: """
-                SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
-                FROM workingSetEntry wse
-                JOIN pathClassification pc ON pc.pathId = wse.pathId
-                JOIN paths p ON p.id = wse.pathId
-                WHERE wse.trackedPathId = ? AND pc.category = ? AND pc.subcategory = ?
-                ORDER BY wse.sizeBytes DESC, p.path ASC
-                LIMIT ? OFFSET ?
-            """, arguments: [trackedPathId.uuidString, category.rawValue, subcategoryValue, limit, offset])
+            try SnapshotEntryWithPath.fetchAll(
+                db,
+                sql: Self.workingSetEntriesByClassificationSQL,
+                arguments: [trackedPathId.uuidString, category.rawValue, subcategoryValue, limit, offset]
+            )
         }
     }
 
@@ -1136,8 +1152,8 @@ extension DatabaseManager {
         return try await dbPool.read { db in
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
-                FROM snapshotEntry se
-                JOIN pathClassification pc ON pc.pathId = se.pathId
+                FROM pathClassification pc
+                CROSS JOIN snapshotEntry se ON se.pathId = pc.pathId
                 JOIN paths p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                     AND pc.category = ?
@@ -1172,8 +1188,8 @@ extension DatabaseManager {
         return try await dbPool.read { db in
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
-                FROM workingSetEntry wse
-                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                FROM pathClassification pc
+                CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                 JOIN paths p ON p.id = wse.pathId
                 WHERE wse.trackedPathId = ?
                     AND pc.category = ?
@@ -1210,8 +1226,8 @@ extension DatabaseManager {
                 db,
                 sql: """
                     SELECT p.path AS path, se.sizeBytes AS sizeBytes
-                    FROM snapshotEntry se
-                    JOIN pathClassification pc ON pc.pathId = se.pathId
+                    FROM pathClassification pc
+                    CROSS JOIN snapshotEntry se ON se.pathId = pc.pathId
                     JOIN paths p ON p.id = se.pathId
                     WHERE se.snapshotId = ?
                         AND pc.category = ?
@@ -1245,8 +1261,8 @@ extension DatabaseManager {
                 db,
                 sql: """
                     SELECT p.path AS path, wse.sizeBytes AS sizeBytes
-                    FROM workingSetEntry wse
-                    JOIN pathClassification pc ON pc.pathId = wse.pathId
+                    FROM pathClassification pc
+                    CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                     JOIN paths p ON p.id = wse.pathId
                     WHERE wse.trackedPathId = ?
                         AND pc.category = ?
@@ -1350,6 +1366,25 @@ extension DatabaseManager {
 
         try await dbPool.write { db in
             try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+        }
+    }
+
+    func optimizeQueryPlanner() async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA analysis_limit = 400")
+            // System SQLite before 3.46 ignores the 0x10000 "check all tables" bit and
+            // only analyzes tables this connection queried, so it would never seed stats.
+            let hasStatistics = try Bool.fetchOne(db, sql: """
+                SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1')
+                """) ?? false
+            if !hasStatistics {
+                try db.execute(sql: "ANALYZE")
+            }
+            try db.execute(sql: "PRAGMA optimize = 0x10002")
         }
     }
 
