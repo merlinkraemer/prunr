@@ -2,7 +2,7 @@ import SwiftUI
 
 /// One change in a day group: icon, name over a muted caption ("14:20 ·
 /// detail", "found by scan", "a little each day since Fri 2 Oct"), and the
-/// signed amount on the right. Not clickable.
+/// amount with its direction arrow on the right. Not clickable.
 struct ChangeRow: View {
     let episode: ChangeEpisode
     var calendar: Calendar = .current
@@ -35,12 +35,12 @@ struct ChangeRow: View {
         .frame(height: 44)
         .padding(.horizontal, 6)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(episode.title), \(caption), \(amountText)")
+        .accessibilityLabel("\(episode.title), \(caption), \(spokenChangeAmount(episode.netBytes))")
     }
 
     private var caption: String { EpisodeBuilder.caption(for: episode, calendar: calendar) }
 
-    private var amountText: String { signedBytes(episode.netBytes) }
+    private var amountText: String { arrowBytes(episode.netBytes) }
 }
 
 /// Orange for growth of at least the row line, grey for shrinks, primary for
@@ -50,4 +50,14 @@ func changeAmountStyle(_ netBytes: Int64) -> AnyShapeStyle {
         return AnyShapeStyle(Color.orange)
     }
     return netBytes < 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary)
+}
+
+/// "↑ 9.0 GB" for growth, "↓ 4.0 GB" for a shrink.
+func arrowBytes(_ bytes: Int64) -> String {
+    "\(bytes < 0 ? "\u{2193}" : "\u{2191}") \(formattedBytes(abs(bytes)))"
+}
+
+/// The amount as VoiceOver reads it: "up 9.0 GB" or "down 4.0 GB".
+func spokenChangeAmount(_ bytes: Int64) -> String {
+    "\(bytes < 0 ? "down" : "up") \(formattedBytes(abs(bytes)))"
 }

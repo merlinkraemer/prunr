@@ -807,4 +807,119 @@ final class EpisodeBuilderTests: XCTestCase {
         let c = ChangeGroup(day: monday, category: .downloads, episodes: [])
         XCTAssertEqual(Set([a.id, b.id, c.id]).count, 3)
     }
+
+    // MARK: - Arrows and the storage balance
+
+    func testRowAmountsReadWithArrows() {
+        XCTAssertEqual(arrowBytes(9 * Self.gb), "\u{2191} \(formattedBytes(9 * Self.gb))")
+        XCTAssertEqual(arrowBytes(-4 * Self.gb), "\u{2193} \(formattedBytes(4 * Self.gb))")
+        XCTAssertEqual(arrowBytes(300 * Self.mb), "\u{2191} \(formattedBytes(300 * Self.mb))")
+        XCTAssertEqual(spokenChangeAmount(-4 * Self.gb), "down \(formattedBytes(4 * Self.gb))")
+    }
+
+    func testUsedOfCapacityUsesTheCapacitysUnit() {
+        XCTAssertEqual(StorageBalance.usedOfCapacity(1_730 * Self.gb, 2_000 * Self.gb), "1.73 of 2 TB")
+        XCTAssertEqual(StorageBalance.usedOfCapacity(1_981 * Self.gb, 2_000 * Self.gb), "1.98 of 2 TB")
+        XCTAssertEqual(StorageBalance.usedOfCapacity(312 * Self.gb, 500 * Self.gb), "312 of 500 GB")
+        XCTAssertEqual(StorageBalance.usedOfCapacity(45_300 * Self.mb, 64 * Self.gb), "45.3 of 64 GB")
+    }
+
+    private static let capacity: Int64 = 2_000 * gb
+
+    private func history(_ utc: Calendar) -> StorageHistory {
+        StorageHistory(records: [
+            FreeSpaceRecord(recordedAt: date(2026, 10, 5, 9, 0, in: utc), freeBytes: 400 * Self.gb),
+            FreeSpaceRecord(recordedAt: date(2026, 10, 5, 22, 0, in: utc), freeBytes: 320 * Self.gb),
+            FreeSpaceRecord(recordedAt: date(2026, 10, 7, 10, 0, in: utc), freeBytes: 300 * Self.gb)
+        ])
+    }
+
+    func testUsedStorageAtEndOfADayReadsThatDaysLastSnapshot() throws {
+        let utc = calendar()
+        let storage = try XCTUnwrap(history(utc).usedStorage(
+            atEndOf: date(2026, 10, 5, 0, 0, in: utc), capacityBytes: Self.capacity, calendar: utc
+        ))
+        XCTAssertEqual(storage.usedBytes, 1_680 * Self.gb)
+        XCTAssertEqual(storage.recordedAt, date(2026, 10, 5, 22, 0, in: utc))
+        XCTAssertTrue(storage.isFromThatDay)
+    }
+
+    func testDayWithoutSnapshotKeepsTheNearestOlderOneAndSaysSo() throws {
+        let utc = calendar()
+        let monday = date(2026, 10, 6, 0, 0, in: utc)
+        let storage = try XCTUnwrap(history(utc).usedStorage(atEndOf: monday, capacityBytes: Self.capacity, calendar: utc))
+        XCTAssertEqual(storage.usedBytes, 1_680 * Self.gb)
+        XCTAssertFalse(storage.isFromThatDay)
+
+        let balance = StorageBalance.recorded(day: monday, storage: storage, capacityBytes: Self.capacity)
+        XCTAssertEqual(balance.amountText, "~1.68 of 2 TB")
+        XCTAssertEqual(balance.olderRecordNote(calendar: utc), "Last recorded Mon 5 Oct")
+        XCTAssertEqual(balance.historicUsedBytes, 1_680 * Self.gb)
+    }
+
+    func testDayBeforeTheFirstSnapshotHasNoValue() {
+        let utc = calendar()
+        let day = date(2026, 10, 4, 0, 0, in: utc)
+        XCTAssertNil(history(utc).usedStorage(atEndOf: day, capacityBytes: Self.capacity, calendar: utc))
+        XCTAssertNil(StorageHistory.empty.usedStorage(atEndOf: day, capacityBytes: Self.capacity, calendar: utc))
+
+        let balance = StorageBalance.recorded(day: day, storage: nil, capacityBytes: Self.capacity)
+        XCTAssertEqual(balance.amountText, "\u{2014}")
+        XCTAssertNil(balance.historicUsedBytes)
+        XCTAssertEqual(balance.title(calendar: utc), "Sun 4 Oct")
+    }
+
+    func testHeaderShowsNowAtTheTopAndTheRecordedDateWhileScrolled() {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let feed = build([
+            slot(Self.iso, at: date(2026, 10, 11, 9, 0, in: utc), net: 3 * Self.gb),
+            slot(Self.project, at: date(2026, 10, 5, 10, 0, in: utc), net: 2 * Self.gb, category: "developer")
+        ], now: now, calendar: utc)
+        let used = 1_730 * Self.gb
+        func balance(_ anchor: Date?) -> StorageBalance {
+            StorageBalance.make(
+                scrollAnchor: anchor, feed: feed, history: history(utc),
+                usedBytes: used, capacityBytes: Self.capacity, now: now, calendar: utc
+            )
+        }
+
+        let top = StorageBalance.current(usedBytes: used, capacityBytes: Self.capacity)
+        XCTAssertEqual(balance(nil), top)
+        XCTAssertEqual(balance(utc.startOfDay(for: now)), top)
+        XCTAssertEqual(top.title(calendar: utc), "Used")
+        XCTAssertEqual(top.amountText, "1.73 of 2 TB")
+        XCTAssertFalse(top.isScrolled)
+        XCTAssertNil(top.historicUsedBytes)
+
+        let monday = date(2026, 10, 5, 0, 0, in: utc)
+        let scrolled = balance(monday)
+        XCTAssertTrue(scrolled.isScrolled)
+        XCTAssertEqual(scrolled.title(calendar: utc), "Mon 5 Oct")
+        XCTAssertEqual(scrolled.amountText, "1.68 of 2 TB")
+        XCTAssertNil(scrolled.olderRecordNote(calendar: utc))
+
+        XCTAssertEqual(balance(date(2026, 10, 3, 0, 0, in: utc)), top)
+    }
+
+    func testQuietLineIsTheTopWhenThisWeekHasNoRow() {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let feed = build([slot(Self.iso, at: date(2026, 10, 2, 9, 0, in: utc), net: 3 * Self.gb)], now: now, calendar: utc)
+        let friday = date(2026, 10, 2, 0, 0, in: utc)
+        XCTAssertEqual(ChangeFeedRows.topAnchor(for: feed, now: now, calendar: utc), ChangeFeedRows.quietLineID)
+
+        let atQuietLine = StorageBalance.make(
+            scrollAnchor: ChangeFeedRows.quietLineID, feed: feed, history: history(utc),
+            usedBytes: 1, capacityBytes: Self.capacity, now: now, calendar: utc
+        )
+        XCTAssertFalse(atQuietLine.isScrolled)
+
+        let atFirstDay = StorageBalance.make(
+            scrollAnchor: friday, feed: feed, history: nil,
+            usedBytes: 1, capacityBytes: Self.capacity, now: now, calendar: utc
+        )
+        XCTAssertTrue(atFirstDay.isScrolled)
+        XCTAssertEqual(atFirstDay.amountText, "\u{2014}")
+    }
 }

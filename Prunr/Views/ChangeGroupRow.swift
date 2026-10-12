@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// One category's changes on one day in the main list: coloured category
-/// glyph, category name, signed amount and a chevron. Same metrics as the
+/// glyph, category name, amount with its direction arrow and a chevron. Same metrics as the
 /// categories view rows. Clicking opens the day's rows for that category.
 struct ChangeGroupRow: View {
     let group: ChangeGroup
@@ -48,12 +48,12 @@ struct ChangeGroupRow: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(group.category.displayName), \(amountText)")
+        .accessibilityLabel("\(group.category.displayName), \(spokenChangeAmount(group.netBytes))")
         .accessibilityHint("Shows this day's changes in \(group.category.displayName)")
         .accessibilityAddTraits(.isButton)
     }
 
-    private var amountText: String { signedBytes(group.netBytes) }
+    private var amountText: String { arrowBytes(group.netBytes) }
 }
 
 /// "Show all (N)" under a day's first groups; expands that day in place.

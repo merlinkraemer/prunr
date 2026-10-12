@@ -1090,7 +1090,7 @@ struct MenuBarView: View {
 
     /// Clicking the bar area opens the categories view; once it is open the
     /// bar's segments hover and drill into their category as before. The row
-    /// under the bar is "This week" on the change list, else a title row.
+    /// under the bar is the used storage on the change list, else a title row.
     private var changesHeader: some View {
         ChangesHeaderView(
             onOpenBar: showsCategoryOverview ? nil : { setShowsCategoryOverview(true) }
@@ -1107,8 +1107,31 @@ struct MenuBarView: View {
                     onBack: closeGroup
                 )
             } else {
-                WeeklyChangeRow(weekly: WeeklyChange(shownChangeFeed))
+                StorageBalanceRow(balance: storageBalance, onNow: scrollFeedToTop)
             }
+        }
+    }
+
+    private var storageBalance: StorageBalance {
+        StorageBalance.make(
+            scrollAnchor: feedScrollAnchor,
+            feed: manager.changeFeed?.feed,
+            history: manager.storageHistory,
+            usedBytes: manager.usedBytes,
+            capacityBytes: manager.totalBytes
+        )
+    }
+
+    /// The bar shows a past date's level only under that date's header row.
+    private var driveBarHistoricUsedBytes: Int64? {
+        guard !showsCategoryOverview, shownGroup == nil else { return nil }
+        return storageBalance.historicUsedBytes
+    }
+
+    private func scrollFeedToTop() {
+        guard let feed = manager.changeFeed?.feed else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            feedScrollAnchor = ChangeFeedRows.topAnchor(for: feed, now: Date())
         }
     }
 
@@ -1124,7 +1147,8 @@ struct MenuBarView: View {
             focusedLabel: focusedDriveBarLabel,
             focusedIcon: focusedDriveBarCategory?.category.icon,
             focusedIconColor: focusedDriveBarCategory?.category.color ?? .secondary,
-            disableHover: shouldDisableDriveBarHover
+            disableHover: shouldDisableDriveBarHover,
+            historicUsedBytes: driveBarHistoricUsedBytes
         )
     }
 

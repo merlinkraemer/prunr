@@ -142,4 +142,21 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
             XCTAssertEqual(nodeModules.topFiles.map(\.currentSizeBytes), [10_000, 8_000])
         }
     }
+
+    /// Past used storage reads only complete snapshots of this path that
+    /// recorded free space, oldest first.
+    func testRecordedFreeSpaceReadsCompleteSnapshotsWithAValueOldestFirst() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let db = DatabaseManager.shared
+            _ = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: 300)
+            _ = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: nil)
+            _ = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: 999, lifecycle: .scanning)
+            _ = try await db.createSnapshot(trackedPathId: UUID(), freeBytes: 777)
+            _ = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: 200)
+
+            let records = try await db.fetchRecordedFreeSpace(trackedPathId: trackedPathId)
+            XCTAssertEqual(records.map(\.freeBytes), [300, 200])
+            XCTAssertLessThanOrEqual(records[0].recordedAt, records[1].recordedAt)
+        }
+    }
 }
