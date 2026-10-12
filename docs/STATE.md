@@ -12,8 +12,8 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Review the grouped-list build on the Mac (category groups per day + drilldown, bar opens categories), then merge feat/s13-grouped (contains s1–s13) into main — rec: review, then merge — branch: feat/s13-grouped
-2. Rows of slowly growing places shift by a day as the 30-day window slides — rec: small checkpoint table (schema change) — branch: none
+1. Rows of slowly growing places shift by a day as the 30-day window slides — rec: small checkpoint table (schema change) — branch: none
+2. Top number (bank-balance idea) and settings review — mockups in progress — branch: none
 
 ## Queue
 
@@ -43,7 +43,7 @@ acceptance: docs/core-screen-brief-<date>.md, on a branch, unlanded (taste stays
 validation: none.
 do not touch: app code, website.
 
-### Q5 Build core screen per PRD [blocked] [mac]
+### Q5 Build core screen per PRD [landed] [mac]
 goal: v1 slices of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice. Order {s1, s2a} → {s2b, s5, s6, s7} → s3 → s4 → s9. Drilldown (L0) after v1.
 landed: s2a, s5, s6, s7. on branch: s1–s9 (feat/s9-cleanup, installed on Mac, reviewed: too hard to read). s10 1 GB rule + s11 real icons green and combined in feat/v1-review (mac-queue PASS 20261011-131629), installed on the Mac.
 followup: feed rebuild ~2.4 s on a worst-case 200k-bucket fixture; accepted for now (off main thread, debounced), re-measure on real alpha data before s9.
@@ -53,7 +53,7 @@ do not touch: release/appcast/workflows; nothing user-visible lands without Merl
 landing: non-UI slices (s1, s2a, s5–s7) land when mac-queue test is green; UI slices (s2b, s3, s4, s9) wait for Merlin.
 
 ## Rundown
-- Core screen v1 built: all 9 slices green on the Mac (225 tests). Names (s2a, s5–s7) on main; the rest stacked in feat/s9-cleanup.
-- Onboarding and manual-scan card kept as before (Merlin).
-- Blocked: owner visual review before merging data + UI changes.
-- Next: L0 drilldown, L2 real app icons, L3 more names; EpisodeBuilder speed if real data needs it.
+- Core screen v1 landed on main (s1–s13 + fade fix): change log grouped by day and category, drilldown, bar opens categories. 240 tests green; Merlin reviewed on the Mac.
+- Not pushed. Mac test of merged main queued.
+- In progress: top-number mockups (free per date / balance on scroll), settings review + hidden Developer tab mockups.
+- Later: L0 drilldown detail, L1, L3 names, L4 cleanup awareness, L5 hover-with-click, checkpoint table.

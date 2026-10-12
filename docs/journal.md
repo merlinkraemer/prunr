@@ -45,3 +45,4 @@
 2026-10-11 16:30 orchestrator Q5 spawn: Merlin approved X1+X2 (week breakdown dropped; This week row not clickable; bar full-width hover → categories; per-category bar hover on categories view); worker s13 on feat/s13-grouped from feat/s12-polish
 2026-10-11 16:45 orchestrator Q5 blocked: s13 grouped list green (01228b3, mac-queue PASS 20261011-154259, 240 tests), installed (20261011-161807); waits for Merlin review
 2026-10-11 17:00 orchestrator Q5 followup: smoother bottom fade under footer (70f09c6, mac-queue PASS 20261011-163548), installed (20261011-163953)
+2026-10-12 03:55 orchestrator Q5 landed: core screen v1 merged to main (7cd0350; s1–s13 + fade fix), Merlin approved; merged-main Mac test queued 20261012-035415
