@@ -59,3 +59,5 @@
 2026-10-12 07:35 orchestrator - spawn: s17 drill perf option A (pc-driven join, PRAGMA optimize after scans/launch, warm largest only) on feat/s17-drill-perf
 2026-10-12 08:05 orchestrator - landed on branch: privacy banner removed, footer opens Folder tab (6d4a993, mac-queue PASS 20261012-060156), installed; spawn s18 group rows (1 place inline + Finder on chevron hover, 2+ drill, no-path inert) on feat/s18-group-rows
 2026-10-12 08:40 orchestrator - landed on branch: s17 drill perf option A (f68adec, mac-queue PASS 20261012-062626, 278 tests). Real DB already had planner stats: videos 0.20→0.01 s, photos 3.1→2.8 s; remaining cost = disk reads + GROUP BY 1.3 s + growth totals 1.5 s → option B needed for big categories
+- 2026-10-12 mac-queue 1f403832a mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
+2026-10-12 09:00 orchestrator - landed on branch: s17 + s18 combined in feat/review-2 (mac-queue PASS 20261012-070928), installed (20261012-071629); waits for review
