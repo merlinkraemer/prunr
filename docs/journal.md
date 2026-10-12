@@ -56,3 +56,4 @@
 2026-10-12 06:45 orchestrator - landed on branch: s16 beta flow (b9452fd, mac-queue PASS 20261012-054608, 272 tests), installed (20261012-055216); skipped footer states: Catching up (no state), Update ready (Sparkle has no download state)
 2026-10-12 07:10 orchestrator - decided: groups with 1 place show the place directly, chevron stays and turns into the Finder icon on hover; 2+ places drill down; rows without a path: no chevron/hover. Slow categories drill → read-only review spawned. Build waits for banner-removal worker.
 2026-10-12 07:30 orchestrator - review: slow categories drill = top-20 queries scan 4M working-set rows (no sqlite_stat1, planner ignores pc index), ~35 s cold; rec fix A (pc-driven join + PRAGMA optimize + warm only biggest) → docs/slow-category-drilldown-2026-10-12.md
+2026-10-12 07:35 orchestrator - spawn: s17 drill perf option A (pc-driven join, PRAGMA optimize after scans/launch, warm largest only) on feat/s17-drill-perf
