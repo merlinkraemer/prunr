@@ -54,6 +54,6 @@ landing: non-UI slices (s1, s2a, s5–s7) land when mac-queue test is green; UI 
 
 ## Rundown
 - Core screen v1 landed on main (s1–s13 + fade fix): change log grouped by day and category, drilldown, bar opens categories. 240 tests green; Merlin reviewed on the Mac.
-- Not pushed. Mac test of merged main queued.
+- Not pushed. Merged main green on the Mac (20261012-035415).
 - In progress: top-number mockups (free per date / balance on scroll), settings review + hidden Developer tab mockups.
 - Later: L0 drilldown detail, L1, L3 names, L4 cleanup awareness, L5 hover-with-click, checkpoint table.
