@@ -1816,8 +1816,6 @@ final class MenuBarManager: NSObject {
         }
     }
 
-    /// The first open warms only the largest category: warming every visible
-    /// one at once makes them contend for the same rows and slows the one opened.
     nonisolated static func initialWarmupCategory(in items: [CategoryInventoryItem]) -> GrowthCategory? {
         items.reduce(nil as CategoryInventoryItem?) { largest, item in
             guard let largest else { return item }
@@ -3657,8 +3655,6 @@ final class MenuBarManager: NSObject {
         enqueuePendingRecentChangePaths(fallbackPaths, source: "requiresFullRescan")
     }
 
-    /// Refreshes SQLite planner statistics off the main thread. Runs on the
-    /// pool's serial writer, so it waits for any open write transaction.
     func scheduleQueryPlannerOptimization() {
         let logger = Self.logger
         queryPlannerOptimizationTask = Task.detached(priority: .utility) {

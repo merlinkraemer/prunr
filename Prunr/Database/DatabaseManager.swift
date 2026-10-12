@@ -1369,7 +1369,6 @@ extension DatabaseManager {
         }
     }
 
-    /// Refreshes planner statistics with a bounded sample per index.
     func optimizeQueryPlanner() async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
