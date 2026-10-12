@@ -9,6 +9,18 @@ extension Logger {
     static let perf = Logger(subsystem: "com.prunr.perf", category: "Perf")
 }
 
+enum PerfLogging {
+    static let defaultsKey = "perfLogging"
+
+    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: defaultsKey) as? Bool ?? true
+    }
+
+    static func setEnabled(_ enabled: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(enabled, forKey: defaultsKey)
+    }
+}
+
 /// Lightweight performance instrumentation used to confirm which path burns CPU
 /// during sustained file-system activity (full scans vs. incremental refresh DB
 /// aggregation vs. FSEvents churn). Emits an os_signpost interval (for
@@ -31,11 +43,13 @@ enum Perf {
             signposter.endInterval(name, state)
             let ms = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
             let nameText = "\(name)"
-            let detailText = detail()
-            if detailText.isEmpty {
-                Logger.perf.notice("\(nameText, privacy: .public): \(ms, format: .fixed(precision: 1))ms")
-            } else {
-                Logger.perf.notice("\(nameText, privacy: .public): \(ms, format: .fixed(precision: 1))ms \(detailText, privacy: .public)")
+            if PerfLogging.isEnabled() {
+                let detailText = detail()
+                if detailText.isEmpty {
+                    Logger.perf.notice("\(nameText, privacy: .public): \(ms, format: .fixed(precision: 1))ms")
+                } else {
+                    Logger.perf.notice("\(nameText, privacy: .public): \(ms, format: .fixed(precision: 1))ms \(detailText, privacy: .public)")
+                }
             }
             Task { @MainActor in
                 DiagnosticsReporter.shared.recordOperation(name: nameText, milliseconds: ms)
@@ -277,7 +291,7 @@ final class DiagnosticsReporter {
     /// fresh line).
     private func flushWindow(force: Bool) {
         let hadActivity = fsBatches + incrementalRefreshes + fullScanEscalations + cpuSamples > 0
-        if hadActivity || force {
+        if force || (hadActivity && PerfLogging.isEnabled()) {
             let line = windowSummaryLine(label: "window")
             append(line)
             Logger.perf.notice("\(line, privacy: .public)")
