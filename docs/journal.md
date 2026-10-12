@@ -51,3 +51,5 @@
 2026-10-12 04:30 orchestrator - spawn: s14 settings rework + Developer tab (feat/s14-settings; tab 'Folder' instead of 'Watching', keep Change… + folder name in copy); balance mockups B1–B3 (used storage top right, ↑↓ arrows)
 2026-10-12 05:00 orchestrator - spawn: s15 balance header C3 (used of capacity, scroll-linked historic values from snapshots, bar shows historic fill, Now ↑) + ↑/↓ row arrows (feat/s15-balance)
 2026-10-12 05:25 orchestrator - landed on Mac: settings (s14) + balance (s15) combined in feat/review-s14-s15 (mac-queue PASS 20261012-050224), Debug install PASS (isolated queue, battery override on Merlin's go); waits for review
+2026-10-12 06:00 orchestrator - decided: Merlin approved beta flow F1–F5 (↗/↘ arrows, hover Finder icon replaces amount, categories by size, footer states; idle footer default 'Updated N min ago'); build waits for balance-flag worker
+2026-10-12 06:20 orchestrator - landed on branch: balance header behind flag 'balanceHeader' (default off), This week back (656ade9, mac-queue PASS 20261012-052558, 266 tests) → feat/review-s14-s15; spawn s16 beta flow F1–F5 (feat/s16-beta-flow)
