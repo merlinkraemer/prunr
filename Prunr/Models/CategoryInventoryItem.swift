@@ -45,8 +45,7 @@ struct GrowthJournalBucket: Codable, Identifiable, Sendable, Equatable, Hashable
     /// For `scan` buckets: start of the window the scan reconciled. The change
     /// happened somewhere in `(observedSince, bucketStart]`.
     let observedSince: Date?
-    /// `UnitResolver` key of the place this change belongs to; `''` for rows
-    /// written before v22 or at category grain (coarse residuals).
+    /// `UnitResolver` key of the place this change belongs to.
     let unitKey: String
 
     enum Source: String, Codable, Sendable {
@@ -82,6 +81,8 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
     let subcategory: GrowthSubcategory?
     /// Set for cache groups that are split by the application owning the cache.
     let cacheApplicationKey: String?
+    /// The drilldown index group (`DrilldownGroupKey`).
+    let groupKey: String
     let displayName: String
     let totalBytes: Int64
     let fileCount: Int
@@ -95,13 +96,18 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
         fileCount: Int,
         growthBytes: Int64? = nil,
         topFiles: [GrowthItem],
-        cacheApplicationKey: String? = nil
+        cacheApplicationKey: String? = nil,
+        groupKey: String? = nil
     ) {
         self.id = cacheApplicationKey.map { "cache-application:\($0)" }
             ?? subcategory?.rawValue
             ?? "__uncategorized__:\(displayName)"
         self.subcategory = subcategory
         self.cacheApplicationKey = cacheApplicationKey
+        self.groupKey = groupKey
+            ?? cacheApplicationKey.map { DrilldownGroupKey.cachePrefix + $0 }
+            ?? subcategory?.rawValue
+            ?? ""
         self.displayName = displayName
         self.totalBytes = totalBytes
         self.fileCount = fileCount

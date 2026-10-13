@@ -5,7 +5,7 @@ import Foundation
 struct JournalSlot: Sendable, Equatable {
     static let slotSeconds: Int64 = 30 * 60
 
-    /// `UnitResolver` key, or `''` for legacy/coarse rows.
+    /// `UnitResolver` key.
     let unitKey: String
     let category: String
     let subcategory: String
@@ -27,7 +27,7 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     let title: String
     let detail: String?
     let category: GrowthCategory
-    /// Unit root to reveal in Finder; nil for legacy category-level rows.
+    /// Unit root to reveal in Finder; nil when the key has no root.
     let rootPath: String?
     /// Everything since the place's last row, up to the end of `day`.
     let netBytes: Int64
@@ -46,7 +46,7 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// The caption then reads "a little each day since Fri 2 Oct".
     var buildingSince: Date?
 
-    /// Where the row's icon comes from; `.category` for legacy rows.
+    /// Where the row's icon comes from.
     var iconSource: UnitIconSource = .category
 
     /// Orange in the list: growth of at least the row line. Shrinks are grey.
@@ -210,7 +210,6 @@ enum WeeklyChange: Equatable, Sendable {
 ///   <start day>". A daily-scan slot with an old window reads "found by scan".
 /// - Trash growth is a move and never counts; the Trash only counts shrinks,
 ///   which read "Trash emptied".
-/// - Legacy rows without a unit count per (category, subcategory).
 ///
 /// The count is not stored: every build recomputes it from the shown history,
 /// so each place's count starts on the oldest shown day.
@@ -247,7 +246,7 @@ enum EpisodeBuilder {
         var weekNet: Int64 = 0
         var rowsByDay: [Date: [ChangeEpisode]] = [:]
 
-        for (identity, placeSlots) in Dictionary(grouping: slots, by: identity(of:)) {
+        for (identity, placeSlots) in Dictionary(grouping: slots, by: \.unitKey) {
             let isTrashPlace = placeSlots.contains { isTrash($0) }
             var count: Int64 = 0
             var gross: Int64 = 0
@@ -334,15 +333,8 @@ enum EpisodeBuilder {
 
     // MARK: - Private
 
-    private static func identity(of slot: JournalSlot) -> String {
-        slot.unitKey.isEmpty ? "legacy|\(slot.category)|\(slot.subcategory)" : slot.unitKey
-    }
-
     private static func isTrash(_ slot: JournalSlot) -> Bool {
-        if let key = UnitKey(rawValue: slot.unitKey) {
-            return key.kind == .trash
-        }
-        return slot.category == GrowthCategory.trash.rawValue
+        UnitKey(rawValue: slot.unitKey)?.kind == .trash
     }
 
     /// How much the Trash grew in each slot.
@@ -408,22 +400,11 @@ enum EpisodeBuilder {
         let isOneGo = countStart == day || abs(peakNet) * 2 > abs(netBytes)
         let approximate = isOneGo && peakSlots.allSatisfy { isApproximateSlot($0) }
 
-        var title: String
-        let detail: String?
-        let category: GrowthCategory
-        let rootPath: String?
-        if first.unitKey.isEmpty {
-            category = GrowthCategory(rawValue: first.category) ?? .other
-            title = legacyName(category: category, subcategory: GrowthSubcategory(rawValue: first.subcategory))
-            detail = nil
-            rootPath = nil
-        } else {
-            let name = UnitNamer.name(forKey: first.unitKey, home: home)
-            title = name.title
-            detail = name.detail
-            category = name.category
-            rootPath = UnitKey(rawValue: first.unitKey)?.rootPath
-        }
+        let name = UnitNamer.name(forKey: first.unitKey, home: home)
+        var title = name.title
+        let detail = name.detail
+        let category = name.category
+        let rootPath = UnitKey(rawValue: first.unitKey)?.rootPath
 
         if isTrashPlace {
             title = "Trash emptied"
@@ -448,7 +429,7 @@ enum EpisodeBuilder {
             isApproximateTime: approximate,
             isMovedToTrash: movedToTrash,
             buildingSince: isOneGo ? nil : countStart,
-            iconSource: first.unitKey.isEmpty ? .category : UnitNamer.name(forKey: first.unitKey, home: home).icon
+            iconSource: name.icon
         )
     }
 
@@ -456,22 +437,6 @@ enum EpisodeBuilder {
         guard slot.source == .scan else { return false }
         guard let observedSince = slot.observedSince else { return true }
         return slot.firstAt.timeIntervalSince(observedSince) > approximateAfter
-    }
-
-    /// Rough names for rows recorded before places existed. Never a bare
-    /// category word such as "Other".
-    static func legacyName(category: GrowthCategory, subcategory: GrowthSubcategory?) -> String {
-        if let subcategory {
-            return subcategory.displayName
-        }
-        switch category {
-        case .downloads, .trash:
-            return category.displayName
-        case .other:
-            return "Files in your folders"
-        default:
-            return "Files in \(category.displayName)"
-        }
     }
 
     private static func newestFirst(_ lhs: ChangeEpisode, _ rhs: ChangeEpisode) -> Bool {

@@ -233,7 +233,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(episode.netBytes, 5 * Self.gb + 100 * Self.mb)
     }
 
-    // MARK: - Merging and legacy rows
+    // MARK: - Merging
 
     func testSameUnitFromTwoTrackedPathsMerges() {
         let utc = calendar()
@@ -246,29 +246,6 @@ final class EpisodeBuilderTests: XCTestCase {
 
         XCTAssertEqual(feed.days.first?.episodes.count, 1)
         XCTAssertEqual(feed.days.first?.episodes.first?.netBytes, 3 * Self.gb)
-    }
-
-    func testLegacyRowsAreOneCoarseRowPerCategoryAndSubcategory() throws {
-        let utc = calendar()
-        let now = date(2026, 10, 11, 20, 0, in: utc)
-        let feed = build([
-            slot("", at: date(2026, 10, 11, 9, 0, in: utc), net: 1 * Self.gb, category: "developer", subcategory: "buildArtifacts"),
-            slot("", at: date(2026, 10, 11, 15, 0, in: utc), net: 1 * Self.gb, category: "developer", subcategory: "buildArtifacts"),
-            slot("", at: date(2026, 10, 11, 10, 0, in: utc), net: 3 * Self.gb, category: "other"),
-            slot("", at: date(2026, 10, 11, 11, 0, in: utc), net: 4 * Self.gb, category: "downloads"),
-            slot("", at: date(2026, 10, 11, 12, 0, in: utc), net: 5 * Self.gb, category: "cachesAndSystem")
-        ], now: now, calendar: utc)
-
-        let episodes = try XCTUnwrap(feed.days.first?.episodes)
-        let byTitle = Dictionary(uniqueKeysWithValues: episodes.map { ($0.title, $0.netBytes) })
-        XCTAssertEqual(byTitle, [
-            "Build Artifacts": 2 * Self.gb,
-            "Files in your folders": 3 * Self.gb,
-            "Downloads": 4 * Self.gb,
-            "Files in Caches & System": 5 * Self.gb
-        ])
-        XCTAssertTrue(episodes.allSatisfy { $0.rootPath == nil })
-        XCTAssertFalse(episodes.contains { $0.title == "Other" || $0.title.contains("Other") })
     }
 
     // MARK: - Time zones
@@ -836,9 +813,9 @@ final class EpisodeBuilderTests: XCTestCase {
     }
 
     func testGroupsWithoutAnyPathAreInert() {
-        let legacy = group([("Files in your folders", nil)])
-        XCTAssertEqual(legacy.rowKind, .inert)
-        XCTAssertEqual(legacy.soloPlace?.id, "Files in your folders")
+        let pathless = group([("somewhere", nil)])
+        XCTAssertEqual(pathless.rowKind, .inert)
+        XCTAssertEqual(pathless.soloPlace?.id, "somewhere")
         XCTAssertEqual(group([("a", nil), ("b", nil)]).rowKind, .inert)
     }
 

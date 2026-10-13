@@ -122,27 +122,6 @@ actor GrowthJournalService {
         }
     }
 
-    /// Signed subcategory totals over the same window the category rows use, so
-    /// a drilldown decomposes the row above it rather than reading a second clock.
-    func subcategoryGrowthTotals(
-        trackedPath: TrackedPath,
-        category: GrowthCategory,
-        now: Date = Date()
-    ) async -> [GrowthSubcategory?: Int64] {
-        let cutoff = Self.weekStart(now: now)
-
-        do {
-            return try await db.fetchGrowthJournalTotalsBySubcategory(
-                trackedPathId: trackedPath.id,
-                category: category,
-                since: cutoff
-            )
-        } catch {
-            logger.error("Failed to fetch subcategory growth totals: \(error.localizedDescription, privacy: .public)")
-            return [:]
-        }
-    }
-
     /// Deletes buckets older than the retention window, counted in whole local
     /// days like the change list.
     ///
@@ -228,15 +207,21 @@ enum HistoryStart {
         return suite
     }()
 
-    /// The earlier of the remembered start and `oldestSnapshot`, remembered for
+    /// The remembered start; without one, `oldestSnapshot`, remembered for
     /// next time. Nil when neither is known.
     static func remember(oldestSnapshot: Date?, defaults: UserDefaults = HistoryStart.store) -> Date? {
-        let stored = defaults.object(forKey: defaultsKey) as? Date
-        guard let start = [stored, oldestSnapshot].compactMap({ $0 }).min() else { return nil }
-        if start != stored {
-            defaults.set(start, forKey: defaultsKey)
+        if let stored = defaults.object(forKey: defaultsKey) as? Date {
+            return stored
         }
-        return start
+        guard let oldestSnapshot else { return nil }
+        defaults.set(oldestSnapshot, forKey: defaultsKey)
+        return oldestSnapshot
+    }
+
+    /// History starts over at `date` while the snapshots are kept (the
+    /// journal was cleared by a schema upgrade).
+    static func restart(at date: Date, defaults: UserDefaults = HistoryStart.store) {
+        defaults.set(date, forKey: defaultsKey)
     }
 
     static func stored(defaults: UserDefaults = HistoryStart.store) -> Date? {

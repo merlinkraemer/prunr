@@ -48,9 +48,7 @@ struct CategoryGrowthListView: View {
     @State private var pageWidth: CGFloat = 0
     @State private var pendingTransition: PendingNavigationTransition? = nil
     @State private var hasInitializedDisplay = false
-    @State private var loadedContributorTaskID: String? = nil
     @State private var isDataReady = false
-    @State private var contributorPrefetchTask: Task<Void, Never>? = nil
 
     private enum NavigationDirection {
         case forward
@@ -169,26 +167,15 @@ struct CategoryGrowthListView: View {
             if !ids.isEmpty {
                 isDataReady = true
             }
-            preloadVisibleCategoriesIfNeeded()
         }
         .onChange(of: manager.isPopoverShown) { _, isShown in
             guard isShown else { return }
             synchronizeVisibleScreenToCurrent()
-            preloadVisibleCategoriesIfNeeded()
-        }
-        .onChange(of: manager.isAnalyzingChanges) { _, isAnalyzing in
-            guard !isAnalyzing else { return }
-            preloadVisibleCategoriesIfNeeded()
-        }
-        .onChange(of: startupWarmupSignature) { _, _ in
-            updateStartupWarmupStateIfNeeded()
         }
         .onDisappear {
             subcategoryLoadTask?.cancel()
             subcategoryLoadTask = nil
             isLoadingSubcategories = false
-            contributorPrefetchTask?.cancel()
-            contributorPrefetchTask = nil
             activeTransition = nil
             pendingTransition = nil
             drillTransitionCoordinator.cancelAndReset()
@@ -409,9 +396,6 @@ struct CategoryGrowthListView: View {
         )
     }
 
-    @State private var growthContributors: [GrowthContributor] = []
-    @State private var isLoadingContributors = false
-
     // MARK: - File List View
 
     private func fileListView(for group: SubcategoryGroup?) -> some View {
@@ -434,24 +418,9 @@ struct CategoryGrowthListView: View {
         let remainingCount = max(0, group.fileCount - loadedFiles.count)
         let remainingBytes = max(0, group.totalBytes - loadedBytes)
         let canLoadMore = group.hasMoreFiles && group.loadedFileCount < SubcategoryGroup.maxLoadableFiles
-        let selectedCategory = manager.selectedInventoryCategory?.category
-        let contributorTaskID = selectedCategory.map {
-            contributorTaskKey(for: group, category: $0)
-        } ?? "contributors-\(group.id)"
-        let visibleGrowthContributors = loadedContributorTaskID == contributorTaskID ? growthContributors : []
-        let showFileSkeleton = isLoadingContributors && loadedFiles.isEmpty
-
-        // Keep changed files in the unified list, but remove them from the
-        // inventory-backed portion so each path appears exactly once.
-        let contributorPaths = Set(visibleGrowthContributors.map(\.path))
-        let nonGrowthFiles = loadedFiles.filter { !contributorPaths.contains($0.path) }
-        let orderedFiles = (
-            visibleGrowthContributors.map {
-                DrilldownFileListItem(path: $0.path, currentSizeBytes: $0.currentSizeBytes)
-            } + nonGrowthFiles.map {
-                DrilldownFileListItem(path: $0.path, currentSizeBytes: $0.currentSizeBytes)
-            }
-        ).sorted { lhs, rhs in
+        let orderedFiles = loadedFiles.map {
+            DrilldownFileListItem(path: $0.path, currentSizeBytes: $0.currentSizeBytes)
+        }.sorted { lhs, rhs in
             if lhs.currentSizeBytes != rhs.currentSizeBytes {
                 return lhs.currentSizeBytes > rhs.currentSizeBytes
             }
@@ -461,9 +430,7 @@ struct CategoryGrowthListView: View {
         return AnyView(
             ScrollView {
                 VStack(spacing: 0) {
-                    if showFileSkeleton {
-                        fileListSkeletonView
-                    } else if loadedFiles.isEmpty && remainingCount == 0 {
+                    if loadedFiles.isEmpty && remainingCount == 0 {
                         VStack(spacing: 8) {
                             Image(systemName: "tray")
                                 .foregroundStyle(.secondary)
@@ -474,10 +441,6 @@ struct CategoryGrowthListView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                         .padding(.top, 12)
                     } else {
-                        if isLoadingContributors {
-                            contributorLoadingRow
-                        }
-
                         ExpandableList(
                             items: orderedFiles,
                             chunkSize: 10,
@@ -507,66 +470,14 @@ struct CategoryGrowthListView: View {
             .scrollIndicators(.hidden)
             .hiddenScrollIndicators()
             .frame(maxHeight: maxHeight)
-            .task(id: contributorTaskID) {
-                guard let category = selectedCategory else {
-                    loadedContributorTaskID = nil
-                    growthContributors = []
-                    isLoadingContributors = false
-                    return
-                }
-
-                if let cachedContributors = manager.cachedGrowthContributors(for: group, category: category) {
-                    growthContributors = cachedContributors
-                    loadedContributorTaskID = contributorTaskID
-                    isLoadingContributors = false
-                    return
-                }
-
-                loadedContributorTaskID = nil
-                growthContributors = []
-                isLoadingContributors = true
-                let contributors = await manager.loadGrowthContributors(for: group, category: category)
-                guard !Task.isCancelled else { return }
-                growthContributors = contributors
-                loadedContributorTaskID = contributorTaskID
-                isLoadingContributors = false
-            }
             .transaction { $0.disablesAnimations = true }
         )
-    }
-
-    private var contributorLoadingRow: some View {
-        HStack(spacing: 10) {
-            SkeletonBlock(width: 18, height: 18, cornerRadius: 5)
-
-            VStack(alignment: .leading, spacing: 2) {
-                SkeletonBlock(width: 136, height: 11, cornerRadius: 4)
-                SkeletonBlock(width: 164, height: 9, cornerRadius: 4)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .frame(minHeight: 34)
-        .padding(.horizontal, 6)
-    }
-
-    private func contributorTaskKey(for group: SubcategoryGroup, category: GrowthCategory) -> String {
-        [
-            "contributors",
-            String(manager.growthContributorCacheGeneration),
-            category.rawValue,
-            group.id
-        ].joined(separator: ":")
     }
 
     // MARK: - Actions
 
     private func selectCategory(_ item: CategoryInventoryItem) {
         guard !manager.isDrillDownTransitionAnimating, activeTransition == nil, pendingTransition == nil else { return }
-        contributorPrefetchTask?.cancel()
-        contributorPrefetchTask = nil
         let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: item.category)
 
         subcategoryLoadTask?.cancel()
@@ -598,8 +509,6 @@ struct CategoryGrowthListView: View {
 
         guard needsSubcategoryLoad else {
             subcategoryLoadTask = nil
-            let groups = manager.subcategoryGroupsByCategory[item.category] ?? []
-            prefetchGrowthContributors(for: groups, category: item.category)
             return
         }
 
@@ -645,88 +554,19 @@ struct CategoryGrowthListView: View {
                     manager.isDrilledDown = true
                 }
             }
-            prefetchGrowthContributors(for: groups, category: selectedCategory)
         }
         subcategoryLoadTask = loadTask
     }
 
     private func selectSubcategory(_ group: SubcategoryGroup, category: GrowthCategory) {
         guard !manager.isDrillDownTransitionAnimating, activeTransition == nil, pendingTransition == nil else { return }
-        contributorPrefetchTask?.cancel()
 
         var transaction = Transaction()
         transaction.disablesAnimations = true
-
-        let cached = manager.cachedGrowthContributors(for: group, category: category)
-
         withTransaction(transaction) {
             manager.selectedSubcategory = group
             manager.isSubcategoryDrillDown = true
-
-            if let cached {
-                growthContributors = cached
-                loadedContributorTaskID = contributorTaskKey(for: group, category: category)
-                isLoadingContributors = false
-            } else {
-                loadedContributorTaskID = nil
-                growthContributors = []
-                isLoadingContributors = true
-            }
         }
-
-        if cached == nil {
-            contributorPrefetchTask = Task { @MainActor in
-                _ = await manager.loadGrowthContributors(for: group, category: category)
-            }
-        }
-    }
-
-    private func prefetchGrowthContributors(for groups: [SubcategoryGroup], category: GrowthCategory) {
-        contributorPrefetchTask?.cancel()
-        guard !groups.isEmpty else { return }
-        contributorPrefetchTask = Task { @MainActor in
-            for group in groups {
-                guard !Task.isCancelled else { return }
-                _ = await manager.loadGrowthContributors(for: group, category: category)
-            }
-        }
-    }
-
-    private var visibleCategories: [CategoryInventoryItem] {
-        categories
-    }
-
-    private var startupWarmupSignature: [String] {
-        visibleCategories.map { item in
-            let category = item.category
-            return "\(category.rawValue):\(manager.isSubcategoryBreakdownReady(for: category)):\(manager.isSubcategoryBreakdownLoading(for: category))"
-        }
-    }
-
-    private var warmupCategories: [GrowthCategory] {
-        MenuBarManager.initialWarmupCategory(in: visibleCategories).map { [$0] } ?? []
-    }
-
-    private func preloadVisibleCategoriesIfNeeded() {
-        guard !manager.hasCompletedInitialSubcategoryWarmup else { return }
-        guard !manager.isAnalyzingChanges else { return }
-        let categories = warmupCategories
-        guard !categories.isEmpty else { return }
-
-        guard !categories.allSatisfy({ manager.isSubcategoryBreakdownReady(for: $0) }) else {
-            manager.completeInitialSubcategoryWarmup()
-            return
-        }
-
-        manager.preloadInitialSubcategoryBreakdownsIfNeeded(for: categories)
-    }
-
-    private func updateStartupWarmupStateIfNeeded() {
-        guard !manager.hasCompletedInitialSubcategoryWarmup else { return }
-        let categories = warmupCategories
-        guard !categories.isEmpty else { return }
-        guard categories.allSatisfy({ manager.isSubcategoryBreakdownReady(for: $0) }) else { return }
-        manager.completeInitialSubcategoryWarmup()
     }
 
     // MARK: - Skeletons
@@ -759,16 +599,6 @@ struct CategoryGrowthListView: View {
         .scrollIndicators(.hidden)
         .hiddenScrollIndicators()
         .frame(maxHeight: maxHeight)
-    }
-
-    private var fileListSkeletonView: some View {
-        VStack(spacing: 0) {
-            ForEach(0..<6, id: \.self) { _ in
-                SkeletonListRow(style: .file)
-            }
-        }
-        .padding(.top, pageTopInset)
-        .padding(.bottom, pageTopInset)
     }
 
 }

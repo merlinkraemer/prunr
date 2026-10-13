@@ -57,8 +57,7 @@ struct UnitKey: Hashable, Sendable {
         self.rootPath = rootPath
     }
 
-    /// Parses `"<kind>|<rootPath>"`. Returns nil for strings without a kind,
-    /// including the legacy empty key.
+    /// Parses `"<kind>|<rootPath>"`. Returns nil for strings without a kind.
     init?(rawValue: String) {
         guard let separator = rawValue.firstIndex(of: "|"), separator != rawValue.startIndex else {
             return nil

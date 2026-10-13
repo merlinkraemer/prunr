@@ -79,8 +79,7 @@ enum UnitIconSource: Hashable, Sendable {
 
 /// Turns a unit key into a display name. Pure; computed at read time.
 enum UnitNamer {
-    /// Name for a persisted key. Keys without a kind (the legacy `''`) are named
-    /// as a place; callers that group legacy rows coarsely handle `''` themselves.
+    /// Name for a persisted key. Keys without a kind are named as a place.
     nonisolated static func name(forKey rawKey: String, home: String = UnitResolver.defaultHome) -> UnitName {
         let key = UnitKey(rawValue: rawKey) ?? UnitKey(kind: .place, rootPath: rawKey)
         return name(for: key, home: home)

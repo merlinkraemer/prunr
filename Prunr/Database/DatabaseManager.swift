@@ -55,10 +55,20 @@ final class DatabaseManager {
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             // Registered on every pool connection: journal writes group by it.
             db.add(function: DatabaseManager.unitKeyFunction)
+            db.add(function: DatabaseManager.cacheGroupFunction)
         }
 
         dbPool = try DatabasePool(path: dbURL.path, configuration: config)
+        let hadDrilldownIndex = try dbPool?.read { db in
+            try Self.makeMigrator().appliedIdentifiers(db).contains(Self.drilldownIndexMigrationIdentifier)
+        } ?? false
+        let hadEarlierMigrations = try dbPool?.read { db in
+            try !Self.makeMigrator().appliedIdentifiers(db).isEmpty
+        } ?? false
         try runMigrations()
+        if hadEarlierMigrations, !hadDrilldownIndex {
+            HistoryStart.restart(at: Date())
+        }
         try clearWorkingSetRefreshStagingSynchronously()
         PrunrInternalPaths.refreshCache()
     }
@@ -539,6 +549,8 @@ final class DatabaseManager {
                 """)
         }
 
+        registerDrilldownIndexMigration(in: &migrator)
+
         return migrator
     }
 }
@@ -549,20 +561,8 @@ extension DatabaseManager {
     struct JournalDeltaKey: Hashable, Sendable {
         let category: GrowthCategory
         let subcategory: GrowthSubcategory?
-        /// `UnitResolver` key of the place the change belongs to; `''` for
-        /// category-level (legacy or coarse) totals.
+        /// `UnitResolver` key of the place the change belongs to.
         let unitKey: String
-
-        init(category: GrowthCategory, subcategory: GrowthSubcategory?, unitKey: String = "") {
-            self.category = category
-            self.subcategory = subcategory
-            self.unitKey = unitKey
-        }
-
-        /// The same change at category grain.
-        var coarse: JournalDeltaKey {
-            JournalDeltaKey(category: category, subcategory: subcategory)
-        }
     }
 
     /// Creates a new snapshot with the current timestamp for a specific path
@@ -637,7 +637,7 @@ extension DatabaseManager {
                 arguments: [newSnapshotId, trackedPathId.uuidString]
             )
 
-            // Delete all older snapshots (FK CASCADE cleans snapshotEntry, categorySnapshot, subcategorySnapshot)
+            // Delete all older snapshots (FK CASCADE cleans snapshotEntry, categorySnapshot)
             try db.execute(
                 sql: "DELETE FROM snapshot WHERE trackedPathId = ? AND id != ?",
                 arguments: [trackedPathId.uuidString, newSnapshotId]
@@ -1031,318 +1031,6 @@ extension DatabaseManager {
         }
     }
 
-    /// Fetches working set entries for a tracked path, paginated. Returns the same shape as snapshot entries.
-    func fetchWorkingSetEntriesPaginated(trackedPathId: UUID, offset: Int, limit: Int) async throws -> [SnapshotEntryWithPath] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        return try await dbPool.read { db in
-            try SnapshotEntryWithPath.fetchAll(db, sql: """
-                SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
-                FROM workingSetEntry wse
-                JOIN paths p ON p.id = wse.pathId
-                WHERE wse.trackedPathId = ?
-                LIMIT ? OFFSET ?
-                """, arguments: [trackedPathId.uuidString, limit, offset])
-        }
-    }
-
-    /// Fetches working-set entries for a specific category using SQL-level filtering
-    /// via pathClassification. Much faster than fetching all entries and classifying in Swift.
-    func fetchWorkingSetEntriesByCategory(
-        trackedPathId: UUID,
-        category: GrowthCategory,
-        offset: Int,
-        limit: Int
-    ) async throws -> [SnapshotEntryWithPath] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        return try await dbPool.read { db in
-            try SnapshotEntryWithPath.fetchAll(db, sql: """
-                SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
-                FROM workingSetEntry wse
-                JOIN pathClassification pc ON pc.pathId = wse.pathId
-                JOIN paths p ON p.id = wse.pathId
-                WHERE wse.trackedPathId = ? AND pc.category = ?
-                LIMIT ? OFFSET ?
-                """, arguments: [trackedPathId.uuidString, category.rawValue, limit, offset])
-        }
-    }
-
-    func fetchSnapshotEntriesByClassification(
-        snapshotId: Int64,
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        offset: Int,
-        limit: Int
-    ) async throws -> [SnapshotEntryWithPath] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let subcategoryValue = subcategory?.rawValue ?? ""
-        return try await dbPool.read { db in
-            try SnapshotEntryWithPath.fetchAll(
-                db,
-                sql: Self.snapshotEntriesByClassificationSQL,
-                arguments: [snapshotId, category.rawValue, subcategoryValue, limit, offset]
-            )
-        }
-    }
-
-    // SQLite planner quirk: without sqlite_stat1 it drives these joins from the
-    // entry table's snapshotId/trackedPathId index, i.e. every row of the tracked
-    // path. CROSS JOIN pins pathClassification as the outer loop so its covering
-    // (category, subcategory, pathId) index picks the few matching paths first.
-    static let snapshotEntriesByClassificationSQL = """
-        SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
-        FROM pathClassification pc
-        CROSS JOIN snapshotEntry se ON se.pathId = pc.pathId
-        JOIN paths p ON p.id = se.pathId
-        WHERE se.snapshotId = ? AND pc.category = ? AND pc.subcategory = ?
-        ORDER BY se.sizeBytes DESC, p.path ASC
-        LIMIT ? OFFSET ?
-        """
-
-    static let workingSetEntriesByClassificationSQL = """
-        SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
-        FROM pathClassification pc
-        CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-        JOIN paths p ON p.id = wse.pathId
-        WHERE wse.trackedPathId = ? AND pc.category = ? AND pc.subcategory = ?
-        ORDER BY wse.sizeBytes DESC, p.path ASC
-        LIMIT ? OFFSET ?
-        """
-
-    func fetchWorkingSetEntriesByClassification(
-        trackedPathId: UUID,
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        offset: Int,
-        limit: Int
-    ) async throws -> [SnapshotEntryWithPath] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let subcategoryValue = subcategory?.rawValue ?? ""
-        return try await dbPool.read { db in
-            try SnapshotEntryWithPath.fetchAll(
-                db,
-                sql: Self.workingSetEntriesByClassificationSQL,
-                arguments: [trackedPathId.uuidString, category.rawValue, subcategoryValue, limit, offset]
-            )
-        }
-    }
-
-    func fetchSnapshotEntriesByCacheApplication(
-        snapshotId: Int64,
-        applicationKey: String?,
-        offset: Int,
-        limit: Int
-    ) async throws -> [SnapshotEntryWithPath] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let pattern = applicationKey.map { "%/Library/Caches/\($0)/%" } ?? "%/Library/Caches/%"
-        return try await dbPool.read { db in
-            try SnapshotEntryWithPath.fetchAll(db, sql: """
-                SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
-                FROM pathClassification pc
-                CROSS JOIN snapshotEntry se ON se.pathId = pc.pathId
-                JOIN paths p ON p.id = se.pathId
-                WHERE se.snapshotId = ?
-                    AND pc.category = ?
-                    AND pc.subcategory IN (?, ?, ?)
-                    AND p.path LIKE ? COLLATE NOCASE
-                ORDER BY se.sizeBytes DESC, p.path ASC
-                LIMIT ? OFFSET ?
-                """, arguments: [
-                    snapshotId,
-                    GrowthCategory.cachesAndSystem.rawValue,
-                    GrowthSubcategory.appCaches.rawValue,
-                    GrowthSubcategory.browserCaches.rawValue,
-                    GrowthSubcategory.spotifyCache.rawValue,
-                    pattern,
-                    limit,
-                    offset
-                ])
-        }
-    }
-
-    func fetchWorkingSetEntriesByCacheApplication(
-        trackedPathId: UUID,
-        applicationKey: String?,
-        offset: Int,
-        limit: Int
-    ) async throws -> [SnapshotEntryWithPath] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let pattern = applicationKey.map { "%/Library/Caches/\($0)/%" } ?? "%/Library/Caches/%"
-        return try await dbPool.read { db in
-            try SnapshotEntryWithPath.fetchAll(db, sql: """
-                SELECT wse.id, 0 AS snapshotId, p.path AS path, wse.sizeBytes
-                FROM pathClassification pc
-                CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-                JOIN paths p ON p.id = wse.pathId
-                WHERE wse.trackedPathId = ?
-                    AND pc.category = ?
-                    AND pc.subcategory IN (?, ?, ?)
-                    AND p.path LIKE ? COLLATE NOCASE
-                ORDER BY wse.sizeBytes DESC, p.path ASC
-                LIMIT ? OFFSET ?
-                """, arguments: [
-                    trackedPathId.uuidString,
-                    GrowthCategory.cachesAndSystem.rawValue,
-                    GrowthSubcategory.appCaches.rawValue,
-                    GrowthSubcategory.browserCaches.rawValue,
-                    GrowthSubcategory.spotifyCache.rawValue,
-                    pattern,
-                    limit,
-                    offset
-                ])
-        }
-    }
-
-    /// Fetches application-owned cache groups without persisting a dynamic
-    /// application column. The owner is derived from the path's first
-    /// component below Library/Caches.
-    func fetchCacheApplicationGroups(
-        snapshotId: Int64,
-        topLimit: Int
-    ) async throws -> [SubcategoryGroup] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let rows: [(path: String, sizeBytes: Int64)] = try await dbPool.read { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT p.path AS path, se.sizeBytes AS sizeBytes
-                    FROM pathClassification pc
-                    CROSS JOIN snapshotEntry se ON se.pathId = pc.pathId
-                    JOIN paths p ON p.id = se.pathId
-                    WHERE se.snapshotId = ?
-                        AND pc.category = ?
-                        AND pc.subcategory IN (?, ?, ?)
-                    """,
-                arguments: [
-                    snapshotId,
-                    GrowthCategory.cachesAndSystem.rawValue,
-                    GrowthSubcategory.appCaches.rawValue,
-                    GrowthSubcategory.browserCaches.rawValue,
-                    GrowthSubcategory.spotifyCache.rawValue
-                ]
-            ).map { row in
-                (path: row["path"] ?? "", sizeBytes: row["sizeBytes"] ?? 0)
-            }
-        }
-
-        return Self.makeCacheApplicationGroups(rows: rows, topLimit: topLimit)
-    }
-
-    func fetchWorkingSetCacheApplicationGroups(
-        trackedPathId: UUID,
-        topLimit: Int
-    ) async throws -> [SubcategoryGroup] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let rows: [(path: String, sizeBytes: Int64)] = try await dbPool.read { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT p.path AS path, wse.sizeBytes AS sizeBytes
-                    FROM pathClassification pc
-                    CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-                    JOIN paths p ON p.id = wse.pathId
-                    WHERE wse.trackedPathId = ?
-                        AND pc.category = ?
-                        AND pc.subcategory IN (?, ?, ?)
-                    """,
-                arguments: [
-                    trackedPathId.uuidString,
-                    GrowthCategory.cachesAndSystem.rawValue,
-                    GrowthSubcategory.appCaches.rawValue,
-                    GrowthSubcategory.browserCaches.rawValue,
-                    GrowthSubcategory.spotifyCache.rawValue
-                ]
-            ).map { row in
-                (path: row["path"] ?? "", sizeBytes: row["sizeBytes"] ?? 0)
-            }
-        }
-
-        return Self.makeCacheApplicationGroups(rows: rows, topLimit: topLimit)
-    }
-
-    private static func makeCacheApplicationGroups(
-        rows: [(path: String, sizeBytes: Int64)],
-        topLimit: Int
-    ) -> [SubcategoryGroup] {
-        struct Accumulator {
-            var key: String?
-            var totalBytes = Int64(0)
-            var fileCount = 0
-            var topFiles: [(path: String, sizeBytes: Int64)] = []
-        }
-
-        var grouped: [String: Accumulator] = [:]
-        for row in rows {
-            let key = GrowthCategory.cacheApplicationKey(for: row.path)
-            let dictionaryKey = key ?? "__other_cache__"
-            var accumulator = grouped[dictionaryKey] ?? Accumulator(key: key)
-            accumulator.totalBytes += row.sizeBytes
-            accumulator.fileCount += 1
-            accumulator.topFiles.append((path: row.path, sizeBytes: row.sizeBytes))
-            accumulator.topFiles.sort {
-                if $0.sizeBytes == $1.sizeBytes {
-                    return $0.path.localizedStandardCompare($1.path) == .orderedAscending
-                }
-                return $0.sizeBytes > $1.sizeBytes
-            }
-            if accumulator.topFiles.count > topLimit {
-                accumulator.topFiles.removeLast()
-            }
-            grouped[dictionaryKey] = accumulator
-        }
-
-        return grouped.values.map { accumulator in
-            let displayName = accumulator.key.map(GrowthCategory.cacheApplicationDisplayName(for:)) ?? "Other Caches"
-            let topFiles = accumulator.topFiles.map { file in
-                GrowthItem(
-                    path: file.path,
-                    growthBytes: file.sizeBytes,
-                    currentSizeBytes: file.sizeBytes,
-                    percentOfParent: accumulator.totalBytes > 0
-                        ? Double(file.sizeBytes) / Double(accumulator.totalBytes)
-                        : 0,
-                    subcategory: .appCaches
-                )
-            }
-            return SubcategoryGroup(
-                subcategory: .appCaches,
-                displayName: displayName,
-                totalBytes: accumulator.totalBytes,
-                fileCount: accumulator.fileCount,
-                topFiles: topFiles,
-                cacheApplicationKey: accumulator.key
-            )
-        }.sorted {
-            if $0.totalBytes == $1.totalBytes {
-                return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
-            }
-            return $0.totalBytes > $1.totalBytes
-        }
-    }
-
     /// Returns the total bytes stored in a snapshot without materializing every row.
     func sumEntrySizes(for snapshotId: Int64) async throws -> Int64 {
         guard let dbPool = dbPool else {
@@ -1505,264 +1193,16 @@ extension DatabaseManager {
         }
     }
 
-    struct StoredSubcategorySnapshot: Sendable {
-        let category: GrowthCategory
-        let subcategory: GrowthSubcategory?
-        let totalBytes: Int64
-        let fileCount: Int
-        let topItems: [GrowthItem]
-    }
-
-    /// Replaces all subcategory summaries for a snapshot in a single transaction.
-    func replaceSubcategorySnapshots(snapshotId: Int64, rows: [StoredSubcategorySnapshot]) async throws {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let encoder = JSONEncoder()
-
-        try await dbPool.write { db in
-            try db.execute(sql: "DELETE FROM subcategorySnapshot WHERE snapshotId = ?", arguments: [snapshotId])
-
-            guard !rows.isEmpty else { return }
-
-            let statement = try db.makeStatement(
-                sql: """
-                    INSERT INTO subcategorySnapshot (snapshotId, category, subcategory, totalBytes, fileCount, topItemsJSON)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """
-            )
-
-            for row in rows {
-                let payload = try encoder.encode(row.topItems)
-                let json = String(decoding: payload, as: UTF8.self)
-                try statement.execute(arguments: [
-                    snapshotId,
-                    row.category.rawValue,
-                    row.subcategory?.rawValue ?? "",
-                    row.totalBytes,
-                    row.fileCount,
-                    json
-                ])
-            }
-        }
-    }
-
-    /// Fetches precomputed subcategory groups for a category within a snapshot.
-    func fetchSubcategoryGroups(for snapshotId: Int64, category: GrowthCategory) async throws -> [SubcategoryGroup] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let decoder = JSONDecoder()
-
-        return try await dbPool.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT subcategory, totalBytes, fileCount, topItemsJSON
-                    FROM subcategorySnapshot
-                    WHERE snapshotId = ? AND category = ?
-                    ORDER BY totalBytes DESC
-                    """,
-                arguments: [snapshotId, category.rawValue]
-            )
-
-            return try rows.map { row in
-                let rawSubcategory: String = row["subcategory"] ?? ""
-                let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
-                let totalBytes: Int64 = row["totalBytes"] ?? 0
-                let fileCount: Int = row["fileCount"] ?? 0
-                let topItemsJSON: String = row["topItemsJSON"] ?? "[]"
-                let topItems = try decoder.decode([GrowthItem].self, from: Data(topItemsJSON.utf8))
-
-                let displayName: String
-                if let subcategory {
-                    displayName = subcategory.displayName
-                } else {
-                    displayName = category.supportsSubcategories ? "Uncategorized" : "Files"
-                }
-
-                return SubcategoryGroup(
-                    subcategory: subcategory,
-                    displayName: displayName,
-                    totalBytes: totalBytes,
-                    fileCount: fileCount,
-                    growthBytes: nil,
-                    topFiles: topItems
-                )
-            }
-        }
-    }
-
-    /// Builds subcategory summaries for a snapshot using SQL-level pathClassification filtering.
-    /// This is the fallback for older snapshots that do not have precomputed subcategorySnapshot rows.
-    func fetchSubcategoryGroupsByClassification(
-        for snapshotId: Int64,
-        category: GrowthCategory,
-        topLimit: Int
-    ) async throws -> [SubcategoryGroup] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        // Extract Sendable values inside the read closure — `Row` is not Sendable,
-        // so returning `[Row]` from the async read fails strict concurrency checks.
-        let rows: [(subcategory: String, totalBytes: Int64, fileCount: Int)] = try await dbPool.read { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT
-                        pc.subcategory AS subcategory,
-                        COALESCE(SUM(se.sizeBytes), 0) AS totalBytes,
-                        COUNT(*) AS fileCount
-                    FROM snapshotEntry se
-                    JOIN pathClassification pc ON pc.pathId = se.pathId
-                    WHERE se.snapshotId = ? AND pc.category = ?
-                    GROUP BY pc.subcategory
-                    HAVING COALESCE(SUM(se.sizeBytes), 0) > 0
-                    ORDER BY totalBytes DESC, pc.subcategory ASC
-                    """,
-                arguments: [snapshotId, category.rawValue]
-            ).map { row in
-                (
-                    subcategory: row["subcategory"] ?? "",
-                    totalBytes: row["totalBytes"] ?? 0,
-                    fileCount: row["fileCount"] ?? 0
-                )
-            }
-        }
-
-        var groups: [SubcategoryGroup] = []
-        groups.reserveCapacity(rows.count)
-
-        for row in rows {
-            let rawSubcategory = row.subcategory
-            let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
-            let totalBytes = row.totalBytes
-            let fileCount = row.fileCount
-
-            let topEntries = try await fetchSnapshotEntriesByClassification(
-                snapshotId: snapshotId,
-                category: category,
-                subcategory: subcategory,
-                offset: 0,
-                limit: topLimit
-            )
-
-            groups.append(makeSubcategoryGroup(
-                category: category,
-                subcategory: subcategory,
-                totalBytes: totalBytes,
-                fileCount: fileCount,
-                entries: topEntries
-            ))
-        }
-
-        return groups
-    }
-
-    func fetchWorkingSetSubcategoryGroupsByClassification(
+    /// Replaces the working set with a snapshot's entries and rebuilds every
+    /// derived table in the same transaction. `drilldownIndex` is the index the
+    /// scan that wrote the snapshot accumulated in memory; without it the index
+    /// is recomputed from the new working set.
+    func rebuildWorkingSet(
+        from snapshotId: Int64,
         trackedPathId: UUID,
-        category: GrowthCategory,
-        topLimit: Int
-    ) async throws -> [SubcategoryGroup] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let trackedPathIdString = trackedPathId.uuidString
-        // Extract Sendable values inside the read closure — `Row` is not Sendable,
-        // so returning `[Row]` from the async read fails strict concurrency checks.
-        let rows: [(subcategory: String, totalBytes: Int64, fileCount: Int)] = try await dbPool.read { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT
-                        pc.subcategory AS subcategory,
-                        COALESCE(SUM(wse.sizeBytes), 0) AS totalBytes,
-                        COUNT(*) AS fileCount
-                    FROM workingSetEntry wse
-                    JOIN pathClassification pc ON pc.pathId = wse.pathId
-                    WHERE wse.trackedPathId = ? AND pc.category = ?
-                    GROUP BY pc.subcategory
-                    HAVING COALESCE(SUM(wse.sizeBytes), 0) > 0
-                    ORDER BY totalBytes DESC, pc.subcategory ASC
-                    """,
-                arguments: [trackedPathIdString, category.rawValue]
-            ).map { row in
-                (
-                    subcategory: row["subcategory"] ?? "",
-                    totalBytes: row["totalBytes"] ?? 0,
-                    fileCount: row["fileCount"] ?? 0
-                )
-            }
-        }
-
-        var groups: [SubcategoryGroup] = []
-        groups.reserveCapacity(rows.count)
-
-        for row in rows {
-            let rawSubcategory = row.subcategory
-            let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
-            let totalBytes = row.totalBytes
-            let fileCount = row.fileCount
-
-            let topEntries = try await fetchWorkingSetEntriesByClassification(
-                trackedPathId: trackedPathId,
-                category: category,
-                subcategory: subcategory,
-                offset: 0,
-                limit: topLimit
-            )
-
-            groups.append(makeSubcategoryGroup(
-                category: category,
-                subcategory: subcategory,
-                totalBytes: totalBytes,
-                fileCount: fileCount,
-                entries: topEntries
-            ))
-        }
-
-        return groups
-    }
-
-    private func makeSubcategoryGroup(
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        totalBytes: Int64,
-        fileCount: Int,
-        entries: [SnapshotEntryWithPath]
-    ) -> SubcategoryGroup {
-        let displayName: String
-        if let subcategory {
-            displayName = subcategory.displayName
-        } else {
-            displayName = category.supportsSubcategories ? "Uncategorized" : "Files"
-        }
-
-        let topFiles = entries.map { entry in
-            GrowthItem(
-                path: entry.path,
-                growthBytes: entry.sizeBytes,
-                currentSizeBytes: entry.sizeBytes,
-                percentOfParent: totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0,
-                subcategory: subcategory
-            )
-        }
-
-        return SubcategoryGroup(
-            subcategory: subcategory,
-            displayName: displayName,
-            totalBytes: totalBytes,
-            fileCount: fileCount,
-            growthBytes: nil,
-            topFiles: topFiles
-        )
-    }
-
-    func rebuildWorkingSet(from snapshotId: Int64, trackedPathId: UUID, updatedAt: Date = Date()) async throws {
+        updatedAt: Date = Date(),
+        drilldownIndex: DrilldownIndexBuilder? = nil
+    ) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
@@ -1806,6 +1246,12 @@ extension DatabaseManager {
                     """,
                 arguments: [trackedPathIdString, updatedAt, snapshotId]
             )
+
+            if let drilldownIndex {
+                try Self.replaceDrilldownIndex(trackedPathId: trackedPathIdString, builder: drilldownIndex, db: db)
+            } else {
+                try Self.rebuildDrilldownIndex(trackedPathId: trackedPathIdString, db: db)
+            }
         }
     }
 
@@ -1828,6 +1274,7 @@ extension DatabaseManager {
                 sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
                 arguments: [trackedPathIdString]
             )
+            try Self.clearDrilldownIndex(trackedPathId: trackedPathIdString, db: db)
         }
     }
 
@@ -1850,13 +1297,15 @@ extension DatabaseManager {
         return nil
     }
 
-    /// Replaces all working-set category totals for a tracked path using the provided in-memory totals.
+    /// Replaces all working-set category totals and the drilldown index for a
+    /// tracked path using the scan's in-memory totals.
     ///
     /// Used by the inline working-set path (alsoWriteWorkingSet = true) to avoid a separate
     /// SQL GROUP BY over 2.2M rows after scan completion.
     func replaceWorkingSetCategoryTotals(
         trackedPathId: UUID,
         totals: [GrowthCategory: Int64],
+        drilldownIndex: DrilldownIndexBuilder,
         updatedAt: Date
     ) async throws {
         guard let dbPool = dbPool else {
@@ -1870,6 +1319,7 @@ extension DatabaseManager {
                 sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
                 arguments: [trackedPathIdString]
             )
+            try Self.replaceDrilldownIndex(trackedPathId: trackedPathIdString, builder: drilldownIndex, db: db)
 
             guard !totals.isEmpty else { return }
 
@@ -1930,9 +1380,11 @@ extension DatabaseManager {
 
         let trackedPathIdString = trackedPathId.uuidString
         let normalizedPath = Self.normalizePath(entry.path)
-        let newCategory = entry.category
-        let newSubcategory = entry.subcategory
-        let unitKey = UnitResolver.resolve(path: normalizedPath)
+        let newState = WorkingSetFileState(
+            category: entry.category,
+            subcategory: entry.subcategory,
+            sizeBytes: entry.sizeBytes
+        )
 
         return try await dbPool.write { db in
             try db.execute(
@@ -1948,36 +1400,7 @@ extension DatabaseManager {
                 return [:]
             }
 
-            let oldRow = try Row.fetchOne(
-                db,
-                sql: """
-                    SELECT wse.sizeBytes AS sizeBytes,
-                           pc.category AS category,
-                           pc.subcategory AS subcategory
-                    FROM workingSetEntry wse
-                    LEFT JOIN pathClassification pc ON pc.pathId = wse.pathId
-                    WHERE wse.trackedPathId = ? AND wse.pathId = ?
-                    """,
-                arguments: [trackedPathIdString, pathId]
-            )
-
-            var deltasByCategory: [JournalDeltaKey: Int64] = [:]
-            if let oldRow,
-               let oldSizeBytes: Int64 = oldRow["sizeBytes"],
-               let oldRawCategory: String = oldRow["category"],
-               let oldCategory = GrowthCategory(rawValue: oldRawCategory) {
-                let oldRawSubcategory: String = oldRow["subcategory"] ?? ""
-                let oldSubcategory = oldRawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: oldRawSubcategory)
-                deltasByCategory[
-                    JournalDeltaKey(category: oldCategory, subcategory: oldSubcategory, unitKey: unitKey),
-                    default: 0
-                ] -= oldSizeBytes
-            }
-
-            deltasByCategory[
-                JournalDeltaKey(category: newCategory, subcategory: newSubcategory, unitKey: unitKey),
-                default: 0
-            ] += entry.sizeBytes
+            let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
 
             try db.execute(
                 sql: """
@@ -1987,7 +1410,7 @@ extension DatabaseManager {
                         category = excluded.category,
                         subcategory = excluded.subcategory
                     """,
-                arguments: [pathId, newCategory.rawValue, newSubcategory?.rawValue ?? ""]
+                arguments: [pathId, newState.category.rawValue, newState.subcategory?.rawValue ?? ""]
             )
 
             try db.execute(
@@ -1998,18 +1421,55 @@ extension DatabaseManager {
                         sizeBytes = excluded.sizeBytes,
                         updatedAt = excluded.updatedAt
                     """,
-                arguments: [trackedPathIdString, pathId, entry.sizeBytes, updatedAt]
+                arguments: [trackedPathIdString, pathId, newState.sizeBytes, updatedAt]
             )
 
-            deltasByCategory = deltasByCategory.filter { $0.value != 0 }
-            try applyWorkingSetCategoryDeltas(
-                deltasByCategory,
+            return try Self.applyWorkingSetChanges(
+                [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: newState)],
                 trackedPathId: trackedPathIdString,
                 updatedAt: updatedAt,
                 db: db
             )
-            return deltasByCategory
         }
+    }
+
+    /// The working-set state of one file; nil when it is not in the working
+    /// set or has no classification.
+    private static func fetchWorkingSetFileState(
+        trackedPathId: String,
+        pathId: Int64,
+        db: Database
+    ) throws -> WorkingSetFileState? {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+                SELECT wse.sizeBytes AS sizeBytes,
+                       pc.category AS category,
+                       pc.subcategory AS subcategory
+                FROM workingSetEntry wse
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                WHERE wse.trackedPathId = ? AND wse.pathId = ?
+                """,
+            arguments: [trackedPathId, pathId]
+        ) else {
+            return nil
+        }
+        return workingSetFileState(category: row["category"], subcategory: row["subcategory"], sizeBytes: row["sizeBytes"])
+    }
+
+    private static func workingSetFileState(
+        category rawCategory: String?,
+        subcategory rawSubcategory: String?,
+        sizeBytes: Int64?
+    ) -> WorkingSetFileState? {
+        guard let rawCategory, let category = GrowthCategory(rawValue: rawCategory), let sizeBytes else {
+            return nil
+        }
+        return WorkingSetFileState(
+            category: category,
+            subcategory: rawSubcategory.flatMap { GrowthSubcategory(rawValue: $0) },
+            sizeBytes: sizeBytes
+        )
     }
 
     func removeWorkingSetPathOrSubtree(
@@ -2044,19 +1504,14 @@ extension DatabaseManager {
 
         let trackedPathIdString = trackedPathId.uuidString
         let normalizedPath = Self.normalizePath(path)
-        let unitKey = UnitResolver.resolve(path: normalizedPath)
 
         return try await dbPool.write { db in
-            guard let oldRow = try Row.fetchOne(
+            guard let pathId = try Int64.fetchOne(
                 db,
                 sql: """
-                    SELECT p.id AS pathId,
-                           wse.sizeBytes AS sizeBytes,
-                           pc.category AS category,
-                           pc.subcategory AS subcategory
+                    SELECT p.id
                     FROM paths p
                     JOIN workingSetEntry wse ON wse.pathId = p.id
-                    LEFT JOIN pathClassification pc ON pc.pathId = p.id
                     WHERE wse.trackedPathId = ? AND p.path = ?
                     """,
                 arguments: [trackedPathIdString, normalizedPath]
@@ -2064,35 +1519,19 @@ extension DatabaseManager {
                 return nil
             }
 
-            guard let pathId: Int64 = oldRow["pathId"] else {
-                return [:]
-            }
-
-            var deltasByCategory: [JournalDeltaKey: Int64] = [:]
-            if let oldSizeBytes: Int64 = oldRow["sizeBytes"],
-               let oldRawCategory: String = oldRow["category"],
-               let oldCategory = GrowthCategory(rawValue: oldRawCategory) {
-                let oldRawSubcategory: String = oldRow["subcategory"] ?? ""
-                let oldSubcategory = oldRawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: oldRawSubcategory)
-                deltasByCategory[
-                    JournalDeltaKey(category: oldCategory, subcategory: oldSubcategory, unitKey: unitKey),
-                    default: 0
-                ] -= oldSizeBytes
-            }
+            let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
 
             try db.execute(
                 sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ? AND pathId = ?",
                 arguments: [trackedPathIdString, pathId]
             )
 
-            deltasByCategory = deltasByCategory.filter { $0.value != 0 }
-            try applyWorkingSetCategoryDeltas(
-                deltasByCategory,
+            return try Self.applyWorkingSetChanges(
+                [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: nil)],
                 trackedPathId: trackedPathIdString,
                 updatedAt: updatedAt,
                 db: db
             )
-            return deltasByCategory
         }
     }
 
@@ -2193,25 +1632,14 @@ extension DatabaseManager {
                 arguments: [stagingSessionId]
             )
 
-            try db.execute(
-                sql: """
-                    INSERT INTO pathClassification (pathId, category, subcategory)
-                    SELECT p.id, s.category, s.subcategory
-                    FROM workingSetRefreshStaging s
-                    JOIN paths p ON p.path = s.path
-                    WHERE s.sessionId = ?
-                    ON CONFLICT(pathId) DO UPDATE SET
-                        category = excluded.category,
-                        subcategory = excluded.subcategory
-                    """,
-                arguments: [stagingSessionId]
-            )
-
-            let deltaRows = try Row.fetchAll(
+            // Old states are read before the classification upsert below, so a
+            // reclassified file leaves its previous group.
+            let changeRows = try Row.fetchAll(
                 db,
                 sql: """
                     WITH oldRows AS (
                         SELECT
+                            p.id AS pathId,
                             p.path AS path,
                             wse.sizeBytes AS sizeBytes,
                             pc.category AS category,
@@ -2226,32 +1654,35 @@ extension DatabaseManager {
                           )
                     ),
                     newRows AS (
-                        SELECT path, sizeBytes, category, subcategory
-                        FROM workingSetRefreshStaging
-                        WHERE sessionId = ?
-                    ),
-                    combined AS (
                         SELECT
-                            oldRows.path AS path,
-                            COALESCE(newRows.category, oldRows.category) AS category,
-                            COALESCE(newRows.subcategory, oldRows.subcategory) AS subcategory,
-                            COALESCE(newRows.sizeBytes, 0) - COALESCE(oldRows.sizeBytes, 0) AS deltaBytes
-                        FROM oldRows
-                        LEFT JOIN newRows ON newRows.path = oldRows.path
-                        UNION ALL
-                        SELECT
-                            newRows.path AS path,
-                            newRows.category AS category,
-                            newRows.subcategory AS subcategory,
-                            COALESCE(newRows.sizeBytes, 0) - COALESCE(oldRows.sizeBytes, 0) AS deltaBytes
-                        FROM newRows
-                        LEFT JOIN oldRows ON oldRows.path = newRows.path
-                        WHERE oldRows.path IS NULL
+                            p.id AS pathId,
+                            p.path AS path,
+                            MAX(s.sizeBytes) AS sizeBytes,
+                            s.category AS category,
+                            s.subcategory AS subcategory
+                        FROM workingSetRefreshStaging s
+                        JOIN paths p ON p.path = s.path
+                        WHERE s.sessionId = ?
+                        GROUP BY p.id
                     )
-                    SELECT category, subcategory, prunr_unit(path) AS unitKey, SUM(deltaBytes) AS deltaBytes
-                    FROM combined
-                    WHERE deltaBytes != 0
-                    GROUP BY category, subcategory, unitKey
+                    SELECT
+                        o.pathId AS pathId, o.path AS path,
+                        o.sizeBytes AS oldSize, o.category AS oldCategory, o.subcategory AS oldSubcategory,
+                        n.sizeBytes AS newSize, n.category AS newCategory, n.subcategory AS newSubcategory
+                    FROM oldRows o
+                    LEFT JOIN newRows n ON n.pathId = o.pathId
+                    WHERE n.pathId IS NULL
+                       OR n.sizeBytes != o.sizeBytes
+                       OR n.category != o.category
+                       OR n.subcategory != o.subcategory
+                    UNION ALL
+                    SELECT
+                        n.pathId, n.path,
+                        NULL, NULL, NULL,
+                        n.sizeBytes, n.category, n.subcategory
+                    FROM newRows n
+                    LEFT JOIN oldRows o ON o.pathId = n.pathId
+                    WHERE o.pathId IS NULL
                     """,
                 arguments: [
                     trackedPathIdString,
@@ -2262,27 +1693,37 @@ extension DatabaseManager {
                 ]
             )
 
-            var deltasByCategory: [JournalDeltaKey: Int64] = [:]
-            deltasByCategory.reserveCapacity(deltaRows.count)
-            for row in deltaRows {
-                guard
-                    let rawCategory: String = row["category"],
-                    let category = GrowthCategory(rawValue: rawCategory)
-                else {
-                    continue
-                }
-
-                let rawSubcategory: String = row["subcategory"] ?? ""
-                let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
-                let deltaBytes: Int64 = row["deltaBytes"] ?? 0
-                guard deltaBytes != 0 else { continue }
-                let unitKey: String = row["unitKey"] ?? ""
-
-                deltasByCategory[
-                    JournalDeltaKey(category: category, subcategory: subcategory, unitKey: unitKey),
-                    default: 0
-                ] += deltaBytes
+            let changes = changeRows.compactMap { row -> WorkingSetFileChange? in
+                guard let pathId: Int64 = row["pathId"], let path: String = row["path"] else { return nil }
+                return WorkingSetFileChange(
+                    pathId: pathId,
+                    path: path,
+                    old: Self.workingSetFileState(
+                        category: row["oldCategory"],
+                        subcategory: row["oldSubcategory"],
+                        sizeBytes: row["oldSize"]
+                    ),
+                    new: Self.workingSetFileState(
+                        category: row["newCategory"],
+                        subcategory: row["newSubcategory"],
+                        sizeBytes: row["newSize"]
+                    )
+                )
             }
+
+            try db.execute(
+                sql: """
+                    INSERT INTO pathClassification (pathId, category, subcategory)
+                    SELECT p.id, s.category, s.subcategory
+                    FROM workingSetRefreshStaging s
+                    JOIN paths p ON p.path = s.path
+                    WHERE s.sessionId = ?
+                    ON CONFLICT(pathId) DO UPDATE SET
+                        category = excluded.category,
+                        subcategory = excluded.subcategory
+                    """,
+                arguments: [stagingSessionId]
+            )
 
             try db.execute(
                 sql: """
@@ -2306,10 +1747,11 @@ extension DatabaseManager {
             try db.execute(
                 sql: """
                     INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
-                    SELECT ?, p.id, s.sizeBytes, ?
+                    SELECT ?, p.id, MAX(s.sizeBytes), ?
                     FROM workingSetRefreshStaging s
                     JOIN paths p ON p.path = s.path
                     WHERE s.sessionId = ?
+                    GROUP BY p.id
                     ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
                         sizeBytes = excluded.sizeBytes,
                         updatedAt = excluded.updatedAt
@@ -2317,9 +1759,8 @@ extension DatabaseManager {
                 arguments: [trackedPathIdString, updatedAt, stagingSessionId]
             )
 
-            // Apply incremental deltas to category totals.
-            try applyWorkingSetCategoryDeltas(
-                deltasByCategory,
+            let deltas = try Self.applyWorkingSetChanges(
+                changes,
                 trackedPathId: trackedPathIdString,
                 updatedAt: updatedAt,
                 db: db
@@ -2330,7 +1771,7 @@ extension DatabaseManager {
                 arguments: [stagingSessionId]
             )
 
-            return deltasByCategory
+            return deltas
         }
     }
 
@@ -2604,43 +2045,6 @@ extension DatabaseManager {
         }
     }
 
-    func fetchGrowthJournalTotalsBySubcategory(
-        trackedPathId: UUID,
-        category: GrowthCategory,
-        since: Date
-    ) async throws -> [GrowthSubcategory?: Int64] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let trackedPathIdString = trackedPathId.uuidString
-
-        return try await dbPool.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT subcategory, COALESCE(SUM(deltaBytes), 0) AS totalDelta
-                    FROM growthJournalBucket
-                    WHERE trackedPathId = ? AND category = ? AND bucketStart >= ?
-                    GROUP BY subcategory
-                    """,
-                arguments: [trackedPathIdString, category.rawValue, since]
-            )
-
-            // Signed: a subcategory that shrank keeps its negative total, so the
-            // drill decomposes the category row instead of only its growth.
-            var result: [GrowthSubcategory?: Int64] = [:]
-            for row in rows {
-                let rawSubcategory: String? = row["subcategory"]
-                let subcategory = rawSubcategory.flatMap { GrowthSubcategory(rawValue: $0) }
-                let totalDelta: Int64 = row["totalDelta"] ?? 0
-                result[subcategory, default: 0] += totalDelta
-            }
-
-            return result.filter { $0.value != 0 }
-        }
-    }
-
     func pruneGrowthJournalBuckets(olderThan cutoff: Date) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
@@ -2680,6 +2084,7 @@ extension DatabaseManager {
                 try db.execute(sql: "DELETE FROM workingSetCategoryTotal")
                 try db.execute(sql: "DELETE FROM growthJournalBucket")
             }
+            try Self.clearDrilldownIndex(trackedPathId: trackedPathIdString, db: db)
         }
     }
 
@@ -2688,14 +2093,14 @@ extension DatabaseManager {
     /// - Case is preserved for display. `paths.path` uses UNIQUE COLLATE NOCASE, so
     ///   SQLite matches case-insensitively; Swift dictionary lookups must key by the
     ///   requested spelling (see `fetchPathIds`) rather than assuming stored case matches.
-    private static func normalizePath(_ path: String) -> String {
+    static func normalizePath(_ path: String) -> String {
         if path == "/" {
             return path
         }
         return path.hasSuffix("/") ? String(path.dropLast()) : path
     }
 
-    private static func pathPrefixUpperBound(_ prefix: String) -> String {
+    static func pathPrefixUpperBound(_ prefix: String) -> String {
         let normalizedPrefix = prefix.hasSuffix("/") ? prefix : prefix + "/"
         if normalizedPrefix == "/" {
             return "0"
@@ -2833,19 +2238,13 @@ extension DatabaseManager {
         return result
     }
 
-    private func applyWorkingSetCategoryDeltas(
-        _ deltasByCategory: [JournalDeltaKey: Int64],
+    static func applyWorkingSetCategoryDeltas(
+        _ deltasByCategory: [GrowthCategory: Int64],
         trackedPathId: String,
         updatedAt: Date,
         db: Database
     ) throws {
-        guard !deltasByCategory.isEmpty else { return }
-
-        var categoryDeltas: [GrowthCategory: Int64] = [:]
-        for (key, deltaBytes) in deltasByCategory where deltaBytes != 0 {
-            categoryDeltas[key.category, default: 0] += deltaBytes
-        }
-
+        let categoryDeltas = deltasByCategory.filter { $0.value != 0 }
         guard !categoryDeltas.isEmpty else { return }
 
         let upsert = try db.makeStatement(sql: """
@@ -2865,252 +2264,6 @@ extension DatabaseManager {
         }
 
         try delete.execute(arguments: [trackedPathId])
-    }
-}
-
-// MARK: - Growth Contributors
-
-extension DatabaseManager {
-
-    /// Finds files in a category whose size changed since the last snapshot by
-    /// comparing working set entries against snapshot entries.
-    ///
-    /// - Parameters:
-    ///   - trackedPathId: The tracked path to query
-    ///   - snapshotId: The baseline snapshot to compare against
-    ///   - category: The growth category to filter by
-    ///   - subcategory: Optional subcategory filter
-    ///   - limit: Maximum number of results
-    /// - Returns: Array of (path, currentSizeBytes, growthBytes) tuples sorted
-    ///   by absolute change DESC.
-    func fetchGrowthContributors(
-        trackedPathId: UUID,
-        snapshotId: Int64,
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        limit: Int = 50,
-        cacheApplicationKey: String? = nil
-    ) async throws -> [GrowthContributor] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let trackedPathIdString = trackedPathId.uuidString
-        let subcategoryRawValue = subcategory?.rawValue ?? ""
-        let hasSubcategoryFilter = subcategory == nil ? 0 : 1
-
-        return try await dbPool.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT
-                        p.path AS path,
-                        wse.sizeBytes AS currentSizeBytes,
-                        wse.sizeBytes - COALESCE(se.sizeBytes, 0) AS growthBytes
-                    FROM workingSetEntry wse
-                    JOIN pathClassification pc ON pc.pathId = wse.pathId
-                    JOIN paths p ON p.id = wse.pathId
-                    LEFT JOIN snapshotEntry se
-                        ON se.pathId = wse.pathId
-                        AND se.snapshotId = ?
-                    WHERE wse.trackedPathId = ?
-                        AND wse.sizeBytes != COALESCE(se.sizeBytes, 0)
-                        AND pc.category = ?
-                        AND (? = 0 OR pc.subcategory = ?)
-                        AND (? = '' OR p.path LIKE ? COLLATE NOCASE)
-                    ORDER BY ABS(growthBytes) DESC
-                    LIMIT ?
-                    """,
-                arguments: [
-                    snapshotId,
-                    trackedPathIdString,
-                    category.rawValue,
-                    hasSubcategoryFilter,
-                    subcategoryRawValue,
-                    cacheApplicationKey ?? "",
-                    "%/Library/Caches/\(cacheApplicationKey ?? "")%",
-                    limit
-                ]
-            )
-
-            return rows.map { row in
-                let path: String = row["path"] ?? ""
-                let currentSizeBytes: Int64 = row["currentSizeBytes"] ?? 0
-                let growthBytes: Int64 = row["growthBytes"] ?? 0
-
-                return GrowthContributor(
-                    path: path,
-                    currentSizeBytes: currentSizeBytes,
-                    growthBytes: growthBytes
-                )
-            }
-        }
-    }
-
-    func fetchGrowthTotalsByCacheApplication(
-        trackedPathId: UUID,
-        snapshotId: Int64
-    ) async throws -> [String: Int64] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        return try await dbPool.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT p.path AS path,
-                           wse.sizeBytes - COALESCE(se.sizeBytes, 0) AS growthBytes
-                    FROM workingSetEntry wse
-                    JOIN pathClassification pc ON pc.pathId = wse.pathId
-                    JOIN paths p ON p.id = wse.pathId
-                    LEFT JOIN snapshotEntry se
-                        ON se.pathId = wse.pathId
-                        AND se.snapshotId = ?
-                    WHERE wse.trackedPathId = ?
-                        AND wse.sizeBytes > COALESCE(se.sizeBytes, 0)
-                        AND pc.category = ?
-                        AND pc.subcategory IN (?, ?, ?)
-                    """,
-                arguments: [
-                    snapshotId,
-                    trackedPathId.uuidString,
-                    GrowthCategory.cachesAndSystem.rawValue,
-                    GrowthSubcategory.appCaches.rawValue,
-                    GrowthSubcategory.browserCaches.rawValue,
-                    GrowthSubcategory.spotifyCache.rawValue
-                ]
-            )
-
-            var totals: [String: Int64] = [:]
-            for row in rows {
-                let path: String = row["path"] ?? ""
-                let growthBytes: Int64 = row["growthBytes"] ?? 0
-                guard growthBytes > 0 else { continue }
-                let key = GrowthCategory.cacheApplicationKey(for: path) ?? "__other_cache__"
-                totals[key, default: 0] += growthBytes
-            }
-            return totals
-        }
-    }
-
-    func fetchGrowthTotalsBySubcategory(
-        trackedPathId: UUID,
-        snapshotId: Int64,
-        category: GrowthCategory
-    ) async throws -> [GrowthSubcategory?: Int64] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let trackedPathIdString = trackedPathId.uuidString
-
-        return try await dbPool.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT
-                        pc.subcategory AS subcategory,
-                        COALESCE(SUM(wse.sizeBytes - COALESCE(se.sizeBytes, 0)), 0) AS growthBytes
-                    FROM workingSetEntry wse
-                    JOIN pathClassification pc ON pc.pathId = wse.pathId
-                    LEFT JOIN snapshotEntry se
-                        ON se.pathId = wse.pathId
-                        AND se.snapshotId = ?
-                    WHERE wse.trackedPathId = ?
-                        AND wse.sizeBytes > COALESCE(se.sizeBytes, 0)
-                        AND pc.category = ?
-                    GROUP BY pc.subcategory
-                    """,
-                arguments: [snapshotId, trackedPathIdString, category.rawValue]
-            )
-
-            var totals: [GrowthSubcategory?: Int64] = [:]
-            for row in rows {
-                let growthBytes: Int64 = row["growthBytes"] ?? 0
-                guard growthBytes > 0 else { continue }
-
-                let rawSubcategory: String = row["subcategory"] ?? ""
-                let subcategory = rawSubcategory.isEmpty ? nil : GrowthSubcategory(rawValue: rawSubcategory)
-                totals[subcategory, default: 0] += growthBytes
-            }
-
-            return totals
-        }
-    }
-}
-
-/// A file that contributed to growth since the last snapshot
-struct GrowthContributor: Identifiable, Sendable, Equatable {
-    var id: String { path }
-    let path: String
-    let currentSizeBytes: Int64
-    let growthBytes: Int64
-}
-
-// MARK: - Snapshot Diff Growth Contributors
-
-extension DatabaseManager {
-
-    /// Compares two snapshots to find files that grew between them.
-    /// Used as a fallback when working-set comparison returns nothing.
-    func fetchSnapshotDiffContributors(
-        latestSnapshotId: Int64,
-        previousSnapshotId: Int64,
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        limit: Int = 50
-    ) async throws -> [GrowthContributor] {
-        guard let dbPool = dbPool else {
-            throw DatabaseError.notInitialized
-        }
-
-        let subcategoryRawValue = subcategory?.rawValue ?? ""
-        let hasSubcategoryFilter = subcategory == nil ? 0 : 1
-
-        return try await dbPool.read { db in
-            let rows = try Row.fetchAll(
-                db,
-                sql: """
-                    SELECT
-                        p.path AS path,
-                        newSe.sizeBytes AS currentSizeBytes,
-                        newSe.sizeBytes - COALESCE(oldSe.sizeBytes, 0) AS growthBytes
-                    FROM snapshotEntry newSe
-                    JOIN pathClassification pc ON pc.pathId = newSe.pathId
-                    JOIN paths p ON p.id = newSe.pathId
-                    LEFT JOIN snapshotEntry oldSe
-                        ON oldSe.pathId = newSe.pathId
-                        AND oldSe.snapshotId = ?
-                    WHERE newSe.snapshotId = ?
-                        AND newSe.sizeBytes > COALESCE(oldSe.sizeBytes, 0)
-                        AND pc.category = ?
-                        AND (? = 0 OR pc.subcategory = ?)
-                    ORDER BY growthBytes DESC
-                    LIMIT ?
-                    """,
-                arguments: [
-                    previousSnapshotId,
-                    latestSnapshotId,
-                    category.rawValue,
-                    hasSubcategoryFilter,
-                    subcategoryRawValue,
-                    limit
-                ]
-            )
-
-            return rows.map { row in
-                let path: String = row["path"] ?? ""
-                let currentSizeBytes: Int64 = row["currentSizeBytes"] ?? 0
-                let growthBytes: Int64 = row["growthBytes"] ?? 0
-
-                return GrowthContributor(
-                    path: path,
-                    currentSizeBytes: currentSizeBytes,
-                    growthBytes: growthBytes
-                )
-            }
-        }
     }
 }
 

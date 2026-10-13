@@ -408,18 +408,6 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         }
     }
 
-    func testInitialSubcategoryWarmupDoesNotRepeatSameCategorySet() {
-        let manager = MenuBarManager()
-
-        manager.preloadInitialSubcategoryBreakdownsIfNeeded(for: [.developer, .downloads])
-        XCTAssertEqual(manager.subcategoryBreakdownLoadingCategories, [.developer, .downloads])
-
-        manager.subcategoryBreakdownLoadingCategories = []
-        manager.preloadInitialSubcategoryBreakdownsIfNeeded(for: [.downloads, .developer])
-
-        XCTAssertTrue(manager.subcategoryBreakdownLoadingCategories.isEmpty)
-    }
-
     func testUpdateBannerVisibilityTracksDismissedVersion() {
         let manager = MenuBarManager()
         manager.isUpdaterAvailable = true
@@ -528,34 +516,6 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             home: home
         ).map(\.path)
         XCTAssertEqual(Set(result), Set([home.path, external.path]))
-    }
-
-    // MARK: - CACHE-01 subcategory vs contributor generation
-
-    func testSubcategoryBreakdownSurvivesContributorCacheInvalidation() {
-        let manager = MenuBarManager()
-        let group = SubcategoryGroup(
-            subcategory: .nodeModules,
-            displayName: "node_modules",
-            totalBytes: 1_024,
-            fileCount: 1,
-            topFiles: []
-        )
-
-        manager._testSeedSubcategoryReady(category: .developer, groups: [group])
-        XCTAssertTrue(manager.isSubcategoryBreakdownReady(for: .developer))
-
-        manager._testInvalidateGrowthContributorCache()
-        XCTAssertTrue(
-            manager.isSubcategoryBreakdownReady(for: .developer),
-            "Contributor-only invalidation must not stale subcategory readiness"
-        )
-
-        manager._testBumpSubcategoryCacheGeneration()
-        XCTAssertFalse(
-            manager.isSubcategoryBreakdownReady(for: .developer),
-            "Subcategory generation bump must stale readiness"
-        )
     }
 
 }

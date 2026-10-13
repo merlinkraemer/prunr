@@ -198,7 +198,7 @@ final class PrunrSmokeTests: XCTestCase {
             "Xcode"
         )
 
-        try await withEmptyTemporaryDatabase { trackedPathId in
+        try await withEmptyTemporaryDatabase { [self] trackedPathId in
             let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
             let snapshotId = try XCTUnwrap(snapshot.id)
             try await DatabaseManager.shared.addEntries(
@@ -209,11 +209,9 @@ final class PrunrSmokeTests: XCTestCase {
                     ScanResult(path: "\(home)/Library/Caches/com.google.Chrome/Cache/data", sizeBytes: 200)
                 ]
             )
+            try await DatabaseManager.shared.rebuildWorkingSet(from: snapshotId, trackedPathId: trackedPathId)
 
-            let groups = await BaselineService.shared.getSubcategoryBreakdown(
-                for: .cachesAndSystem,
-                snapshotId: snapshotId
-            )
+            let groups = await self.drilldownGroups(.cachesAndSystem, trackedPathIds: [trackedPathId])
 
             XCTAssertEqual(groups.map(\.displayName), ["Safari", "Google Chrome"])
             XCTAssertEqual(groups.map(\.totalBytes), [400, 200])
@@ -307,7 +305,7 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     func testSubcategoryBreakdownUsesFullCategoryTotals() async throws {
-        try await withTemporaryDatabase { _, snapshotId in
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
             let entries = (1...55).map { index in
                 ScanResult(
                     path: "/Users/tester/dev/app/node_modules/pkg-\(index).js",
@@ -316,11 +314,9 @@ final class PrunrSmokeTests: XCTestCase {
             }
 
             try await DatabaseManager.shared.addEntries(to: snapshotId, entries: entries)
+            try await DatabaseManager.shared.rebuildWorkingSet(from: snapshotId, trackedPathId: trackedPathId)
 
-            let groups = await BaselineService.shared.getSubcategoryBreakdown(
-                for: .developer,
-                snapshotId: snapshotId
-            )
+            let groups = await self.drilldownGroups(.developer, trackedPathIds: [trackedPathId])
 
             let group = try XCTUnwrap(groups.first(where: { $0.subcategory == .nodeModules }))
             XCTAssertEqual(group.fileCount, 55)
@@ -329,8 +325,9 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testLoadMoreFilesUsesStablePagingWithoutDuplicates() async throws {
-        try await withTemporaryDatabase { _, snapshotId in
+        try await withTemporaryDatabase { trackedPathId, snapshotId in
             let entries = (1...55).reversed().map { index in
                 ScanResult(
                     path: "/Users/tester/dev/app/node_modules/pkg-\(String(format: "%02d", index)).js",
@@ -339,11 +336,12 @@ final class PrunrSmokeTests: XCTestCase {
             }
 
             try await DatabaseManager.shared.addEntries(to: snapshotId, entries: entries)
+            try await DatabaseManager.shared.rebuildWorkingSet(from: snapshotId, trackedPathId: trackedPathId)
 
-            let groups = await BaselineService.shared.getSubcategoryBreakdown(
-                for: .developer,
-                snapshotId: snapshotId
-            )
+            let store = DrilldownStore()
+            await store.reload(trackedPathIds: [trackedPathId])
+            await store.loadFiles(for: .developer, trackedPathIds: [trackedPathId])
+            let groups = store.groupsByCategory[.developer] ?? []
             let group = try XCTUnwrap(groups.first(where: { $0.subcategory == .nodeModules }))
 
             XCTAssertEqual(
@@ -351,14 +349,11 @@ final class PrunrSmokeTests: XCTestCase {
                 (1...50).map { String(format: "pkg-%02d.js", $0) }
             )
 
-            let additionalFiles = await BaselineService.shared.loadMoreSubcategoryFiles(
-                for: .developer,
-                subcategory: .nodeModules,
-                snapshotId: snapshotId,
-                totalBytes: group.totalBytes,
-                offset: group.loadedFileCount,
-                limit: 10
+            let updatedGroup = try XCTUnwrap(
+                await store.loadMoreFiles(for: group, category: .developer, trackedPathIds: [trackedPathId])
             )
+            let additionalFiles = Array(updatedGroup.topFiles.dropFirst(group.loadedFileCount))
+            XCTAssertFalse(updatedGroup.hasMoreFiles)
 
             XCTAssertEqual(
                 additionalFiles.map { URL(fileURLWithPath: $0.path).lastPathComponent },
@@ -419,7 +414,7 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     func testAggregatedSubcategoryBreakdownMergesTrackedPaths() async throws {
-        try await withEmptyTemporaryDatabase { trackedPathId in
+        try await withEmptyTemporaryDatabase { [self] trackedPathId in
             let secondTrackedPathId = UUID()
 
             let firstSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
@@ -441,19 +436,10 @@ final class PrunrSmokeTests: XCTestCase {
                     ScanResult(path: "/Applications/MyApp.app/Contents/Resources/node_modules/pkg-b.js", sizeBytes: 512)
                 ]
             )
+            try await DatabaseManager.shared.rebuildWorkingSet(from: firstSnapshotId, trackedPathId: trackedPathId)
+            try await DatabaseManager.shared.rebuildWorkingSet(from: secondSnapshotId, trackedPathId: secondTrackedPathId)
 
-            let groups = await BaselineService.shared.getSubcategoryBreakdown(
-                for: .developer,
-                trackedPathsById: [
-                    trackedPathId: TrackedPath(id: trackedPathId, url: URL(fileURLWithPath: "/Users/tester"), displayName: "tester"),
-                    secondTrackedPathId: TrackedPath(id: secondTrackedPathId, url: URL(fileURLWithPath: "/Applications"), displayName: "Applications")
-                ],
-                latestSnapshotIdsByPath: [
-                    trackedPathId: firstSnapshotId,
-                    secondTrackedPathId: secondSnapshotId
-                ],
-                baselineSnapshotIdsByPath: [:]
-            )
+            let groups = await self.drilldownGroups(.developer, trackedPathIds: [trackedPathId, secondTrackedPathId])
 
             let nodeModules = try XCTUnwrap(groups.first(where: { $0.subcategory == .nodeModules }))
             XCTAssertEqual(nodeModules.fileCount, 4)
@@ -541,7 +527,7 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     func testAggregatedSubcategoryBreakdownCombinesMultipleTrackedPaths() async throws {
-        try await withEmptyTemporaryDatabase { _ in
+        try await withEmptyTemporaryDatabase { [self] _ in
             let pathAId = UUID()
             let snapshotA = try await DatabaseManager.shared.createSnapshot(trackedPathId: pathAId)
             let snapshotAId = try XCTUnwrap(snapshotA.id)
@@ -562,82 +548,15 @@ final class PrunrSmokeTests: XCTestCase {
                     ScanResult(path: "/Users/tester/dev/app-b/node_modules/svelte/index.js", sizeBytes: 300)
                 ]
             )
+            try await DatabaseManager.shared.rebuildWorkingSet(from: snapshotAId, trackedPathId: pathAId)
+            try await DatabaseManager.shared.rebuildWorkingSet(from: snapshotBId, trackedPathId: pathBId)
 
-            let groups = await BaselineService.shared.getSubcategoryBreakdown(
-                for: .developer,
-                trackedPathsById: [
-                    pathAId: TrackedPath(id: pathAId, url: URL(fileURLWithPath: "/Users/tester/dev/app-a"), displayName: "A"),
-                    pathBId: TrackedPath(id: pathBId, url: URL(fileURLWithPath: "/Users/tester/dev/app-b"), displayName: "B")
-                ],
-                latestSnapshotIdsByPath: [
-                    pathAId: snapshotAId,
-                    pathBId: snapshotBId
-                ],
-                baselineSnapshotIdsByPath: [:]
-            )
+            let groups = await self.drilldownGroups(.developer, trackedPathIds: [pathAId, pathBId])
 
             let nodeModules = try XCTUnwrap(groups.first(where: { $0.subcategory == .nodeModules }))
             XCTAssertEqual(nodeModules.totalBytes, 600)
             XCTAssertEqual(nodeModules.fileCount, 3)
             XCTAssertEqual(nodeModules.topFiles.first?.path, "/Users/tester/dev/app-b/node_modules/svelte/index.js")
-        }
-    }
-
-    func testAggregatedSubcategoryBreakdownPreservesBaselineGrowthWhenJournalIsPartial() async throws {
-        try await withEmptyTemporaryDatabase { trackedPathId in
-            let trackedPath = TrackedPath(
-                id: trackedPathId,
-                url: URL(fileURLWithPath: "/Users/tester/dev"),
-                displayName: "dev"
-            )
-
-            let baselineSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
-            let baselineSnapshotId = try XCTUnwrap(baselineSnapshot.id)
-            try await DatabaseManager.shared.addEntries(
-                to: baselineSnapshotId,
-                entries: [
-                    ScanResult(path: "/Users/tester/dev/app/node_modules/react/index.js", sizeBytes: 100),
-                    ScanResult(path: "/Users/tester/dev/app/.build/output.bin", sizeBytes: 200)
-                ]
-            )
-
-            let currentSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
-            let currentSnapshotId = try XCTUnwrap(currentSnapshot.id)
-            try await DatabaseManager.shared.addEntries(
-                to: currentSnapshotId,
-                entries: [
-                    ScanResult(path: "/Users/tester/dev/app/node_modules/react/index.js", sizeBytes: 400),
-                    ScanResult(path: "/Users/tester/dev/app/.build/output.bin", sizeBytes: 500)
-                ]
-            )
-            try await DatabaseManager.shared.rebuildWorkingSet(
-                from: currentSnapshotId,
-                trackedPathId: trackedPathId
-            )
-
-            try await GrowthJournalService.shared.recordDeltas(
-                trackedPath: trackedPath,
-                deltas: [
-                    DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules): 300
-                ],
-                at: Date()
-            )
-
-            let groups = await BaselineService.shared.getSubcategoryBreakdown(
-                for: .developer,
-                trackedPathsById: [trackedPathId: trackedPath],
-                latestSnapshotIdsByPath: [trackedPathId: currentSnapshotId],
-                baselineSnapshotIdsByPath: [trackedPathId: baselineSnapshotId]
-            )
-
-            XCTAssertEqual(
-                groups.first(where: { $0.subcategory == .nodeModules })?.growthBytes,
-                300
-            )
-            XCTAssertEqual(
-                groups.first(where: { $0.subcategory == .buildArtifacts })?.growthBytes,
-                300
-            )
         }
     }
 
@@ -676,7 +595,7 @@ final class PrunrSmokeTests: XCTestCase {
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
                 deltas: [
-                    DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules): 300 * 1024 * 1024
+                    DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules, unitKey: "place|/Users/tester/dev"): 300 * 1024 * 1024
                 ]
             )
 
@@ -753,18 +672,6 @@ final class PrunrSmokeTests: XCTestCase {
                 snapshotId: completedSnapshotId,
                 totals: [.developer: 55]
             )
-            try await DatabaseManager.shared.replaceSubcategorySnapshots(
-                snapshotId: completedSnapshotId,
-                rows: [
-                    DatabaseManager.StoredSubcategorySnapshot(
-                        category: .developer,
-                        subcategory: .nodeModules,
-                        totalBytes: 55,
-                        fileCount: 10,
-                        topItems: []
-                    )
-                ]
-            )
             try await DatabaseManager.shared.rebuildWorkingSet(
                 from: completedSnapshotId,
                 trackedPathId: trackedPathId,
@@ -782,18 +689,6 @@ final class PrunrSmokeTests: XCTestCase {
             try await DatabaseManager.shared.replaceCategorySnapshots(
                 snapshotId: abandonedSnapshotId,
                 totals: [.developer: 100]
-            )
-            try await DatabaseManager.shared.replaceSubcategorySnapshots(
-                snapshotId: abandonedSnapshotId,
-                rows: [
-                    DatabaseManager.StoredSubcategorySnapshot(
-                        category: .developer,
-                        subcategory: .nodeModules,
-                        totalBytes: 100,
-                        fileCount: 1,
-                        topItems: []
-                    )
-                ]
             )
 
             let deleted = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
@@ -951,7 +846,7 @@ final class PrunrSmokeTests: XCTestCase {
                 displayName: "dev"
             )
             let growthBytes = Int64(300 * 1024 * 1024)
-            let deltaKey = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil)
+            let deltaKey = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev")
 
             // Two buckets spread over time — and one well outside any 24h window
             // to prove growth accumulates until reset, not just for the last day.
@@ -1025,46 +920,6 @@ final class PrunrSmokeTests: XCTestCase {
                 "\(viewModel.formattedSnapshotDate(currentDate)) vs \(viewModel.formattedSnapshotDate(historicalDate))"
             )
             XCTAssertFalse(viewModel.comparisonSummary?.hasPrefix("Now vs ") ?? false)
-        }
-    }
-
-    func testGrowthContributorsStayEmptyWithoutLiveWorkingSetGrowth() async throws {
-        try await withTemporaryDatabase { trackedPathId, initialSnapshotId in
-            let trackedPath = TrackedPath(
-                id: trackedPathId,
-                url: URL(fileURLWithPath: "/Users/tester/dev"),
-                displayName: "dev"
-            )
-            let filePath = "/Users/tester/dev/node_modules/react/index.js"
-
-            try await DatabaseManager.shared.addEntries(
-                to: initialSnapshotId,
-                entries: [
-                    ScanResult(path: filePath, sizeBytes: 1_024)
-                ]
-            )
-
-            let newerSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
-            let newerSnapshotId = try XCTUnwrap(newerSnapshot.id)
-            try await DatabaseManager.shared.addEntries(
-                to: newerSnapshotId,
-                entries: [
-                    ScanResult(path: filePath, sizeBytes: 4_096)
-                ]
-            )
-            try await DatabaseManager.shared.rebuildWorkingSet(
-                from: newerSnapshotId,
-                trackedPathId: trackedPath.id
-            )
-
-            let contributors = await BaselineService.shared.getGrowthContributors(
-                trackedPathId: trackedPath.id,
-                snapshotId: newerSnapshotId,
-                category: .developer,
-                subcategory: .nodeModules
-            )
-
-            XCTAssertTrue(contributors.isEmpty)
         }
     }
 
@@ -1160,18 +1015,6 @@ final class PrunrSmokeTests: XCTestCase {
                 try await DatabaseManager.shared.replaceCategorySnapshots(
                     snapshotId: snapshotId,
                     totals: [.developer: Int64(index + 1)]
-                )
-                try await DatabaseManager.shared.replaceSubcategorySnapshots(
-                    snapshotId: snapshotId,
-                    rows: [
-                        DatabaseManager.StoredSubcategorySnapshot(
-                            category: .developer,
-                            subcategory: .nodeModules,
-                            totalBytes: Int64(index + 1),
-                            fileCount: 1,
-                            topItems: []
-                        )
-                    ]
                 )
             }
 
@@ -1941,7 +1784,7 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     func testFirstBaselineClearsStaleRealtimeGrowthState() async throws {
-        try await withEmptyTemporaryDatabase { trackedPathId in
+        try await withEmptyTemporaryDatabase { [self] trackedPathId in
             let tempDirectory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("PrunrBaseline-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
@@ -1962,13 +1805,12 @@ final class PrunrSmokeTests: XCTestCase {
                 trackedPathId: trackedPathId,
                 bucketStart: Date(),
                 deltas: [
-                    DatabaseManager.JournalDeltaKey(category: .other, subcategory: nil): 2_048
+                    DatabaseManager.JournalDeltaKey(category: .other, subcategory: nil, unitKey: "place|/Users/tester/dev"): 2_048
                 ]
             )
 
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
-            let snapshot = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
-            let snapshotId = try XCTUnwrap(snapshot.id)
+            _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
 
             let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
             let journalCount = try await dbPool.read { db in
@@ -1976,14 +1818,7 @@ final class PrunrSmokeTests: XCTestCase {
             }
             XCTAssertEqual(journalCount, 0)
 
-            let contributors = try await DatabaseManager.shared.fetchGrowthContributors(
-                trackedPathId: trackedPathId,
-                snapshotId: snapshotId,
-                category: .other,
-                subcategory: nil,
-                limit: 20
-            )
-            XCTAssertTrue(contributors.isEmpty)
+            try await self.assertDrilldownIndexExact(trackedPathId, "after a full scan")
         }
     }
 
@@ -2074,10 +1909,7 @@ final class PrunrSmokeTests: XCTestCase {
                     trackedPathId: trackedPath.id
                 )
 
-                await manager.loadInventoryFromLatestSnapshot(
-                    refreshedAt: Date(),
-                    invalidateSubcategoryCache: true
-                )
+                await manager.loadInventoryFromLatestSnapshot(refreshedAt: Date())
 
                 let liveFile = trackedRoot.appendingPathComponent("app/node_modules/react/index.js")
                 try FileManager.default.createDirectory(
@@ -2107,26 +1939,11 @@ final class PrunrSmokeTests: XCTestCase {
                     Int64(128_000 + liveGrowthBytes)
                 )
 
-                let liveGroups = await BaselineService.shared.getSubcategoryBreakdownFromWorkingSet(
-                    for: .developer,
-                    trackedPathsById: [trackedPath.id: trackedPath],
-                    baselineSnapshotIdsByPath: [trackedPath.id: snapshotId]
-                )
-                XCTAssertEqual(
-                    liveGroups.first(where: { $0.subcategory == .nodeModules })?.growthBytes,
-                    Int64(liveGrowthBytes)
-                )
-
                 let groups = await manager.loadSubcategoryBreakdown(for: .developer)
                 let nodeModules = try XCTUnwrap(groups.first(where: { $0.subcategory == .nodeModules }))
-                XCTAssertEqual(nodeModules.growthBytes, Int64(liveGrowthBytes))
-
-                let contributors = await manager.loadGrowthContributors(
-                    for: nodeModules,
-                    category: .developer
-                )
-                XCTAssertEqual(contributors.first?.path, liveFile.path)
-                XCTAssertEqual(contributors.first?.growthBytes, Int64(liveGrowthBytes))
+                XCTAssertEqual(nodeModules.totalBytes, Int64(liveGrowthBytes))
+                XCTAssertEqual(nodeModules.topFiles.first?.path, liveFile.path)
+                try await self.assertDrilldownIndexExact(trackedPath.id, "after a watcher refresh")
             }
         }
     }
@@ -2356,7 +2173,7 @@ final class PrunrSmokeTests: XCTestCase {
                 try await GrowthJournalService.shared.recordDeltas(
                     trackedPath: trackedPath,
                     deltas: [
-                        DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules): 2 * 1024 * 1024
+                        DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules, unitKey: "place|/Users/tester/dev"): 2 * 1024 * 1024
                     ]
                 )
 
@@ -2403,7 +2220,7 @@ final class PrunrSmokeTests: XCTestCase {
                 try await GrowthJournalService.shared.recordDeltas(
                     trackedPath: trackedPath,
                     deltas: [
-                        DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules): 2 * 1024 * 1024
+                        DatabaseManager.JournalDeltaKey(category: .developer, subcategory: .nodeModules, unitKey: "place|/Users/tester/dev"): 2 * 1024 * 1024
                     ]
                 )
 

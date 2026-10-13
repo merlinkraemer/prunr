@@ -54,6 +54,26 @@ class PrunrTestCase: XCTestCase {
         return directory
     }
 
+    /// A category's drilldown groups with their stored top files, read the way
+    /// the categories view reads them.
+    @MainActor
+    func drilldownGroups(_ category: GrowthCategory, trackedPathIds: [UUID]) async -> [SubcategoryGroup] {
+        let store = DrilldownStore()
+        await store.reload(trackedPathIds: trackedPathIds)
+        await store.loadFiles(for: category, trackedPathIds: trackedPathIds)
+        return store.groupsByCategory[category] ?? []
+    }
+
+    func assertDrilldownIndexExact(
+        _ trackedPathId: UUID,
+        _ context: String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        let problems = try await DatabaseManager.shared.verifyDrilldownIndex(trackedPathId: trackedPathId)
+        XCTAssertEqual(problems, [], context, file: file, line: line)
+    }
+
     func diskUsageBytes(at url: URL) throws -> Int64 {
         var fileStat = stat()
         XCTAssertEqual(lstat(url.path, &fileStat), 0)

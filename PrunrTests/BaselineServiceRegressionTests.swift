@@ -24,10 +24,10 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
                 deltas: [
-                    .init(category: .developer, subcategory: nil): -20 * gb,
-                    .init(category: .downloads, subcategory: nil): 1 * gb,
+                    .init(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev"): -20 * gb,
+                    .init(category: .downloads, subcategory: nil, unitKey: "place|/Users/tester/dev"): 1 * gb,
                     // Sub-floor: hidden by the row renderer, still in the sum.
-                    .init(category: .applications, subcategory: nil): 800_000
+                    .init(category: .applications, subcategory: nil, unitKey: "place|/Users/tester/dev"): 800_000
                 ],
                 at: Date().addingTimeInterval(-3600)
             )
@@ -51,12 +51,12 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .cachesAndSystem, subcategory: nil): eightGB],
+                deltas: [.init(category: .cachesAndSystem, subcategory: nil, unitKey: "place|/Users/tester/dev"): eightGB],
                 at: Date().addingTimeInterval(-7200)
             )
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .cachesAndSystem, subcategory: nil): -eightGB],
+                deltas: [.init(category: .cachesAndSystem, subcategory: nil, unitKey: "place|/Users/tester/dev"): -eightGB],
                 at: Date().addingTimeInterval(-3600)
             )
 
@@ -76,13 +76,13 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .developer, subcategory: nil): inWindow],
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev"): inWindow],
                 at: Date().addingTimeInterval(-2 * day)
             )
             // 9 days back: outside the 7-day display window.
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .developer, subcategory: nil): outOfWindow],
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev"): outOfWindow],
                 at: Date().addingTimeInterval(-9 * day)
             )
 
@@ -126,7 +126,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             func daysAgo(_ days: Int) -> Date {
                 calendar.date(byAdding: .hour, value: 12, to: calendar.date(byAdding: .day, value: -days, to: today)!)!
             }
-            let key = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil)
+            let key = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev")
             try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 1_000], at: daysAgo(8))
             try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 2_000], at: daysAgo(29))
             try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 4_000], at: daysAgo(30))
@@ -166,7 +166,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             )
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .developer, subcategory: .buildArtifacts): 128_000],
+                deltas: [.init(category: .developer, subcategory: .buildArtifacts, unitKey: "place|/Users/tester/dev"): 128_000],
                 at: Date()
             )
 
@@ -227,12 +227,11 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             try await DatabaseManager.shared.upsertGrowthJournalBuckets(
                 trackedPathId: trackedPathId,
                 bucketStart: Date(),
-                deltas: [.init(category: .other, subcategory: nil): 6_144]
+                deltas: [.init(category: .other, subcategory: nil, unitKey: "place|/Users/tester/dev"): 6_144]
             )
 
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
-            let snapshot = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
-            let snapshotId = try XCTUnwrap(snapshot.id)
+            _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
 
             let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
             let counts = try await dbPool.read { db in
@@ -247,15 +246,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             XCTAssertEqual(counts.0, 0)
             XCTAssertEqual(counts.1, 1)
-
-            let contributors = try await DatabaseManager.shared.fetchGrowthContributors(
-                trackedPathId: trackedPathId,
-                snapshotId: snapshotId,
-                category: .other,
-                subcategory: nil,
-                limit: 20
-            )
-            XCTAssertTrue(contributors.isEmpty)
+            try await self.assertDrilldownIndexExact(trackedPathId, "after the first full scan")
         }
     }
 
@@ -504,7 +495,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             }
         }
 
-        try migrator.migrate(dbQueue)
+        try migrator.migrate(dbQueue, upTo: "v22_journal_unit")
 
         try dbQueue.write { db in
             let buckets = try GrowthJournalBucket.fetchAll(
@@ -550,7 +541,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .developer, subcategory: .nodeModules): 2 * 1_024 * 1_024],
+                deltas: [.init(category: .developer, subcategory: .nodeModules, unitKey: "place|/Users/tester/dev"): 2 * 1_024 * 1_024],
                 at: Date()
             )
 
