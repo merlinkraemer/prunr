@@ -72,7 +72,7 @@ struct ChangeGroupRow: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(arrowBytes(group.netBytes))
+            Text(signedBytes(group.netBytes))
                 .font(.system(size: 13).monospacedDigit())
                 .foregroundStyle(changeAmountStyle(group.netBytes))
                 .lineLimit(1)

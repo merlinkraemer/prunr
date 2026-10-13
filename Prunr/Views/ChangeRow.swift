@@ -50,7 +50,7 @@ struct ChangeRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             ZStack(alignment: .trailing) {
-                Text(arrowBytes(episode.netBytes))
+                Text(signedBytes(episode.netBytes))
                     .font(.system(size: 13).monospacedDigit())
                     .foregroundStyle(changeAmountStyle(episode.netBytes))
                     .lineLimit(1)
@@ -105,9 +105,9 @@ func changeAmountStyle(_ netBytes: Int64) -> AnyShapeStyle {
     return netBytes < 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary)
 }
 
-/// "↗ 9.0 GB" for growth, "↘ 4.0 GB" for a shrink.
-func arrowBytes(_ bytes: Int64) -> String {
-    "\(bytes < 0 ? "\u{2198}" : "\u{2197}") \(formattedBytes(abs(bytes)))"
+/// "+9.0 GB" for growth, "−4.0 GB" for a shrink.
+func signedBytes(_ bytes: Int64) -> String {
+    "\(bytes < 0 ? "\u{2212}" : "+")\(formattedBytes(abs(bytes)))"
 }
 
 /// The amount as VoiceOver reads it: "up 9.0 GB" or "down 4.0 GB".

@@ -83,10 +83,8 @@ struct WeeklyChangeRow: View {
 
     private var amountStyle: AnyShapeStyle {
         switch weekly {
-        case .bytes(let net) where net >= EpisodeBuilder.rowThresholdBytes:
-            return AnyShapeStyle(Color.orange)
-        case .bytes:
-            return AnyShapeStyle(.primary)
+        case .bytes(let net):
+            return changeAmountStyle(net)
         case .unknown, .none:
             return AnyShapeStyle(.secondary)
         }

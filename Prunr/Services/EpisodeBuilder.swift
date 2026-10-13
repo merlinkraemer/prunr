@@ -179,7 +179,7 @@ enum WeeklyChange: Equatable, Sendable {
         self = abs(net) < GrowthJournalService.presentationFloorBytes ? .none : .bytes(net)
     }
 
-    /// The amount on the header's right edge: "—", "↗ 48 GB" or "↘ 3 GB".
+    /// The amount on the header's right edge: "—", "+48 GB" or "−3 GB".
     /// `.none` has no amount; the header reads "No change".
     var amountText: String? {
         switch self {
@@ -188,7 +188,7 @@ enum WeeklyChange: Equatable, Sendable {
         case .none:
             return nil
         case .bytes(let net):
-            return arrowBytes(net)
+            return signedBytes(net)
         }
     }
 }
