@@ -84,24 +84,6 @@ struct ChangeGroup: Identifiable, Equatable, Sendable {
 
     /// Orange in the list: growth of at least the row line. Shrinks are grey.
     var isGrowth: Bool { netBytes >= EpisodeBuilder.rowThresholdBytes }
-
-    /// The only place in the group; the main list shows it instead of the category.
-    var soloPlace: ChangeEpisode? { episodes.count == 1 ? episodes.first : nil }
-
-    var rowKind: ChangeGroupRowKind {
-        if let soloPlace {
-            return soloPlace.rootPath.map(ChangeGroupRowKind.single(rootPath:)) ?? .inert
-        }
-        return episodes.contains { $0.rootPath != nil } ? .multi : .inert
-    }
-}
-
-/// What a main-list group row does: reveal its one place, open the group's
-/// places, or nothing for rows recorded before places had a path.
-enum ChangeGroupRowKind: Equatable, Sendable {
-    case single(rootPath: String)
-    case multi
-    case inert
 }
 
 /// The change list: every row back to `GrowthJournalService.historyWindowDays`,

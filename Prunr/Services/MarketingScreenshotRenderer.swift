@@ -174,8 +174,7 @@ private struct MarketingPopoverPreview: View {
                 feed: manager.changeFeed?.feed ?? .empty,
                 now: MarketingSample.now,
                 expandedDays: .constant([]),
-                onOpenGroup: { _ in },
-                onReveal: { _ in }
+                onOpenGroup: { _ in }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .softBottomEdge()
@@ -227,9 +226,8 @@ enum MarketingSample {
 
     /// Newest first. Mail built up over days; the rest moved in one go. Each
     /// category's rows this week add up to its change in `categories`.
-    /// Tuesday's Developer group has two places, so it reads "Developer";
-    /// every other group has one place and shows it. Monday has four
-    /// categories, so it shows "Show all (4)".
+    /// Tuesday's Developer group has two places. Monday has four categories,
+    /// so it shows "Show all (4)".
     static let rows: [ChangeEpisode] = [
         episode("xcode", "Xcode build files", detail: "Prunr", .developer,
                 "/Users/sample/Library/Developer/Xcode/DerivedData", 6_900_000_000, day: 7, hour: 17, minute: 5),
@@ -264,12 +262,12 @@ enum MarketingSample {
     /// The categories view behind the header. Sizes add up to 1,858.6 GB, so
     /// "Not watched" carries the other 122.4 GB; the changes add up to the week.
     /// The Developer subcategories in the drilldown scene, biggest first.
-    static let developerSubcategories: [(title: String, bytes: Int64, icon: String)] = [
-        ("Docker", 64_000_000_000, "shippingbox.fill"),
-        ("Xcode", 48_000_000_000, "hammer.fill"),
-        ("node_modules", 31_000_000_000, "cube.box.fill"),
-        ("Other dev files", 21_800_000_000, "doc.fill"),
-        ("Python", 18_000_000_000, "chevron.left.forwardslash.chevron.right")
+    static let developerSubcategories: [(title: String, bytes: Int64, files: Int, icon: String)] = [
+        ("Docker", 64_000_000_000, 38, "shippingbox.fill"),
+        ("Xcode", 48_000_000_000, 212_880, "hammer.fill"),
+        ("node_modules", 31_000_000_000, 418_307, "cube.box.fill"),
+        ("Other dev files", 21_800_000_000, 12_402, "doc.fill"),
+        ("Python", 18_000_000_000, 96_114, "chevron.left.forwardslash.chevron.right")
     ]
 
     static func categories(endedAt now: Date) -> [CategoryInventoryItem] {
@@ -374,9 +372,14 @@ private struct MarketingDrilldownPreview: View {
                             .font(.system(size: 14))
                             .foregroundStyle(.white.opacity(0.6))
                             .frame(width: 18)
-                        Text(row.title)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.92))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.92))
+                            Text(CategorySizes.fileCountText(row.files))
+                                .font(.system(size: 11).monospacedDigit())
+                                .foregroundStyle(.white.opacity(0.52))
+                        }
                         Spacer(minLength: 4)
                         Text(CategorySizes.sizeText(row.bytes))
                             .font(.system(size: 13).monospacedDigit())
@@ -386,7 +389,7 @@ private struct MarketingDrilldownPreview: View {
                             .foregroundStyle(.white.opacity(0.34))
                     }
                     .padding(.horizontal, 18)
-                    .frame(height: 34)
+                    .frame(height: 44)
                 }
             }
             .padding(.top, 6)

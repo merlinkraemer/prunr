@@ -40,8 +40,7 @@ struct PanelSamplePreview: View {
                     feed: MarketingSample.feed,
                     now: MarketingSample.now,
                     expandedDays: $expandedDays,
-                    onOpenGroup: { _ in },
-                    onReveal: { _ in }
+                    onOpenGroup: { _ in }
                 )
                 .padding(.bottom, SoftBottomEdge.height)
             }

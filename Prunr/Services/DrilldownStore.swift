@@ -13,6 +13,8 @@ final class DrilldownStore {
     private(set) var isBuilding = false
     private(set) var loadingFileCategories: Set<GrowthCategory> = []
     private(set) var loadedFileCategories: Set<GrowthCategory> = []
+    private(set) var groupsReadFailed = false
+    private(set) var failedFileCategories: Set<GrowthCategory> = []
 
     @ObservationIgnored private var storedFilesByGroupID: [String: [GrowthItem]] = [:]
     @ObservationIgnored private var generation: UInt64 = 0
@@ -27,6 +29,8 @@ final class DrilldownStore {
         isBuilding = false
         loadingFileCategories = []
         loadedFileCategories = []
+        groupsReadFailed = false
+        failedFileCategories = []
         storedFilesByGroupID = [:]
     }
 
@@ -40,9 +44,13 @@ final class DrilldownStore {
             snapshot = try await db.fetchDrilldownGroups(trackedPathIds: trackedPathIds)
         } catch {
             logger.error("Drilldown groups read failed: \(error.localizedDescription, privacy: .public)")
+            if requestGeneration == generation {
+                groupsReadFailed = true
+            }
             return
         }
         guard requestGeneration == generation else { return }
+        groupsReadFailed = false
 
         let shownCounts = groupsByCategory.values.joined().reduce(into: [String: Int]()) {
             $0[$1.id] = $1.topFiles.count
@@ -56,6 +64,7 @@ final class DrilldownStore {
 
         let reloadCategories = loadedFileCategories
         loadedFileCategories = []
+        failedFileCategories = []
         storedFilesByGroupID = [:]
         for category in reloadCategories where groupsByCategory[category] != nil {
             await loadFiles(for: category, trackedPathIds: trackedPathIds, shownCounts: shownCounts)
@@ -82,9 +91,13 @@ final class DrilldownStore {
             rows = try await db.fetchDrilldownTopFiles(trackedPathIds: trackedPathIds, category: category)
         } catch {
             logger.error("Drilldown files read failed: \(error.localizedDescription, privacy: .public)")
+            if requestGeneration == generation {
+                failedFileCategories.insert(category)
+            }
             return
         }
         guard requestGeneration == generation, var groups = groupsByCategory[category] else { return }
+        failedFileCategories.remove(category)
 
         let rowsByGroupKey = Dictionary(grouping: rows, by: \.groupKey)
         for index in groups.indices {

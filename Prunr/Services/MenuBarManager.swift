@@ -269,6 +269,13 @@ final class MenuBarManager: NSObject {
             }
             return false
         }
+
+        var progress: Double? {
+            if case .fullScan(.scanning, let percentage?) = self {
+                return Double(percentage) / 100
+            }
+            return nil
+        }
     }
 
     /// The footer should describe work that is happening now, without treating a
@@ -1733,12 +1740,68 @@ final class MenuBarManager: NSObject {
         }
     }
 
-    func isSubcategoryBreakdownReady(for category: GrowthCategory) -> Bool {
-        drilldownStore.isFilesLoaded(for: category)
+    nonisolated static func directFileGroup(for category: GrowthCategory, groups: [SubcategoryGroup]) -> SubcategoryGroup? {
+        guard !category.supportsSubcategories else { return nil }
+        return groups.first(where: { $0.subcategory == nil }) ?? groups.first
     }
 
-    func isSubcategoryBreakdownLoading(for category: GrowthCategory) -> Bool {
-        drilldownStore.isBuilding || drilldownStore.loadingFileCategories.contains(category)
+    func openCategory(_ item: CategoryInventoryItem) {
+        let fileGroup = Self.directFileGroup(for: item.category, groups: subcategoryGroupsByCategory[item.category] ?? [])
+        withAnimationsDisabled {
+            selectedInventoryCategory = item
+            selectedSubcategory = fileGroup
+            isSubcategoryDrillDown = fileGroup != nil
+            isDrilledDown = true
+        }
+        prefetchDrilldownFiles(for: item.category)
+    }
+
+    func openSubcategory(_ group: SubcategoryGroup) {
+        guard isDrilledDown, let category = selectedInventoryCategory?.category else { return }
+        withAnimationsDisabled {
+            selectedSubcategory = group
+            isSubcategoryDrillDown = true
+        }
+        prefetchDrilldownFiles(for: category)
+    }
+
+    func closeDrilldownLevel() {
+        guard let category = selectedInventoryCategory?.category else { return }
+        withAnimationsDisabled {
+            if isSubcategoryDrillDown, selectedSubcategory != nil, category.supportsSubcategories {
+                isSubcategoryDrillDown = false
+                selectedSubcategory = nil
+            } else {
+                isSubcategoryDrillDown = false
+                selectedSubcategory = nil
+                selectedInventoryCategory = nil
+                isDrilledDown = false
+            }
+        }
+    }
+
+    func prefetchDrilldownFiles(for category: GrowthCategory) {
+        guard !drilldownStore.isFilesLoaded(for: category),
+              !drilldownStore.loadingFileCategories.contains(category) else { return }
+        let trackedPathIds = enabledTrackedPathIDs()
+        Task { [drilldownStore] in
+            await drilldownStore.loadFiles(for: category, trackedPathIds: trackedPathIds)
+        }
+    }
+
+    func retryDrilldownRead(for category: GrowthCategory?) {
+        Task {
+            if drilldownStore.groupsReadFailed {
+                await reloadDrilldownStore()
+            }
+            if let category {
+                prefetchDrilldownFiles(for: category)
+            }
+        }
+    }
+
+    func drilldownFileGroup(_ group: SubcategoryGroup, in category: GrowthCategory) -> SubcategoryGroup {
+        subcategoryGroupsByCategory[category]?.first(where: { $0.id == group.id }) ?? group
     }
 
     /// The category's groups with their largest files, from the drilldown index.

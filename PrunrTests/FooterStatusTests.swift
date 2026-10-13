@@ -20,7 +20,7 @@ final class FooterStatusTests: PrunrTestCase {
         XCTAssertEqual(FooterStatus.resolve(
             scanText: "Scanning 42%", isRefreshing: true,
             foldersNotReadable: true, updateAvailable: true, groupDay: day, preview: .sample, updatedAt: updated
-        ), .scanning("Scanning 42%"))
+        ), .scanning("Scanning 42%", progress: nil))
         XCTAssertEqual(FooterStatus.resolve(
             isRefreshing: true, foldersNotReadable: true, updateAvailable: true, groupDay: day, preview: .sample, updatedAt: updated
         ), .refreshing)
@@ -42,9 +42,25 @@ final class FooterStatusTests: PrunrTestCase {
         XCTAssertEqual(FooterStatus.foldersNotReadable.text(), "Some folders not readable")
         XCTAssertEqual(FooterStatus.preview(.sample).text(), "Sample data")
         XCTAssertEqual(FooterStatus.preview(.dayOne).text(), "Preview: Day one")
-        XCTAssertTrue(FooterStatus.scanning("Scanning 42%").showsSpinner)
-        XCTAssertTrue(FooterStatus.refreshing.showsSpinner)
-        XCTAssertFalse(FooterStatus.updated(now).showsSpinner)
+        XCTAssertEqual(FooterStatus.scanning("Scanning 42%", progress: nil).text(), "Scanning 42%")
+    }
+
+    func testFullScanFillsTheRingToItsPercentage() {
+        XCTAssertEqual(
+            FooterStatus.resolve(scanText: "Scanning 42%", scanProgress: 0.42),
+            .scanning("Scanning 42%", progress: 0.42)
+        )
+        XCTAssertEqual(FooterStatus.scanning("Scanning 42%", progress: 0.42).ring, .progress(0.42))
+        XCTAssertEqual(FooterStatus.scanning("Scanning 140%", progress: 1.4).ring, .progress(1))
+        XCTAssertEqual(FooterStatus.scanning("Finalizing scan…", progress: nil).ring, .spinning)
+        XCTAssertEqual(FooterStatus.refreshing.ring, .spinning)
+        XCTAssertNil(FooterStatus.updated(now).ring)
+        XCTAssertNil(FooterStatus.refreshFailed.ring)
+
+        XCTAssertEqual(MenuBarManager.FooterActivity.fullScan(phase: .scanning, percentage: 42).progress, 0.42)
+        XCTAssertNil(MenuBarManager.FooterActivity.fullScan(phase: .scanning, percentage: nil).progress)
+        XCTAssertNil(MenuBarManager.FooterActivity.fullScan(phase: .finalizing, percentage: nil).progress)
+        XCTAssertNil(MenuBarManager.FooterActivity.idle.progress)
     }
 
     func testUpdatedReadsRelativeTime() {

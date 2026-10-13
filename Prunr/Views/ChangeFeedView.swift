@@ -12,7 +12,6 @@ struct ChangeFeedView: View {
     /// back lands where the list was. The header shows this day's storage.
     @Binding var scrollAnchor: Date?
     let onOpenGroup: (ChangeGroup) -> Void
-    let onReveal: (String) -> Void
     let onRetry: () -> Void
 
     var body: some View {
@@ -36,8 +35,7 @@ struct ChangeFeedView: View {
                         feed: feed,
                         now: now,
                         expandedDays: $expandedDays,
-                        onOpenGroup: onOpenGroup,
-                        onReveal: onReveal
+                        onOpenGroup: onOpenGroup
                     )
                         .padding(.bottom, SoftBottomEdge.height)
                 }
@@ -70,7 +68,6 @@ struct ChangeFeedRows: View {
     let now: Date
     @Binding var expandedDays: Set<Date>
     let onOpenGroup: (ChangeGroup) -> Void
-    let onReveal: (String) -> Void
 
     private let calendar = Calendar.current
 
@@ -121,7 +118,7 @@ struct ChangeFeedRows: View {
                 .accessibilityAddTraits(.isHeader)
 
             ForEach(shown) { group in
-                ChangeGroupRow(group: group, onOpen: { onOpenGroup(group) }, onReveal: onReveal)
+                ChangeGroupRow(group: group, onOpen: { onOpenGroup(group) })
             }
 
             if isCollapsed {
@@ -135,14 +132,14 @@ struct ChangeFeedRows: View {
     }
 }
 
-/// One day's rows for one category: the drilldown under the main list.
 struct ChangeGroupView: View {
     let group: ChangeGroup
+    let onOpenPlace: (ChangeEpisode) -> Void
     let onReveal: (String) -> Void
 
     var body: some View {
         ScrollView {
-            ChangeGroupRows(group: group, onReveal: onReveal)
+            ChangeGroupRows(group: group, onOpenPlace: onOpenPlace, onReveal: onReveal)
                 .padding(.bottom, SoftBottomEdge.height)
         }
         .hiddenScrollIndicators()
@@ -150,15 +147,15 @@ struct ChangeGroupView: View {
     }
 }
 
-/// The drilldown's rows without the scroll view, newest first.
 struct ChangeGroupRows: View {
     let group: ChangeGroup
+    let onOpenPlace: (ChangeEpisode) -> Void
     let onReveal: (String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(group.episodes) { episode in
-                ChangeRow(episode: episode, onReveal: onReveal)
+                ChangeRow(episode: episode, onOpen: onOpenPlace, onReveal: onReveal)
             }
         }
         .padding(.top, 6)

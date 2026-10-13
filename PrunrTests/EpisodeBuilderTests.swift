@@ -801,52 +801,46 @@ final class EpisodeBuilderTests: XCTestCase {
         )
     }
 
-    func testOnePlaceGroupShowsThePlaceAndRevealsIt() {
-        let single = group([("xcode", "/Users/tester/Library/Developer/Xcode/DerivedData")])
-        XCTAssertEqual(single.soloPlace?.id, "xcode")
-        XCTAssertEqual(single.rowKind, .single(rootPath: "/Users/tester/Library/Developer/Xcode/DerivedData"))
-    }
-
-    func testGroupWithSeveralPlacesOpensWhenAnyHasAPath() {
-        XCTAssertEqual(group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")]).rowKind, .multi)
-        XCTAssertEqual(group([("a", nil), ("b", "/Users/tester/b")]).rowKind, .multi)
-        XCTAssertNil(group([("a", "/Users/tester/a"), ("b", nil)]).soloPlace)
-    }
-
-    func testGroupsWithoutAnyPathAreInert() {
+    func testEveryGroupRowOpensTheDaysPlaces() {
+        let one = group([("xcode", "/Users/tester/Library/Developer/Xcode/DerivedData")])
         let pathless = group([("somewhere", nil)])
-        XCTAssertEqual(pathless.rowKind, .inert)
-        XCTAssertEqual(pathless.soloPlace?.id, "somewhere")
-        XCTAssertEqual(group([("a", nil), ("b", nil)]).rowKind, .inert)
+        let several = group([("a", "/Users/tester/a"), ("b", nil)])
+        for row in [one, pathless, several] {
+            XCTAssertEqual(FeedPage.feed.opening(row), .group(row))
+            XCTAssertEqual(FeedPage.group(row).parent, .feed)
+        }
     }
 
-    func testHoverSwapsTheChevronForShowInFinderOnlyOnOnePlaceRows() {
-        let single = ChangeGroupRowKind.single(rootPath: "/Users/tester/a")
-        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: single, isHovering: false), .chevron)
-        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: single, isHovering: true), .revealInFinder)
-        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: .multi, isHovering: false), .chevron)
-        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: .multi, isHovering: true), .chevron)
-        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: .inert, isHovering: false), ChangeGroupRow.TrailingGlyph.none)
-        XCTAssertEqual(ChangeGroupRow.trailingGlyph(for: .inert, isHovering: true), ChangeGroupRow.TrailingGlyph.none)
+    func testPlaceRowsWithAPathOpenTheirContents() throws {
+        let day = group([("a", "/Users/tester/a"), ("b", nil)])
+        let withPath = try XCTUnwrap(day.episodes.first { $0.id == "a" })
+        let pathless = try XCTUnwrap(day.episodes.first { $0.id == "b" })
+
+        XCTAssertTrue(FeedPage.opensContents(withPath))
+        XCTAssertFalse(FeedPage.opensContents(pathless))
+        XCTAssertEqual(FeedPage.group(day).opening(withPath), .place(day, withPath))
+        XCTAssertEqual(FeedPage.group(day).opening(pathless), .group(day))
+        XCTAssertEqual(FeedPage.feed.opening(withPath), .feed)
     }
 
-    func testRowClickRevealsOnePlaceOpensSeveralAndIgnoresInert() {
-        var opened = 0
-        var revealed: [String] = []
-        let open = { opened += 1 }
-        let reveal = { (path: String) in revealed.append(path) }
+    func testBackGoesUpOneLevelAndTheFooterKeepsTheRowsDate() throws {
+        let day = group([("a", "/Users/tester/a")])
+        let place = try XCTUnwrap(day.episodes.first)
+        let page = FeedPage.group(day).opening(place)
 
-        ChangeGroupRow.perform(.single(rootPath: "/Users/tester/a"), onOpen: open, onReveal: reveal)
-        XCTAssertEqual(revealed, ["/Users/tester/a"])
-        XCTAssertEqual(opened, 0)
+        XCTAssertEqual(page.depth, 2)
+        XCTAssertEqual(page.group?.day, day.day)
+        XCTAssertEqual(page.place, place)
+        XCTAssertEqual(page.parent, .group(day))
+        XCTAssertEqual(page.parent.parent, .feed)
+        XCTAssertEqual(FeedPage.feed.parent, .feed)
+    }
 
-        ChangeGroupRow.perform(.multi, onOpen: open, onReveal: reveal)
-        XCTAssertEqual(opened, 1)
-        XCTAssertEqual(revealed.count, 1)
-
-        ChangeGroupRow.perform(.inert, onOpen: open, onReveal: reveal)
-        XCTAssertEqual(opened, 1)
-        XCTAssertEqual(revealed.count, 1)
+    func testContextMenuOnlyOnRowsWithAPath() {
+        XCTAssertEqual(RowPathAction.actions(forPath: "/Users/tester/a"), [.showInFinder, .copyPath])
+        XCTAssertEqual(RowPathAction.actions(forPath: nil), [])
+        XCTAssertEqual(RowPathAction.showInFinder.title, "Show in Finder")
+        XCTAssertEqual(RowPathAction.copyPath.title, "Copy Path")
     }
 
     // MARK: - Signs and the storage balance

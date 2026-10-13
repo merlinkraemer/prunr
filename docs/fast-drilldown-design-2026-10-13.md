@@ -207,3 +207,15 @@ API: `DatabaseManager.fetchPlaceContents(unitRoot:trackedPathIds:offset:limit: =
 - All other subcategory read paths (snapshot/working-set GROUP BYs, cache-app builders, growth
   contributors, journal subcategory totals, warm-up, snapshot bypass) are deleted; the categories view
   reads `DrilldownStore`.
+
+## 9. As built (S3 UI, feat/s20-drill-ui)
+- Main list: every category row opens the day's places (`FeedPage.group`); a place with a root opens its
+  contents (`FeedPage.place`, `PlaceContentsView` over `fetchPlaceContents`, 50 per page, "Show more" pages in
+  place). Contents rows are leaves. Right-click "Show in Finder" / "Copy Path" only on place and content rows.
+- Categories view: `MenuBarManager.openCategory` / `openSubcategory` / `closeDrilldownLevel` set the final
+  selection synchronously; a category without subcategories goes straight to its only group. File lists
+  read the group from `DrilldownStore` (prefetched on open) and fill in on the same page.
+- No loader pages and no skeletons in any drill: inline rows "Indexing files…", "No files found",
+  "Couldn't read · Retry" (`InlineStatus`). The first-launch category skeleton stays.
+- Footer: a full scan shows a progress ring filled to the scan % with "Scanning 42%" in the refresh
+  button's place; "Refreshing…" shows a spinning ring there.

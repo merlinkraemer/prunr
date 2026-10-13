@@ -35,8 +35,8 @@ struct MenuBarView: View {
     /// The change list is the root page; the category overview and its drill
     /// sit one level below it.
     @State private var showsCategoryOverview = false
-    /// The day group open below the change list, if any.
-    @State private var openGroup: ChangeGroup? = nil
+    @State private var feedPage = FeedPage.feed
+    @State private var feedSlidesForward = true
     @State private var expandedFeedDays: Set<Date> = []
     @State private var feedScrollAnchor: Date? = nil
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
@@ -1102,12 +1102,18 @@ struct MenuBarView: View {
         } row: {
             if showsCategoryOverview {
                 headerNavigationView
+            } else if let place = shownPlace {
+                HeaderTitleRow(
+                    title: EpisodeBuilder.rowTitle(for: place),
+                    backHint: "Return to this day's \(place.category.displayName) changes",
+                    onBack: navigateFeedBack
+                )
             } else if let group = shownGroup {
                 HeaderTitleRow(
                     title: group.category.displayName,
                     category: group.category,
                     backHint: "Return to the change list",
-                    onBack: closeGroup
+                    onBack: navigateFeedBack
                 )
             } else {
                 switch changeListHeaderRow {
@@ -1133,7 +1139,7 @@ struct MenuBarView: View {
 
     /// The bar shows a past date's level only under that date's header row.
     private var driveBarHistoricUsedBytes: Int64? {
-        guard !showsCategoryOverview, shownGroup == nil else { return nil }
+        guard !showsCategoryOverview, feedPage == .feed else { return nil }
         return changeListHeaderRow.historicUsedBytes
     }
 
@@ -1284,10 +1290,22 @@ struct MenuBarView: View {
                 categoryListView
                     .clearOfFooter()
                     .transition(.move(edge: .trailing))
+            } else if let place = shownPlace, let unitRoot = place.rootPath {
+                PlaceContentsView(
+                    category: place.category,
+                    isIndexing: manager.drilldownStore.isBuilding,
+                    onReveal: revealPlace,
+                    loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) }
+                )
+                .id("place-\(place.id)")
+                .transition(.move(edge: .trailing))
             } else if let group = shownGroup {
-                ChangeGroupView(group: group, onReveal: revealPlace)
+                ChangeGroupView(group: group, onOpenPlace: openPlace, onReveal: revealPlace)
                     .id(group.id)
-                    .transition(.move(edge: .trailing))
+                    .transition(.asymmetric(
+                        insertion: .move(edge: feedSlidesForward ? .trailing : .leading),
+                        removal: .move(edge: feedSlidesForward ? .leading : .trailing)
+                    ))
             } else {
                 changeFeedView
                     .transition(.move(edge: .leading))
@@ -1300,7 +1318,7 @@ struct MenuBarView: View {
                 isEnabled: canNavigateBackFromDrilldown || isShowingGroup,
                 onSwipeBack: {
                     if isShowingGroup {
-                        closeGroup()
+                        navigateFeedBack()
                     } else {
                         navigateBackFromDrilldown()
                     }
@@ -1465,36 +1483,55 @@ struct MenuBarView: View {
                     expandedDays: $expandedFeedDays,
                     scrollAnchor: $feedScrollAnchor,
                     onOpenGroup: openChangeGroup,
-                    onReveal: revealPlace,
                     onRetry: { Task { await manager.refreshChangeFeed() } }
                 )
             }
         }
     }
 
-    /// The open group as the latest change list has it, so a refresh while it
-    /// is open shows the new rows; the opened copy if the group is gone.
     private var shownGroup: ChangeGroup? {
-        guard let openGroup else { return nil }
+        guard let openGroup = feedPage.group else { return nil }
         let fresh = shownChangeFeed?.feed?.days
             .first { $0.day == openGroup.day }?
             .groups.first { $0.id == openGroup.id }
         return fresh ?? openGroup
     }
 
+    private var shownPlace: ChangeEpisode? {
+        guard let place = feedPage.place else { return nil }
+        return shownGroup?.episodes.first { $0.id == place.id } ?? place
+    }
+
     private var isShowingGroup: Bool {
-        openGroup != nil && !showsCategoryOverview
+        feedPage != .feed && !showsCategoryOverview
     }
 
     private func openChangeGroup(_ group: ChangeGroup) {
-        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
-            openGroup = group
-        }
+        navigateFeed(to: feedPage.opening(group))
     }
 
-    private func closeGroup() {
-        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
-            openGroup = nil
+    private func openPlace(_ place: ChangeEpisode) {
+        navigateFeed(to: feedPage.opening(place))
+    }
+
+    private func navigateFeedBack() {
+        navigateFeed(to: feedPage.parent)
+    }
+
+    private func navigateFeed(to page: FeedPage) {
+        guard page != feedPage else { return }
+        let forward = page.depth > feedPage.depth
+        guard forward != feedSlidesForward else {
+            withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+                feedPage = page
+            }
+            return
+        }
+        feedSlidesForward = forward
+        DispatchQueue.main.async {
+            withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+                feedPage = page
+            }
         }
     }
 
@@ -1509,7 +1546,7 @@ struct MenuBarView: View {
         }
         withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
             showsCategoryOverview = shows
-            openGroup = nil
+            feedPage = .feed
             highlightedStorageSegmentID = nil
         }
         synchronizeVisibleHeaderToCurrent()
@@ -1567,9 +1604,7 @@ struct MenuBarView: View {
                         displayedHeader = headerScreen(for: pane)
                         activeHeaderTransition = nil
                     },
-                    onTapItem: { path in
-                        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
-                    }
+                    onTapItem: revealPlace
                 )
             }
         }
@@ -1578,33 +1613,28 @@ struct MenuBarView: View {
     // MARK: - Footer Buttons (Icon Toolbar)
 
     private var footerButtons: some View {
-        ZStack {
-            footerStatusText
+        let status = footerStatus
+        return ZStack {
+            if status.ring == nil {
+                footerStatusText(status)
+            }
 
             HStack {
-                Button {
-                    Task { await refreshNow() }
-                } label: {
-                    Image(systemName: isRefreshing ? "arrow.trianglehead.2.clockwise.rotate.90" : "arrow.clockwise")
-                        .font(.system(size: 13))
-                        .frame(width: 26, height: 26)
-                        .background(
-                            Circle()
-                                .fill(refreshHover ? Color.gray.opacity(0.12) : Color.clear)
-                        )
-                        .foregroundStyle(isRefreshing ? .secondary : .primary)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(manager.isLoading || manager.isAutoScanning || isRefreshing)
-                .accessibilityLabel("Refresh recent changes")
-                .accessibilityHint("Run a lightweight refresh without a full scan")
-                .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        refreshHover = hovering
+                if let ring = status.ring {
+                    HStack(spacing: 7) {
+                        FooterProgressRing(ring: ring)
+                            .id(ring == .spinning)
+                        Text(status.text())
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
+                    .padding(.leading, 5)
+                    .frame(height: 26)
+                    .accessibilityElement(children: .combine)
+                } else {
+                    refreshButton
                 }
-                .help("Refresh recent changes")
 
                 Spacer()
 
@@ -1634,6 +1664,32 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: SoftBottomEdge.footerHeight)
+    }
+
+    private var refreshButton: some View {
+        Button {
+            Task { await refreshNow() }
+        } label: {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 13))
+                .frame(width: 26, height: 26)
+                .background(
+                    Circle()
+                        .fill(refreshHover ? Color.gray.opacity(0.12) : Color.clear)
+                )
+                .foregroundStyle(.primary)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(manager.isLoading || manager.isAutoScanning || isRefreshing)
+        .accessibilityLabel("Refresh recent changes")
+        .accessibilityHint("Run a lightweight refresh without a full scan")
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                refreshHover = hovering
+            }
+        }
+        .help("Refresh recent changes")
     }
 
     private var isRefreshing: Bool {
@@ -1692,6 +1748,7 @@ struct MenuBarView: View {
             notice: footerNotice,
             refreshFailed: shownErrorMessage != nil || shownChangeFeed == .failed,
             scanText: activity.isFullScan ? activity.text : nil,
+            scanProgress: activity.progress,
             isRefreshing: isRefreshing,
             foldersNotReadable: !manager.isGrowthTrackingActive || hasRequiredScanAccess == false,
             updateAvailable: manager.showsUpdateAvailableBanner,
@@ -1702,8 +1759,7 @@ struct MenuBarView: View {
     }
 
     @ViewBuilder
-    private var footerStatusText: some View {
-        let status = footerStatus
+    private func footerStatusText(_ status: FooterStatus) -> some View {
         switch status {
         case .refreshFailed:
             HStack(spacing: 4) {
@@ -1717,13 +1773,7 @@ struct MenuBarView: View {
             }
             .font(.system(size: 11))
         case .scanning, .refreshing:
-            HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.mini)
-                Text(status.text())
-                    .foregroundStyle(.secondary)
-            }
-            .font(.system(size: 11))
+            EmptyView()
         case .foldersNotReadable:
             Button(action: closePopoverAndOpenFolderSettings) {
                 HStack(spacing: 6) {
@@ -2006,25 +2056,7 @@ struct MenuBarView: View {
     }
 
     private func navigateBackFromDrilldown() {
-        guard let category = manager.selectedInventoryCategory else { return }
-        let isFileLevel = manager.isSubcategoryDrillDown && manager.selectedSubcategory != nil
-
-        if isFileLevel {
-            if category.category.supportsSubcategories {
-                manager.isSubcategoryDrillDown = false
-                manager.selectedSubcategory = nil
-            } else {
-                manager.isSubcategoryDrillDown = false
-                manager.selectedSubcategory = nil
-                manager.selectedInventoryCategory = nil
-                manager.isDrilledDown = false
-            }
-        } else {
-            manager.selectedSubcategory = nil
-            manager.selectedInventoryCategory = nil
-            manager.isSubcategoryDrillDown = false
-            manager.isDrilledDown = false
-        }
+        manager.closeDrilldownLevel()
     }
 
     private func navigateFromDriveBar(segmentID: String) {
@@ -2034,45 +2066,12 @@ struct MenuBarView: View {
         guard let item = manager.sortedCategories
             .first(where: { $0.category == category }) else { return }
 
-        let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: category)
-        let groups = manager.subcategoryGroupsByCategory[category] ?? []
-        let selectedSubcategory = needsSubcategoryLoad || category.supportsSubcategories
-            ? nil
-            : groups.first(where: { $0.subcategory == nil }) ?? groups.first
-        let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
-
-        // Enter the drilldown immediately. The destination page owns the
-        // loading skeleton while an uncached breakdown is being fetched.
-        let shouldDrillDownImmediately = true
-
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             highlightedStorageSegmentID = segmentID
-            manager.selectedInventoryCategory = item
-            manager.selectedSubcategory = selectedSubcategory
-            manager.isDrilledDown = shouldDrillDownImmediately
-            manager.isSubcategoryDrillDown = isSubcategoryDrillDown
         }
-
-        guard needsSubcategoryLoad else { return }
-
-        Task { @MainActor in
-            let groups = await manager.loadSubcategoryBreakdown(for: category)
-            guard manager.selectedInventoryCategory?.category == category else { return }
-
-            guard !category.supportsSubcategories else { return }
-
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
-                manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
-                // Transition from main directly to files now that the single
-                // group is known, avoiding a visible intermediate subcategory step.
-                manager.isDrilledDown = true
-            }
-        }
+        manager.openCategory(item)
     }
 
 }
