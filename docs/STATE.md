@@ -12,8 +12,8 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Review the latest build on the Mac (settings, beta flow, banner removed, group rows, drilldown perf), then merge feat/review-2 into main — rec: review, then merge — branch: feat/review-2
-2. Option B for big categories (reuse precomputed subcategory sizes, lazy file lists) — rec: do it — branch: none
+1. Review the fresh-start build on the Mac (drill index, row → places → contents, right-click, T1 bar, S2 scan ring, +/−), DB reset done (backup in ~/Library/Application Support/Prunr-backup-20261013-1936), then merge feat/s20-drill-ui into main — rec: review, then merge — branch: feat/s20-drill-ui
+2. WAL checkpoint runs inside a transaction (SQLite refuses) — pre-existing bug — rec: fix next — branch: none
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 
 ## Queue
