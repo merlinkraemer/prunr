@@ -124,7 +124,6 @@ struct CategoryGrowthListView: View {
                 if !categories.isEmpty {
                     isDataReady = true
                 }
-                preloadVisibleCategoriesIfNeeded()
             }
             .onChange(of: geometry.size.width) { _, newWidth in
                 guard newWidth > 0 else { return }

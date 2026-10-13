@@ -77,7 +77,7 @@ final class DrilldownStore {
         loadingFileCategories.insert(category)
         defer { loadingFileCategories.remove(category) }
 
-        let rows: [DrilldownFileRow]
+        let rows: [DrilldownFileEntry]
         do {
             rows = try await db.fetchDrilldownTopFiles(trackedPathIds: trackedPathIds, category: category)
         } catch {
@@ -165,7 +165,7 @@ final class DrilldownStore {
         )
     }
 
-    private nonisolated static func makeItem(_ row: DrilldownFileRow, group: SubcategoryGroup) -> GrowthItem {
+    private nonisolated static func makeItem(_ row: DrilldownFileEntry, group: SubcategoryGroup) -> GrowthItem {
         GrowthItem(
             path: row.path,
             growthBytes: row.sizeBytes,

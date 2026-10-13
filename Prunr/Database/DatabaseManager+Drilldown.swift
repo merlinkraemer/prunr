@@ -32,7 +32,7 @@ struct DrilldownGroupsSnapshot: Sendable, Equatable {
     let buildingTrackedPathIds: Set<UUID>
 }
 
-struct DrilldownFileRow: Sendable, Equatable {
+struct DrilldownFileEntry: Sendable, Equatable {
     let groupKey: String
     let path: String
     let sizeBytes: Int64
@@ -701,12 +701,12 @@ extension DatabaseManager {
         trackedPathIds: [UUID],
         category: GrowthCategory,
         groupKey: String? = nil
-    ) async throws -> [DrilldownFileRow] {
+    ) async throws -> [DrilldownFileEntry] {
         guard let dbPool else { throw DatabaseError.notInitialized }
         guard !trackedPathIds.isEmpty else { return [] }
 
         return try await dbPool.read { db in
-            var files: [DrilldownFileRow] = []
+            var files: [DrilldownFileEntry] = []
             var lowerBoundByGroup: [String: Int64] = [:]
             for trackedPathId in trackedPathIds {
                 var arguments: StatementArguments = [trackedPathId.uuidString, category.rawValue]
@@ -725,7 +725,7 @@ extension DatabaseManager {
                         """,
                     arguments: arguments
                 ).map {
-                    DrilldownFileRow(groupKey: $0["groupKey"] ?? "", path: $0["path"] ?? "", sizeBytes: $0["sizeBytes"] ?? 0)
+                    DrilldownFileEntry(groupKey: $0["groupKey"] ?? "", path: $0["path"] ?? "", sizeBytes: $0["sizeBytes"] ?? 0)
                 }
                 files += rows
 
@@ -761,7 +761,7 @@ extension DatabaseManager {
         groupKey: String,
         offset: Int,
         limit: Int
-    ) async throws -> [DrilldownFileRow] {
+    ) async throws -> [DrilldownFileEntry] {
         guard let dbPool else { throw DatabaseError.notInitialized }
         guard !trackedPathIds.isEmpty, limit > 0 else { return [] }
 
@@ -774,10 +774,10 @@ extension DatabaseManager {
                     offset: offset,
                     limit: limit,
                     db: db
-                ).map { DrilldownFileRow(groupKey: groupKey, path: $0.path, sizeBytes: $0.sizeBytes) }
+                ).map { DrilldownFileEntry(groupKey: groupKey, path: $0.path, sizeBytes: $0.sizeBytes) }
             }
 
-            var files: [DrilldownFileRow] = []
+            var files: [DrilldownFileEntry] = []
             for trackedPathId in trackedPathIds {
                 files += try Self.fetchGroupFiles(
                     trackedPathId: trackedPathId.uuidString,
@@ -786,13 +786,13 @@ extension DatabaseManager {
                     offset: 0,
                     limit: offset + limit,
                     db: db
-                ).map { DrilldownFileRow(groupKey: groupKey, path: $0.path, sizeBytes: $0.sizeBytes) }
+                ).map { DrilldownFileEntry(groupKey: groupKey, path: $0.path, sizeBytes: $0.sizeBytes) }
             }
             return Array(files.sorted(by: Self.fileRowSortsBefore).dropFirst(offset).prefix(limit))
         }
     }
 
-    static func fileRowSortsBefore(_ lhs: DrilldownFileRow, _ rhs: DrilldownFileRow) -> Bool {
+    static func fileRowSortsBefore(_ lhs: DrilldownFileEntry, _ rhs: DrilldownFileEntry) -> Bool {
         if lhs.sizeBytes != rhs.sizeBytes { return lhs.sizeBytes > rhs.sizeBytes }
         return lhs.path < rhs.path
     }

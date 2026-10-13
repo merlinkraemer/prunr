@@ -483,6 +483,16 @@ final class DrilldownIndexTests: PrunrTestCase {
                     try insertClass.execute(arguments: [index, category.rawValue, subcategory?.rawValue ?? ""])
                     try insertLive.execute(arguments: [id.uuidString, index, Int64((index * 7_919) % 1_000_003), now])
                 }
+                try db.execute(
+                    sql: """
+                        INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
+                        SELECT ?, pc.category, SUM(wse.sizeBytes), ?
+                        FROM workingSetEntry wse JOIN pathClassification pc ON pc.pathId = wse.pathId
+                        WHERE wse.trackedPathId = ?
+                        GROUP BY pc.category
+                        """,
+                    arguments: [id.uuidString, now, id.uuidString]
+                )
             }
             let seedMs = Date().timeIntervalSince(seeded) * 1_000
 
@@ -490,6 +500,10 @@ final class DrilldownIndexTests: PrunrTestCase {
             try await db.rebuildDrilldownIndex(trackedPathId: id)
             let rebuildMs = Date().timeIntervalSince(rebuildStarted) * 1_000
             try await db.optimizeQueryPlanner()
+            // The seed leaves a huge WAL; without this every timed commit pays its auto-checkpoint.
+            try await dbPool.writeWithoutTransaction { db in
+                try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+            }
 
             func bestOf(_ runs: Int, _ body: () async throws -> Void) async throws -> (best: Double, median: Double) {
                 var samples: [Double] = []
