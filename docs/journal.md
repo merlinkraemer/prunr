@@ -61,3 +61,4 @@
 2026-10-12 08:40 orchestrator - landed on branch: s17 drill perf option A (f68adec, mac-queue PASS 20261012-062626, 278 tests). Real DB already had planner stats: videos 0.20→0.01 s, photos 3.1→2.8 s; remaining cost = disk reads + GROUP BY 1.3 s + growth totals 1.5 s → option B needed for big categories
 - 2026-10-12 mac-queue 1f403832a mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
 2026-10-12 09:00 orchestrator - landed on branch: s17 + s18 combined in feat/review-2 (mac-queue PASS 20261012-070928), installed (20261012-071629); waits for review
+2026-10-13 orchestrator - review feedback round (6 items, .agent/task.md): +/- back, all-or-none click, no Finder hover, drilldown rebuild (Fable logic, schema OK), bar affordance + scan indicator mockups
