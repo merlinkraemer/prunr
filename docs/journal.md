@@ -62,3 +62,4 @@
 - 2026-10-12 mac-queue 1f403832a mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
 2026-10-12 09:00 orchestrator - landed on branch: s17 + s18 combined in feat/review-2 (mac-queue PASS 20261012-070928), installed (20261012-071629); waits for review
 2026-10-13 orchestrator - review feedback round (6 items, .agent/task.md): +/- back, all-or-none click, no Finder hover, drilldown rebuild (Fable logic, schema OK), bar affordance + scan indicator mockups
+2026-10-13 orchestrator - decided: R1 rows (all clickable) + right-click Show in Finder/Copy Path, T1 bar chevron on hover, S2 scan ring, D1–D3 categories drill; Fable fast-drilldown design saved (docs/fast-drilldown-design-2026-10-13.md, schema v23 drilldown index)
