@@ -349,9 +349,8 @@ final class PrunrSmokeTests: XCTestCase {
                 (1...50).map { String(format: "pkg-%02d.js", $0) }
             )
 
-            let updatedGroup = try XCTUnwrap(
-                await store.loadMoreFiles(for: group, category: .developer, trackedPathIds: [trackedPathId])
-            )
+            let loadedMore = await store.loadMoreFiles(for: group, category: .developer, trackedPathIds: [trackedPathId])
+            let updatedGroup = try XCTUnwrap(loadedMore)
             let additionalFiles = Array(updatedGroup.topFiles.dropFirst(group.loadedFileCount))
             XCTAssertFalse(updatedGroup.hasMoreFiles)
 

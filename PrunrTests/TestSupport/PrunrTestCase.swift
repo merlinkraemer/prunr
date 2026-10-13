@@ -54,6 +54,14 @@ class PrunrTestCase: XCTestCase {
         return directory
     }
 
+    func diskUsageBytes(at url: URL) throws -> Int64 {
+        var fileStat = stat()
+        XCTAssertEqual(lstat(url.path, &fileStat), 0)
+        return FileScanner.diskUsageBytes(for: fileStat)
+    }
+}
+
+extension XCTestCase {
     /// A category's drilldown groups with their stored top files, read the way
     /// the categories view reads them.
     @MainActor
@@ -72,11 +80,5 @@ class PrunrTestCase: XCTestCase {
     ) async throws {
         let problems = try await DatabaseManager.shared.verifyDrilldownIndex(trackedPathId: trackedPathId)
         XCTAssertEqual(problems, [], context, file: file, line: line)
-    }
-
-    func diskUsageBytes(at url: URL) throws -> Int64 {
-        var fileStat = stat()
-        XCTAssertEqual(lstat(url.path, &fileStat), 0)
-        return FileScanner.diskUsageBytes(for: fileStat)
     }
 }
