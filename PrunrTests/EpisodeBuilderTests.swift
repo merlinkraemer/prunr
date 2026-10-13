@@ -670,6 +670,7 @@ final class EpisodeBuilderTests: XCTestCase {
         defer { HistoryStart.reset() }
 
         XCTAssertFalse(HistoryStart.store === UserDefaults.standard)
+        HistoryStart.reset()
         let early = date(1990, 1, 1, 0, 0, in: calendar())
         XCTAssertEqual(HistoryStart.remember(oldestSnapshot: early), early)
         HistoryStart.reset()

@@ -339,6 +339,7 @@ final class DrilldownIndexTests: PrunrTestCase {
         defer {
             try? DatabaseManager.shared.close()
             try? FileManager.default.removeItem(at: directory)
+            HistoryStart.reset()
         }
         let dbPath = directory.appendingPathComponent("prunr.sqlite").path
         let trackedPathId = UUID()
