@@ -27,14 +27,26 @@ struct ChangesHeaderView<Bar: View, Row: View>: View {
     private var barArea: some View {
         if let onOpenBar {
             Button(action: onOpenBar) {
-                paddedBar
-                    .allowsHitTesting(false)
-                    .background(
-                        ListRowHoverBackground(isHovering: isHoveringBar)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                    )
-                    .contentShape(Rectangle())
+                HStack(spacing: 0) {
+                    bar()
+                        .offset(x: isHoveringBar ? -2 : 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: isHoveringBar ? 18 : 0, alignment: .trailing)
+                        .opacity(isHoveringBar ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
+                .allowsHitTesting(false)
+                .background(
+                    ListRowHoverBackground(isHovering: isHoveringBar)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                )
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { hovering in
