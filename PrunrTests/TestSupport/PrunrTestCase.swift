@@ -54,6 +54,14 @@ class PrunrTestCase: XCTestCase {
         return directory
     }
 
+    func diskUsageBytes(at url: URL) throws -> Int64 {
+        var fileStat = stat()
+        XCTAssertEqual(lstat(url.path, &fileStat), 0)
+        return FileScanner.diskUsageBytes(for: fileStat)
+    }
+}
+
+extension XCTestCase {
     /// Sets a fixture file's birth and last-write time. Birth first: macOS
     /// pulls the birth time back when a last-write time precedes it.
     func setFileDates(_ url: URL, birth: Date, modified: Date) throws {
@@ -68,14 +76,6 @@ class PrunrTestCase: XCTestCase {
         try setFileDates(url, birth: old, modified: old)
     }
 
-    func diskUsageBytes(at url: URL) throws -> Int64 {
-        var fileStat = stat()
-        XCTAssertEqual(lstat(url.path, &fileStat), 0)
-        return FileScanner.diskUsageBytes(for: fileStat)
-    }
-}
-
-extension XCTestCase {
     /// A category's drilldown groups with their stored top files, read the way
     /// the categories view reads them.
     @MainActor
