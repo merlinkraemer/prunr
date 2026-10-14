@@ -70,3 +70,5 @@
 2026-10-14 orchestrator - spawn: day-one research (docs/firstrun-patterns-2026-10-14.md) + mockups P1–P4 firstrun on 'Day one' page
 2026-10-14 orchestrator - decided: day one = reconstruction from written-once files (creation≈mtime), This week from same rows, no labels (Q4/Q5); single-line category rows; orange from +5 GB (fixed)
 2026-10-14 orchestrator - spawn: s21 history from file dates (written-once files, first baseline only, source 'files', no labels) + orange from 5 GB, on feat/s21-recon
+- 2026-10-14 mac-queue 495319256 mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
+2026-10-14 orchestrator - landed on branch: s21 file-date history + orange 5 GB (4953192, mac-queue PASS 20261014-052309, 301 tests), installed (20261014-052958); Merlin's DB + prefs reset again (backup folder Prunr-backup-<date>)
