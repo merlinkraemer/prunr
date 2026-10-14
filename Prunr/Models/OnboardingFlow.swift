@@ -25,6 +25,10 @@ enum OnboardingPage: Int, CaseIterable {
         guard accessGranted || accessSkipped else { return .permissions }
         return .scan
     }
+
+    static func canStartScan(accessGranted: Bool, accessSkipped: Bool) -> Bool {
+        accessGranted || accessSkipped
+    }
 }
 
 struct OnboardingFolderOption: Identifiable, Equatable {

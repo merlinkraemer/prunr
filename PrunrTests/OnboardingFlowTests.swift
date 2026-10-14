@@ -40,7 +40,13 @@ final class OnboardingFlowTests: PrunrTestCase {
         XCTAssertEqual(OnboardingPage.maxUnlocked(folderChosen: true, accessGranted: true, accessSkipped: false), .scan)
     }
 
-    func testStepPillsReadFolderAccessScan() {
+    func testStartScanIsEnabledAfterNotNow() {
+        XCTAssertFalse(OnboardingPage.canStartScan(accessGranted: false, accessSkipped: false))
+        XCTAssertTrue(OnboardingPage.canStartScan(accessGranted: false, accessSkipped: true))
+        XCTAssertTrue(OnboardingPage.canStartScan(accessGranted: true, accessSkipped: false))
+    }
+
+        func testStepPillsReadFolderAccessScan() {
         XCTAssertEqual(OnboardingPage.allCases.map(\.title), ["Folder", "Access", "Scan"])
     }
 }

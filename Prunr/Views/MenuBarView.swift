@@ -167,6 +167,10 @@ struct MenuBarView: View {
         hasRequiredScanAccess == true
     }
 
+    private var onboardingCanStartScan: Bool {
+        OnboardingPage.canStartScan(accessGranted: onboardingPermissionSatisfied, accessSkipped: skippedFullDiskAccess)
+    }
+
     private var maxUnlockedOnboardingPage: OnboardingPage {
         OnboardingPage.maxUnlocked(
             folderChosen: onboardingFolderStepComplete,
@@ -816,7 +820,7 @@ struct MenuBarView: View {
             onboardingButton(
                 "Start Scan",
                 style: .primary,
-                isDisabled: !onboardingPermissionSatisfied && !isOnboardingPreview
+                isDisabled: !onboardingCanStartScan && !isOnboardingPreview
             ) {
                 guard !isOnboardingPreview else { return }
                 startOnboardingFirstScan()
@@ -1769,7 +1773,9 @@ struct MenuBarView: View {
             scanText: activity.isFullScan ? activity.text : nil,
             scanProgress: activity.progress,
             isRefreshing: isRefreshing,
-            foldersNotReadable: !manager.isGrowthTrackingActive || hasRequiredScanAccess == false,
+            foldersNotReadable: !manager.isGrowthTrackingActive
+                || hasRequiredScanAccess == false
+                || !manager.runtimeBlockedLocations.isEmpty,
             updateAvailable: manager.showsUpdateAvailableBanner,
             groupDay: isShowingGroup ? shownGroup?.day : nil,
             preview: devMode.panelPreview,
@@ -1865,7 +1871,7 @@ struct MenuBarView: View {
     }
 
     private func startOnboardingFirstScan() {
-        guard onboardingPermissionSatisfied else { return }
+        guard onboardingCanStartScan else { return }
         guard manager.noBaseline else { return }
         guard onboardingFolderStepComplete else { return }
         guard !manager.isLoading, !manager.isAutoScanning else { return }
