@@ -61,7 +61,8 @@ struct MenuBarView: View {
         }
         return false
     }()
-    @State private var developerFolderExists = false
+    @State private var skippedFullDiskAccess = false
+    @State private var previewOnboardingPage = OnboardingPage.folder
     @State private var isRefreshRequested = false
     @State private var footerNotice: String? = nil
     @State private var footerNoticeTask: Task<Void, Never>? = nil
@@ -84,27 +85,6 @@ struct MenuBarView: View {
         case backward
     }
 
-    private enum OnboardingPage: Int, CaseIterable {
-        case folder
-        case permissions
-        case scan
-
-        var number: Int {
-            rawValue + 1
-        }
-
-        var title: String {
-            switch self {
-            case .folder:
-                return "Folder"
-            case .permissions:
-                return "Access"
-            case .scan:
-                return "Scan"
-            }
-        }
-    }
-
     private struct PendingOnboardingTransition {
         let from: OnboardingPage
         let to: OnboardingPage
@@ -114,7 +94,6 @@ struct MenuBarView: View {
     private struct FolderAvailabilitySnapshot: Sendable {
         let selectedScanFolderExists: Bool
         let onboardingChosenFolderExists: Bool
-        let developerFolderExists: Bool
     }
 
     private enum HeaderLevel: Int {
@@ -189,15 +168,15 @@ struct MenuBarView: View {
     }
 
     private var maxUnlockedOnboardingPage: OnboardingPage {
-        if !onboardingFolderStepComplete {
-            return .folder
-        }
+        OnboardingPage.maxUnlocked(
+            folderChosen: onboardingFolderStepComplete,
+            accessGranted: onboardingPermissionSatisfied,
+            accessSkipped: skippedFullDiskAccess
+        )
+    }
 
-        if !onboardingPermissionSatisfied {
-            return .permissions
-        }
-
-        return .scan
+    private var isOnboardingPreview: Bool {
+        devMode.panelPreview == .onboarding
     }
 
     private var accessCheckRoots: [URL] {
@@ -209,32 +188,29 @@ struct MenuBarView: View {
     }
 
     private var currentOnboardingPage: OnboardingPage {
+        if isOnboardingPreview {
+            return previewOnboardingPage
+        }
         guard selectedOnboardingPage.rawValue <= maxUnlockedOnboardingPage.rawValue else {
             return maxUnlockedOnboardingPage
         }
         return selectedOnboardingPage
     }
 
-    private var onboardingCardFillColor: Color {
-        // Keep the content surface translucent so the panel's Liquid Glass
-        // remains visible on macOS 26+; the fallback panel still gets a quiet
-        // contrast layer on older systems.
-        Color.primary.opacity(0.045)
-    }
-
-    private var onboardingControlFillColor: Color {
-        Color.primary.opacity(0.06)
-    }
-
-    private var onboardingStrokeColor: Color {
-        Color(nsColor: .separatorColor).opacity(0.55)
-    }
-
     private func onboardingStepIsComplete(_ page: OnboardingPage) -> Bool {
-        page.rawValue < maxUnlockedOnboardingPage.rawValue
+        if isOnboardingPreview {
+            return page.rawValue < previewOnboardingPage.rawValue
+        }
+        if page == .permissions && !onboardingPermissionSatisfied {
+            return false
+        }
+        return page.rawValue < maxUnlockedOnboardingPage.rawValue
     }
 
     private func onboardingStepIsUnlocked(_ page: OnboardingPage) -> Bool {
+        if isOnboardingPreview {
+            return true
+        }
         if currentOnboardingPage == .scan {
             if manager.isLoading || manager.isAutoScanning {
                 return page == .scan
@@ -257,17 +233,13 @@ struct MenuBarView: View {
     private func refreshFolderAvailability() {
         let selectedFolderURL = selectedScanFolderURL.standardizedFileURL
         let chosenFolderURL = onboardingChosenFolderPath?.standardizedFileURL
-        let developerFolderURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("dev", isDirectory: true)
-            .standardizedFileURL
 
         folderValidationTask?.cancel()
         folderValidationTask = Task {
             let snapshot = await Task.detached(priority: .utility) {
                 FolderAvailabilitySnapshot(
                     selectedScanFolderExists: menuBarViewDirectoryExists(at: selectedFolderURL),
-                    onboardingChosenFolderExists: chosenFolderURL.map { menuBarViewDirectoryExists(at: $0) } ?? false,
-                    developerFolderExists: menuBarViewDirectoryExists(at: developerFolderURL)
+                    onboardingChosenFolderExists: chosenFolderURL.map { menuBarViewDirectoryExists(at: $0) } ?? false
                 )
             }.value
 
@@ -276,61 +248,22 @@ struct MenuBarView: View {
             await MainActor.run {
                 selectedScanFolderExists = snapshot.selectedScanFolderExists
                 onboardingChosenFolderExists = snapshot.onboardingChosenFolderExists
-                developerFolderExists = snapshot.developerFolderExists
             }
         }
     }
 
     private var scanFolderOptions: [OnboardingFolderOption] {
-        var options: [OnboardingFolderOption] = []
-
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let dev = home.appendingPathComponent("dev", isDirectory: true)
-
-        options.append(
-            OnboardingFolderOption(
-                id: "recommended",
-                title: "Recommended",
-                subtitle: shortDisplayPath(for: home),
-                url: home
-            )
+        OnboardingFolderOption.options(
+            home: FileManager.default.homeDirectoryForCurrentUser,
+            custom: customOnboardingFolderPath
         )
-        if developerFolderExists {
-            options.append(
-                OnboardingFolderOption(
-                    id: "dev",
-                    title: "Developer Folder",
-                    subtitle: shortDisplayPath(for: dev),
-                    url: dev
-                )
-            )
-        }
-        options.append(
-            OnboardingFolderOption(
-                id: "full-disk",
-                title: "Full Disk",
-                subtitle: "/",
-                url: URL(fileURLWithPath: "/", isDirectory: true)
-            )
-        )
+    }
 
-        // Add custom path if one was selected via file picker
-        if let customPath = customOnboardingFolderPath {
-            let isAlreadyInList = options.contains { $0.url.standardizedFileURL == customPath.standardizedFileURL }
-            if !isAlreadyInList {
-                options.insert(
-                    OnboardingFolderOption(
-                        id: "custom",
-                        title: "Custom Folder",
-                        subtitle: shortDisplayPath(for: customPath),
-                        url: customPath
-                    ),
-                    at: 0
-                )
-            }
+    private var highlightedOnboardingFolderURL: URL {
+        if !isOnboardingPreview, let chosen = onboardingChosenFolderPath {
+            return chosen.standardizedFileURL
         }
-
-        return options
+        return FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
     }
 
     private func closePopoverAndOpenFolderSettings() {
@@ -393,7 +326,6 @@ struct MenuBarView: View {
                     liveContent
                 case .onboarding:
                     setupOnboardingView
-                        .allowsHitTesting(false)
                 case .scanning:
                     scanningPreviewView
                         .allowsHitTesting(false)
@@ -424,6 +356,10 @@ struct MenuBarView: View {
         }
         .onChange(of: onboardingChosenFolderPath) { _, _ in
             refreshFolderAvailability()
+        }
+        .onChange(of: devMode.panelPreview) { _, _ in
+            previewOnboardingPage = .folder
+            synchronizeVisibleOnboardingToCurrent()
         }
         .onChange(of: manager.noBaseline) { _, _ in
             refreshScanAccess()
@@ -468,15 +404,9 @@ struct MenuBarView: View {
                 await manager.refreshChangeFeed()
             }
         }
-        .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
-            if selectedOnboardingPage.rawValue > newValue.rawValue || selectedOnboardingPage == oldValue {
-                selectedOnboardingPage = newValue
-                return
-            }
-
-            if selectedOnboardingPage.rawValue < newValue.rawValue {
-                selectedOnboardingPage = newValue
-            }
+        .onChange(of: maxUnlockedOnboardingPage) { _, newValue in
+            guard selectedOnboardingPage != .folder || newValue == .folder else { return }
+            selectedOnboardingPage = newValue
         }
     }
 
@@ -602,12 +532,6 @@ struct MenuBarView: View {
     private var setupOnboardingView: some View {
         VStack(spacing: 0) {
             onboardingProgressHeader
-                .padding(.bottom, 14)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(onboardingStrokeColor.opacity(0.55))
-                        .frame(height: 1)
-                }
 
             GeometryReader { geometry in
                 let resolvedWidth = max(geometry.size.width, onboardingWidth)
@@ -675,8 +599,6 @@ struct MenuBarView: View {
                 .accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDisappear {
             onboardingTransitionTask?.cancel()
@@ -685,41 +607,47 @@ struct MenuBarView: View {
     }
 
     private var onboardingProgressHeader: some View {
-        VStack(spacing: 12) {
-            HStack {
-                if canNavigateBackInOnboarding {
-                    Button {
-                        let prevIndex = max(0, currentOnboardingPage.rawValue - 1)
-                        if let prevPage = OnboardingPage(rawValue: prevIndex) {
-                            selectedOnboardingPage = prevPage
-                        }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: 12, height: 12)
-                } else {
-                    Color.clear.frame(width: 12, height: 12)
-                }
+        ZStack(alignment: .top) {
+            Text("Setup")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .padding(.top, 14)
 
-                Spacer()
-
-                Text("Setup")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.primary)
-
-                Spacer()
-
-                Color.clear.frame(width: 12, height: 12)
-            }
-
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 ForEach(OnboardingPage.allCases, id: \.rawValue) { page in
                     onboardingStepPill(for: page)
                 }
             }
+            .padding(.top, 42)
+
+            if canNavigateBackInOnboarding {
+                HStack {
+                    Button {
+                        let prevIndex = max(0, currentOnboardingPage.rawValue - 1)
+                        if let prevPage = OnboardingPage(rawValue: prevIndex) {
+                            goToOnboardingPage(prevPage)
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back")
+
+                    Spacer()
+                }
+                .padding(.leading, 16)
+                .padding(.top, 12)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 82, maxHeight: 82, alignment: .top)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.09))
+                .frame(height: 1)
         }
     }
 
@@ -728,54 +656,44 @@ struct MenuBarView: View {
         let isActive = page == currentOnboardingPage
         let isUnlocked = onboardingStepIsUnlocked(page)
         let pillFill: Color = isActive
-            ? Color.accentColor.opacity(0.14)
-            : (isUnlocked ? onboardingControlFillColor : Color.gray.opacity(0.12))
-        let titleStyle: AnyShapeStyle = isActive
-            ? AnyShapeStyle(.primary)
-            : AnyShapeStyle(isUnlocked ? .secondary : .tertiary)
-        let numberStyle: AnyShapeStyle = isActive
-            ? AnyShapeStyle(Color.accentColor)
-            : AnyShapeStyle(isUnlocked ? .secondary : .tertiary)
+            ? Color.accentColor.opacity(0.22)
+            : Color.primary.opacity(isComplete ? 0.06 : 0.03)
+        let badgeFill: Color = isComplete
+            ? Color.green.opacity(0.16)
+            : (isActive ? Color.accentColor.opacity(0.20) : Color.primary.opacity(0.06))
 
         return Button {
             guard isUnlocked else { return }
-            selectedOnboardingPage = page
+            goToOnboardingPage(page)
         } label: {
             HStack(spacing: 6) {
                 ZStack {
                     Circle()
-                        .fill(
-                            isComplete
-                                ? Color.green.opacity(0.14)
-                                : (isActive ? Color.accentColor.opacity(0.14) : Color.gray.opacity(isUnlocked ? 0.1 : 0.07))
-                        )
-                        .frame(width: 22, height: 22)
+                        .fill(badgeFill)
+                        .frame(width: 20, height: 20)
 
                     if isComplete {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.green)
                     } else {
                         Text("\(page.number)")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(numberStyle)
+                            .foregroundStyle(isActive ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
                     }
                 }
 
                 Text(page.title)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(titleStyle)
+                    .foregroundStyle(isActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(pillFill)
-            )
+            .padding(.leading, 3)
+            .padding(.trailing, 10)
+            .frame(height: 26)
+            .background(Capsule().fill(pillFill))
         }
         .buttonStyle(.plain)
         .disabled(!isUnlocked)
-        .opacity(isUnlocked ? 1.0 : 0.72)
     }
 
     private func onboardingPage(for page: OnboardingPage, size: CGSize) -> some View {
@@ -783,11 +701,13 @@ struct MenuBarView: View {
             Spacer(minLength: 0)
 
             onboardingPageCard(for: page)
-                .frame(maxWidth: 284)
-                .frame(maxWidth: .infinity)
 
             Spacer(minLength: 0)
+
+            onboardingButtons(for: page)
+                .padding(.vertical, 16)
         }
+        .padding(.horizontal, 16)
         .frame(width: size.width, height: size.height)
         .transition(.identity)
     }
@@ -796,214 +716,313 @@ struct MenuBarView: View {
     private func onboardingPageCard(for page: OnboardingPage) -> some View {
         switch page {
         case .folder:
-            VStack(spacing: 10) {
-                onboardingTitleSection(
-                    number: 1,
-                    icon: "folder.badge.gearshape",
-                    title: "Setup Path",
-                    description: "Pick the scope for your first scan."
-                )
-
-                onboardingContentCard {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(scanFolderOptions) { option in
-                            let isSelected = onboardingChosenFolderPath?.standardizedFileURL == option.url.standardizedFileURL
-
-                            Button {
-                                applyOnboardingScanFolder(option.url)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(option.title)
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(isSelected ? Color.accentColor : .primary)
-
-                                        Text(option.subtitle)
-                                            .font(.system(size: 10, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                    }
-
-                                    Spacer()
-
-                                    if isSelected {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(Color.accentColor)
-                                    } else {
-                                        Circle()
-                                            .strokeBorder(Color.gray.opacity(0.4), lineWidth: 1.5)
-                                            .frame(width: 14, height: 14)
-                                    }
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        Divider()
-                            .padding(.vertical, 4)
-
-                        Button {
-                            manager.showOnboardingFolderPicker { url in
-                                if let url = url {
-                                    customOnboardingFolderPath = url
-                                    applyOnboardingScanFolder(url)
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "folder.badge.plus")
-                                    .font(.system(size: 12, weight: .medium))
-                                Text("Choose Custom Folder")
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                            .foregroundStyle(.primary)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
+            onboardingCard(title: "Choose a folder", subtitle: "Prunr scans it once, then keeps watch.") {
+                VStack(spacing: 0) {
+                    ForEach(scanFolderOptions) { option in
+                        onboardingFolderRow(option)
                     }
                 }
+                .padding(.top, 12)
+
+                onboardingHairline
+                    .padding(.top, 6)
+
+                Button {
+                    chooseCustomOnboardingFolder()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(width: 16)
+                        Text("Choose custom folder…")
+                            .font(.system(size: 13, weight: .medium))
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Color.accentColor)
+                    .frame(height: 40)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, -6)
             }
 
         case .permissions:
-            VStack(spacing: 10) {
-                onboardingTitleSection(
-                    number: 2,
-                    icon: "lock.shield",
-                    title: "Review Privacy Access",
-                    description: "Prunr checks whether the folder you chose is actually reachable. Some protected locations may still need extra macOS privacy access."
-                )
-
-                VStack(spacing: 14) {
-                    if onboardingPermissionSatisfied {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("Selected scan scope is accessible")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundStyle(.green)
-                    } else {
-                        VStack(spacing: 10) {
-                            primaryActionButton("Open Privacy Settings", minWidth: 188) {
-                                openScanAccessSettings()
-                            }
-
-                            if !blockedScanAccessLocations.isEmpty {
-                                Text("Still blocked: \(blockedScanAccessLocations.prefix(3).joined(separator: ", "))")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                            } else {
-                                Text("Choose a folder first, then return here if macOS blocks protected locations inside it.")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
-                        }
-                    }
+            onboardingCard(title: "Allow access to your files", subtitle: "So Prunr can measure every folder.") {
+                VStack(spacing: 0) {
+                    onboardingNumberedStep(1, "Open System Settings")
+                    onboardingNumberedStep(2, "Allow Prunr in Full Disk Access")
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 22)
+                .padding(.top, 10)
             }
 
         case .scan:
-            VStack(spacing: 10) {
-                onboardingTitleSection(
-                    number: 3,
-                    icon: "waveform.path.ecg",
-                    title: "Run First Scan",
-                    description: "This can take a while for a full-disk scan or large drives."
-                )
+            onboardingCard(title: "Run first scan", subtitle: "Takes a few minutes.") {
+                onboardingHairline
+                    .padding(.top, 12)
 
-                onboardingContentCard {
-                    VStack(spacing: 14) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary)
+                onboardingSummaryRow(icon: "folder", label: scanFolderName.title) {
+                    Text(selectedScanFolderLabel)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
 
-                            Text(selectedScanFolderLabel)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                onboardingHairline
+
+                onboardingSummaryRow(icon: "lock.shield", label: "Full Disk Access") {
+                    if onboardingPermissionSatisfied || isOnboardingPreview {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.green)
+                            Text("On")
                         }
+                    } else {
+                        Text("Off")
+                    }
+                }
+                .padding(.bottom, -6)
+            }
+        }
+    }
 
-                        if !onboardingPermissionSatisfied {
-                            VStack(spacing: 8) {
-                                Text(
-                                    blockedScanAccessLocations.isEmpty
-                                        ? "Open Privacy Settings if macOS blocks protected locations inside this folder."
-                                        : "Protected locations still blocked: \(blockedScanAccessLocations.prefix(3).joined(separator: ", "))"
-                                )
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
+    @ViewBuilder
+    private func onboardingButtons(for page: OnboardingPage) -> some View {
+        switch page {
+        case .folder:
+            onboardingButton("Continue", style: .primary) {
+                continueFromOnboardingFolder()
+            }
 
-                                secondaryActionButton("Open Privacy Settings", minWidth: 168) {
-                                    openScanAccessSettings()
-                                }
-                            }
-                        }
+        case .permissions:
+            if onboardingPermissionSatisfied && !isOnboardingPreview {
+                onboardingButton("Continue", style: .primary) {
+                    goToOnboardingPage(.scan)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    onboardingButton("Not Now", style: .secondary) {
+                        skipOnboardingAccess()
+                    }
+                    .frame(width: 104)
 
-                        primaryActionButton("Start Scan", minWidth: 168) {
-                            startOnboardingFirstScan()
-                        }
-                        .opacity(onboardingPermissionSatisfied ? 1.0 : 0.5)
+                    onboardingButton("Open System Settings", style: .primary) {
+                        guard !isOnboardingPreview else { return }
+                        openScanAccessSettings()
                     }
                 }
             }
-        }
-    }
 
-    /// Title section displayed above the onboarding card
-    private func onboardingTitleSection(number: Int, icon: String, title: String, description: String) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20)
-
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
+        case .scan:
+            onboardingButton(
+                "Start Scan",
+                style: .primary,
+                isDisabled: !onboardingPermissionSatisfied && !isOnboardingPreview
+            ) {
+                guard !isOnboardingPreview else { return }
+                startOnboardingFirstScan()
             }
-
-            Text(description)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 24)
     }
 
-    /// Card content wrapper - just the visual card with content
-    private func onboardingContentCard<Content: View>(
+    private func onboardingFolderRow(_ option: OnboardingFolderOption) -> some View {
+        let isSelected = highlightedOnboardingFolderURL == option.url.standardizedFileURL
+
+        return Button {
+            guard !isOnboardingPreview else { return }
+            applyOnboardingScanFolder(option.url)
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(option.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+
+                        if let badge = option.badge {
+                            Text(badge)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+
+                    Text(option.subtitle)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                onboardingRadio(isSelected: isSelected)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.primary.opacity(0.06) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, -8)
+    }
+
+    @ViewBuilder
+    private func onboardingRadio(isSelected: Bool) -> some View {
+        if isSelected {
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 16, height: 16)
+                .overlay(
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 6, height: 6)
+                )
+        } else {
+            Circle()
+                .strokeBorder(Color.primary.opacity(0.32), lineWidth: 1.5)
+                .frame(width: 16, height: 16)
+        }
+    }
+
+    private func onboardingNumberedStep(_ number: Int, _ text: String) -> some View {
+        HStack(spacing: 10) {
+            Text("\(number)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Color.primary.opacity(0.10)))
+
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+        .frame(height: 30)
+    }
+
+    private var onboardingHairline: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(height: 1)
+    }
+
+    private func onboardingSummaryRow<Value: View>(
+        icon: String,
+        label: String,
+        @ViewBuilder value: () -> Value
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            value()
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .frame(height: 36)
+    }
+
+    private func onboardingCard<Content: View>(
+        title: String,
+        subtitle: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            Text(subtitle)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+
             content()
-                .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 22)
-        .frame(maxWidth: .infinity)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(onboardingCardFillColor)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(onboardingStrokeColor, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
+    }
+
+    private enum OnboardingButtonStyle {
+        case primary
+        case secondary
+    }
+
+    private func onboardingButton(
+        _ title: String,
+        style: OnboardingButtonStyle,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: style == .primary ? .semibold : .medium))
+                .lineLimit(1)
+                .foregroundStyle(style == .primary ? AnyShapeStyle(Color.white) : AnyShapeStyle(.primary))
+                .frame(maxWidth: .infinity)
+                .frame(height: 32)
+                .background(
+                    Capsule()
+                        .fill(style == .primary ? Color.accentColor : Color.primary.opacity(0.08))
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.5 : 1.0)
+    }
+
+    private func goToOnboardingPage(_ page: OnboardingPage) {
+        if isOnboardingPreview {
+            previewOnboardingPage = page
+        } else {
+            selectedOnboardingPage = page
+        }
+    }
+
+    private func continueFromOnboardingFolder() {
+        if !isOnboardingPreview && onboardingChosenFolderPath == nil {
+            applyOnboardingScanFolder(highlightedOnboardingFolderURL)
+        }
+        goToOnboardingPage(onboardingPermissionSatisfied && !isOnboardingPreview ? .scan : .permissions)
+    }
+
+    private func skipOnboardingAccess() {
+        if !isOnboardingPreview {
+            skippedFullDiskAccess = true
+        }
+        goToOnboardingPage(.scan)
+    }
+
+    private func chooseCustomOnboardingFolder() {
+        guard !isOnboardingPreview else { return }
+        manager.showOnboardingFolderPicker { url in
+            if let url = url {
+                customOnboardingFolderPath = url
+                applyOnboardingScanFolder(url)
+            }
+        }
     }
 
     private func startOnboardingTransition(from previousPage: OnboardingPage, to newPage: OnboardingPage, width: CGFloat) {
@@ -1829,51 +1848,6 @@ struct MenuBarView: View {
         }
     }
 
-    private func primaryActionButton(
-        _ title: String,
-        minWidth: CGFloat = 140,
-        isDisabled: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(minWidth: minWidth)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(isDisabled ? Color.gray.opacity(0.25) : Color.blue)
-                )
-                .foregroundStyle(isDisabled ? .gray : .white)
-                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .opacity(isDisabled ? 0.5 : 1.0)
-    }
-
-    private func secondaryActionButton(
-        _ title: String,
-        minWidth: CGFloat = 140,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(minWidth: minWidth)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.blue, lineWidth: 1.25)
-                )
-                .foregroundStyle(.blue)
-                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
     private func applyOnboardingScanFolder(_ url: URL) {
         onboardingChosenFolderPath = url
         UserDefaults.standard.set(url.path, forKey: "onboardingChosenFolderPath")
@@ -1884,27 +1858,10 @@ struct MenuBarView: View {
         if manager.noBaseline {
             settingsStore.clearPendingScopeChanges()
         }
-
-        selectedOnboardingPage = .permissions
     }
 
     private func shortDisplayPath(for url: URL) -> String {
-        let standardizedPath = url.standardizedFileURL.path
-        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-
-        if standardizedPath == "/" {
-            return "/"
-        }
-
-        if standardizedPath.hasPrefix(homePath) {
-            let relativePath = String(standardizedPath.dropFirst(homePath.count))
-            if relativePath.isEmpty {
-                return "~"
-            }
-            return "~" + relativePath
-        }
-
-        return standardizedPath
+        OnboardingFolderOption.displayPath(for: url, home: FileManager.default.homeDirectoryForCurrentUser)
     }
 
     private func startOnboardingFirstScan() {
@@ -2017,24 +1974,11 @@ struct MenuBarView: View {
             }
 
             if showStopButton {
-                HStack {
-                    Spacer()
-                    Button("Stop") {
-                        Task { await manager.stopScan() }
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(Color.red.opacity(0.5), lineWidth: 1)
-                    )
-                    .accessibilityLabel("Stop scan")
-                    .accessibilityHint("Cancel the current scan operation")
-                    Spacer()
+                onboardingButton("Stop", style: .secondary) {
+                    Task { await manager.stopScan() }
                 }
+                .accessibilityLabel("Stop scan")
+                .accessibilityHint("Cancel the current scan operation")
             }
         }
         .padding(.horizontal, 18)
@@ -2166,13 +2110,6 @@ private struct DrilldownBackSwipeBridge: NSViewRepresentable {
             true
         }
     }
-}
-
-private struct OnboardingFolderOption: Identifiable {
-    let id: String
-    let title: String
-    let subtitle: String
-    let url: URL
 }
 
 #Preview {
