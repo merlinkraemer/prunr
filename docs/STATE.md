@@ -12,8 +12,8 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Review onboarding + file-date history on the Mac (fresh reset done), then merge feat/s22-onboarding (contains everything since main) — rec: review, then merge — branch: feat/s22-onboarding
-4. 'Not Now' on the access step leaves Start Scan disabled (scan stops on the first permission error) — rec: make scans skip protected folders (scan logic) — branch: none
+1. Review onboarding + file-date history on the Mac (fresh reset done), then merge feat/s23-onboard-skip (contains everything since main) — rec: review, then merge — branch: feat/s23-onboard-skip
+4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
 2. WAL checkpoint runs inside a transaction (SQLite refuses) — pre-existing bug — rec: fix next — branch: none
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 

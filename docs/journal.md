@@ -76,3 +76,5 @@
 - 2026-10-14 mac-queue 077b922e1 mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
 2026-10-14 orchestrator - landed on branch: s22 onboarding (077b922, mac-queue PASS 20261014-062327, 306 tests), installed (20261014-063811), Merlin's data reset again with backup
 2026-10-14 orchestrator - decided + spawn: s23 onboarding tweaks (custom folder row white, access icon in step 2 card) + scans skip unreadable folders so 'Not Now' works (feat/s23-onboard-skip)
+- 2026-10-14 mac-queue 5c0e2e668 mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
+2026-10-14 orchestrator - landed on branch: s23 onboarding tweaks + scans skip unreadable folders (5c0e2e6, mac-queue PASS 20261014-065346), installed (20261014-070416)
