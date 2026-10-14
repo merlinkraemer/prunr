@@ -429,7 +429,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(row.netBytes, 1 * Self.gb)
         XCTAssertEqual(row.buildingSince, date(2026, 10, 2, 0, 0, in: utc))
         XCTAssertEqual(EpisodeBuilder.dayLabel(for: try XCTUnwrap(row.buildingSince), calendar: utc), "Fri 2 Oct")
-        XCTAssertTrue(row.isGrowth)
+        XCTAssertFalse(row.isLargeGrowth)
         // The header still counts all of this week's growth.
         XCTAssertEqual(feed.weekNetBytes, 500 * Self.mb)
     }
@@ -474,7 +474,7 @@ final class EpisodeBuilderTests: XCTestCase {
         ], now: now, calendar: utc)
 
         XCTAssertEqual(feed.episodes.map(\.netBytes), [1_200 * Self.mb, -1_200 * Self.mb, 1_200 * Self.mb])
-        XCTAssertEqual(feed.episodes.map(\.isGrowth), [true, false, true])
+        XCTAssertEqual(feed.episodes.map(\.isLargeGrowth), [false, false, false])
     }
 
     func testTheLineIsExactlyOneGigabyte() {
@@ -490,19 +490,23 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(EpisodeBuilder.rowThresholdBytes, 1 * Self.gb)
     }
 
-    /// Orange only for growth of 1 GB or more; shrinks and anything smaller
-    /// are grey.
-    func testOrangeOnlyForGrowthOfOneGigabyte() {
+    /// Orange only for growth of 5 GB or more; smaller growth and shrinks
+    /// are not.
+    func testOrangeOnlyForGrowthOfFiveGigabytes() {
         func episode(_ net: Int64) -> ChangeEpisode {
             ChangeEpisode(
                 id: "x", title: "x", detail: nil, category: .other, rootPath: nil,
                 netBytes: net, grossBytes: abs(net), day: Date(), time: Date(), isApproximateTime: false
             )
         }
-        XCTAssertTrue(episode(1 * Self.gb).isGrowth)
-        XCTAssertTrue(episode(31 * Self.gb).isGrowth)
-        XCTAssertFalse(episode(1 * Self.gb - 1).isGrowth)
-        XCTAssertFalse(episode(-4 * Self.gb).isGrowth)
+        XCTAssertEqual(EpisodeBuilder.largeGrowthBytes, 5 * Self.gb)
+        XCTAssertTrue(episode(5 * Self.gb).isLargeGrowth)
+        XCTAssertTrue(episode(31 * Self.gb).isLargeGrowth)
+        XCTAssertFalse(episode(5 * Self.gb - 1).isLargeGrowth)
+        XCTAssertFalse(episode(1 * Self.gb).isLargeGrowth)
+        XCTAssertFalse(episode(-8 * Self.gb).isLargeGrowth)
+        XCTAssertTrue(EpisodeBuilder.isLargeGrowth(5 * Self.gb), "the header uses the same line")
+        XCTAssertFalse(EpisodeBuilder.isLargeGrowth(4_900 * Self.mb))
     }
 
     /// Each place's count starts on the oldest shown day: growth before the
@@ -566,7 +570,7 @@ final class EpisodeBuilderTests: XCTestCase {
         let row = try XCTUnwrap(feed.episodes.first)
         XCTAssertEqual(row.title, "Trash emptied")
         XCTAssertEqual(row.netBytes, -4 * Self.gb)
-        XCTAssertFalse(row.isGrowth)
+        XCTAssertFalse(row.isLargeGrowth)
         XCTAssertFalse(row.isMovedToTrash)
     }
 
@@ -762,10 +766,10 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(developer.netBytes, 2_100 * Self.mb)
         XCTAssertEqual(developer.episodes.map(\.id), ["xcode", "node"], "rows stay newest first")
         XCTAssertEqual(developer.day, day.day)
-        XCTAssertTrue(developer.isGrowth)
+        XCTAssertFalse(developer.isLargeGrowth)
     }
 
-    func testGroupIsOrangeOnlyForGrowthOfOneGigabyte() {
+    func testGroupIsOrangeOnlyForGrowthOfFiveGigabytes() {
         let utc = calendar()
         let at = date(2026, 10, 5, 12, 0, in: utc)
         func group(_ nets: [Int64]) -> ChangeGroup {
@@ -775,9 +779,11 @@ final class EpisodeBuilderTests: XCTestCase {
                 episodes: nets.enumerated().map { episode("\($0.offset)", .developer, $0.element, at: at, calendar: utc) }
             )
         }
-        XCTAssertTrue(group([Self.gb]).isGrowth)
-        XCTAssertFalse(group([2 * Self.gb, -1_500 * Self.mb]).isGrowth)
-        XCTAssertFalse(group([-4 * Self.gb]).isGrowth)
+        XCTAssertTrue(group([5 * Self.gb]).isLargeGrowth)
+        XCTAssertTrue(group([3 * Self.gb, 2 * Self.gb]).isLargeGrowth)
+        XCTAssertFalse(group([6 * Self.gb, -1_500 * Self.mb]).isLargeGrowth)
+        XCTAssertFalse(group([Self.gb]).isLargeGrowth)
+        XCTAssertFalse(group([-8 * Self.gb]).isLargeGrowth)
         XCTAssertEqual(group([2 * Self.gb, -1_500 * Self.mb]).netBytes, 500 * Self.mb)
     }
 

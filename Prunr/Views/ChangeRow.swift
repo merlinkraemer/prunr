@@ -77,7 +77,7 @@ struct ChangeRow: View {
 }
 
 func changeAmountStyle(_ netBytes: Int64) -> AnyShapeStyle {
-    if netBytes >= EpisodeBuilder.rowThresholdBytes {
+    if EpisodeBuilder.isLargeGrowth(netBytes) {
         return AnyShapeStyle(Color.orange)
     }
     return netBytes < 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary)

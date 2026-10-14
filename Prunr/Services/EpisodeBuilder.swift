@@ -49,8 +49,8 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// Where the row's icon comes from.
     var iconSource: UnitIconSource = .category
 
-    /// Orange in the list: growth of at least the row line. Shrinks are grey.
-    var isGrowth: Bool { netBytes >= EpisodeBuilder.rowThresholdBytes }
+    /// Orange in the list: growth of at least `largeGrowthBytes`.
+    var isLargeGrowth: Bool { EpisodeBuilder.isLargeGrowth(netBytes) }
 }
 
 struct ChangeFeedDay: Identifiable, Equatable, Sendable {
@@ -82,8 +82,8 @@ struct ChangeGroup: Identifiable, Equatable, Sendable {
 
     var netBytes: Int64 { episodes.reduce(Int64(0)) { $0 + $1.netBytes } }
 
-    /// Orange in the list: growth of at least the row line. Shrinks are grey.
-    var isGrowth: Bool { netBytes >= EpisodeBuilder.rowThresholdBytes }
+    /// Orange in the list: growth of at least `largeGrowthBytes`.
+    var isLargeGrowth: Bool { EpisodeBuilder.isLargeGrowth(netBytes) }
 }
 
 /// The change list: every row back to `GrowthJournalService.historyWindowDays`,
@@ -198,6 +198,13 @@ enum WeeklyChange: Equatable, Sendable {
 enum EpisodeBuilder {
     /// The one row line: 1 GB, decimal like every amount in the app.
     static let rowThresholdBytes: Int64 = 1_000_000_000
+    /// Growth from this size on is orange; smaller growth stays primary and
+    /// shrinks are grey.
+    static let largeGrowthBytes: Int64 = 5_000_000_000
+
+    static func isLargeGrowth(_ netBytes: Int64) -> Bool {
+        netBytes >= largeGrowthBytes
+    }
 
     /// A scan residual whose window started more than this before the scan
     /// cannot say when the change happened.
