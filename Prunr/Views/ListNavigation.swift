@@ -119,7 +119,7 @@ struct PushPager<Page: Identifiable & Equatable, Content: View>: View {
         PushSlide.mountedPages(retained: retained, outgoing: outgoing, shown: shown ?? page)
     }
 
-    private func isVisible(_ mounted: Page) -> Bool {
+    private func isOnScreen(_ mounted: Page) -> Bool {
         mounted.id == (shown ?? page).id || mounted.id == outgoing?.id
     }
 
@@ -127,7 +127,7 @@ struct PushPager<Page: Identifiable & Equatable, Content: View>: View {
         GeometryReader { geometry in
             ZStack(alignment: .top) {
                 ForEach(mountedPages) { mounted in
-                    let isVisible = isVisible(mounted)
+                    let isVisible = isOnScreen(mounted)
                     content(mounted)
                         .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
                         .offset(x: isVisible ? offset(of: mounted, width: geometry.size.width) : geometry.size.width)

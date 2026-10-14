@@ -892,7 +892,7 @@ final class EpisodeBuilderTests: XCTestCase {
     func testMainListRowIsNamedAfterThePageItOpens() {
         let solo = group([("Build files", "/Users/tester/dev/app/build")])
         XCTAssertEqual(solo.rowTitle, "Build files")
-        XCTAssertEqual(solo.rowIconSource, .category)
+        XCTAssertEqual(solo.rowIconSource, UnitIconSource.category)
 
         let several = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
         XCTAssertEqual(several.rowTitle, GrowthCategory.developer.displayName)
