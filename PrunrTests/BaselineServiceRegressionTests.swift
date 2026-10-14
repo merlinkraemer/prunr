@@ -214,6 +214,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             let liveFile = tempDirectory.appendingPathComponent("existing.txt")
             try Data(repeating: 0xCD, count: 2_048).write(to: liveFile)
+            try self.dateBeforeHistory(liveFile)
 
             _ = try await DatabaseManager.shared.replaceWorkingSetSubtree(
                 trackedPathId: trackedPathId,
@@ -296,6 +297,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             let file = tempDirectory.appendingPathComponent("blob.bin")
             let initialBytes = 4_096
             try Data(repeating: 0xAB, count: initialBytes).write(to: file)
+            try self.dateBeforeHistory(file)
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
 
             let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
@@ -348,6 +350,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             let file = tempDirectory.appendingPathComponent("blob.bin")
             try Data(repeating: 0xAB, count: 4_096).write(to: file)
+            try self.dateBeforeHistory(file)
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
 
             let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
@@ -392,6 +395,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             let initialBytes = 4_096
             let growthBytes = 3 * Self.mb
             try Data(repeating: 0xAB, count: initialBytes).write(to: file)
+            try self.dateBeforeHistory(file)
 
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
 
@@ -441,6 +445,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             let file = tempDirectory.appendingPathComponent("blob.bin")
             try Data(repeating: 0xAB, count: 4_096).write(to: file)
+            try self.dateBeforeHistory(file)
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
 
             let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)

@@ -77,6 +77,19 @@ final class FooterStatusTests: PrunrTestCase {
         )
     }
 
+    func testDayOneFooterReadsWatchingSinceToday() {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let start = utc.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 16, minute: 38))!
+        let updated = start.addingTimeInterval(120)
+
+        XCTAssertEqual(FooterStatus.resolve(watchingSinceToday: start, updatedAt: updated), .watchingSince(start))
+        XCTAssertEqual(FooterStatus.resolve(updatedAt: updated), .updated(updated))
+        XCTAssertEqual(FooterStatus.resolve(preview: .sample, watchingSinceToday: start), .preview(.sample))
+        XCTAssertEqual(FooterStatus.resolve(isRefreshing: true, watchingSinceToday: start), .refreshing)
+        XCTAssertEqual(FooterStatus.watchingSince(start).text(now: updated, calendar: utc), "Watching since today 16:38")
+    }
+
     func testMarketingFooterReadsUpdatedTwoMinutesAgo() {
         XCTAssertEqual(MarketingSample.footerStatus.text(now: MarketingSample.now), "Updated 2 min ago")
     }

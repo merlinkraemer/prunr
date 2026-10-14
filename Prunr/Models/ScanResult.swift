@@ -13,14 +13,19 @@ struct ScanResult: Sendable {
     var category: GrowthCategory
     var subcategory: GrowthSubcategory?
 
+    /// Creation and last-write time, when the scanner read them.
+    var fileDates: FileDates?
+
     init(
         path: String,
         sizeBytes: Int64,
         category: GrowthCategory? = nil,
-        subcategory: GrowthSubcategory? = nil
+        subcategory: GrowthSubcategory? = nil,
+        fileDates: FileDates? = nil
     ) {
         self.path = path
         self.sizeBytes = sizeBytes
+        self.fileDates = fileDates
         let resolvedCategory = category ?? GrowthCategory.categorize(path: path)
         self.category = resolvedCategory
         self.subcategory = subcategory ?? GrowthCategory.subcategorize(path: path)

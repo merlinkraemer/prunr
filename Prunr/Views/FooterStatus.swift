@@ -13,6 +13,8 @@ enum FooterStatus: Equatable {
     /// The open group's day.
     case groupDay(Date)
     case preview(PanelPreview)
+    /// Day one until the watcher sees a change: "Watching since today 16:38".
+    case watchingSince(Date)
     case updated(Date)
     case none
 
@@ -26,6 +28,7 @@ enum FooterStatus: Equatable {
         updateAvailable: Bool = false,
         groupDay: Date? = nil,
         preview: PanelPreview = .live,
+        watchingSinceToday: Date? = nil,
         updatedAt: Date? = nil
     ) -> FooterStatus {
         if let notice { return .notice(notice) }
@@ -36,6 +39,7 @@ enum FooterStatus: Equatable {
         if updateAvailable { return .updateAvailable }
         if let groupDay { return .groupDay(groupDay) }
         if preview != .live { return .preview(preview) }
+        if let watchingSinceToday { return .watchingSince(watchingSinceToday) }
         if let updatedAt { return .updated(updatedAt) }
         return .none
     }
@@ -64,9 +68,15 @@ enum FooterStatus: Equatable {
         case .groupDay(let day): return EpisodeBuilder.dayLabel(for: day, calendar: calendar)
         case .preview(.sample): return "Sample data"
         case .preview(let preview): return "Preview: \(preview.title)"
+        case .watchingSince(let date): return Self.watchingSinceText(date, calendar: calendar)
         case .updated(let date): return Self.updatedText(since: date, now: now, calendar: calendar)
         case .none: return ""
         }
+    }
+
+    static func watchingSinceText(_ date: Date, calendar: Calendar = .current) -> String {
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        return String(format: "Watching since today %02d:%02d", components.hour ?? 0, components.minute ?? 0)
     }
 
     /// "Updated just now", "Updated 4 min ago", "Updated 3 h ago", or

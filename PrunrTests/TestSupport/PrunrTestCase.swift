@@ -54,6 +54,20 @@ class PrunrTestCase: XCTestCase {
         return directory
     }
 
+    /// Sets a fixture file's birth and last-write time. Birth first: macOS
+    /// pulls the birth time back when a last-write time precedes it.
+    func setFileDates(_ url: URL, birth: Date, modified: Date) throws {
+        try FileManager.default.setAttributes([.creationDate: birth], ofItemAtPath: url.path)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+    }
+
+    /// Dates a fixture file before the history a first scan rebuilds, so
+    /// the scan adds nothing for it to the journal.
+    func dateBeforeHistory(_ url: URL) throws {
+        let old = Date().addingTimeInterval(-60 * 24 * 60 * 60)
+        try setFileDates(url, birth: old, modified: old)
+    }
+
     func diskUsageBytes(at url: URL) throws -> Int64 {
         var fileStat = stat()
         XCTAssertEqual(lstat(url.path, &fileStat), 0)

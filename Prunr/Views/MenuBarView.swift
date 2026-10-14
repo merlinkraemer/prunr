@@ -1754,6 +1754,7 @@ struct MenuBarView: View {
             updateAvailable: manager.showsUpdateAvailableBanner,
             groupDay: isShowingGroup ? shownGroup?.day : nil,
             preview: devMode.panelPreview,
+            watchingSinceToday: shownChangeFeed?.feed?.watchingSinceToday(now: Date(), calendar: .current),
             updatedAt: manager.updatedAt
         )
     }
@@ -1821,7 +1822,7 @@ struct MenuBarView: View {
             }
         case .none:
             Color.clear.frame(height: 1)
-        case .notice, .groupDay, .preview:
+        case .notice, .groupDay, .preview, .watchingSince:
             Text(status.text())
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)

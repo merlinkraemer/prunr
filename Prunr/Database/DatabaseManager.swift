@@ -1782,11 +1782,26 @@ extension DatabaseManager {
         source: GrowthJournalBucket.Source = .watch,
         observedSince: Date? = nil
     ) async throws {
+        try await upsertGrowthJournalBuckets(
+            trackedPathId: trackedPathId,
+            deltasByBucketStart: [bucketStart: deltas],
+            source: source,
+            observedSince: observedSince
+        )
+    }
+
+    /// Writes many buckets in one transaction.
+    func upsertGrowthJournalBuckets(
+        trackedPathId: UUID,
+        deltasByBucketStart: [Date: [JournalDeltaKey: Int64]],
+        source: GrowthJournalBucket.Source,
+        observedSince: Date? = nil
+    ) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
-        guard !deltas.isEmpty else { return }
+        guard deltasByBucketStart.values.contains(where: { !$0.isEmpty }) else { return }
 
         let trackedPathIdString = trackedPathId.uuidString
 
@@ -1803,17 +1818,19 @@ extension DatabaseManager {
                     """
             )
 
-            for (key, deltaBytes) in deltas where deltaBytes != 0 {
-                try statement.execute(arguments: [
-                    trackedPathIdString,
-                    bucketStart,
-                    key.category.rawValue,
-                    key.subcategory?.rawValue ?? "",
-                    deltaBytes,
-                    source.rawValue,
-                    observedSince,
-                    key.unitKey
-                ])
+            for (bucketStart, deltas) in deltasByBucketStart {
+                for (key, deltaBytes) in deltas where deltaBytes != 0 {
+                    try statement.execute(arguments: [
+                        trackedPathIdString,
+                        bucketStart,
+                        key.category.rawValue,
+                        key.subcategory?.rawValue ?? "",
+                        deltaBytes,
+                        source.rawValue,
+                        observedSince,
+                        key.unitKey
+                    ])
+                }
             }
         }
     }

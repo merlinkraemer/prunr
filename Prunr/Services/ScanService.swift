@@ -132,6 +132,8 @@ actor ScanService {
     struct ScanOutcome: Sendable {
         let snapshot: Snapshot
         let drilldownIndex: DrilldownIndexBuilder
+        /// Set when the scan was asked to rebuild the history from file dates.
+        let fileHistory: FileDateHistory?
     }
 
     func scanWithDrilldownIndex(
@@ -139,6 +141,7 @@ actor ScanService {
         trackedPathId: UUID,
         ignoredNames: Set<String>? = nil,
         alsoWriteWorkingSet: Bool = false,
+        reconstructsFileHistory: Bool = false,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> ScanOutcome {
         let scanID = UUID()
@@ -185,6 +188,7 @@ actor ScanService {
                 trackedPathId: trackedPathId,
                 ignoredNames: ignoredNames,
                 alsoWriteWorkingSet: alsoWriteWorkingSet,
+                reconstructsFileHistory: reconstructsFileHistory,
                 cancellationToken: cancellationToken,
                 progress: progress
             )
@@ -200,6 +204,7 @@ actor ScanService {
         trackedPathId: UUID,
         ignoredNames: Set<String>?,
         alsoWriteWorkingSet: Bool = false,
+        reconstructsFileHistory: Bool = false,
         cancellationToken: ScanCancellationToken,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> ScanOutcome {
@@ -240,6 +245,7 @@ actor ScanService {
         let historicalEntryEstimate = await historicalEntryEstimate(for: trackedPathId)
         var categoryTotals: [GrowthCategory: Int64] = [:]
         var drilldownIndex = DrilldownIndexBuilder()
+        var fileHistory: FileDateHistory? = reconstructsFileHistory ? FileDateHistory(scanStart: snapshot.createdAt) : nil
 
         // Track scan start time for percentage estimation (ISS-033)
         let scanStartTime = Date()
@@ -286,13 +292,23 @@ actor ScanService {
                 batch.append(result)
                 count += 1
                 let category = result.category
+                let normalizedPath = DatabaseManager.normalizePath(result.path)
                 categoryTotals[category, default: 0] += result.sizeBytes
                 drilldownIndex.add(
-                    path: DatabaseManager.normalizePath(result.path),
+                    path: normalizedPath,
                     sizeBytes: result.sizeBytes,
                     category: category,
                     subcategory: result.subcategory
                 )
+                if let dates = result.fileDates {
+                    fileHistory?.add(
+                        path: normalizedPath,
+                        sizeBytes: result.sizeBytes,
+                        category: category,
+                        subcategory: result.subcategory,
+                        dates: dates
+                    )
+                }
 
                 // Insert batch when full
                 if batch.count >= batchSize {
@@ -445,7 +461,7 @@ actor ScanService {
 
             var completedSnapshot = snapshot
             completedSnapshot.lifecycle = .complete
-            return ScanOutcome(snapshot: completedSnapshot, drilldownIndex: drilldownIndex)
+            return ScanOutcome(snapshot: completedSnapshot, drilldownIndex: drilldownIndex, fileHistory: fileHistory)
 
         } catch {
             // A failed DB write can stop consuming the stream before its normal

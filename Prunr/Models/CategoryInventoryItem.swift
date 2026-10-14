@@ -53,6 +53,9 @@ struct GrowthJournalBucket: Codable, Identifiable, Sendable, Equatable, Hashable
         case watch
         /// Residual a full scan found that the watcher missed.
         case scan
+        /// History before the first scan, rebuilt from the birth dates of
+        /// files written once (`FileDateHistory`).
+        case files
     }
 }
 

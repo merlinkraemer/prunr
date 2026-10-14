@@ -270,7 +270,8 @@ final class FileScanner {
                             path: path,
                             sizeBytes: sizeBytes,
                             category: category,
-                            subcategory: subcategory
+                            subcategory: subcategory,
+                            fileDates: FileDates(stat)
                         )
                         if let backpressure {
                             guard await backpressure.waitToProduce() else {

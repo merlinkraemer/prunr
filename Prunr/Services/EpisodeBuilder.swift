@@ -96,6 +96,11 @@ struct ChangeFeed: Equatable, Sendable {
     let weekNetBytes: Int64
     /// When the history started (the first complete snapshot); nil if unknown.
     let watchingSince: Date?
+    /// True when the shown history holds changes rebuilt from file dates, so
+    /// it reaches back before `watchingSince`.
+    var hasFileHistory = false
+    /// The newest change the watcher recorded; nil when it has seen none.
+    var lastLiveChangeAt: Date?
 
     static let empty = ChangeFeed(days: [], weekNetBytes: 0, watchingSince: nil)
 
@@ -104,19 +109,29 @@ struct ChangeFeed: Equatable, Sendable {
 
     var hasRows: Bool { !days.isEmpty }
 
-    /// Day one: nothing earned a row yet and watching started under 24 hours
-    /// ago (or its start is unknown). There is no history to report yet.
+    /// Day one: nothing earned a row, nothing was rebuilt from file dates and
+    /// watching started under 24 hours ago (or its start is unknown). There is
+    /// no history to report yet.
     func isDayOne(now: Date) -> Bool {
-        guard !hasRows else { return false }
+        guard !hasRows, !hasFileHistory else { return false }
         guard let watchingSince else { return true }
         return now.timeIntervalSince(watchingSince) < 24 * 60 * 60
     }
 
-    /// True when watching started inside the shown history, so the list ends
-    /// with "Watching since 3 Oct".
+    /// True when watching started inside the shown history and nothing older
+    /// was rebuilt, so the list ends with "Watching since 3 Oct".
     func isShortHistory(now: Date, calendar: Calendar) -> Bool {
-        guard let watchingSince else { return false }
+        guard !hasFileHistory, let watchingSince else { return false }
         return watchingSince >= GrowthJournalService.historyStart(now: now, calendar: calendar)
+    }
+
+    /// The footer's "Watching since today 16:38": watching started today and
+    /// the watcher has not recorded a change yet. The first full scan clears
+    /// the journal, so every watcher change is newer than the start.
+    func watchingSinceToday(now: Date, calendar: Calendar) -> Date? {
+        guard lastLiveChangeAt == nil, let watchingSince,
+              calendar.isDate(watchingSince, inSameDayAs: now) else { return nil }
+        return watchingSince
     }
 
     /// The date for "Nothing over 1 GB since 28 Sep". Nil when this week has a
@@ -128,6 +143,7 @@ struct ChangeFeed: Equatable, Sendable {
             return newest >= weekStart ? nil : newest
         }
         let historyStart = GrowthJournalService.historyStart(now: now, calendar: calendar)
+        guard !hasFileHistory else { return historyStart }
         return max(watchingSince ?? historyStart, historyStart)
     }
 }
@@ -287,7 +303,14 @@ enum EpisodeBuilder {
         let days = rowsByDay
             .map { day, rows in ChangeFeedDay(day: day, episodes: rows.sorted(by: newestFirst)) }
             .sorted { $0.day > $1.day }
-        return ChangeFeed(days: days, weekNetBytes: weekNet, watchingSince: watchingSince)
+        let shownSlots = slots.filter { $0.firstAt >= oldestDay }
+        return ChangeFeed(
+            days: days,
+            weekNetBytes: weekNet,
+            watchingSince: watchingSince,
+            hasFileHistory: shownSlots.contains { $0.source == .files },
+            lastLiveChangeAt: shownSlots.filter { $0.source == .watch }.map(\.firstAt).max()
+        )
     }
 
     // MARK: - Labels

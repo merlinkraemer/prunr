@@ -1785,6 +1785,7 @@ final class PrunrSmokeTests: XCTestCase {
 
             let fileURL = tempDirectory.appendingPathComponent("existing.txt")
             try Data(repeating: 0xCD, count: 2_048).write(to: fileURL)
+            try self.dateBeforeHistory(fileURL)
 
             _ = try await DatabaseManager.shared.replaceWorkingSetSubtree(
                 trackedPathId: trackedPathId,

@@ -115,6 +115,7 @@ actor BaselineService {
             trackedPathId: trackedPath.id,
             ignoredNames: ignoredNames,
             alsoWriteWorkingSet: false,
+            reconstructsFileHistory: previousSnapshotId == nil,
             progress: progress
         )
         let snapshot = outcome.snapshot
@@ -138,6 +139,9 @@ actor BaselineService {
         if previousSnapshotId == nil {
             // A first successful baseline must clear stale realtime growth left behind from pre-baseline runs.
             try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)
+            if let fileHistory = outcome.fileHistory {
+                try await recordFileHistory(fileHistory, trackedPath: trackedPath)
+            }
         }
 
         // Record deltas to growth journal only when a previous snapshot exists.
@@ -190,6 +194,19 @@ actor BaselineService {
         }
 
         return snapshot
+    }
+
+    /// Writes the history rebuilt from file dates. Every bucket lies before
+    /// the first snapshot, so no later scan window reconciles it again.
+    private func recordFileHistory(_ history: FileDateHistory, trackedPath: TrackedPath) async throws {
+        let start = Date()
+        try await db.upsertGrowthJournalBuckets(
+            trackedPathId: trackedPath.id,
+            deltasByBucketStart: history.deltasByBucketStart,
+            source: .files
+        )
+        let milliseconds = Int(Date().timeIntervalSince(start) * 1000)
+        logger.info("File-date history: \(history.fileCount) files, \(history.totalBytes) bytes in \(history.bucketCount) slots, written in \(milliseconds) ms")
     }
 
     /// Checks whether at least one snapshot exists.
