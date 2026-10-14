@@ -81,3 +81,4 @@
 2026-10-14 orchestrator - spawn: s24 drill fixes (place→contents push transition bug; single-place rows / single-subcategory categories skip a level) on feat/s24-drill-fixes
 - 2026-10-14 mac-queue 62828ba0b mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
 2026-10-14 orchestrator - landed on branch: s24 drill fixes (62828ba, mac-queue PASS 20261014-101348, 313 tests; root cause: nested if/else page branches with differing transitions → single shownPage + PushTransition), installed
+2026-10-14 orchestrator - landed on branch: s25 drill push pager + skipped-level category title (13ae10b, mac-queue PASS 20261014-121708), installed (20261014-122304)
