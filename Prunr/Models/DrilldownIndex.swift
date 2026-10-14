@@ -115,7 +115,8 @@ struct DrilldownIndexBuilder: Sendable {
         pathId: Int64? = nil,
         sizeBytes: Int64,
         category: GrowthCategory,
-        subcategory: GrowthSubcategory?
+        subcategory: GrowthSubcategory?,
+        unitKey: String? = nil
     ) {
         categoryTotals[category, default: 0] += sizeBytes
 
@@ -132,7 +133,7 @@ struct DrilldownIndexBuilder: Sendable {
         }
         groups[id] = group
 
-        if let child = PlaceChildKey(path: path, unitKey: UnitResolver.resolve(path: path)) {
+        if let child = PlaceChildKey(path: path, unitKey: unitKey ?? UnitResolver.resolve(path: path)) {
             placeChildren[child, default: Totals()].totalBytes += sizeBytes
             placeChildren[child, default: Totals()].fileCount += 1
         }

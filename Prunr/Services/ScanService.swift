@@ -293,16 +293,18 @@ actor ScanService {
                 count += 1
                 let category = result.category
                 let normalizedPath = DatabaseManager.normalizePath(result.path)
+                let unitKey = UnitResolver.resolve(path: normalizedPath)
                 categoryTotals[category, default: 0] += result.sizeBytes
                 drilldownIndex.add(
                     path: normalizedPath,
                     sizeBytes: result.sizeBytes,
                     category: category,
-                    subcategory: result.subcategory
+                    subcategory: result.subcategory,
+                    unitKey: unitKey
                 )
                 if let dates = result.fileDates {
                     fileHistory?.add(
-                        path: normalizedPath,
+                        unitKey: unitKey,
                         sizeBytes: result.sizeBytes,
                         category: category,
                         subcategory: result.subcategory,

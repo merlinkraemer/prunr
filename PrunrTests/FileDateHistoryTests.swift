@@ -5,7 +5,7 @@ import GRDB
 /// Day-one history rebuilt from file dates: which files count, how they are
 /// bucketed, and what the change list makes of them.
 final class FileDateHistoryTests: PrunrTestCase {
-    private static let home = "/Users/tester"
+    private static let home = UnitResolver.defaultHome
     private static let gb: Int64 = 1_000_000_000
     private static let mb: Int64 = 1_000_000
     private static let hour: TimeInterval = 60 * 60
@@ -25,14 +25,27 @@ final class FileDateHistoryTests: PrunrTestCase {
         FileDates(birth: birth.timeIntervalSince1970, modified: birth.timeIntervalSince1970 + modifiedAfter)
     }
 
+    private func homePath(_ relative: String) -> String {
+        Self.home + "/" + relative
+    }
+
+    /// Adds a file at `relative` below home, classified and resolved the way
+    /// the scan does.
     private func add(
         _ history: inout FileDateHistory,
-        _ path: String,
+        _ relative: String,
         _ bytes: Int64,
         _ dates: FileDates
     ) {
+        let path = homePath(relative)
         let (category, subcategory) = GrowthCategory.classify(path: path)
-        history.add(path: path, sizeBytes: bytes, category: category, subcategory: subcategory, dates: dates, home: Self.home)
+        history.add(
+            unitKey: UnitResolver.resolve(path: path),
+            sizeBytes: bytes,
+            category: category,
+            subcategory: subcategory,
+            dates: dates
+        )
     }
 
     /// The journal slots the feed would read back, grouped like
@@ -67,7 +80,7 @@ final class FileDateHistoryTests: PrunrTestCase {
         var history = FileDateHistory(scanStart: scanStart, calendar: calendar)
         let birth = date(10, 9, 14, 47, in: calendar)
 
-        add(&history, "/Users/tester/Downloads/ubuntu.iso", 3 * Self.gb, written(at: birth))
+        add(&history, "Downloads/ubuntu.iso", 3 * Self.gb, written(at: birth))
 
         let buckets = history.deltasByBucketStart
         XCTAssertEqual(Array(buckets.keys), [date(10, 9, 14, 30, in: calendar)])
@@ -75,7 +88,7 @@ final class FileDateHistoryTests: PrunrTestCase {
         XCTAssertEqual(deltas.count, 1)
         let key = try XCTUnwrap(deltas.keys.first)
         XCTAssertEqual(key.category, .downloads)
-        XCTAssertEqual(key.unitKey, UnitResolver.resolve(path: "/Users/tester/Downloads/ubuntu.iso", home: Self.home))
+        XCTAssertEqual(key.unitKey, UnitResolver.resolve(path: homePath("Downloads/ubuntu.iso")))
         XCTAssertEqual(deltas[key], 3 * Self.gb)
         XCTAssertEqual(history.fileCount, 1)
     }
@@ -86,11 +99,11 @@ final class FileDateHistoryTests: PrunrTestCase {
         var history = FileDateHistory(scanStart: scanStart, calendar: calendar)
         let birth = date(10, 5, 10, 0, in: calendar)
 
-        add(&history, "/Users/tester/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", 40 * Self.gb,
+        add(&history, "Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", 40 * Self.gb,
             written(at: birth, modifiedAfter: 6 * Self.day))
-        add(&history, "/Users/tester/dev/acme/db.sqlite", 2 * Self.gb, written(at: birth, modifiedAfter: Self.hour + 1))
-        add(&history, "/Users/tester/Downloads/a.zip", 1 * Self.gb, written(at: birth, modifiedAfter: Self.hour))
-        add(&history, "/Users/tester/Downloads/b.zip", 2 * Self.gb, written(at: birth, modifiedAfter: -Self.day))
+        add(&history, "dev/acme/db.sqlite", 2 * Self.gb, written(at: birth, modifiedAfter: Self.hour + 1))
+        add(&history, "Downloads/a.zip", 1 * Self.gb, written(at: birth, modifiedAfter: Self.hour))
+        add(&history, "Downloads/b.zip", 2 * Self.gb, written(at: birth, modifiedAfter: -Self.day))
 
         XCTAssertEqual(history.fileCount, 2, "written within an hour of birth, or last written before it")
         XCTAssertEqual(total(history), 3 * Self.gb)
@@ -103,10 +116,10 @@ final class FileDateHistoryTests: PrunrTestCase {
         XCTAssertEqual(history.windowStart, date(9, 13, 0, 0, in: calendar))
         XCTAssertEqual(history.windowStart, GrowthJournalService.historyStart(now: scanStart, calendar: calendar))
 
-        add(&history, "/Users/tester/Downloads/old.iso", 5 * Self.gb, written(at: date(9, 12, 23, 59, in: calendar)))
-        add(&history, "/Users/tester/Downloads/first.iso", 1 * Self.gb, written(at: date(9, 13, 0, 0, in: calendar)))
-        add(&history, "/Users/tester/Downloads/during-scan.iso", 7 * Self.gb, written(at: scanStart))
-        add(&history, "/Users/tester/Downloads/later.iso", 9 * Self.gb, written(at: scanStart.addingTimeInterval(60)))
+        add(&history, "Downloads/old.iso", 5 * Self.gb, written(at: date(9, 12, 23, 59, in: calendar)))
+        add(&history, "Downloads/first.iso", 1 * Self.gb, written(at: date(9, 13, 0, 0, in: calendar)))
+        add(&history, "Downloads/during-scan.iso", 7 * Self.gb, written(at: scanStart))
+        add(&history, "Downloads/later.iso", 9 * Self.gb, written(at: scanStart.addingTimeInterval(60)))
 
         XCTAssertEqual(history.fileCount, 1)
         XCTAssertEqual(total(history), 1 * Self.gb)
@@ -119,8 +132,8 @@ final class FileDateHistoryTests: PrunrTestCase {
         var history = FileDateHistory(scanStart: scanStart, calendar: calendar)
         let birth = date(10, 10, 9, 0, in: calendar)
 
-        add(&history, "/Users/tester/.Trash/old.iso", 4 * Self.gb, written(at: birth))
-        add(&history, "/Users/tester/Downloads/empty.txt", 0, written(at: birth))
+        add(&history, ".Trash/old.iso", 4 * Self.gb, written(at: birth))
+        add(&history, "Downloads/empty.txt", 0, written(at: birth))
 
         XCTAssertTrue(history.isEmpty)
     }
@@ -133,7 +146,7 @@ final class FileDateHistoryTests: PrunrTestCase {
         let scanStart = kathmandu.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 16, minute: 38))!
         var history = FileDateHistory(scanStart: scanStart, calendar: kathmandu)
 
-        add(&history, "/Users/tester/Downloads/a.iso", 1 * Self.gb, written(at: history.windowStart.addingTimeInterval(60)))
+        add(&history, "Downloads/a.iso", 1 * Self.gb, written(at: history.windowStart.addingTimeInterval(60)))
 
         XCTAssertEqual(Array(history.deltasByBucketStart.keys), [history.windowStart])
     }
@@ -146,10 +159,10 @@ final class FileDateHistoryTests: PrunrTestCase {
         var history = FileDateHistory(scanStart: scanStart, calendar: calendar)
 
         for minute in [0, 10, 20] {
-            add(&history, "/Users/tester/Documents/Archive/scan \(minute).pdf", 400 * Self.mb, written(at: date(10, 9, 20, minute, in: calendar)))
+            add(&history, "Documents/Archive/scan \(minute).pdf", 400 * Self.mb, written(at: date(10, 9, 20, minute, in: calendar)))
         }
-        add(&history, "/Users/tester/Downloads/a.iso", 2 * Self.gb, written(at: date(10, 9, 20, 5, in: calendar)))
-        add(&history, "/Users/tester/Downloads/a.iso", 1 * Self.gb, written(at: date(10, 10, 8, 0, in: calendar)))
+        add(&history, "Downloads/a.iso", 2 * Self.gb, written(at: date(10, 9, 20, 5, in: calendar)))
+        add(&history, "Downloads/a.iso", 1 * Self.gb, written(at: date(10, 10, 8, 0, in: calendar)))
 
         let buckets = history.deltasByBucketStart
         XCTAssertEqual(Set(buckets.keys), [date(10, 9, 20, 0, in: calendar), date(10, 10, 8, 0, in: calendar)])
@@ -172,9 +185,9 @@ final class FileDateHistoryTests: PrunrTestCase {
         let now = scanStart.addingTimeInterval(10 * 60)
         var history = FileDateHistory(scanStart: scanStart, calendar: calendar)
 
-        add(&history, "/Users/tester/Downloads/a.iso", 5_100 * Self.mb, written(at: date(10, 11, 18, 0, in: calendar)))
-        add(&history, "/Users/tester/Music/Projects/Live Set.wav", 3_200 * Self.mb, written(at: date(10, 9, 21, 0, in: calendar)))
-        add(&history, "/Users/tester/Pictures/Export/trip.mov", 7_200 * Self.mb, written(at: date(10, 1, 12, 0, in: calendar)))
+        add(&history, "Downloads/a.iso", 5_100 * Self.mb, written(at: date(10, 11, 18, 0, in: calendar)))
+        add(&history, "Music/Projects/Live Set.wav", 3_200 * Self.mb, written(at: date(10, 9, 21, 0, in: calendar)))
+        add(&history, "Pictures/Export/trip.mov", 7_200 * Self.mb, written(at: date(10, 1, 12, 0, in: calendar)))
 
         let feed = EpisodeBuilder.build(
             slots: slots(history), now: now, calendar: calendar, home: Self.home, watchingSince: scanStart
@@ -205,7 +218,7 @@ final class FileDateHistoryTests: PrunrTestCase {
         XCTAssertEqual(WeeklyChange(.loaded(nothing), now: now), .unknown)
 
         var history = FileDateHistory(scanStart: scanStart, calendar: calendar)
-        add(&history, "/Users/tester/Downloads/small.zip", 300 * Self.mb, written(at: date(10, 10, 9, 0, in: calendar)))
+        add(&history, "Downloads/small.zip", 300 * Self.mb, written(at: date(10, 10, 9, 0, in: calendar)))
         let small = EpisodeBuilder.build(
             slots: slots(history), now: now, calendar: calendar, home: Self.home, watchingSince: scanStart
         )
@@ -245,6 +258,10 @@ final class FileDateHistoryTests: PrunrTestCase {
     private func writeFile(_ url: URL, bytes: Int, birth: Date, modified: Date) throws {
         try Data(repeating: 0x5A, count: bytes).write(to: url)
         try setFileDates(url, birth: birth, modified: modified)
+    }
+
+    private func floorToMinute(_ date: Date) -> Date {
+        Date(timeIntervalSinceReferenceDate: floor(date.timeIntervalSinceReferenceDate / 60) * 60)
     }
 
     private func slotStart(_ date: Date) -> Date {
@@ -296,7 +313,7 @@ final class FileDateHistoryTests: PrunrTestCase {
             XCTAssertEqual(second.filter { $0.source == .files }, first, "a later full scan never rebuilds")
             let scan = second.filter { $0.source == .scan }
             XCTAssertEqual(scan.reduce(Int64(0)) { $0 + $1.deltaBytes }, addedBytes, "the residual counts only the new file")
-            XCTAssertTrue(scan.allSatisfy { $0.bucketStart > s0.createdAt && $0.bucketStart <= s1.createdAt })
+            XCTAssertTrue(scan.allSatisfy { $0.bucketStart == self.floorToMinute(s1.createdAt) }, "the residual lands at the second scan")
 
             _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
             let third = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
@@ -308,22 +325,25 @@ final class FileDateHistoryTests: PrunrTestCase {
     // MARK: - Scale
 
     /// A 4M-file scan feeds every file through `add`. Times the in-memory
-    /// aggregation and the journal write on a synthetic 2M-file fixture.
+    /// aggregation and the journal write on a synthetic 2M-file fixture. Unit
+    /// keys are resolved up front: the scan resolves them once per file for
+    /// the drilldown index and hands the same key to the history.
     func testLargeFixtureTiming() async throws {
         let calendar = Calendar.current
         let scanStart = Date()
         var history = FileDateHistory(scanStart: scanStart, calendar: calendar)
         let fileCount = 2_000_000
-        let places = (0..<400).map { index -> (path: String, category: GrowthCategory, subcategory: GrowthSubcategory?) in
-            let path: String
+        let places = (0..<400).map { index -> (unitKey: String, category: GrowthCategory, subcategory: GrowthSubcategory?) in
+            let relative: String
             switch index % 4 {
-            case 0: path = "/Users/tester/dev/project\(index)/node_modules/pkg/index.js"
-            case 1: path = "/Users/tester/Downloads/file\(index).zip"
-            case 2: path = "/Users/tester/Library/Caches/com.example.app\(index)/blob"
-            default: path = "/Users/tester/Pictures/Export \(index)/photo.jpg"
+            case 0: relative = "dev/project\(index)/node_modules/pkg/index.js"
+            case 1: relative = "Downloads/file\(index).zip"
+            case 2: relative = "Library/Caches/com.example.app\(index)/blob"
+            default: relative = "Pictures/Export \(index)/photo.jpg"
             }
+            let path = homePath(relative)
             let (category, subcategory) = GrowthCategory.classify(path: path)
-            return (path, category, subcategory)
+            return (UnitResolver.resolve(path: path), category, subcategory)
         }
         let span = scanStart.timeIntervalSince(history.windowStart) * 1.5
 
@@ -333,12 +353,11 @@ final class FileDateHistoryTests: PrunrTestCase {
             let birth = scanStart.timeIntervalSince1970 - span * Double((index &* 7_919) % 10_000) / 10_000
             let modified = index % 5 == 0 ? birth + 3 * Self.day : birth + 30
             history.add(
-                path: place.path,
+                unitKey: place.unitKey,
                 sizeBytes: 4_096 + Int64(index % 1_000),
                 category: place.category,
                 subcategory: place.subcategory,
-                dates: FileDates(birth: birth, modified: modified),
-                home: Self.home
+                dates: FileDates(birth: birth, modified: modified)
             )
         }
         let addSeconds = Date().timeIntervalSince(addStart)

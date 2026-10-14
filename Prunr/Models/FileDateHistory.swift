@@ -57,15 +57,15 @@ struct FileDateHistory: Sendable {
 
     var bucketCount: Int { bytesBySlot.count }
 
-    /// Trash is left out: Trash growth is a move, never a row, so it must not
-    /// reach the header either.
+    /// `unitKey` is the file's `UnitResolver` key; the scan already resolves
+    /// it for the drilldown index. Trash is left out: Trash growth is a move,
+    /// never a row, so it must not reach the header either.
     mutating func add(
-        path: String,
+        unitKey: String,
         sizeBytes: Int64,
         category: GrowthCategory,
         subcategory: GrowthSubcategory?,
-        dates: FileDates,
-        home: String = UnitResolver.defaultHome
+        dates: FileDates
     ) {
         guard sizeBytes > 0,
               category != .trash,
@@ -75,11 +75,7 @@ struct FileDateHistory: Sendable {
             return
         }
         let slot = Int64(floor(dates.birth / TimeInterval(JournalSlot.slotSeconds)))
-        let key = DatabaseManager.JournalDeltaKey(
-            category: category,
-            subcategory: subcategory,
-            unitKey: UnitResolver.resolve(path: path, home: home)
-        )
+        let key = DatabaseManager.JournalDeltaKey(category: category, subcategory: subcategory, unitKey: unitKey)
         bytesBySlot[slot, default: [:]][key, default: 0] += sizeBytes
         fileCount += 1
         totalBytes += sizeBytes
