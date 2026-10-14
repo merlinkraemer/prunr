@@ -1145,7 +1145,11 @@ struct MenuBarView: View {
             } else if let place = shownPlace {
                 HeaderTitleRow(
                     title: EpisodeBuilder.rowTitle(for: place),
-                    backHint: "Return to this day's \(place.category.displayName) changes",
+                    category: place.category,
+                    iconSource: place.iconSource,
+                    backHint: feedPage.parent == .feed
+                        ? "Return to the change list"
+                        : "Return to this day's \(place.category.displayName) changes",
                     onBack: navigateFeedBack
                 )
             } else if let group = shownGroup {
@@ -1321,35 +1325,11 @@ struct MenuBarView: View {
 
     // MARK: - Page Navigation Content
 
-    /// The change list is the root page. The categories view (with the
-    /// category → subcategory → files drill) and a day group's rows slide in
-    /// from the right over it; their title rows live in the header.
     private var pageNavigationContent: some View {
         ZStack(alignment: .top) {
-            if showsCategoryOverview {
-                categoryListView
-                    .clearOfFooter()
-                    .transition(.move(edge: .trailing))
-            } else if let place = shownPlace, let unitRoot = place.rootPath {
-                PlaceContentsView(
-                    category: place.category,
-                    isIndexing: manager.drilldownStore.isBuilding,
-                    onReveal: revealPlace,
-                    loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) }
-                )
-                .id("place-\(place.id)")
-                .transition(.move(edge: .trailing))
-            } else if let group = shownGroup {
-                ChangeGroupView(group: group, onOpenPlace: openPlace, onReveal: revealPlace)
-                    .id(group.id)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: feedSlidesForward ? .trailing : .leading),
-                        removal: .move(edge: feedSlidesForward ? .leading : .trailing)
-                    ))
-            } else {
-                changeFeedView
-                    .transition(.move(edge: .leading))
-            }
+            shownPage
+                .id(shownPageID)
+                .transition(PushTransition.transition(forward: feedSlidesForward))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
@@ -1368,6 +1348,29 @@ struct MenuBarView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .onDisappear {
             drillTransitionCoordinator.cancelAndReset()
+        }
+    }
+
+    private var shownPageID: String {
+        showsCategoryOverview ? "categories" : feedPage.id
+    }
+
+    @ViewBuilder
+    private var shownPage: some View {
+        if showsCategoryOverview {
+            categoryListView
+                .clearOfFooter()
+        } else if let place = shownPlace, let unitRoot = place.rootPath {
+            PlaceContentsView(
+                category: place.category,
+                isIndexing: manager.drilldownStore.isBuilding,
+                onReveal: revealPlace,
+                loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) }
+            )
+        } else if let group = shownGroup {
+            ChangeGroupView(group: group, onOpenPlace: openPlace, onReveal: revealPlace)
+        } else {
+            changeFeedView
         }
     }
 
@@ -1560,19 +1563,20 @@ struct MenuBarView: View {
 
     private func navigateFeed(to page: FeedPage) {
         guard page != feedPage else { return }
-        let forward = page.depth > feedPage.depth
-        guard forward != feedSlidesForward else {
+        slidePage(forward: page.depth > feedPage.depth) {
             withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
                 feedPage = page
             }
+        }
+    }
+
+    private func slidePage(forward: Bool, _ change: @escaping () -> Void) {
+        guard forward != feedSlidesForward else {
+            change()
             return
         }
         feedSlidesForward = forward
-        DispatchQueue.main.async {
-            withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
-                feedPage = page
-            }
-        }
+        DispatchQueue.main.async(execute: change)
     }
 
     private func setShowsCategoryOverview(_ shows: Bool) {
@@ -1584,12 +1588,14 @@ struct MenuBarView: View {
             manager.isSubcategoryDrillDown = false
             manager.isDrilledDown = false
         }
-        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
-            showsCategoryOverview = shows
-            feedPage = .feed
-            highlightedStorageSegmentID = nil
+        slidePage(forward: shows) {
+            withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+                showsCategoryOverview = shows
+                feedPage = .feed
+                highlightedStorageSegmentID = nil
+            }
+            synchronizeVisibleHeaderToCurrent()
         }
-        synchronizeVisibleHeaderToCurrent()
     }
 
     private func scanErrorView(_ error: String) -> some View {

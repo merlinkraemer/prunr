@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import Prunr
 
 final class EpisodeBuilderTests: XCTestCase {
@@ -807,14 +808,26 @@ final class EpisodeBuilderTests: XCTestCase {
         )
     }
 
-    func testEveryGroupRowOpensTheDaysPlaces() {
-        let one = group([("xcode", "/Users/tester/Library/Developer/Xcode/DerivedData")])
+    func testGroupRowsWithSeveralPlacesOpenTheDaysPlaces() {
         let pathless = group([("somewhere", nil)])
         let several = group([("a", "/Users/tester/a"), ("b", nil)])
-        for row in [one, pathless, several] {
+        let bothWithPaths = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
+        for row in [pathless, several, bothWithPaths] {
             XCTAssertEqual(FeedPage.feed.opening(row), .group(row))
             XCTAssertEqual(FeedPage.group(row).parent, .feed)
         }
+    }
+
+    func testGroupRowWithOnePlaceOpensItsContentsAndBackReturnsToTheList() throws {
+        let one = group([("xcode", "/Users/tester/Library/Developer/Xcode/DerivedData")])
+        let place = try XCTUnwrap(one.episodes.first)
+        let page = FeedPage.feed.opening(one)
+
+        XCTAssertEqual(FeedPage.soloPlace(of: one), place)
+        XCTAssertEqual(page, .place(one, place))
+        XCTAssertEqual(page.place, place)
+        XCTAssertEqual(page.parent, .feed)
+        XCTAssertNil(FeedPage.soloPlace(of: group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])))
     }
 
     func testPlaceRowsWithAPathOpenTheirContents() throws {
@@ -830,7 +843,7 @@ final class EpisodeBuilderTests: XCTestCase {
     }
 
     func testBackGoesUpOneLevelAndTheFooterKeepsTheRowsDate() throws {
-        let day = group([("a", "/Users/tester/a")])
+        let day = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
         let place = try XCTUnwrap(day.episodes.first)
         let page = FeedPage.group(day).opening(place)
 
@@ -840,6 +853,21 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(page.parent, .group(day))
         XCTAssertEqual(page.parent.parent, .feed)
         XCTAssertEqual(FeedPage.feed.parent, .feed)
+    }
+
+    func testEveryPageHasItsOwnIdentity() throws {
+        let day = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
+        let a = try XCTUnwrap(day.episodes.first { $0.id == "a" })
+        let b = try XCTUnwrap(day.episodes.first { $0.id == "b" })
+        let ids = [FeedPage.feed, .group(day), .place(day, a), .place(day, b)].map(\.id)
+        XCTAssertEqual(Set(ids).count, ids.count)
+    }
+
+    func testEveryLevelPushesWithTheSameTransition() {
+        XCTAssertEqual(PushTransition.insertionEdge(forward: true), .trailing)
+        XCTAssertEqual(PushTransition.removalEdge(forward: true), .leading)
+        XCTAssertEqual(PushTransition.insertionEdge(forward: false), .leading)
+        XCTAssertEqual(PushTransition.removalEdge(forward: false), .trailing)
     }
 
     func testContextMenuOnlyOnRowsWithAPath() {

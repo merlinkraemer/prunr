@@ -26,15 +26,24 @@ enum FeedPage: Equatable {
         return nil
     }
 
+    var id: String {
+        switch self {
+        case .feed: return "feed"
+        case .group(let group): return "group-\(group.id)"
+        case .place(let group, let place): return "place-\(group.id)-\(place.id)"
+        }
+    }
+
     var parent: FeedPage {
         switch self {
         case .feed, .group: return .feed
-        case .place(let group, _): return .group(group)
+        case .place(let group, _): return FeedPage.soloPlace(of: group) == nil ? .group(group) : .feed
         }
     }
 
     func opening(_ group: ChangeGroup) -> FeedPage {
-        .group(group)
+        guard let place = FeedPage.soloPlace(of: group) else { return .group(group) }
+        return .place(group, place)
     }
 
     func opening(_ place: ChangeEpisode) -> FeedPage {
@@ -44,6 +53,28 @@ enum FeedPage: Equatable {
 
     static func opensContents(_ place: ChangeEpisode) -> Bool {
         place.rootPath != nil
+    }
+
+    static func soloPlace(of group: ChangeGroup) -> ChangeEpisode? {
+        guard group.episodes.count == 1, let place = group.episodes.first, opensContents(place) else { return nil }
+        return place
+    }
+}
+
+enum PushTransition {
+    static func insertionEdge(forward: Bool) -> Edge {
+        forward ? .trailing : .leading
+    }
+
+    static func removalEdge(forward: Bool) -> Edge {
+        forward ? .leading : .trailing
+    }
+
+    static func transition(forward: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: insertionEdge(forward: forward)),
+            removal: .move(edge: removalEdge(forward: forward))
+        )
     }
 }
 

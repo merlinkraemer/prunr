@@ -298,11 +298,10 @@ struct StorageBalanceRow: View {
     }
 }
 
-/// A title row in the header's row slot: back chevron at the left edge, the
-/// title (with an optional category glyph) centred, no amount.
 struct HeaderTitleRow: View {
     let title: String
     var category: GrowthCategory? = nil
+    var iconSource: UnitIconSource? = nil
     let backHint: String
     let onBack: () -> Void
 
@@ -311,7 +310,10 @@ struct HeaderTitleRow: View {
     var body: some View {
         ZStack {
             HStack(spacing: 8) {
-                if let category {
+                if let category, let iconSource {
+                    UnitIconTile(category: category, source: iconSource, size: 18)
+                        .accessibilityHidden(true)
+                } else if let category {
                     Image(systemName: category.icon)
                         .font(.system(size: 15))
                         .foregroundStyle(category.color)
