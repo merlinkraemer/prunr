@@ -201,7 +201,41 @@ final class DrilldownIndexTests: PrunrTestCase {
         }
     }
 
-    // MARK: - Top prefix invariant
+    func testFullScanSkipsUnreadableFoldersAndCompletes() async throws {
+        try await withEmptyTemporaryDatabase { [self] id in
+            let root = try createTrackedPathDirectory(named: "PrunrUnreadableScan")
+            let locked = root.appendingPathComponent("locked", isDirectory: true)
+            defer {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+                try? FileManager.default.removeItem(at: root)
+            }
+            let readable = root.appendingPathComponent("open/notes.txt")
+            for (url, bytes) in [(readable, 8_192), (locked.appendingPathComponent("secret.mov"), 65_536)] {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(repeating: 0x5A, count: bytes).write(to: url)
+            }
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+
+            let skipLog = ScanSkipLog()
+            let snapshot = try await BaselineService.shared.createBaseline(
+                trackedPath: TrackedPath(id: id, url: root, displayName: "Scan"),
+                ignoredNames: [],
+                skipLog: skipLog
+            )
+
+            XCTAssertEqual(snapshot.lifecycle, .complete)
+            XCTAssertGreaterThan(skipLog.count, 0)
+            XCTAssertEqual(skipLog.locationLabels, ["locked"])
+
+            let totals = try await db.fetchWorkingSetCategoryTotals(for: id)
+            let totalBytes = totals.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
+            XCTAssertEqual(totalBytes, try diskUsageBytes(at: readable))
+            let entryCount = try await db.fetchEntryCount(for: try XCTUnwrap(snapshot.id))
+            XCTAssertEqual(entryCount, 1)
+            try await assertDrilldownIndexExact(id, "after skipping an unreadable folder")
+        }
+    }
+
 
     func testTopFilesStayACorrectPrefixAndRefill() async throws {
         try await withEmptyTemporaryDatabase { [self] id in

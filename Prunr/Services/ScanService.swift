@@ -142,6 +142,7 @@ actor ScanService {
         ignoredNames: Set<String>? = nil,
         alsoWriteWorkingSet: Bool = false,
         reconstructsFileHistory: Bool = false,
+        skipLog: ScanSkipLog? = nil,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> ScanOutcome {
         let scanID = UUID()
@@ -190,6 +191,7 @@ actor ScanService {
                 alsoWriteWorkingSet: alsoWriteWorkingSet,
                 reconstructsFileHistory: reconstructsFileHistory,
                 cancellationToken: cancellationToken,
+                skipLog: skipLog,
                 progress: progress
             )
         } onCancel: {
@@ -206,6 +208,7 @@ actor ScanService {
         alsoWriteWorkingSet: Bool = false,
         reconstructsFileHistory: Bool = false,
         cancellationToken: ScanCancellationToken,
+        skipLog: ScanSkipLog?,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> ScanOutcome {
         // Capture volume free space before creating snapshot
@@ -279,7 +282,8 @@ actor ScanService {
                 url,
                 ignoredNames: resolvedIgnoredNames,
                 cancellationToken: cancellationToken,
-                backpressure: backpressure
+                backpressure: backpressure,
+                skipLog: skipLog
             )
 
             for try await result in stream {
@@ -459,7 +463,8 @@ actor ScanService {
             }
 
             try await db.markSnapshotComplete(id: snapshotId)
-            logger.info("Scan completed successfully: \(count) files scanned")
+            let skippedCount = skipLog?.count ?? 0
+            logger.info("Scan completed successfully: \(count) files scanned, \(skippedCount) unreadable entries skipped")
 
             var completedSnapshot = snapshot
             completedSnapshot.lifecycle = .complete

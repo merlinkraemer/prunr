@@ -1154,6 +1154,7 @@ final class MenuBarManager: NSObject {
         // `trackedPaths` are independent (no path is a subpath of another). Each gets
         // its own snapshot, so there are no DB write conflicts — safe to scan in parallel.
         recordFullScanAttempt()
+        let skipLog = ScanSkipLog()
 
         do {
             let snapshotsByPath: [UUID: Snapshot]
@@ -1166,6 +1167,7 @@ final class MenuBarManager: NSObject {
                     scanCurrentPathDisplay = "."
                     let snapshot = try await baselineService.createBaseline(
                         trackedPath: trackedPath,
+                        skipLog: skipLog,
                         progress: { progress in progressCallback(trackedPath, progress) }
                     )
                     snapshots[trackedPath.id] = snapshot
@@ -1180,6 +1182,7 @@ final class MenuBarManager: NSObject {
                         group.addTask {
                             let snapshot = try await self.baselineService.createBaseline(
                                 trackedPath: capturedPath,
+                                skipLog: skipLog,
                                 progress: { progress in progressCallback(capturedPath, progress) }
                             )
                             return (capturedPath.id, snapshot)
@@ -1195,6 +1198,7 @@ final class MenuBarManager: NSObject {
             }
 
             recordFullScanSuccess()
+            runtimeBlockedLocations = skipLog.locationLabels
             return snapshotsByPath
         } catch {
             if !isScanCancellation(error) {

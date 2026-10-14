@@ -88,6 +88,7 @@ actor BaselineService {
     func createBaseline(
         trackedPath: TrackedPath,
         ignoredNames: Set<String>? = nil,
+        skipLog: ScanSkipLog? = nil,
         progress: ((ScanService.ScanProgress) -> Void)? = nil
     ) async throws -> Snapshot {
         // Get previous snapshot for delta calculation
@@ -116,6 +117,7 @@ actor BaselineService {
             ignoredNames: ignoredNames,
             alsoWriteWorkingSet: false,
             reconstructsFileHistory: previousSnapshotId == nil,
+            skipLog: skipLog,
             progress: progress
         )
         let snapshot = outcome.snapshot

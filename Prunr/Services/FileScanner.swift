@@ -17,6 +17,31 @@ final class ScanCancellationToken: @unchecked Sendable {
     }
 }
 
+/// Entries a scan skipped because the system denied access (no Full Disk
+/// Access, or plain Unix permissions). Their bytes are unknown, not zero.
+final class ScanSkipLog: @unchecked Sendable {
+    private let paths = OSAllocatedUnfairLock(initialState: [String]())
+
+    var skippedPaths: [String] {
+        paths.withLock { $0 }
+    }
+
+    var count: Int {
+        paths.withLock { $0.count }
+    }
+
+    var locationLabels: [String] {
+        Array(Set(skippedPaths.map { path in
+            let name = (path as NSString).lastPathComponent
+            return name.isEmpty ? path : name
+        })).sorted()
+    }
+
+    func record(_ path: String) {
+        paths.withLock { $0.append(path) }
+    }
+}
+
 private final class ScanTraversalState: @unchecked Sendable {
     struct Snapshot {
         let lastProgressAt: Date
@@ -150,12 +175,14 @@ final class FileScanner {
     ///   - ignoredNames: Directory names to skip
     ///   - cancellationToken: Optional cooperative cancel signal
     ///   - backpressure: Optional gate limiting outstanding unconsumed results
+    ///   - skipLog: Optional record of entries skipped for lack of access
     /// - Returns: An AsyncThrowingStream that yields ScanResult values
     func scan(
         _ rootURL: URL,
         ignoredNames: Set<String>,
         cancellationToken: ScanCancellationToken? = nil,
-        backpressure: ScanBackpressureGate? = nil
+        backpressure: ScanBackpressureGate? = nil,
+        skipLog: ScanSkipLog? = nil
     ) -> AsyncThrowingStream<ScanResult, Error> {
         return AsyncThrowingStream<ScanResult, Error> { continuation in
             let traversalState = ScanTraversalState(rootPath: rootURL.path)
@@ -298,6 +325,11 @@ final class FileScanner {
                             Self.logger.error("FTS error at \(path, privacy: .public)")
                         }
 
+                        if Self.skipsUnreadableEntry(ftsErrno: entryErrno, level: level) {
+                            skipLog?.record(path)
+                            continue
+                        }
+
                         if let abortError = Self.abortError(forFTSErrno: entryErrno, path: path) {
                             await backpressure?.close()
                             continuation.finish(throwing: abortError)
@@ -331,8 +363,14 @@ final class FileScanner {
 
     // MARK: - FTS Error Policy
 
+    /// Folders and files below the root that the system will not let us read
+    /// are skipped and logged; the scan goes on without them.
+    static func skipsUnreadableEntry(ftsErrno entryErrno: Int32, level: Int) -> Bool {
+        level > 0 && (entryErrno == EACCES || entryErrno == EPERM)
+    }
+
     /// Transient per-entry failures (vanished/stale nodes) continue the scan.
-    /// Permission and other systematic errors abort so inventories stay trustworthy.
+    /// An unreadable scan root and other systematic errors abort so inventories stay trustworthy.
     static func abortError(forFTSErrno entryErrno: Int32, path: String) -> ScanError? {
         switch entryErrno {
         case ENOENT, ESTALE:

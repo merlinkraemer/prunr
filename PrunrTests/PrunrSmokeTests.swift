@@ -837,6 +837,13 @@ final class PrunrSmokeTests: XCTestCase {
         XCTAssertEqual(failedPath, "/tmp/io")
     }
 
+    func testFileScannerSkipsUnreadableEntriesBelowTheRoot() {
+        XCTAssertTrue(FileScanner.skipsUnreadableEntry(ftsErrno: EACCES, level: 1))
+        XCTAssertTrue(FileScanner.skipsUnreadableEntry(ftsErrno: EPERM, level: 3))
+        XCTAssertFalse(FileScanner.skipsUnreadableEntry(ftsErrno: EACCES, level: 0))
+        XCTAssertFalse(FileScanner.skipsUnreadableEntry(ftsErrno: EIO, level: 1))
+    }
+
     func testRecentGrowthStorySumsAllDeltasSinceBaseline() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let trackedPath = TrackedPath(
