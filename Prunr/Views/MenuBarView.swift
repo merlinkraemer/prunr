@@ -950,6 +950,13 @@ struct MenuBarView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 22, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+
                 VStack(alignment: .leading, spacing: 0) {
                     Text(title)
                         .font(.system(size: 15, weight: .semibold))
@@ -962,13 +969,6 @@ struct MenuBarView: View {
                         .padding(.top, 4)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-                if let icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 22, weight: .regular))
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                }
             }
 
             content()
