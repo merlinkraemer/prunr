@@ -72,3 +72,4 @@
 2026-10-14 orchestrator - spawn: s21 history from file dates (written-once files, first baseline only, source 'files', no labels) + orange from 5 GB, on feat/s21-recon
 - 2026-10-14 mac-queue 495319256 mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
 2026-10-14 orchestrator - landed on branch: s21 file-date history + orange 5 GB (4953192, mac-queue PASS 20261014-052309, 301 tests), installed (20261014-052958); Merlin's DB + prefs reset again (backup folder Prunr-backup-<date>)
+2026-10-14 orchestrator - decided + spawn: onboarding polish (O1 Home/Desktop/Full disk, O2 variant B, O3, O4 pill Stop), s22 on feat/s22-onboarding
