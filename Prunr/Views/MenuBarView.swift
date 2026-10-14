@@ -742,7 +742,7 @@ struct MenuBarView: View {
                             .font(.system(size: 13, weight: .medium))
                         Spacer(minLength: 0)
                     }
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(.primary)
                     .frame(height: 40)
                     .contentShape(Rectangle())
                 }
@@ -751,7 +751,11 @@ struct MenuBarView: View {
             }
 
         case .permissions:
-            onboardingCard(title: "Allow access to your files", subtitle: "So Prunr can measure every folder.") {
+            onboardingCard(
+                title: "Allow access to your files",
+                subtitle: "So Prunr can measure every folder.",
+                icon: "lock.shield"
+            ) {
                 VStack(spacing: 0) {
                     onboardingNumberedStep(1, "Open System Settings")
                     onboardingNumberedStep(2, "Allow Prunr in Full Disk Access")
@@ -941,18 +945,31 @@ struct MenuBarView: View {
     private func onboardingCard<Content: View>(
         title: String,
         subtitle: String,
+        icon: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.primary)
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
 
-            Text(subtitle)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
+                    Text(subtitle)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 22, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+            }
 
             content()
         }
