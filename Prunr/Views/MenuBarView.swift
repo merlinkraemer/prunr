@@ -36,7 +36,6 @@ struct MenuBarView: View {
     /// sit one level below it.
     @State private var showsCategoryOverview = false
     @State private var feedPage = FeedPage.feed
-    @State private var feedSlidesForward = true
     @State private var expandedFeedDays: Set<Date> = []
     @State private var feedScrollAnchor: Date? = nil
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
@@ -1326,10 +1325,8 @@ struct MenuBarView: View {
     // MARK: - Page Navigation Content
 
     private var pageNavigationContent: some View {
-        ZStack(alignment: .top) {
-            shownPage
-                .id(shownPageID)
-                .transition(PushTransition.transition(forward: feedSlidesForward))
+        PushPager(page: shownListPage, isForward: ListPage.isPush) { page in
+            listPage(for: page)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
@@ -1351,23 +1348,31 @@ struct MenuBarView: View {
         }
     }
 
-    private var shownPageID: String {
-        showsCategoryOverview ? "categories" : feedPage.id
+    private var shownListPage: ListPage {
+        showsCategoryOverview ? .categories : .feed(feedPage)
     }
 
     @ViewBuilder
-    private var shownPage: some View {
-        if showsCategoryOverview {
+    private func listPage(for page: ListPage) -> some View {
+        switch page {
+        case .categories:
             categoryListView
                 .clearOfFooter()
-        } else if let place = shownPlace, let unitRoot = place.rootPath {
+        case .feed(let feedPage):
+            feedPageView(for: feedPage)
+        }
+    }
+
+    @ViewBuilder
+    private func feedPageView(for page: FeedPage) -> some View {
+        if let place = shownPlace(for: page), let unitRoot = place.rootPath {
             PlaceContentsView(
                 category: place.category,
                 isIndexing: manager.drilldownStore.isBuilding,
                 onReveal: revealPlace,
                 loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) }
             )
-        } else if let group = shownGroup {
+        } else if let group = shownGroup(for: page) {
             ChangeGroupView(group: group, onOpenPlace: openPlace, onReveal: revealPlace)
         } else {
             changeFeedView
@@ -1430,7 +1435,7 @@ struct MenuBarView: View {
                 .transition(.identity)
         case .category, .files:
             if let category = resolvedHeaderCategory(for: screen) {
-                drillDownHeader(category: category, subcategory: resolvedHeaderSubcategory(for: screen))
+                drillDownHeader(category: category, subcategory: headerSubcategory(for: screen, in: category))
                     .transition(.identity)
             } else {
                 Color.clear
@@ -1448,6 +1453,12 @@ struct MenuBarView: View {
         }
 
         return selectedCategory.category == screenCategory.category ? selectedCategory : screenCategory
+    }
+
+    private func headerSubcategory(for screen: HeaderScreen, in category: CategoryInventoryItem) -> SubcategoryGroup? {
+        let groups = manager.subcategoryGroupsByCategory[category.category] ?? []
+        guard MenuBarManager.filesBackReturnsToSubcategories(for: category.category, groups: groups) else { return nil }
+        return resolvedHeaderSubcategory(for: screen)
     }
 
     private func resolvedHeaderSubcategory(for screen: HeaderScreen) -> SubcategoryGroup? {
@@ -1533,16 +1544,24 @@ struct MenuBarView: View {
     }
 
     private var shownGroup: ChangeGroup? {
-        guard let openGroup = feedPage.group else { return nil }
+        shownGroup(for: feedPage)
+    }
+
+    private var shownPlace: ChangeEpisode? {
+        shownPlace(for: feedPage)
+    }
+
+    private func shownGroup(for page: FeedPage) -> ChangeGroup? {
+        guard let openGroup = page.group else { return nil }
         let fresh = shownChangeFeed?.feed?.days
             .first { $0.day == openGroup.day }?
             .groups.first { $0.id == openGroup.id }
         return fresh ?? openGroup
     }
 
-    private var shownPlace: ChangeEpisode? {
-        guard let place = feedPage.place else { return nil }
-        return shownGroup?.episodes.first { $0.id == place.id } ?? place
+    private func shownPlace(for page: FeedPage) -> ChangeEpisode? {
+        guard let place = page.place else { return nil }
+        return shownGroup(for: page)?.episodes.first { $0.id == place.id } ?? place
     }
 
     private var isShowingGroup: Bool {
@@ -1563,20 +1582,9 @@ struct MenuBarView: View {
 
     private func navigateFeed(to page: FeedPage) {
         guard page != feedPage else { return }
-        slidePage(forward: page.depth > feedPage.depth) {
-            withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
-                feedPage = page
-            }
+        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+            feedPage = page
         }
-    }
-
-    private func slidePage(forward: Bool, _ change: @escaping () -> Void) {
-        guard forward != feedSlidesForward else {
-            change()
-            return
-        }
-        feedSlidesForward = forward
-        DispatchQueue.main.async(execute: change)
     }
 
     private func setShowsCategoryOverview(_ shows: Bool) {
@@ -1588,14 +1596,12 @@ struct MenuBarView: View {
             manager.isSubcategoryDrillDown = false
             manager.isDrilledDown = false
         }
-        slidePage(forward: shows) {
-            withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
-                showsCategoryOverview = shows
-                feedPage = .feed
-                highlightedStorageSegmentID = nil
-            }
-            synchronizeVisibleHeaderToCurrent()
+        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+            showsCategoryOverview = shows
+            feedPage = .feed
+            highlightedStorageSegmentID = nil
         }
+        synchronizeVisibleHeaderToCurrent()
     }
 
     private func scanErrorView(_ error: String) -> some View {

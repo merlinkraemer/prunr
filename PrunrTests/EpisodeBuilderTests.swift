@@ -863,11 +863,23 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(Set(ids).count, ids.count)
     }
 
-    func testEveryLevelPushesWithTheSameTransition() {
-        XCTAssertEqual(PushTransition.insertionEdge(forward: true), .trailing)
-        XCTAssertEqual(PushTransition.removalEdge(forward: true), .leading)
-        XCTAssertEqual(PushTransition.insertionEdge(forward: false), .leading)
-        XCTAssertEqual(PushTransition.removalEdge(forward: false), .trailing)
+    func testEveryLevelPushesWithTheSameSlide() {
+        XCTAssertEqual(PushSlide.offset(isIncoming: true, forward: true, progress: 0, width: 300), 300)
+        XCTAssertEqual(PushSlide.offset(isIncoming: false, forward: true, progress: 0, width: 300), 0)
+        XCTAssertEqual(PushSlide.offset(isIncoming: true, forward: true, progress: 1, width: 300), 0)
+        XCTAssertEqual(PushSlide.offset(isIncoming: false, forward: true, progress: 1, width: 300), -300)
+        XCTAssertEqual(PushSlide.offset(isIncoming: true, forward: false, progress: 0, width: 300), -300)
+        XCTAssertEqual(PushSlide.offset(isIncoming: false, forward: false, progress: 1, width: 300), 300)
+    }
+
+    func testDeeperPagesPushAndShallowerPagesPop() throws {
+        let day = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
+        let a = try XCTUnwrap(day.episodes.first { $0.id == "a" })
+        XCTAssertTrue(ListPage.isPush(from: .feed(.feed), to: .feed(.group(day))))
+        XCTAssertTrue(ListPage.isPush(from: .feed(.group(day)), to: .feed(.place(day, a))))
+        XCTAssertFalse(ListPage.isPush(from: .feed(.place(day, a)), to: .feed(.group(day))))
+        XCTAssertTrue(ListPage.isPush(from: .feed(.group(day)), to: .categories))
+        XCTAssertFalse(ListPage.isPush(from: .categories, to: .feed(.feed)))
     }
 
     func testContextMenuOnlyOnRowsWithAPath() {

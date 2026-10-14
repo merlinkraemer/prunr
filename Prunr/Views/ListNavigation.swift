@@ -61,20 +61,118 @@ enum FeedPage: Equatable {
     }
 }
 
-enum PushTransition {
-    static func insertionEdge(forward: Bool) -> Edge {
-        forward ? .trailing : .leading
+enum ListPage: Equatable, Identifiable {
+    case categories
+    case feed(FeedPage)
+
+    var id: String {
+        switch self {
+        case .categories: return "categories"
+        case .feed(let page): return page.id
+        }
     }
 
-    static func removalEdge(forward: Bool) -> Edge {
-        forward ? .leading : .trailing
+    static func isPush(from old: ListPage, to new: ListPage) -> Bool {
+        switch (old, new) {
+        case (_, .categories): return true
+        case (.categories, _): return false
+        case (.feed(let oldPage), .feed(let newPage)): return newPage.depth > oldPage.depth
+        }
+    }
+}
+
+enum PushSlide {
+    static func offset(isIncoming: Bool, forward: Bool, progress: CGFloat, width: CGFloat) -> CGFloat {
+        let direction: CGFloat = forward ? 1 : -1
+        return isIncoming ? direction * (1 - progress) * width : -direction * progress * width
+    }
+}
+
+struct PushPager<Page: Identifiable & Equatable, Content: View>: View {
+    let page: Page
+    let isForward: (Page, Page) -> Bool
+    @ViewBuilder let content: (Page) -> Content
+
+    @State private var shown: Page?
+    @State private var outgoing: Page?
+    @State private var forward = true
+    @State private var progress: CGFloat = 1
+    @State private var slideTask: Task<Void, Never>?
+
+    private var visiblePages: [Page] {
+        [outgoing, shown ?? page].compactMap { $0 }
     }
 
-    static func transition(forward: Bool) -> AnyTransition {
-        .asymmetric(
-            insertion: .move(edge: insertionEdge(forward: forward)),
-            removal: .move(edge: removalEdge(forward: forward))
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .top) {
+                ForEach(visiblePages) { visible in
+                    content(visible)
+                        .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+                        .offset(x: offset(of: visible, width: geometry.size.width))
+                        .transition(.identity)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+            .clipped()
+        }
+        .onChange(of: page) { old, new in
+            guard old.id != new.id else {
+                shown = new
+                return
+            }
+            slide(from: old, to: new)
+        }
+        .onDisappear(perform: settle)
+    }
+
+    private func offset(of visible: Page, width: CGFloat) -> CGFloat {
+        guard outgoing != nil else { return 0 }
+        return PushSlide.offset(
+            isIncoming: visible.id != outgoing?.id,
+            forward: forward,
+            progress: progress,
+            width: width
         )
+    }
+
+    private func slide(from old: Page, to new: Page) {
+        slideTask?.cancel()
+        withoutAnimation {
+            outgoing = old
+            shown = new
+            forward = isForward(old, new)
+            progress = 0
+        }
+        slideTask = Task { @MainActor in
+            await withCheckedContinuation { continuation in
+                RunLoop.main.perform { continuation.resume() }
+            }
+            guard !Task.isCancelled else { return }
+            withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+                progress = 1
+            }
+            try? await Task.sleep(for: .milliseconds(Int(DrilldownTransitionCoordinator.slideMilliseconds)))
+            guard !Task.isCancelled else { return }
+            withoutAnimation {
+                outgoing = nil
+            }
+        }
+    }
+
+    private func settle() {
+        slideTask?.cancel()
+        withoutAnimation {
+            outgoing = nil
+            shown = nil
+            progress = 1
+        }
+    }
+
+    private func withoutAnimation(_ change: () -> Void) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction, change)
     }
 }
 
