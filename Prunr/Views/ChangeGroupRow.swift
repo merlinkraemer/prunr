@@ -9,12 +9,16 @@ struct ChangeGroupRow: View {
     var body: some View {
         Button(action: onOpen) {
             HStack(spacing: 10) {
-                Image(systemName: group.category.icon)
-                    .font(.system(size: 15))
-                    .foregroundStyle(group.category.color)
-                    .frame(width: 18, height: 18)
+                if let iconSource = group.rowIconSource {
+                    UnitIconTile(category: group.category, source: iconSource, size: 18)
+                } else {
+                    Image(systemName: group.category.icon)
+                        .font(.system(size: 15))
+                        .foregroundStyle(group.category.color)
+                        .frame(width: 18, height: 18)
+                }
 
-                Text(group.category.displayName)
+                Text(group.rowTitle)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
@@ -43,8 +47,8 @@ struct ChangeGroupRow: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(group.category.displayName), \(spokenChangeAmount(group.netBytes))")
-        .accessibilityHint("Shows this day's changes in \(group.category.displayName)")
+        .accessibilityLabel("\(group.rowTitle), \(spokenChangeAmount(group.netBytes))")
+        .accessibilityHint(group.rowIconSource == nil ? "Shows this day's changes in \(group.category.displayName)" : "Shows what is in this place")
         .accessibilityAddTraits(.isButton)
     }
 }

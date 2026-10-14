@@ -2246,20 +2246,12 @@ final class MenuBarManager: NSObject {
         }
     }
 
-    /// Reveals the given path in Finder and activates Finder
-    func revealInFinder(path: String) {
-        let url = URL(fileURLWithPath: path)
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+    static let finderBundleIdentifier = "com.apple.finder"
 
-        // Also activate Finder to bring it to front
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NSApp.activate()
-            if let finderBundle = Bundle(url: URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")),
-               let bundleId = finderBundle.bundleIdentifier {
-                let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
-                runningApp?.activate()
-            }
-        }
+    func revealInFinder(path: String) {
+        NSApp.yieldActivation(toApplicationWithBundleIdentifier: Self.finderBundleIdentifier)
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        NSRunningApplication.runningApplications(withBundleIdentifier: Self.finderBundleIdentifier).first?.activate()
     }
 
     /// Shows a folder picker dialog for onboarding

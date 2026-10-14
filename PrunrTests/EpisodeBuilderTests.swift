@@ -889,6 +889,32 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(RowPathAction.copyPath.title, "Copy Path")
     }
 
+    func testMainListRowIsNamedAfterThePageItOpens() {
+        let solo = group([("Build files", "/Users/tester/dev/app/build")])
+        XCTAssertEqual(solo.rowTitle, "Build files")
+        XCTAssertEqual(solo.rowIconSource, .category)
+
+        let several = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
+        XCTAssertEqual(several.rowTitle, GrowthCategory.developer.displayName)
+        XCTAssertNil(several.rowIconSource)
+
+        let pathless = group([("somewhere", nil)])
+        XCTAssertEqual(pathless.rowTitle, GrowthCategory.developer.displayName)
+        XCTAssertNil(pathless.rowIconSource)
+    }
+
+    func testThePagerKeepsTheRetainedPageMountedBehindTheShownOne() {
+        struct Page: Identifiable, Equatable { let id: String }
+        let feed = Page(id: "feed")
+        let group = Page(id: "group")
+        let place = Page(id: "place")
+        XCTAssertEqual(PushSlide.mountedPages(retained: feed, outgoing: nil, shown: feed), [feed])
+        XCTAssertEqual(PushSlide.mountedPages(retained: feed, outgoing: feed, shown: group), [feed, group])
+        XCTAssertEqual(PushSlide.mountedPages(retained: feed, outgoing: nil, shown: place), [feed, place])
+        XCTAssertEqual(PushSlide.mountedPages(retained: feed, outgoing: group, shown: place), [feed, group, place])
+        XCTAssertEqual(PushSlide.mountedPages(retained: nil, outgoing: group, shown: place), [group, place])
+    }
+
     // MARK: - Signs and the storage balance
 
     func testRowAmountsReadWithSigns() {

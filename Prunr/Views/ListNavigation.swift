@@ -61,6 +61,16 @@ enum FeedPage: Equatable {
     }
 }
 
+extension ChangeGroup {
+    var rowTitle: String {
+        FeedPage.soloPlace(of: self).map(EpisodeBuilder.rowTitle(for:)) ?? category.displayName
+    }
+
+    var rowIconSource: UnitIconSource? {
+        FeedPage.soloPlace(of: self)?.iconSource
+    }
+}
+
 enum ListPage: Equatable, Identifiable {
     case categories
     case feed(FeedPage)
@@ -86,10 +96,16 @@ enum PushSlide {
         let direction: CGFloat = forward ? 1 : -1
         return isIncoming ? direction * (1 - progress) * width : -direction * progress * width
     }
+
+    static func mountedPages<Page: Identifiable>(retained: Page?, outgoing: Page?, shown: Page) -> [Page] {
+        var seen = Set<Page.ID>()
+        return Array([shown, outgoing, retained].compactMap { $0 }.filter { seen.insert($0.id).inserted }.reversed())
+    }
 }
 
 struct PushPager<Page: Identifiable & Equatable, Content: View>: View {
     let page: Page
+    var retained: Page? = nil
     let isForward: (Page, Page) -> Bool
     @ViewBuilder let content: (Page) -> Content
 
@@ -99,17 +115,25 @@ struct PushPager<Page: Identifiable & Equatable, Content: View>: View {
     @State private var progress: CGFloat = 1
     @State private var slideTask: Task<Void, Never>?
 
-    private var visiblePages: [Page] {
-        [outgoing, shown ?? page].compactMap { $0 }
+    private var mountedPages: [Page] {
+        PushSlide.mountedPages(retained: retained, outgoing: outgoing, shown: shown ?? page)
+    }
+
+    private func isVisible(_ mounted: Page) -> Bool {
+        mounted.id == (shown ?? page).id || mounted.id == outgoing?.id
     }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .top) {
-                ForEach(visiblePages) { visible in
-                    content(visible)
+                ForEach(mountedPages) { mounted in
+                    let isVisible = isVisible(mounted)
+                    content(mounted)
                         .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
-                        .offset(x: offset(of: visible, width: geometry.size.width))
+                        .offset(x: isVisible ? offset(of: mounted, width: geometry.size.width) : geometry.size.width)
+                        .opacity(isVisible ? 1 : 0)
+                        .allowsHitTesting(isVisible)
+                        .accessibilityHidden(!isVisible)
                         .transition(.identity)
                 }
             }

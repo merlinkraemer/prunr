@@ -1325,7 +1325,7 @@ struct MenuBarView: View {
     // MARK: - Page Navigation Content
 
     private var pageNavigationContent: some View {
-        PushPager(page: shownListPage, isForward: ListPage.isPush) { page in
+        PushPager(page: shownListPage, retained: .feed(.feed), isForward: ListPage.isPush) { page in
             listPage(for: page)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1777,7 +1777,7 @@ struct MenuBarView: View {
             showFooterNotice("No longer on disk")
             return
         }
-        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+        manager.revealInFinder(path: path)
     }
 
     private func showFooterNotice(_ text: String) {
