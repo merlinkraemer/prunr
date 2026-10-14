@@ -67,3 +67,4 @@
 2026-10-13 orchestrator - landed on branch: s19 drill index + fresh start (a4fda7d, mac-queue PASS 20261013-104550, 283 tests; schema v23, subcategorySnapshot dropped, journal cleared, legacy code removed; one-time index build ~2–3 min). Followup: checkpointWalTruncate runs inside a transaction → SQLite refuses (pre-existing bug)
 - 2026-10-13 mac-queue 54acf65c8 mac-install-Prunr PASS: 10-xcodegen=PASS 20-macinstall-Prunr-build=PASS 20-macinstall-Prunr-install=PASS
 2026-10-13 19:40 orchestrator - landed on branch: s20 drill UI (54acf65, mac-queue PASS 20261013-110421, 289 tests), installed (20261013-113132); Merlin's DB + prefs reset (moved to Prunr-backup-20261013-1936) for a fresh onboarding scan
+2026-10-14 orchestrator - spawn: day-one research (docs/firstrun-patterns-2026-10-14.md) + mockups P1–P4 firstrun on 'Day one' page
