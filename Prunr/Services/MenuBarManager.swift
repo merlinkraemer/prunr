@@ -1745,8 +1745,14 @@ final class MenuBarManager: NSObject {
     }
 
     nonisolated static func directFileGroup(for category: GrowthCategory, groups: [SubcategoryGroup]) -> SubcategoryGroup? {
-        guard !category.supportsSubcategories else { return nil }
-        return groups.first(where: { $0.subcategory == nil }) ?? groups.first
+        guard category.supportsSubcategories else {
+            return groups.first(where: { $0.subcategory == nil }) ?? groups.first
+        }
+        return groups.count == 1 ? groups.first : nil
+    }
+
+    nonisolated static func filesBackReturnsToSubcategories(for category: GrowthCategory, groups: [SubcategoryGroup]) -> Bool {
+        category.supportsSubcategories && directFileGroup(for: category, groups: groups) == nil
     }
 
     func openCategory(_ item: CategoryInventoryItem) {
@@ -1772,7 +1778,8 @@ final class MenuBarManager: NSObject {
     func closeDrilldownLevel() {
         guard let category = selectedInventoryCategory?.category else { return }
         withAnimationsDisabled {
-            if isSubcategoryDrillDown, selectedSubcategory != nil, category.supportsSubcategories {
+            let groups = subcategoryGroupsByCategory[category] ?? []
+            if isSubcategoryDrillDown, selectedSubcategory != nil, Self.filesBackReturnsToSubcategories(for: category, groups: groups) {
                 isSubcategoryDrillDown = false
                 selectedSubcategory = nil
             } else {

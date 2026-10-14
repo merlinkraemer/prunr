@@ -56,7 +56,18 @@ final class DrilldownNavigationTests: XCTestCase {
         let files = SubcategoryGroup(subcategory: nil, displayName: "Files", totalBytes: 10, fileCount: 2, topFiles: [])
         XCTAssertEqual(MenuBarManager.directFileGroup(for: .downloads, groups: [files])?.id, files.id)
         XCTAssertNil(MenuBarManager.directFileGroup(for: .downloads, groups: []))
-        XCTAssertNil(MenuBarManager.directFileGroup(for: .developer, groups: [files]))
+    }
+
+    func testCategoryWithOneSubcategoryOpensItsFilesDirectly() {
+        let docker = SubcategoryGroup(subcategory: .docker, displayName: "Docker", totalBytes: 10, fileCount: 1, topFiles: [])
+        let nodeModules = SubcategoryGroup(subcategory: .nodeModules, displayName: "node_modules", totalBytes: 5, fileCount: 1, topFiles: [])
+        XCTAssertEqual(MenuBarManager.directFileGroup(for: .developer, groups: [docker])?.id, docker.id)
+        XCTAssertNil(MenuBarManager.directFileGroup(for: .developer, groups: [docker, nodeModules]))
+        XCTAssertNil(MenuBarManager.directFileGroup(for: .developer, groups: []))
+
+        XCTAssertFalse(MenuBarManager.filesBackReturnsToSubcategories(for: .developer, groups: [docker]))
+        XCTAssertTrue(MenuBarManager.filesBackReturnsToSubcategories(for: .developer, groups: [docker, nodeModules]))
+        XCTAssertFalse(MenuBarManager.filesBackReturnsToSubcategories(for: .downloads, groups: [docker, nodeModules]))
     }
 
     func testEachTapSetsOneFinalSelectionAndBackGoesUpOneLevel() {
