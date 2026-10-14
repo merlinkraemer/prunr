@@ -661,6 +661,16 @@ extension DatabaseManager {
         }
     }
 
+    func deleteAllGrowthJournalBuckets() async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.write { db in
+            try db.execute(sql: "DELETE FROM growthJournalBucket")
+        }
+    }
+
     /// Adds a single entry to a snapshot (for testing/debugging)
     /// - Parameters:
     ///   - snapshotId: The snapshot ID to add the entry to

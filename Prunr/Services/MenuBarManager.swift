@@ -1090,6 +1090,17 @@ final class MenuBarManager: NSObject {
         }
     }
 
+    func clearHistory() async {
+        do {
+            try await baselineService.clearHistory()
+        } catch {
+            Self.logger.error("Failed to clear history: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        await loadInventoryFromLatestSnapshot()
+        await refreshChangeFeed()
+    }
+
     /// Applies scope changes that require deleting existing snapshots, then refreshes
     /// all visible menu-bar state so the popover reflects the new scope immediately.
     func applyScopeChanges() async throws {

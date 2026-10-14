@@ -192,6 +192,7 @@ actor GrowthJournalService {
 /// start forward and claim a short history after 30 days of watching.
 enum HistoryStart {
     static let defaultsKey = "changeHistoryStartedAt"
+    static let clearedKey = "changeHistoryClearedAt"
     static let testSuiteName = "com.prunr.tests.history-start"
 
     /// Where the start is kept. Unit tests run inside the app against
@@ -228,10 +229,25 @@ enum HistoryStart {
         defaults.object(forKey: defaultsKey) as? Date
     }
 
+    static func clear(at date: Date, defaults: UserDefaults = HistoryStart.store) {
+        restart(at: date, defaults: defaults)
+        defaults.set(date, forKey: clearedKey)
+    }
+
+    static func cleared(defaults: UserDefaults = HistoryStart.store) -> Date? {
+        defaults.object(forKey: clearedKey) as? Date
+    }
+
+    static func scanWindowKeepsResidual(windowStart: Date, defaults: UserDefaults = HistoryStart.store) -> Bool {
+        guard let cleared = cleared(defaults: defaults) else { return true }
+        return windowStart >= cleared
+    }
+
     /// Forgets the start; called when the baseline is reset and history
     /// starts over.
     static func reset(defaults: UserDefaults = HistoryStart.store) {
         defaults.removeObject(forKey: defaultsKey)
+        defaults.removeObject(forKey: clearedKey)
     }
 }
 

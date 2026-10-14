@@ -342,6 +342,68 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
+    func testClearedHistoryStaysClearedThroughTheNextScan() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrClearHistory")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+                HistoryStart.reset()
+            }
+
+            let file = tempDirectory.appendingPathComponent("blob.bin")
+            let initialBytes = 4_096
+            try Data(repeating: 0xAB, count: initialBytes).write(to: file)
+            try self.dateBeforeHistory(file)
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+
+            let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+            try await self.backdateSnapshot(s0, to: Self.wholeSecondNow().addingTimeInterval(-7_200))
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [self.journalKey(for: file): 10 * Self.mb],
+                at: Date().addingTimeInterval(-3_600)
+            )
+            try Data(repeating: 0xAB, count: initialBytes + Int(12 * Self.mb)).write(to: file)
+
+            let clearedAt = Date()
+            try await BaselineService.shared.clearHistory()
+            let afterClear = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertTrue(afterClear.isEmpty)
+            let kept = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
+            XCTAssertEqual(kept.map(\.id), [s0.id], "the baseline stays")
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(HistoryStart.stored()), clearedAt.addingTimeInterval(-1))
+
+            let s1 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+            let afterScan = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertTrue(afterScan.isEmpty, "changes from before the clear must not come back as a scan residual")
+            XCTAssertFalse(afterScan.contains { $0.source == .files }, "no file-date history after a clear")
+
+            let sizeBefore = try self.diskUsageBytes(at: file)
+            try Data(repeating: 0xAB, count: initialBytes + Int(15 * Self.mb)).write(to: file)
+            let newGrowth = try self.diskUsageBytes(at: file) - sizeBefore
+            _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+            let later = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertEqual(later.reduce(Int64(0)) { $0 + $1.deltaBytes }, newGrowth, "changes after the clear show")
+            XCTAssertFalse(later.isEmpty)
+            XCTAssertTrue(later.allSatisfy { abs(($0.observedSince ?? .distantPast).timeIntervalSince(s1.createdAt)) < 1 })
+        }
+    }
+
+    func testOnlyScanWindowsThatStartAfterTheClearKeepTheirResidual() throws {
+        let suite = "PrunrTests.HistoryClear.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let clearedAt = Date(timeIntervalSince1970: 5_000)
+
+        XCTAssertTrue(HistoryStart.scanWindowKeepsResidual(windowStart: Date(timeIntervalSince1970: 1_000), defaults: defaults))
+        HistoryStart.clear(at: clearedAt, defaults: defaults)
+        XCTAssertEqual(HistoryStart.stored(defaults: defaults), clearedAt)
+        XCTAssertFalse(HistoryStart.scanWindowKeepsResidual(windowStart: Date(timeIntervalSince1970: 4_999), defaults: defaults))
+        XCTAssertTrue(HistoryStart.scanWindowKeepsResidual(windowStart: clearedAt, defaults: defaults))
+        HistoryStart.reset(defaults: defaults)
+        XCTAssertNil(HistoryStart.cleared(defaults: defaults))
+    }
+
     /// A watch +10 MB followed by a scan that finds no change leaves a −10 MB residual.
     func testFullScanWritesNegativeResidualWhenWatcherOverCounted() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in

@@ -145,9 +145,8 @@ private struct GeneralSettingsTab: View {
     @Bindable var settingsStore: SettingsStore
     @State private var manager = MenuBarManager.shared
     @State private var checksAutomatically = MenuBarManager.shared?.automaticallyChecksForUpdates ?? false
-    @State private var showStartOverConfirmation = false
-    @State private var isStartingOver = false
-    @State private var startOverNotice = ""
+    @State private var showClearHistoryConfirmation = false
+    @State private var isClearingHistory = false
 
     private var isUpdaterAvailable: Bool {
         manager?.isUpdaterAvailable == true
@@ -166,10 +165,6 @@ private struct GeneralSettingsTab: View {
         }
         guard let lastCheck = manager.lastUpdateCheckDate else { return "Not checked yet." }
         return "Up to date. Last checked \(SettingsDates.relative(lastCheck))."
-    }
-
-    private var watchingSince: Date? {
-        SettingsDates.watchingSince(feed: manager?.changeFeed)
     }
 
     var body: some View {
@@ -213,23 +208,13 @@ private struct GeneralSettingsTab: View {
 
             Section("History") {
                 SettingsRow(
-                    title: "Prunr keeps \(GrowthJournalService.historyWindowDays) days of changes",
-                    detail: "Older days drop off the list on their own."
+                    title: "Clear history",
+                    detail: "Prunr keeps \(GrowthJournalService.historyWindowDays) days of changes. Clearing empties the list; new changes show up as they happen."
                 ) {
-                    if let watchingSince {
-                        Text(EpisodeBuilder.watchingSinceLabel(watchingSince, calendar: .current))
-                            .foregroundStyle(.secondary)
+                    Button(isClearingHistory ? "Clearing…" : "Clear…") {
+                        showClearHistoryConfirmation = true
                     }
-                }
-
-                SettingsRow(
-                    title: "Start over",
-                    detail: startOverNotice.isEmpty ? "Clears the change history. Your folder stays the same." : startOverNotice
-                ) {
-                    Button(isStartingOver ? "Starting Over…" : "Start Over…") {
-                        showStartOverConfirmation = true
-                    }
-                    .disabled(isStartingOver)
+                    .disabled(isClearingHistory)
                 }
             }
         }
@@ -239,31 +224,29 @@ private struct GeneralSettingsTab: View {
             checksAutomatically = manager?.automaticallyChecksForUpdates ?? false
         }
         .confirmationDialog(
-            "Start over?",
-            isPresented: $showStartOverConfirmation,
+            "Clear history?",
+            isPresented: $showClearHistoryConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Start Over", role: .destructive) {
-                startOver()
+            Button("Clear", role: .destructive) {
+                clearHistory()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This clears the change history. Your folder stays the same.")
+            Text("The list starts empty.")
         }
     }
 
-    private func startOver() {
-        isStartingOver = true
-        startOverNotice = ""
+    private func clearHistory() {
+        isClearingHistory = true
 
         Task {
             if let manager {
-                await manager.performReset()
+                await manager.clearHistory()
             } else {
-                try? await BaselineService.shared.resetBaseline()
+                try? await BaselineService.shared.clearHistory()
             }
-            isStartingOver = false
-            startOverNotice = "History cleared. Run a scan to start again."
+            isClearingHistory = false
         }
     }
 }
