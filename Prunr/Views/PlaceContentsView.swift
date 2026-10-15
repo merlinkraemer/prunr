@@ -111,7 +111,7 @@ struct PlaceContentsRows: View {
                 InlineStatusRow(status: status, onRetry: onRetry)
             } else {
                 ForEach(children) { child in
-                    PlaceChildRow(child: child, category: category)
+                    PlaceChildRow(child: child, category: category, onTap: { onReveal(child.path) })
                         .pathContextMenu(child.path, onShowInFinder: onReveal)
                 }
                 if hasMore {
@@ -127,8 +127,28 @@ struct PlaceContentsRows: View {
 struct PlaceChildRow: View {
     let child: PlaceChild
     let category: GrowthCategory
+    let onTap: () -> Void
+
+    @State private var isHovering = false
 
     var body: some View {
+        Button(action: onTap) {
+            content
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .help(child.path)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([displayName, countText, CategorySizes.sizeText(child.totalBytes)].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityHint("Shows it in Finder")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var content: some View {
         HStack(spacing: 10) {
             Image(systemName: child.isFolder ? "folder" : "doc")
                 .font(.system(size: 14))
@@ -158,11 +178,9 @@ struct PlaceChildRow: View {
         }
         .padding(.horizontal, 12)
         .frame(height: countText == nil ? 34 : 44)
+        .background(ListRowHoverBackground(isHovering: isHovering))
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
-        .help(child.path)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel([displayName, countText, CategorySizes.sizeText(child.totalBytes)].compactMap { $0 }.joined(separator: ", "))
     }
 
     private var displayName: String {

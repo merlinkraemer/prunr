@@ -222,6 +222,24 @@ enum RowPathAction: CaseIterable, Equatable {
     }
 }
 
+enum FinderReveal: Equatable {
+    case select(URL)
+    case open(URL)
+
+    static let iCloudDriveContainer = "com~apple~CloudDocs"
+
+    static func target(forPath path: String, isDirectory: Bool, home: String = NSHomeDirectory()) -> FinderReveal {
+        let url = URL(fileURLWithPath: path)
+        let mobileDocuments = home + "/Library/Mobile Documents/"
+        guard path.hasPrefix(mobileDocuments) else { return .select(url) }
+        let components = path.dropFirst(mobileDocuments.count).split(separator: "/")
+        let shownByICloudDrive = components.first == Substring(iCloudDriveContainer)
+            || (components.count > 2 && components[1] == "Documents")
+        if shownByICloudDrive { return .select(url) }
+        return .open(isDirectory ? url : url.deletingLastPathComponent())
+    }
+}
+
 extension View {
     @ViewBuilder
     func pathContextMenu(_ path: String?, onShowInFinder: @escaping (String) -> Void) -> some View {

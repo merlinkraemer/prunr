@@ -889,6 +889,35 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(RowPathAction.copyPath.title, "Copy Path")
     }
 
+    func testFinderSelectsOrdinaryPathsAndOpensHiddenICloudContainerFolders() {
+        let home = "/Users/tester"
+        let whatsApp = "/Users/tester/Library/Mobile Documents/57T9237FN3~net~whatsapp~WhatsApp"
+        XCTAssertEqual(
+            FinderReveal.target(forPath: "/Users/tester/dev/app/build", isDirectory: true, home: home),
+            .select(URL(fileURLWithPath: "/Users/tester/dev/app/build"))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: whatsApp + "/Accounts", isDirectory: true, home: home),
+            .open(URL(fileURLWithPath: whatsApp + "/Accounts"))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: whatsApp + "/Accounts/backup.db", isDirectory: false, home: home),
+            .open(URL(fileURLWithPath: whatsApp + "/Accounts"))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: whatsApp, isDirectory: true, home: home),
+            .open(URL(fileURLWithPath: whatsApp))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: "/Users/tester/Library/Mobile Documents/com~apple~CloudDocs/Notes.txt", isDirectory: false, home: home),
+            .select(URL(fileURLWithPath: "/Users/tester/Library/Mobile Documents/com~apple~CloudDocs/Notes.txt"))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: "/Users/tester/Library/Mobile Documents/iCloud~md~obsidian/Documents/Vault", isDirectory: true, home: home),
+            .select(URL(fileURLWithPath: "/Users/tester/Library/Mobile Documents/iCloud~md~obsidian/Documents/Vault"))
+        )
+    }
+
     func testMainListRowIsNamedAfterThePageItOpens() {
         let solo = group([("Build files", "/Users/tester/dev/app/build")])
         XCTAssertEqual(solo.rowTitle, "Build files")

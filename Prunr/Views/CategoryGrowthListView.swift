@@ -382,7 +382,7 @@ struct CategoryGrowthListView: View {
                     InlineStatusRow(status: status, onRetry: { manager.retryDrilldownRead(for: category) })
                 } else {
                     ForEach(files, id: \.path) { file in
-                        DrilldownFileRow(path: file.path, sizeBytes: file.currentSizeBytes)
+                        DrilldownFileRow(path: file.path, sizeBytes: file.currentSizeBytes, onTap: { onTapItem(file.path) })
                             .pathContextMenu(file.path, onShowInFinder: onTapItem)
                     }
                     if remainingCount > 0, let group {
@@ -579,6 +579,9 @@ private struct SupplementalInventoryRow: View {
 private struct DrilldownFileRow: View {
     let path: String
     let sizeBytes: Int64
+    let onTap: () -> Void
+
+    @State private var isHovering = false
 
     private var parentPath: String {
         let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
@@ -586,6 +589,20 @@ private struct DrilldownFileRow: View {
     }
 
     var body: some View {
+        Button(action: onTap) {
+            content
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .help(path)
+        .accessibilityHint("Shows it in Finder")
+    }
+
+    private var content: some View {
         HStack(spacing: 10) {
             Image(systemName: "doc")
                 .font(.system(size: 14))
@@ -615,9 +632,9 @@ private struct DrilldownFileRow: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 44)
+        .background(ListRowHoverBackground(isHovering: isHovering))
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
-        .help(path)
     }
 }
 

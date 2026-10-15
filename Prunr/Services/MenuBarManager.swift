@@ -2260,8 +2260,18 @@ final class MenuBarManager: NSObject {
     static let finderBundleIdentifier = "com.apple.finder"
 
     func revealInFinder(path: String) {
+        var isDirectory: ObjCBool = false
+        FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
         NSApp.yieldActivation(toApplicationWithBundleIdentifier: Self.finderBundleIdentifier)
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        switch FinderReveal.target(forPath: path, isDirectory: isDirectory.boolValue) {
+        case .select(let url):
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .open(let folder):
+            Self.logger.info("Opening hidden iCloud container folder instead of selecting: \(folder.path, privacy: .private)")
+            if !NSWorkspace.shared.open(folder) {
+                Self.logger.error("Finder could not open \(folder.path, privacy: .private)")
+            }
+        }
         NSRunningApplication.runningApplications(withBundleIdentifier: Self.finderBundleIdentifier).first?.activate()
     }
 
