@@ -131,6 +131,73 @@ extension DatabaseManager {
 
     static let drilldownIndexMigrationIdentifier = "v23_drilldown_index"
 
+    static func registerOwnerUnitsMigration(in migrator: inout DatabaseMigrator) {
+        // Migration v24: places grouped by owner. Unit keys changed (Preferences
+        // and flat Library areas collapse, vendor folders go one deeper, hidden
+        // home folders are tool units, DerivedData is found by shape) and so did
+        // the classification of user folders, hidden folders, Steam games and the
+        // Homebrew cache. History starts fresh: the journal is cleared, the
+        // changed classifications and category totals are recomputed, and the
+        // drilldown index is rebuilt in the background.
+        migrator.registerMigration(ownerUnitsMigrationIdentifier) { db in
+            let changed = try reclassifyOwnerUnitPaths(db: db)
+            if changed > 0 {
+                try db.execute(sql: "DELETE FROM workingSetCategoryTotal")
+                try db.execute(sql: """
+                    INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
+                    SELECT wse.trackedPathId, pc.category, COALESCE(SUM(wse.sizeBytes), 0) AS totalBytes,
+                           MAX(wse.updatedAt) AS updatedAt
+                    FROM workingSetEntry wse
+                    JOIN pathClassification pc ON pc.pathId = wse.pathId
+                    GROUP BY wse.trackedPathId, pc.category
+                    HAVING totalBytes > 0
+                    """)
+            }
+            try db.execute(
+                sql: """
+                    INSERT INTO workingSetIndexState (trackedPathId, state)
+                    SELECT DISTINCT trackedPathId, ? FROM workingSetCategoryTotal WHERE true
+                    ON CONFLICT(trackedPathId) DO UPDATE SET state = excluded.state
+                    """,
+                arguments: [DrilldownIndexState.building.rawValue]
+            )
+            try db.execute(sql: "DELETE FROM growthJournalBucket")
+        }
+    }
+
+    static let ownerUnitsMigrationIdentifier = "v24_owner_units"
+
+    /// Reclassifies the paths whose category the v24 rules can change: the
+    /// former "Other", Steam games, the Homebrew cache and Xcode build folders
+    /// outside Developer. Returns the number of changed rows.
+    private static func reclassifyOwnerUnitPaths(db: Database) throws -> Int {
+        let cursor = try Row.fetchCursor(db, sql: """
+            SELECT pc.pathId AS pathId, p.path AS path, pc.category AS category, pc.subcategory AS subcategory
+            FROM pathClassification pc
+            JOIN paths p ON p.id = pc.pathId
+            WHERE pc.category = 'other'
+               OR p.path LIKE '%/steamapps/common/%'
+               OR p.path LIKE '%/Library/Caches/Homebrew%'
+               OR (pc.category <> 'developer' AND (p.path LIKE '%.noindex/%' OR p.path LIKE '%/Build/Products/%'))
+            """)
+        var changes: [(pathId: Int64, category: String, subcategory: String)] = []
+        while let row = try cursor.next() {
+            guard let pathId: Int64 = row["pathId"], let path: String = row["path"] else { continue }
+            let (category, subcategory) = GrowthCategory.classify(path: path)
+            let newSubcategory = subcategory?.rawValue ?? ""
+            let oldCategory: String = row["category"] ?? ""
+            let oldSubcategory: String = row["subcategory"] ?? ""
+            if category.rawValue != oldCategory || newSubcategory != oldSubcategory {
+                changes.append((pathId, category.rawValue, newSubcategory))
+            }
+        }
+        let update = try db.makeStatement(sql: "UPDATE pathClassification SET category = ?, subcategory = ? WHERE pathId = ?")
+        for change in changes {
+            try update.execute(arguments: [change.category, change.subcategory, change.pathId])
+        }
+        return changes.count
+    }
+
     // MARK: - Delta maintenance
 
     private struct GroupRef: Hashable {

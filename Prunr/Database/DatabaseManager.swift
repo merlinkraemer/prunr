@@ -59,14 +59,12 @@ final class DatabaseManager {
         }
 
         dbPool = try DatabasePool(path: dbURL.path, configuration: config)
-        let hadDrilldownIndex = try dbPool?.read { db in
-            try Self.makeMigrator().appliedIdentifiers(db).contains(Self.drilldownIndexMigrationIdentifier)
-        } ?? false
-        let hadEarlierMigrations = try dbPool?.read { db in
-            try !Self.makeMigrator().appliedIdentifiers(db).isEmpty
-        } ?? false
+        let appliedBefore = try dbPool?.read { db in
+            try Self.makeMigrator().appliedIdentifiers(db)
+        } ?? []
+        let historyResets = [Self.drilldownIndexMigrationIdentifier, Self.ownerUnitsMigrationIdentifier]
         try runMigrations()
-        if hadEarlierMigrations, !hadDrilldownIndex {
+        if !appliedBefore.isEmpty, !historyResets.allSatisfy(appliedBefore.contains) {
             HistoryStart.restart(at: Date())
         }
         try clearWorkingSetRefreshStagingSynchronously()
@@ -550,6 +548,7 @@ final class DatabaseManager {
         }
 
         registerDrilldownIndexMigration(in: &migrator)
+        registerOwnerUnitsMigration(in: &migrator)
 
         return migrator
     }

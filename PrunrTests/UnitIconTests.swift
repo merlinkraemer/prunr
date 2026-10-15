@@ -86,7 +86,7 @@ final class UnitIconTests: XCTestCase {
         XCTAssertEqual(icon("\(lib)/Preferences/com.apple.finder.plist"), .category)
         XCTAssertEqual(icon("\(lib)/Group Containers/UBF8T346G9.Office/x"), .namedApp(name: "Office", vendor: nil))
         XCTAssertEqual(icon("\(lib)/Caches/Homebrew/downloads/a.tar.gz"), .namedApp(name: "Homebrew", vendor: nil))
-        XCTAssertEqual(icon("\(lib)/Application Support/Google/Chrome/Default/x"), .namedApp(name: "Google", vendor: nil))
+        XCTAssertEqual(icon("\(lib)/Application Support/Google/Chrome/Default/x"), .namedApp(name: "Chrome", vendor: "Google"))
     }
 
     func testDownloadFileUsesItsOwnIcon() {

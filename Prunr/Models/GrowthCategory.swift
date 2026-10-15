@@ -81,7 +81,7 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         case .applications: return "Applications"
         case .mediaAndDocuments: return "Media & Documents"
         case .downloads: return "Downloads"
-        case .cachesAndSystem: return "Caches & System"
+        case .cachesAndSystem: return "Apps & System"
         case .trash: return "Trash"
         case .other: return "Other"
         }
@@ -152,6 +152,10 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             return .downloads
         }
 
+        if isSteamGamePath(lowerPath) {
+            return .applications
+        }
+
         // High-confidence developer patterns (docker, node_modules, git, build artifacts, etc.)
         if isSpecificDeveloperPath(lowerPath, home: home) {
             return .developer
@@ -173,14 +177,27 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             return .cachesAndSystem
         }
 
-        // Fallback: files under dev project roots (~/dev, ~/projects, etc.)
-        // that didn't match any more specific category above.
         if isDevProjectPath(lowerPath, home: home) {
             return .developer
         }
 
-        return .other
+        return homeFolderCategory(lowerPath, home: home) ?? .other
     }
+
+    /// What is left in home: a hidden folder is a tool's state (Developer),
+    /// any visible folder or file is the user's (Media & Documents). Nil
+    /// outside home.
+    private static func homeFolderCategory(_ lowerPath: String, home: String) -> GrowthCategory? {
+        guard lowerPath.hasPrefix(home + "/") else { return nil }
+        let relative = lowerPath.dropFirst(home.count + 1)
+        guard let first = relative.split(separator: "/").first else { return nil }
+        return first.hasPrefix(".") ? .developer : .mediaAndDocuments
+    }
+
+    /// Home folders whose content is developer work by convention.
+    static let developerFolderNames: Set<String> = [
+        "dev", "projects", "code", "repos", "src", "workspace", "developer", "xcode", "android"
+    ]
 
     static func subcategorize(path: String, home: String? = nil) -> GrowthSubcategory? {
         let lowerPath = normalizedLowercasedPath(path)
@@ -414,6 +431,12 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
 
     private static func isBuildArtifactsPath(_ lowerPath: String, home: String) -> Bool {
         if lowerPath.contains("/deriveddata/")
+            || lowerPath.contains("/index.noindex/")
+            || lowerPath.contains("/modulecache.noindex/")
+            || lowerPath.contains("/compilationcache.noindex/")
+            || lowerPath.contains("/sdkstatcaches.noindex/")
+            || lowerPath.contains("/build/intermediates.noindex/")
+            || lowerPath.contains("/build/products/")
             || lowerPath.contains("/target/release")
             || lowerPath.contains("/target/debug")
             || lowerPath.contains("/.build/")
@@ -460,10 +483,13 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
     }
 
     private static func isDevProjectPath(_ lowerPath: String, home: String) -> Bool {
-        let devRoots = ["/dev", "/projects", "/code", "/repos", "/src"]
-            .map { home + $0 }
+        guard lowerPath.hasPrefix(home + "/") else { return false }
+        let first = lowerPath.dropFirst(home.count + 1).split(separator: "/").first.map(String.init) ?? ""
+        return developerFolderNames.contains(first)
+    }
 
-        return devRoots.contains { isUnderDirectory(lowerPath, $0) }
+    private static func isSteamGamePath(_ lowerPath: String) -> Bool {
+        lowerPath.contains("/library/application support/steam/steamapps/common/")
     }
 
     private static func isLikelyDeveloperContext(_ lowerPath: String, home: String) -> Bool {
@@ -529,7 +555,6 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         lowerPath.hasPrefix("/opt/homebrew")
             || lowerPath.hasPrefix("/usr/local/cellar")
             || lowerPath.hasPrefix("/usr/local/caskroom")
-            || lowerPath.contains("library/caches/homebrew")
     }
 
     private static func isGlobalPackagePath(_ lowerPath: String) -> Bool {

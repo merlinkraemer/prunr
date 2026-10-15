@@ -23,7 +23,7 @@ final class UnitRulesAppsTests: XCTestCase {
             ("\(lib)/Containers/com.acme.some-app/Data/x", "Some app · App data"),
             ("\(lib)/Group Containers/group.com.apple.notes/x", "Notes · Shared data"),
             ("\(lib)/Group Containers/UBF8T346G9.Office/x", "Office · Shared data"),
-            ("\(lib)/Application Support/Google/Chrome/Default/x", "Google · App data"),
+            ("\(lib)/Application Support/Google/Chrome/Default/x", "Chrome · App data"),
             ("\(lib)/Application Support/Steam/steamapps/common/Half-Life 2/hl2.exe", "Steam · Half-Life 2"),
             ("\(lib)/Application Support/Steam/config/x", "Steam · App data"),
             ("\(lib)/Mail/V10/ABCDEF/INBOX.mbox/x.emlx", "Mail · Mailboxes"),
@@ -55,7 +55,7 @@ final class UnitRulesAppsTests: XCTestCase {
     func testCoreKeysStayStable() {
         XCTAssertEqual(key("\(lib)/Caches/com.apple.Safari/a/b"), "library|\(lib)/Caches/com.apple.Safari")
         XCTAssertEqual(key("\(lib)/Containers/com.apple.mail/Data"), "library|\(lib)/Containers/com.apple.mail")
-        XCTAssertEqual(key("\(lib)/Application Support/Google/Chrome"), "library|\(lib)/Application Support/Google")
+        XCTAssertEqual(key("\(lib)/Preferences/com.apple.finder.plist"), "library|\(lib)/Preferences")
     }
 
     func testPackKeys() {

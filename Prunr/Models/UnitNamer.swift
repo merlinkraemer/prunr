@@ -268,11 +268,16 @@ extension UnitRules {
         }
     )
 
-    /// `~/Library/<Area>/<X>/...`; named by `libraryName(for:)`.
+    /// `~/Library/<Area>/<X>/...`; named by `libraryName(for:)`. Preferences and
+    /// files lying directly in an area are one unit per area; vendor folders
+    /// (`Application Support/Google/Chrome`) go one level deeper.
     static let libraryRule = UnitRule(
         kind: .library,
         resolve: { path in
             guard let relative = path.lowercasedRelative, relative.first == "library" else { return nil }
+            if relative.count >= 2, relative[1] == "preferences" { return path.homeRoot(depth: 2) }
+            if relative.count == 3 { return path.homeRoot(depth: 2) }
+            if relative.count >= 5, libraryVendors.contains(relative[2]) { return path.homeRoot(depth: 4) }
             return path.homeRoot(depth: 3)
         },
         name: { root in UnitRules.libraryName(for: root) }

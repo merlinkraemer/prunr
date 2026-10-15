@@ -36,7 +36,7 @@ extension UnitRules {
         cloudStorageRule
     ]
 
-    /// Steam game folder → "<Game>", owned by Steam.
+    /// Steam game folder → "<Game>", owned by Steam, filed under Applications.
     static let steamGameRule = UnitRule(
         kind: .steamGame,
         resolve: { path in
@@ -48,9 +48,9 @@ extension UnitRules {
         name: { root in
             let owner = UnitOwner.named("Steam")
             guard let rel = root.relative, rel.count >= 6, let game = UnitNamer.displayComponent(rel[5]) else {
-                return UnitName(title: "Games", category: root.category, icon: .steam, owner: owner)
+                return UnitName(title: "Games", category: .applications, icon: .steam, owner: owner)
             }
-            return UnitName(title: game, category: root.category, icon: .steam, owner: owner)
+            return UnitName(title: game, category: .applications, icon: .steam, owner: owner)
         }
     )
 
