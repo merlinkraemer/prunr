@@ -81,6 +81,8 @@ struct UnitPath: Sendable {
     /// Number of leading components that make up the home folder, or nil when
     /// the path is outside home.
     let homeDepth: Int?
+    /// The home folder the path was split against.
+    let home: String
 
     init(_ rawPath: String, home: String) {
         let parts = UnitPath.split(rawPath, home: home)
@@ -88,9 +90,15 @@ struct UnitPath: Sendable {
         path = "/" + parts.joined(separator: "/")
 
         let homeParts = UnitPath.split(home, home: home)
+        self.home = "/" + homeParts.joined(separator: "/")
         let isUnderHome = parts.count >= homeParts.count
             && zip(parts, homeParts).allSatisfy { $0.caseInsensitiveCompare($1) == .orderedSame }
         homeDepth = isUnderHome ? homeParts.count : nil
+    }
+
+    /// The category of this path, judged against the same home.
+    var category: GrowthCategory {
+        GrowthCategory.categorize(path: path, home: home)
     }
 
     /// Components below home, case preserved; nil when outside home.

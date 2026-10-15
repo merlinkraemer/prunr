@@ -413,8 +413,8 @@ enum EpisodeBuilder {
         let approximate = isOneGo && peakSlots.allSatisfy { isApproximateSlot($0) }
 
         let name = UnitNamer.name(forKey: first.unitKey, home: home)
-        var title = name.title
-        let detail = name.detail
+        var title = name.standaloneTitle
+        let detail = name.context
         let category = name.category
         let rootPath = UnitKey(rawValue: first.unitKey)?.rootPath
 

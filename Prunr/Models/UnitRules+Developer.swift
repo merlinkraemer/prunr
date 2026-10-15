@@ -61,7 +61,7 @@ extension UnitRules {
                   let project = strippingXcodeHash(rel[4]) else {
                 return UnitName(title: "Xcode build files", category: .developer, icon: .xcode)
             }
-            return UnitName(title: "Xcode build files · \(project)", category: .developer, icon: .xcode)
+            return UnitName(title: "Xcode build files · \(project)", shortTitle: project, category: .developer, icon: .xcode)
         }
     )
 
@@ -78,7 +78,7 @@ extension UnitRules {
             guard let area = xcodeArea(path), area.hasSuffix("devicesupport") else { return nil }
             return path.homeRoot(depth: 4)
         },
-        name: { _ in UnitName(title: "Xcode device support", category: .developer, icon: .xcode) }
+        name: { _ in UnitName(title: "Device support", category: .developer, icon: .xcode) }
     )
 
     static let xcodeSimulatorRule = UnitRule(
@@ -88,7 +88,7 @@ extension UnitRules {
                   rel[0] == "library", rel[1] == "developer", rel[2] == "coresimulator" else { return nil }
             return path.homeRoot(depth: 3)
         },
-        name: { _ in UnitName(title: "Xcode simulators", category: .developer, icon: .xcode) }
+        name: { _ in UnitName(title: "Simulators", category: .developer, icon: .xcode) }
     )
 
     /// Xcode appends a 28 letter hash to the project name ("Prunr-bkgqx..."). Nil
@@ -119,13 +119,13 @@ extension UnitRules {
             }
             return nil
         },
-        name: { _ in UnitName(title: "Docker disk", detail: dockerDetail, category: .developer, icon: .docker) }
+        name: { _ in UnitName(title: "Docker disk", context: dockerDetail, category: .developer, icon: .docker) }
     )
 
     static let colimaRule = UnitRule(
         kind: .colima,
         resolve: { path in path.lowercasedRelative?.first == ".colima" ? path.homeRoot(depth: 1) : nil },
-        name: { _ in UnitName(title: "Docker disk · Colima", detail: dockerDetail, category: .developer, icon: .docker) }
+        name: { _ in UnitName(title: "Docker disk · Colima", context: dockerDetail, category: .developer, icon: .docker) }
     )
 
     // MARK: Model stores and package caches
@@ -234,7 +234,7 @@ extension UnitRules {
                 guard let project = projectName(of: root) else {
                     return UnitName(title: orphanTitle, category: .developer)
                 }
-                return UnitName(title: "\(title) · \(project)", category: .developer)
+                return UnitName(title: "\(title) · \(project)", shortTitle: project, category: .developer)
             }
         )
     }

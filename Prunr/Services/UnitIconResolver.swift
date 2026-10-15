@@ -40,7 +40,7 @@ final class UnitIconResolver {
         if let cached = cache[source] { return cached }
         let image: NSImage?
         switch source {
-        case .category:
+        case .category, .namedApp:
             return nil
         case .app(let bundleIdentifier):
             image = lookup.applicationIcon(bundleIdentifier)
