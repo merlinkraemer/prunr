@@ -85,3 +85,4 @@
 2026-10-14 orchestrator - landed on branch: s26 Show in Finder, solo-place row titles, main list kept alive, Clear history (80debfb, mac-queue PASS 20261014-134551), installed (20261014-134942)
 2026-10-15 orchestrator - landed on branch: s27 Finder reveal for hidden iCloud containers + leaf rows open in Finder (f87558c, mac-queue PASS 20261015-060408), installed (20261015-060810); decided: group by app (plan in scratchpad app-grouping-plan.md, Q1–Q5 all rec), mockups next
 2026-10-15 orchestrator - decided: build group-by-app per docs/app-grouping-plan-2026-10-15.md (mockups r20 approved, short names A6); spawn O1–O3 logic on feat/s29-owners
+2026-10-15 orchestrator - landed on branch: s28 single-item drills open Finder (cf6b842, mac-queue PASS 20261015-061600), installed (20261015-063630)
