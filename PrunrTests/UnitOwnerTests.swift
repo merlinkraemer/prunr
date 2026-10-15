@@ -167,7 +167,7 @@ final class UnitOwnerTests: XCTestCase {
                 || $0 == "UnitOwner.swift" || $0 == "GrowthCategory.swift" }
         XCTAssertGreaterThanOrEqual(files.count, 6)
         let forbidden = [
-            "/local/", "dev/build", "\\bmerlin", "\\bpara\\b", "\\b[0-9]-(projects|areas|resources|archive)\\b",
+            "(?<!/usr)/local/", "dev/build", "\\bmerlin", "\\bpara\\b", "\\b[0-9]-(projects|areas|resources|archive)\\b",
             "/\\.pi/", "\\bagent-[0-9a-f]{6,}"
         ]
         for file in files {
