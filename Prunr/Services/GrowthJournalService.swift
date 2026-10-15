@@ -199,11 +199,7 @@ enum HistoryStart {
     /// temporary databases, so under XCTest this is a throwaway suite, emptied
     /// at launch: a test must never move the owner's real "Watching since".
     static let store: UserDefaults = {
-        let environment = ProcessInfo.processInfo.environment
-        let isTestRun = environment["XCTestConfigurationFilePath"] != nil
-            || environment["XCTestSessionIdentifier"] != nil
-            || environment["XCTestBundlePath"] != nil
-        guard isTestRun, let suite = UserDefaults(suiteName: testSuiteName) else { return .standard }
+        guard TestHost.isActive, let suite = UserDefaults(suiteName: testSuiteName) else { return .standard }
         suite.removePersistentDomain(forName: testSuiteName)
         return suite
     }()
