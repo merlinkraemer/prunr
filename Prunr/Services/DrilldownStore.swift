@@ -56,9 +56,30 @@ final class DrilldownStore {
         let shownCounts = groupsByCategory.values.joined().reduce(into: [String: Int]()) {
             $0[$1.id] = $1.topFiles.count
         }
+        let reloadCategories = loadedFileCategories
+        isBuilding = !snapshot.buildingTrackedPathIds.isEmpty
+        if isBuilding {
+            groupsByCategory = groupsByCategory.filter { reloadCategories.contains($0.key) }
+        } else {
+            ownerFileCounts = Dictionary(
+                snapshot.rows.filter { DrilldownGroupKey.isOwnerGroupKey($0.groupKey) }.map { ($0.groupKey, $0.fileCount) },
+                uniquingKeysWith: +
+            )
+            groupsByCategory = makeGroups(snapshot.rows)
+        }
+
+        loadedFileCategories = []
+        failedFileCategories = []
+        storedFilesByGroupID = [:]
+        for category in reloadCategories where isBuilding || groupsByCategory[category] != nil {
+            await loadFiles(for: category, trackedPathIds: trackedPathIds, shownCounts: shownCounts)
+        }
+    }
+
+    private func makeGroups(_ rows: [DrilldownGroupRow]) -> [GrowthCategory: [SubcategoryGroup]] {
         var groups: [GrowthCategory: [SubcategoryGroup]] = [:]
         var ownerRows: [GrowthCategory: [DrilldownGroupRow]] = [:]
-        for row in snapshot.rows where row.totalBytes > 0 {
+        for row in rows where row.totalBytes > 0 {
             if DrilldownGroupKey.isOwnerGroupKey(row.groupKey) {
                 ownerRows[row.category, default: []].append(row)
             } else {
@@ -75,24 +96,15 @@ final class DrilldownStore {
                 groups[category, default: []] += Self.ownerGroups(rows, catalog: catalog)
             }
         }
-        ownerFileCounts = Dictionary(
-            snapshot.rows.filter { DrilldownGroupKey.isOwnerGroupKey($0.groupKey) }.map { ($0.groupKey, $0.fileCount) },
-            uniquingKeysWith: +
-        )
-        groupsByCategory = groups.mapValues(Self.sorted)
-        isBuilding = !snapshot.buildingTrackedPathIds.isEmpty
-
-        let reloadCategories = loadedFileCategories
-        loadedFileCategories = []
-        failedFileCategories = []
-        storedFilesByGroupID = [:]
-        for category in reloadCategories where groupsByCategory[category] != nil {
-            await loadFiles(for: category, trackedPathIds: trackedPathIds, shownCounts: shownCounts)
-        }
+        return groups.mapValues(Self.sorted)
     }
 
     func isFilesLoaded(for category: GrowthCategory) -> Bool {
         loadedFileCategories.contains(category)
+    }
+
+    func isGroupsPending(for category: GrowthCategory) -> Bool {
+        isBuilding && !loadedFileCategories.contains(category) && !failedFileCategories.contains(category)
     }
 
     /// Loads the stored largest files of every group of a category, one read.
@@ -107,8 +119,15 @@ final class DrilldownStore {
         defer { loadingFileCategories.remove(category) }
 
         let rows: [DrilldownFileEntry]
+        var computedGroupRows: [DrilldownGroupRow]?
         do {
-            rows = try await db.fetchDrilldownTopFiles(trackedPathIds: trackedPathIds, category: category)
+            if isBuilding {
+                let contents = try await db.fetchDrilldownCategoryFromWorkingSet(trackedPathIds: trackedPathIds, category: category)
+                rows = contents.files
+                computedGroupRows = contents.rows
+            } else {
+                rows = try await db.fetchDrilldownTopFiles(trackedPathIds: trackedPathIds, category: category)
+            }
         } catch {
             logger.error("Drilldown files read failed: \(error.localizedDescription, privacy: .public)")
             if requestGeneration == generation {
@@ -116,7 +135,14 @@ final class DrilldownStore {
             }
             return
         }
-        guard requestGeneration == generation, var groups = groupsByCategory[category] else { return }
+        guard requestGeneration == generation else { return }
+        if let computedGroupRows {
+            for row in computedGroupRows where DrilldownGroupKey.isOwnerGroupKey(row.groupKey) {
+                ownerFileCounts[row.groupKey] = row.fileCount
+            }
+            groupsByCategory[category] = makeGroups(computedGroupRows)[category] ?? []
+        }
+        guard var groups = groupsByCategory[category] else { return }
         failedFileCategories.remove(category)
 
         let rowsByGroupKey = Dictionary(grouping: rows, by: \.groupKey)
