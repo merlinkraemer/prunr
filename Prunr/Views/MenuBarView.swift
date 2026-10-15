@@ -65,6 +65,7 @@ struct MenuBarView: View {
     @State private var isRefreshRequested = false
     @State private var footerNotice: String? = nil
     @State private var footerNoticeTask: Task<Void, Never>? = nil
+    @State private var feedDrillTask: Task<Void, Never>? = nil
 
     private let outsideScopeSegmentID = "outside-scan-scope"
 
@@ -1537,6 +1538,8 @@ struct MenuBarView: View {
                     expandedDays: $expandedFeedDays,
                     scrollAnchor: $feedScrollAnchor,
                     onOpenGroup: openChangeGroup,
+                    soleItemPath: soleItemPath(of:),
+                    onReveal: revealPlace,
                     onRetry: { Task { await manager.refreshChangeFeed() } }
                 )
             }
@@ -1569,11 +1572,33 @@ struct MenuBarView: View {
     }
 
     private func openChangeGroup(_ group: ChangeGroup) {
-        navigateFeed(to: feedPage.opening(group))
+        drillFeed(to: feedPage.opening(group))
     }
 
     private func openPlace(_ place: ChangeEpisode) {
-        navigateFeed(to: feedPage.opening(place))
+        drillFeed(to: feedPage.opening(place))
+    }
+
+    private func drillFeed(to page: FeedPage) {
+        guard page != feedPage, let unitRoot = page.place?.rootPath else {
+            navigateFeed(to: page)
+            return
+        }
+        feedDrillTask?.cancel()
+        feedDrillTask = Task {
+            let solePath = await manager.soleItemPath(unitRoot: unitRoot)
+            guard !Task.isCancelled else { return }
+            if let solePath {
+                revealPlace(solePath)
+            } else {
+                navigateFeed(to: page)
+            }
+        }
+    }
+
+    private func soleItemPath(of group: ChangeGroup) async -> String? {
+        guard let unitRoot = FeedPage.soloPlace(of: group)?.rootPath else { return nil }
+        return await manager.soleItemPath(unitRoot: unitRoot)
     }
 
     private func navigateFeedBack() {
@@ -2051,7 +2076,7 @@ struct MenuBarView: View {
         withTransaction(transaction) {
             highlightedStorageSegmentID = segmentID
         }
-        manager.openCategory(item)
+        manager.drillIntoCategory(item, reveal: revealPlace)
     }
 
 }

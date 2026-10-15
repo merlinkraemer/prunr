@@ -1759,7 +1759,7 @@ final class MenuBarManager: NSObject {
         guard category.supportsSubcategories else {
             return groups.first(where: { $0.subcategory == nil }) ?? groups.first
         }
-        return groups.count == 1 ? groups.first : nil
+        return SoloDrill.step(rows: groups.map { _ in .branch }, hasMore: false) == .skip ? groups.first : nil
     }
 
     nonisolated static func filesBackReturnsToSubcategories(for category: GrowthCategory, groups: [SubcategoryGroup]) -> Bool {
@@ -1775,6 +1775,47 @@ final class MenuBarManager: NSObject {
             isDrilledDown = true
         }
         prefetchDrilldownFiles(for: item.category)
+    }
+
+    func drillIntoCategory(_ item: CategoryInventoryItem, reveal: @escaping (String) -> Void) {
+        let fileGroup = Self.directFileGroup(for: item.category, groups: subcategoryGroupsByCategory[item.category] ?? [])
+        revealSoleFile(of: fileGroup, in: item.category, reveal: reveal) { [weak self] in
+            self?.openCategory(item)
+        }
+    }
+
+    func drillIntoSubcategory(_ group: SubcategoryGroup, reveal: @escaping (String) -> Void) {
+        guard let category = selectedInventoryCategory?.category else { return }
+        revealSoleFile(of: group, in: category, reveal: reveal) { [weak self] in
+            self?.openSubcategory(group)
+        }
+    }
+
+    private func revealSoleFile(
+        of group: SubcategoryGroup?,
+        in category: GrowthCategory,
+        reveal: @escaping (String) -> Void,
+        orOpen open: @escaping () -> Void
+    ) {
+        guard let group, group.fileCount == 1 else {
+            open()
+            return
+        }
+        Task {
+            await drilldownStore.loadFiles(for: category, trackedPathIds: enabledTrackedPathIDs())
+            let loaded = drilldownFileGroup(group, in: category)
+            let hasMore = CategorySizes.remainingFileCount(loaded) > 0
+            if let path = SoloDrill.revealPath(leaves: loaded.topFiles.map(\.path), hasMore: hasMore) {
+                reveal(path)
+            } else {
+                open()
+            }
+        }
+    }
+
+    func soleItemPath(unitRoot: String) async -> String? {
+        guard !drilldownStore.isBuilding, let page = try? await loadPlaceContents(unitRoot: unitRoot) else { return nil }
+        return SoloDrill.revealPath(leaves: page.children.map(\.path), hasMore: page.hasMore)
     }
 
     func openSubcategory(_ group: SubcategoryGroup) {

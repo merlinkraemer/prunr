@@ -56,8 +56,37 @@ enum FeedPage: Equatable {
     }
 
     static func soloPlace(of group: ChangeGroup) -> ChangeEpisode? {
-        guard group.episodes.count == 1, let place = group.episodes.first, opensContents(place) else { return nil }
-        return place
+        let rows = group.episodes.map { opensContents($0) ? SoloDrill.Row.branch : .inert }
+        guard SoloDrill.step(rows: rows, hasMore: false) == .skip else { return nil }
+        return group.episodes.first
+    }
+}
+
+enum SoloDrill {
+    enum Row: Equatable {
+        case leaf(String)
+        case branch
+        case inert
+    }
+
+    enum Step: Equatable {
+        case push
+        case skip
+        case reveal(String)
+    }
+
+    static func step(rows: [Row], hasMore: Bool) -> Step {
+        guard rows.count == 1, !hasMore, let row = rows.first else { return .push }
+        switch row {
+        case .leaf(let path): return .reveal(path)
+        case .branch: return .skip
+        case .inert: return .push
+        }
+    }
+
+    static func revealPath(leaves: [String], hasMore: Bool) -> String? {
+        guard case .reveal(let path) = step(rows: leaves.map(Row.leaf), hasMore: hasMore) else { return nil }
+        return path
     }
 }
 

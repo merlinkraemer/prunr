@@ -52,6 +52,25 @@ final class DrilldownNavigationTests: XCTestCase {
         XCTAssertEqual(InlineStatus.empty.text, "No files found")
     }
 
+    func testSingleRowPagesAreSkippedOrRevealedAndOthersPush() {
+        XCTAssertEqual(SoloDrill.step(rows: [], hasMore: false), .push)
+        XCTAssertEqual(SoloDrill.step(rows: [.leaf("/a")], hasMore: false), .reveal("/a"))
+        XCTAssertEqual(SoloDrill.step(rows: [.leaf("/a")], hasMore: true), .push)
+        XCTAssertEqual(SoloDrill.step(rows: [.leaf("/a"), .leaf("/b")], hasMore: false), .push)
+        XCTAssertEqual(SoloDrill.step(rows: [.branch], hasMore: false), .skip)
+        XCTAssertEqual(SoloDrill.step(rows: [.branch], hasMore: true), .push)
+        XCTAssertEqual(SoloDrill.step(rows: [.branch, .branch], hasMore: false), .push)
+        XCTAssertEqual(SoloDrill.step(rows: [.inert], hasMore: false), .push)
+    }
+
+    func testOnlyASingleCompleteLeafPageRevealsItsItem() {
+        let whatsApp = "/Users/tester/Library/Mobile Documents/57T9237FN3~net~whatsapp~WhatsApp/Accounts"
+        XCTAssertEqual(SoloDrill.revealPath(leaves: [whatsApp], hasMore: false), whatsApp)
+        XCTAssertNil(SoloDrill.revealPath(leaves: [whatsApp], hasMore: true))
+        XCTAssertNil(SoloDrill.revealPath(leaves: [whatsApp, "/b"], hasMore: false))
+        XCTAssertNil(SoloDrill.revealPath(leaves: [], hasMore: false))
+    }
+
     func testCategoryWithoutSubcategoriesOpensItsFilesDirectly() {
         let files = SubcategoryGroup(subcategory: nil, displayName: "Files", totalBytes: 10, fileCount: 2, topFiles: [])
         XCTAssertEqual(MenuBarManager.directFileGroup(for: .downloads, groups: [files])?.id, files.id)
