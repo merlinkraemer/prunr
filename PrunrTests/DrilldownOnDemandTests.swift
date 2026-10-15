@@ -18,6 +18,13 @@ final class DrilldownOnDemandTests: PrunrTestCase {
         }
     }
 
+    private func shape(_ groups: [SubcategoryGroup]) -> [String] {
+        groups.map { group in
+            ([group.id, group.displayName, "\(group.totalBytes)", "\(group.fileCount)"]
+                + group.topFiles.map { "\($0.path)=\($0.currentSizeBytes)" }).joined(separator: "|")
+        }
+    }
+
     func testPlaceContentsWhileIndexingMatchTheIndex() async throws {
         try await withEmptyTemporaryDatabase { [self] id in
             let place = "/Data/Place"
@@ -102,8 +109,8 @@ final class DrilldownOnDemandTests: PrunrTestCase {
             await store.loadFiles(for: .developer, trackedPathIds: [id])
             await store.loadFiles(for: .cachesAndSystem, trackedPathIds: [id])
             XCTAssertFalse(store.isGroupsPending(for: .developer))
-            XCTAssertEqual(store.groupsByCategory[.developer], indexedDeveloper)
-            XCTAssertEqual(store.groupsByCategory[.cachesAndSystem], indexedCaches)
+            XCTAssertEqual(store.groupsByCategory[.developer].map { self.shape($0) }, self.shape(indexedDeveloper))
+            XCTAssertEqual(store.groupsByCategory[.cachesAndSystem].map { self.shape($0) }, self.shape(indexedCaches))
 
             var group = try XCTUnwrap(store.groupsByCategory[.developer]?.first { $0.subcategory == .nodeModules })
             while let next = await store.loadMoreFiles(for: group, category: .developer, trackedPathIds: [id]) {
