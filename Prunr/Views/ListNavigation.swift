@@ -236,7 +236,7 @@ enum FinderReveal: Equatable {
         let shownByICloudDrive = components.first == Substring(iCloudDriveContainer)
             || (components.count > 2 && components[1] == "Documents")
         if shownByICloudDrive { return .select(url) }
-        return .open(isDirectory ? url : url.deletingLastPathComponent())
+        return .open(isDirectory ? url : URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
     }
 }
 
