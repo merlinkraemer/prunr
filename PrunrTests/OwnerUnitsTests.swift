@@ -70,7 +70,7 @@ final class OwnerUnitsTests: PrunrTestCase {
             ("\(home)/.local/state/opencode/x", "tool|\(home)/.local/state/opencode", "Opencode data"),
             ("\(home)/.config/gh/hosts.yml", "tool|\(home)/.config/gh", "gh data"),
             ("\(home)/.local/bin/uv", "tool|\(home)/.local/bin", "bin data"),
-            ("\(home)/.nvm/versions/node/v20/lib/node_modules/x", "tool|\(home)/.nvm", "Nvm data")
+            ("\(home)/.nvm/versions/node/v20/lib/node_modules/x", "tool|\(home)/.nvm", "nvm data")
         ]
         for (path, expectedKey, title) in cases {
             XCTAssertEqual(key(path), expectedKey, path)
