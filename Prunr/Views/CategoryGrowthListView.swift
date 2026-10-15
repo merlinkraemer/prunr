@@ -409,12 +409,12 @@ struct CategoryGrowthListView: View {
 
     private func selectCategory(_ item: CategoryInventoryItem) {
         guard canNavigate else { return }
-        manager.openCategory(item)
+        manager.drillIntoCategory(item, reveal: onTapItem)
     }
 
     private func selectSubcategory(_ group: SubcategoryGroup) {
         guard canNavigate else { return }
-        manager.openSubcategory(group)
+        manager.drillIntoSubcategory(group, reveal: onTapItem)
     }
 
     private func loadMoreFiles(of group: SubcategoryGroup) {

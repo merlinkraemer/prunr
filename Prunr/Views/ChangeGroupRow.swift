@@ -3,8 +3,11 @@ import SwiftUI
 struct ChangeGroupRow: View {
     let group: ChangeGroup
     let onOpen: () -> Void
+    var soleItemPath: (@MainActor () async -> String?)? = nil
+    var onReveal: (String) -> Void = { _ in }
 
     @State private var isHovering = false
+    @State private var resolvedSoleItemPath: String?
 
     var body: some View {
         Button(action: onOpen) {
@@ -48,8 +51,17 @@ struct ChangeGroupRow: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(group.rowTitle), \(spokenChangeAmount(group.netBytes))")
-        .accessibilityHint(group.rowIconSource == nil ? "Shows this day's changes in \(group.category.displayName)" : "Shows what is in this place")
+        .accessibilityHint(accessibilityHint)
         .accessibilityAddTraits(.isButton)
+        .pathContextMenu(resolvedSoleItemPath, onShowInFinder: onReveal)
+        .task(id: group) {
+            resolvedSoleItemPath = await soleItemPath?()
+        }
+    }
+
+    private var accessibilityHint: String {
+        if resolvedSoleItemPath != nil { return "Shows it in Finder" }
+        return group.rowIconSource == nil ? "Shows this day's changes in \(group.category.displayName)" : "Shows what is in this place"
     }
 }
 
