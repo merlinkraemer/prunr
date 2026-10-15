@@ -33,7 +33,6 @@ actor DatabaseCleanupService {
     private static let appVersionKey = "appLastLaunchedVersion"
     private static let startupCleanupTimestampKey = "databaseLastStartupCleanupAt"
     private static let startupCleanupInterval: TimeInterval = 12 * 60 * 60
-    private static let startupAggressiveDbSizeBytes: Int64 = 400 * 1024 * 1024
     private static let startupAggressiveWalSizeBytes: Int64 = 32 * 1024 * 1024
     private static let startupInitialDelay: TimeInterval = 2 * 60
     private static let startupIdlePollInterval: TimeInterval = 5
@@ -82,8 +81,6 @@ actor DatabaseCleanupService {
     /// Keeps only the latest full raw snapshot payload per tracked path.
     func performAutoCleanup() async {
         do {
-            let storageBefore = await databaseStorageStats()
-
             // First pass: aggregate category totals for snapshots about to lose their entries
             try await aggregateCategoryTotalsForOldSnapshots()
 
@@ -98,7 +95,7 @@ actor DatabaseCleanupService {
 
             let reclaimedRows = entriesDeleted > 0 || pathsDeleted > 0 || snapshotsDeleted > 0
             let storageAfterCleanup = await databaseStorageStats()
-            if reclaimedRows && shouldVacuumNow(before: storageBefore, after: storageAfterCleanup) {
+            if reclaimedRows && shouldVacuumNow(storageAfterCleanup) {
                 try await db.checkpointWalTruncate()
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
                 try await vacuumDatabase()
@@ -112,13 +109,49 @@ actor DatabaseCleanupService {
         }
     }
 
-    /// Performs startup maintenance to keep app data lean between app versions.
-    /// Runs a standard cleanup pass and optionally forces WAL checkpoint/vacuum
-    /// when version changes or database size grows beyond thresholds.
-    ///
-    /// Abandoned-snapshot cleanup always runs once the app is idle so launch
-    /// cannot race an in-flight scan. Broader maintenance still respects the
-    /// interval / size gates.
+    struct StartupMaintenancePlan: Equatable, Sendable {
+        let runCleanup: Bool
+        let checkpoint: Bool
+        let vacuum: Bool
+    }
+
+    static func startupMaintenancePlan(
+        versionChanged: Bool,
+        walBytes: Int64,
+        freelistBytes: Int64,
+        freelistRatio: Double,
+        lastCleanupAt: TimeInterval,
+        lastCheckpointAt: TimeInterval,
+        lastVacuumAt: TimeInterval,
+        now: TimeInterval
+    ) -> StartupMaintenancePlan {
+        let cleanupDue = lastCleanupAt == 0 || now - lastCleanupAt >= startupCleanupInterval
+        let largeWal = walBytes >= startupAggressiveWalSizeBytes
+        let vacuum = vacuumWorthwhile(
+            freelistBytes: freelistBytes,
+            freelistRatio: freelistRatio,
+            lastVacuumAt: lastVacuumAt,
+            now: now
+        )
+        let checkpointDue = lastCheckpointAt == 0 || now - lastCheckpointAt >= checkpointInterval
+        return StartupMaintenancePlan(
+            runCleanup: cleanupDue || versionChanged || largeWal,
+            checkpoint: vacuum || versionChanged || largeWal || checkpointDue,
+            vacuum: vacuum
+        )
+    }
+
+    static func vacuumWorthwhile(
+        freelistBytes: Int64,
+        freelistRatio: Double,
+        lastVacuumAt: TimeInterval,
+        now: TimeInterval
+    ) -> Bool {
+        guard lastVacuumAt == 0 || now - lastVacuumAt >= vacuumInterval else { return false }
+        return freelistRatio >= minimumVacuumReclaimRatio
+            && freelistBytes >= minimumVacuumReclaimBytes
+    }
+
     func performStartupMaintenance() async {
         guard !isStartupMaintenanceRunning else { return }
         isStartupMaintenanceRunning = true
@@ -144,28 +177,21 @@ actor DatabaseCleanupService {
         let lastVersion = UserDefaults.standard.string(forKey: Self.appVersionKey)
         let versionChanged = lastVersion != appVersion
 
-        let now = Date().timeIntervalSince1970
-        let lastCleanup = UserDefaults.standard.double(forKey: Self.startupCleanupTimestampKey)
-        let shouldRun = lastCleanup == 0 || now - lastCleanup >= Self.startupCleanupInterval
-
-        let sizes = databaseFileSizes()
-        let shouldAggressiveCleanup = versionChanged
-            || sizes.dbBytes >= Self.startupAggressiveDbSizeBytes
-            || sizes.walBytes >= Self.startupAggressiveWalSizeBytes
-
-        guard shouldRun || shouldAggressiveCleanup else { return }
+        let initialPlan = await currentStartupPlan(versionChanged: versionChanged)
+        guard initialPlan.runCleanup else { return }
 
         _ = try? await backfillRecentCategorySnapshots()
         await performAutoCleanup()
 
+        let plan = await currentStartupPlan(versionChanged: versionChanged)
         do {
-            if shouldAggressiveCleanup {
-                try await db.checkpointWalTruncate()
-                try await vacuumDatabase()
-                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.vacuumTimestampKey)
-            } else if shouldCheckpointNow() {
+            if plan.checkpoint {
                 try await db.checkpointWalTruncate()
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
+            }
+            if plan.vacuum, await !isAppBusy() {
+                try await vacuumDatabase()
+                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.vacuumTimestampKey)
             }
         } catch {
             logger.error("Startup maintenance failed: \(error.localizedDescription, privacy: .public)")
@@ -272,22 +298,28 @@ actor DatabaseCleanupService {
         )
     }
 
-    private func shouldVacuumNow() -> Bool {
-        let last = UserDefaults.standard.double(forKey: Self.vacuumTimestampKey)
-        guard last > 0 else { return true }
-        return Date().timeIntervalSince1970 - last >= Self.vacuumInterval
+    private func shouldVacuumNow(_ stats: StorageStats) -> Bool {
+        Self.vacuumWorthwhile(
+            freelistBytes: stats.freelistBytes,
+            freelistRatio: stats.freelistRatio,
+            lastVacuumAt: UserDefaults.standard.double(forKey: Self.vacuumTimestampKey),
+            now: Date().timeIntervalSince1970
+        )
     }
 
-    private func shouldVacuumNow(before: StorageStats, after: StorageStats) -> Bool {
-        guard shouldVacuumNow() else { return false }
-
-        let reclaimedBytes = max(0, before.dbBytes - after.dbBytes) + after.freelistBytes
-        if reclaimedBytes >= Self.minimumVacuumReclaimBytes {
-            return true
-        }
-
-        return after.freelistRatio >= Self.minimumVacuumReclaimRatio
-            && after.dbBytes >= Self.startupAggressiveDbSizeBytes
+    private func currentStartupPlan(versionChanged: Bool) async -> StartupMaintenancePlan {
+        let stats = await databaseStorageStats()
+        let defaults = UserDefaults.standard
+        return Self.startupMaintenancePlan(
+            versionChanged: versionChanged,
+            walBytes: stats.walBytes,
+            freelistBytes: stats.freelistBytes,
+            freelistRatio: stats.freelistRatio,
+            lastCleanupAt: defaults.double(forKey: Self.startupCleanupTimestampKey),
+            lastCheckpointAt: defaults.double(forKey: Self.checkpointTimestampKey),
+            lastVacuumAt: defaults.double(forKey: Self.vacuumTimestampKey),
+            now: Date().timeIntervalSince1970
+        )
     }
 
     private func currentAppVersion() -> String {
@@ -398,6 +430,7 @@ actor DatabaseCleanupService {
                 || manager.isCleaningUp
                 || manager.isReconciling
                 || manager.isInventoryRefreshInProgress
+                || manager.isUpdatingDrilldownIndex
         }
     }
 
