@@ -12,7 +12,7 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Review feat/s29-combined (s24–s28 UI + owner logic O1–O3, v24 migration) on the Mac; then O4–O5 UI — rec: review names, then go O4–O5 — branch: feat/s29-combined
+1. Review feat/s30-owner-ui (s24–s28 drill fixes + group by app O1–O5, v24/v25 migrations) on the Mac, then merge to main — rec: review, then merge — branch: feat/s30-owner-ui
 4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
 2. WAL checkpoint runs inside a transaction (SQLite refuses) — pre-existing bug — rec: fix next — branch: none
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
