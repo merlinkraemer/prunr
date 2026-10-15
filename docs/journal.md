@@ -88,3 +88,4 @@
 2026-10-15 orchestrator - landed on branch: s28 single-item drills open Finder (cf6b842, mac-queue PASS 20261015-061600), installed (20261015-063630)
 2026-10-15 orchestrator - landed on branch: s29 owner logic O1–O3 (e010f46, PASS 20261015-070128, 357 tests) + s28 combined as feat/s29-combined (2649cf0, PASS 20261015-070630), installed; v24 migration clears journal
 2026-10-15 orchestrator - landed on branch: s30 owner UI O4–O5 (89fbd70, mac-queue PASS 20261015-084728), installed (20261015-085257)
+2026-10-15 orchestrator - merged feat/s30-owner-ui into main locally (baa0d96), not pushed; found: unit-test host opens the real DB and locks Merlin's app — fix spawned
