@@ -83,3 +83,4 @@
 2026-10-14 orchestrator - landed on branch: s24 drill fixes (62828ba, mac-queue PASS 20261014-101348, 313 tests; root cause: nested if/else page branches with differing transitions → single shownPage + PushTransition), installed
 2026-10-14 orchestrator - landed on branch: s25 drill push pager + skipped-level category title (13ae10b, mac-queue PASS 20261014-121708), installed (20261014-122304)
 2026-10-14 orchestrator - landed on branch: s26 Show in Finder, solo-place row titles, main list kept alive, Clear history (80debfb, mac-queue PASS 20261014-134551), installed (20261014-134942)
+2026-10-15 orchestrator - landed on branch: s27 Finder reveal for hidden iCloud containers + leaf rows open in Finder (f87558c, mac-queue PASS 20261015-060408), installed (20261015-060810); decided: group by app (plan in scratchpad app-grouping-plan.md, Q1–Q5 all rec), mockups next
