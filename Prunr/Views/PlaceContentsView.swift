@@ -55,6 +55,7 @@ final class PlaceContentsModel {
 
 struct PlaceContentsView: View {
     let category: GrowthCategory
+    let caption: String?
     let isIndexing: Bool
     let onReveal: (String) -> Void
 
@@ -62,11 +63,13 @@ struct PlaceContentsView: View {
 
     init(
         category: GrowthCategory,
+        caption: String? = nil,
         isIndexing: Bool,
         onReveal: @escaping (String) -> Void,
         loader: @escaping PlaceContentsModel.Loader
     ) {
         self.category = category
+        self.caption = caption
         self.isIndexing = isIndexing
         self.onReveal = onReveal
         _model = State(initialValue: PlaceContentsModel(loader: loader))
@@ -76,6 +79,7 @@ struct PlaceContentsView: View {
         ScrollView {
             PlaceContentsRows(
                 category: category,
+                caption: caption,
                 children: model.children,
                 status: model.inlineStatus(isIndexing: isIndexing),
                 hasMore: model.hasMore,
@@ -97,6 +101,7 @@ struct PlaceContentsView: View {
 
 struct PlaceContentsRows: View {
     let category: GrowthCategory
+    var caption: String? = nil
     let children: [PlaceChild]
     let status: InlineStatus?
     let hasMore: Bool
@@ -107,6 +112,18 @@ struct PlaceContentsRows: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let caption {
+                Text(caption)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 4)
+                    .padding(.bottom, 4)
+                    .help(caption)
+            }
             if let status {
                 InlineStatusRow(status: status, onRetry: onRetry)
             } else {

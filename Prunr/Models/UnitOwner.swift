@@ -13,12 +13,14 @@ enum UnitOwner: Hashable, Sendable {
     /// macOS itself: flat Library areas, Preferences, Apple daemons.
     case system
 
+    static let categoryKeyPrefix = "category:"
+
     /// Stable grouping key: owners with the same key are one owner.
     var key: String {
         switch self {
         case .app(let id): return "app:\(id.lowercased())"
         case .named(let name, _): return "name:\(name.lowercased())"
-        case .category(let category): return "category:\(category.rawValue)"
+        case .category(let category): return Self.categoryKeyPrefix + category.rawValue
         case .system: return "system"
         }
     }

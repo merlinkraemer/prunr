@@ -24,7 +24,10 @@ struct JournalSlot: Sendable, Equatable {
 /// One row: a place that gained or lost another 1 GB since its last row.
 struct ChangeEpisode: Identifiable, Equatable, Sendable {
     let id: String
+    /// What the place is, read inside its owner: "Cache", "Celeste",
+    /// "Xcode build files · Weatherly".
     let title: String
+    /// More about the place for the contents page's caption; never on the row.
     let detail: String?
     let category: GrowthCategory
     /// Unit root to reveal in Finder; nil when the key has no root.
@@ -46,11 +49,39 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// The caption then reads "a little each day since Fri 2 Oct".
     var buildingSince: Date?
 
-    /// Where the row's icon comes from.
+    /// Where the place's own icon comes from.
     var iconSource: UnitIconSource = .category
+
+    /// What survives when the title does not fit: the user-chosen part
+    /// ("Weatherly", "ubuntu.iso"). Nil when the title itself is that.
+    var shortTitle: String?
+
+    /// Who the place belongs to; nil for a place its category owns.
+    var unitOwner: UnitOwner?
+
+    /// The owner as the list shows it, set by `resolvingOwner(with:)`.
+    var resolvedOwner: ResolvedOwner?
 
     /// Orange in the list: growth of at least `largeGrowthBytes`.
     var isLargeGrowth: Bool { EpisodeBuilder.isLargeGrowth(netBytes) }
+
+    var owner: ResolvedOwner {
+        resolvedOwner ?? AppCatalog.empty.resolve(unitOwner ?? .category(category))
+    }
+
+    /// The row's icon: the owner app's icon for an app's place, else the
+    /// place's own (Xcode for build files, Finder's icon for a plain folder).
+    var rowIconSource: UnitIconSource {
+        guard unitOwner?.isApp == true else { return iconSource }
+        guard owner.icon != .category else { return rootPath.map { .file(path: $0) } ?? iconSource }
+        return owner.icon
+    }
+
+    func resolvingOwner(with catalog: AppCatalog) -> ChangeEpisode {
+        var resolved = self
+        resolved.resolvedOwner = catalog.resolve(unitOwner ?? .category(category))
+        return resolved
+    }
 }
 
 struct ChangeFeedDay: Identifiable, Equatable, Sendable {
@@ -59,26 +90,49 @@ struct ChangeFeedDay: Identifiable, Equatable, Sendable {
     /// Newest first.
     let episodes: [ChangeEpisode]
 
-    /// One group per category with rows this day, biggest change first.
+    /// One group per owner (an app, System or a category) with rows this
+    /// day, biggest change first.
     var groups: [ChangeGroup] {
-        Dictionary(grouping: episodes, by: \.category)
-            .map { ChangeGroup(day: day, category: $0.key, episodes: $0.value) }
+        Dictionary(grouping: episodes, by: \.owner.key)
+            .compactMap { _, rows in
+                rows.first.map { ChangeGroup(day: day, owner: $0.owner, episodes: rows) }
+            }
             .sorted { lhs, rhs in
                 let lhsSize = abs(lhs.netBytes)
                 let rhsSize = abs(rhs.netBytes)
-                return lhsSize == rhsSize ? lhs.category.rawValue < rhs.category.rawValue : lhsSize > rhsSize
+                return lhsSize == rhsSize ? lhs.owner.key < rhs.owner.key : lhsSize > rhsSize
             }
     }
 }
 
-/// One category's rows on one day: a main-list row that opens them.
+/// One owner's rows on one day: a main-list row that opens them.
 struct ChangeGroup: Identifiable, Equatable, Sendable {
     let day: Date
+    let owner: ResolvedOwner
+    /// The category whose symbol stands in for an icon: the owner category,
+    /// or the category of the owner's biggest change.
     let category: GrowthCategory
     /// Newest first.
     let episodes: [ChangeEpisode]
 
-    var id: String { "\(category.rawValue)@\(Int64(day.timeIntervalSince1970))" }
+    init(day: Date, owner: ResolvedOwner, episodes: [ChangeEpisode]) {
+        self.day = day
+        self.owner = owner
+        self.episodes = episodes
+        category = episodes.max { abs($0.netBytes) < abs($1.netBytes) }?.category ?? .other
+    }
+
+    init(day: Date, category: GrowthCategory, episodes: [ChangeEpisode]) {
+        self.day = day
+        owner = AppCatalog.empty.resolve(.category(category))
+        self.category = category
+        self.episodes = episodes
+    }
+
+    var id: String { "\(owner.key)@\(Int64(day.timeIntervalSince1970))" }
+
+    /// True for an app or System: the row always reads the owner's name.
+    var isNamedOwner: Bool { !owner.isCategory }
 
     var netBytes: Int64 { episodes.reduce(Int64(0)) { $0 + $1.netBytes } }
 
@@ -90,7 +144,7 @@ struct ChangeGroup: Identifiable, Equatable, Sendable {
 /// grouped by day, and this week's measured total for the header.
 struct ChangeFeed: Equatable, Sendable {
     /// Days with rows, newest first.
-    let days: [ChangeFeedDay]
+    var days: [ChangeFeedDay]
     /// Net change of everything this week (today and the six days before),
     /// whether it earned a row or not. The header's number.
     let weekNetBytes: Int64
@@ -106,6 +160,23 @@ struct ChangeFeed: Equatable, Sendable {
 
     /// Every row, newest day first.
     var episodes: [ChangeEpisode] { days.flatMap(\.episodes) }
+
+    /// The bundle ids of the app owners in the list, for `AppCatalogProvider`.
+    var ownerAppIdentifiers: [String] {
+        Set(episodes.compactMap { episode -> String? in
+            guard case .app(let id)? = episode.unitOwner else { return nil }
+            return id
+        }).sorted()
+    }
+
+    /// The list with every row's owner named by `catalog`.
+    func resolvingOwners(with catalog: AppCatalog) -> ChangeFeed {
+        var feed = self
+        feed.days = days.map { day in
+            ChangeFeedDay(day: day.day, episodes: day.episodes.map { $0.resolvingOwner(with: catalog) })
+        }
+        return feed
+    }
 
     var hasRows: Bool { !days.isEmpty }
 
@@ -242,7 +313,8 @@ enum EpisodeBuilder {
         now: Date,
         calendar: Calendar,
         home: String = UnitResolver.defaultHome,
-        watchingSince: Date? = nil
+        watchingSince: Date? = nil,
+        catalog: AppCatalog = .empty
     ) -> ChangeFeed {
         let oldestDay = windowStart(now: now, calendar: calendar)
         let weekStart = GrowthJournalService.weekStart(now: now, calendar: calendar)
@@ -310,7 +382,7 @@ enum EpisodeBuilder {
             watchingSince: watchingSince,
             hasFileHistory: shownSlots.contains { $0.source == .files },
             lastLiveChangeAt: shownSlots.filter { $0.source == .watch }.map(\.firstAt).max()
-        )
+        ).resolvingOwners(with: catalog)
     }
 
     // MARK: - Labels
@@ -320,10 +392,34 @@ enum EpisodeBuilder {
         formatter("EEE d MMM", calendar: calendar).string(from: calendar.startOfDay(for: day))
     }
 
-    /// A place row's single title line: "Xcode build files · Prunr".
-    static func rowTitle(for episode: ChangeEpisode) -> String {
-        guard let detail = episode.detail, !detail.isEmpty else { return episode.title }
-        return "\(episode.title) · \(detail)"
+    /// The caption above a place's contents: what the header leaves out and
+    /// where the place is. "Chrome · ~/Library/Application Support/Google/Chrome"
+    /// under the header "App data"; "Cache · ~/Library/Caches/com.spotify.client"
+    /// under the header "Spotify".
+    static func contentsCaption(
+        for episode: ChangeEpisode,
+        headerTitle: String,
+        home: String = UnitResolver.defaultHome
+    ) -> String? {
+        var parts: [String] = []
+        if headerTitle != episode.title {
+            parts.append(episode.title)
+        } else if !episode.owner.isCategory {
+            parts.append(episode.owner.displayName)
+        }
+        if let detail = episode.detail, !detail.isEmpty {
+            parts.append(detail)
+        }
+        if let rootPath = episode.rootPath {
+            parts.append(tildePath(rootPath, home: home))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// "/Users/alex/Library/Caches" → "~/Library/Caches".
+    static func tildePath(_ path: String, home: String) -> String {
+        guard path == home || path.hasPrefix(home + "/") else { return path }
+        return "~" + path.dropFirst(home.count)
     }
 
     /// "14:20" when the clock time of the change is known; nil when a daily
@@ -413,10 +509,14 @@ enum EpisodeBuilder {
         let approximate = isOneGo && peakSlots.allSatisfy { isApproximateSlot($0) }
 
         let name = UnitNamer.name(forKey: first.unitKey, home: home)
-        var title = name.standaloneTitle
+        var title = name.title
         let detail = name.context
         let category = name.category
         let rootPath = UnitKey(rawValue: first.unitKey)?.rootPath
+        var icon = name.icon
+        if icon == .category, !isTrashPlace, let rootPath {
+            icon = .file(path: rootPath)
+        }
 
         if isTrashPlace {
             title = "Trash emptied"
@@ -441,7 +541,9 @@ enum EpisodeBuilder {
             isApproximateTime: approximate,
             isMovedToTrash: movedToTrash,
             buildingSince: isOneGo ? nil : countStart,
-            iconSource: name.icon
+            iconSource: icon,
+            shortTitle: name.shortTitle,
+            unitOwner: name.owner
         )
     }
 

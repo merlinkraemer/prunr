@@ -29,14 +29,10 @@ struct ChangeRow: View {
 
     private func content(opens: Bool) -> some View {
         HStack(spacing: 10) {
-            UnitIconTile(category: episode.category, source: episode.iconSource, size: 18)
+            UnitIconTile(category: episode.category, source: episode.rowIconSource, size: 18)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                FittingTitle(title: title, shortTitle: episode.shortTitle, font: .system(size: 13, weight: .medium))
                 if let time {
                     Text(time)
                         .font(.system(size: 11).monospacedDigit())
@@ -67,12 +63,40 @@ struct ChangeRow: View {
         .accessibilityLabel(accessibilityText)
     }
 
-    private var title: String { EpisodeBuilder.rowTitle(for: episode) }
+    private var title: String { episode.title }
 
     private var time: String? { EpisodeBuilder.timeCaption(for: episode, calendar: calendar) }
 
     private var accessibilityText: String {
         [title, time, spokenChangeAmount(episode.netBytes)].compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
+/// A one-line row title: the whole title when it fits, else its short,
+/// user-chosen part ("Weatherly" for "Xcode build files · Weatherly"), else
+/// that part cut in the middle so a date or version at its end survives.
+struct FittingTitle: View {
+    let title: String
+    var shortTitle: String?
+    let font: Font
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            label(title)
+            if let shortTitle {
+                label(shortTitle)
+            }
+            label(shortTitle ?? title)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text)
+            .font(font)
+            .foregroundStyle(.primary)
+            .lineLimit(1)
     }
 }
 

@@ -21,12 +21,7 @@ struct ChangeGroupRow: View {
                         .frame(width: 18, height: 18)
                 }
 
-                Text(group.rowTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                FittingTitle(title: group.rowTitle, shortTitle: group.rowShortTitle, font: .system(size: 13, weight: .semibold))
 
                 Text(signedBytes(group.netBytes))
                     .font(.system(size: 13).monospacedDigit())
@@ -61,7 +56,7 @@ struct ChangeGroupRow: View {
 
     private var accessibilityHint: String {
         if resolvedSoleItemPath != nil { return "Shows it in Finder" }
-        return group.rowIconSource == nil ? "Shows this day's changes in \(group.category.displayName)" : "Shows what is in this place"
+        return FeedPage.soloPlace(of: group) == nil ? "Shows this day's changes of \(group.owner.displayName)" : "Shows what is in this place"
     }
 }
 

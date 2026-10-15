@@ -2212,10 +2212,12 @@ final class MenuBarManager: NSObject {
         do {
             let oldestSnapshot = try await growthJournalService.oldestCompleteSnapshotDate(trackedPaths: trackedPaths)
             let watchingSince = HistoryStart.remember(oldestSnapshot: oldestSnapshot)
-            result = .loaded(try await growthJournalService.changeFeed(
+            let feed = try await growthJournalService.changeFeed(
                 trackedPaths: trackedPaths,
                 watchingSince: watchingSince
-            ))
+            )
+            let catalog = AppCatalogProvider.shared.catalog(resolving: feed.ownerAppIdentifiers)
+            result = .loaded(feed.resolvingOwners(with: catalog))
         } catch {
             Self.logger.error("Failed to read change feed: \(error.localizedDescription, privacy: .public)")
             result = .failed

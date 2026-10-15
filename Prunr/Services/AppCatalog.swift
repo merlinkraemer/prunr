@@ -23,6 +23,9 @@ struct ResolvedOwner: Sendable, Hashable {
     let key: String
     let displayName: String
     let icon: UnitIconSource
+
+    /// A category owner (Developer, Downloads, ...), not an app or System.
+    var isCategory: Bool { key.hasPrefix(UnitOwner.categoryKeyPrefix) }
 }
 
 /// A snapshot of the installed apps, by bundle id and by name. Built on the
@@ -131,13 +134,17 @@ final class AppCatalogProvider {
 
     private var scanned: [AppCatalogEntry]?
     private var located: [String: AppCatalogEntry] = [:]
+    private var unlocated: Set<String> = []
     private var launchObserver: NSObjectProtocol?
 
     private init() {
         launchObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scanned = nil }
+            MainActor.assumeIsolated {
+                self?.scanned = nil
+                self?.unlocated = []
+            }
         }
     }
 
@@ -162,10 +169,14 @@ final class AppCatalogProvider {
     }
 
     private func locate(_ identifier: String) {
-        guard located[identifier.lowercased()] == nil,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier),
-              let entry = Self.entry(at: url) else { return }
-        located[identifier.lowercased()] = entry
+        let key = identifier.lowercased()
+        guard located[key] == nil, !unlocated.contains(key) else { return }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier),
+              let entry = Self.entry(at: url) else {
+            unlocated.insert(key)
+            return
+        }
+        located[key] = entry
     }
 
     private static func apps(in folder: String, depth: Int) -> [AppCatalogEntry] {

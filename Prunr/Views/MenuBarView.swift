@@ -1142,20 +1142,21 @@ struct MenuBarView: View {
         } row: {
             if showsCategoryOverview {
                 headerNavigationView
-            } else if let place = shownPlace {
+            } else if let place = shownPlace, let group = shownGroup {
                 HeaderTitleRow(
-                    title: EpisodeBuilder.rowTitle(for: place),
+                    title: group.headerTitle(for: place),
                     category: place.category,
-                    iconSource: place.iconSource,
+                    iconSource: group.headerIconSource(for: place),
                     backHint: feedPage.parent == .feed
                         ? "Return to the change list"
-                        : "Return to this day's \(place.category.displayName) changes",
+                        : "Return to this day's \(group.owner.displayName) changes",
                     onBack: navigateFeedBack
                 )
             } else if let group = shownGroup {
                 HeaderTitleRow(
-                    title: group.category.displayName,
+                    title: group.owner.displayName,
                     category: group.category,
+                    iconSource: group.isNamedOwner ? group.rowIconSource : nil,
                     backHint: "Return to the change list",
                     onBack: navigateFeedBack
                 )
@@ -1369,6 +1370,9 @@ struct MenuBarView: View {
         if let place = shownPlace(for: page), let unitRoot = place.rootPath {
             PlaceContentsView(
                 category: place.category,
+                caption: shownGroup(for: page).flatMap {
+                    EpisodeBuilder.contentsCaption(for: place, headerTitle: $0.headerTitle(for: place))
+                },
                 isIndexing: manager.drilldownStore.isBuilding,
                 onReveal: revealPlace,
                 loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) }

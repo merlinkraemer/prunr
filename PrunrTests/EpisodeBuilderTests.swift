@@ -713,15 +713,18 @@ final class EpisodeBuilderTests: XCTestCase {
         )
     }
 
-    func testPlaceRowTitleJoinsDetailAndCaptionIsOnlyTheTime() {
+    func testPlaceDetailGoesToTheContentsCaptionAndTheRowCaptionIsOnlyTheTime() {
         let utc = calendar()
-        let row = episode("Safari data", .cachesAndSystem, Self.gb, at: date(2026, 10, 11, 8, 40, in: utc),
-                          detail: "Application Support", calendar: utc)
-        XCTAssertEqual(EpisodeBuilder.rowTitle(for: row), "Safari data · Application Support")
+        let row = episode("Docker disk", .developer, Self.gb, at: date(2026, 10, 11, 8, 40, in: utc),
+                          detail: "images, containers, volumes",
+                          rootPath: "/Users/tester/Library/Containers/com.docker.docker", calendar: utc)
+        XCTAssertEqual(row.title, "Docker disk")
         XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "08:40")
-
-        let plain = episode("Docker disk", .developer, Self.gb, at: date(2026, 10, 11, 8, 40, in: utc), calendar: utc)
-        XCTAssertEqual(EpisodeBuilder.rowTitle(for: plain), "Docker disk")
+        XCTAssertEqual(
+            EpisodeBuilder.contentsCaption(for: row, headerTitle: "Docker disk", home: Self.home),
+            "images, containers, volumes · ~/Library/Containers/com.docker.docker"
+        )
+        XCTAssertEqual(EpisodeBuilder.tildePath("/Volumes/X/a", home: Self.home), "/Volumes/X/a")
     }
 
     func testPlaceRowHasNoCaptionWithoutAKnownTime() {

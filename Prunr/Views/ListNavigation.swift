@@ -91,12 +91,34 @@ enum SoloDrill {
 }
 
 extension ChangeGroup {
+    /// An app or System reads its own name; a category reads its one place's
+    /// title when the row opens that place, else its own name.
     var rowTitle: String {
-        FeedPage.soloPlace(of: self).map(EpisodeBuilder.rowTitle(for:)) ?? category.displayName
+        guard !isNamedOwner else { return owner.displayName }
+        return FeedPage.soloPlace(of: self)?.title ?? owner.displayName
     }
 
+    var rowShortTitle: String? {
+        guard !isNamedOwner else { return nil }
+        return FeedPage.soloPlace(of: self)?.shortTitle
+    }
+
+    /// Nil shows the category symbol.
     var rowIconSource: UnitIconSource? {
-        FeedPage.soloPlace(of: self)?.iconSource
+        guard !isNamedOwner else { return owner.icon == .category ? nil : owner.icon }
+        return FeedPage.soloPlace(of: self)?.rowIconSource
+    }
+
+    /// The header above a place of this group: the owner's name when the
+    /// owner's row opened the place directly, else the place's title.
+    func headerTitle(for place: ChangeEpisode) -> String {
+        guard isNamedOwner, FeedPage.soloPlace(of: self) != nil else { return place.title }
+        return owner.displayName
+    }
+
+    func headerIconSource(for place: ChangeEpisode) -> UnitIconSource? {
+        guard isNamedOwner, FeedPage.soloPlace(of: self) != nil else { return place.rowIconSource }
+        return rowIconSource
     }
 }
 
