@@ -52,6 +52,8 @@ enum UnitIconSource: Hashable, Sendable {
     case namedApp(name: String, vendor: String?)
     /// The file's own icon (a single download).
     case file(path: String)
+    /// The generic app icon: an app whose data is left but which is not installed.
+    case genericApp
 
     static let xcode = UnitIconSource.app(bundleIdentifier: "com.apple.dt.Xcode")
     static let docker = UnitIconSource.app(bundleIdentifier: "com.docker.docker")

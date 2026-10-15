@@ -219,7 +219,7 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
-    func testCacheApplicationIconResolverMapsVendorAndHelperKeys() {
+    func testCacheApplicationIconResolverMapsHelperKeysWithoutVendorAliases() {
         XCTAssertEqual(
             CacheApplicationIconResolver.bundleIdentifierCandidates(
                 for: "com.microsoft.VSCode.ShipIt"
@@ -233,17 +233,11 @@ final class PrunrSmokeTests: XCTestCase {
             ["com.example.App.helper", "com.example.App"]
         )
         XCTAssertEqual(
-            CacheApplicationIconResolver.bundleIdentifierCandidates(for: "Google"),
-            ["Google", "com.google.Chrome"]
+            CacheApplicationIconResolver.bundleIdentifierCandidates(for: "com.apple.Safari.SafeBrowsing"),
+            ["com.apple.Safari.SafeBrowsing", "com.apple.Safari"]
         )
-        XCTAssertEqual(
-            CacheApplicationIconResolver.bundleIdentifierCandidates(for: "Adobe"),
-            ["Adobe", "com.adobe.acc.AdobeCreativeCloud"]
-        )
-        XCTAssertEqual(
-            CacheApplicationIconResolver.bundleIdentifierCandidates(for: "Steam"),
-            ["Steam", "com.valvesoftware.steam"]
-        )
+        XCTAssertEqual(CacheApplicationIconResolver.bundleIdentifierCandidates(for: "Google"), ["Google"])
+        XCTAssertEqual(CacheApplicationIconResolver.bundleIdentifierCandidates(for: "Steam"), ["Steam"])
     }
 
     func testNodeModulesPathsResolveToDeveloperNodeModules() {
