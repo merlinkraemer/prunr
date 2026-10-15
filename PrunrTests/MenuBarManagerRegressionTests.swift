@@ -308,8 +308,9 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
     }
 
     /// The marketing screenshot's sample reads like mockup X1: real dates from
-    /// Wed 7 Oct back, one group per category a day, Monday with four groups
-    /// (so "Show all (4)"), Mail's slow growth caption, and a header of +48 GB
+    /// Wed 7 Oct back, one group per category a day, Monday with four
+    /// one-place groups (so "Show all (4)"), Tuesday's two-place Developer
+    /// group, Mail's slow growth caption, and a header of +48 GB
     /// that the categories view and the week's groups add up to.
     func testMarketingSampleReadsAsTheNewScreen() throws {
         let feed = MarketingSample.feed
@@ -323,8 +324,13 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         let monday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Mon 5 Oct" })
         XCTAssertEqual(monday.groups.map(\.category), [.downloads, .cachesAndSystem, .developer, .mediaAndDocuments])
         XCTAssertGreaterThan(monday.groups.count, ChangeFeedRows.collapsedGroupLimit)
+        XCTAssertTrue(monday.groups.allSatisfy { $0.episodes.count == 1 })
+        let tuesday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Tue 6 Oct" })
+        let developer = try XCTUnwrap(tuesday.groups.first { $0.category == .developer })
+        XCTAssertEqual(developer.episodes.count, 2)
         let mail = try XCTUnwrap(monday.episodes.first { $0.title == "Mail attachments" })
-        XCTAssertEqual(EpisodeBuilder.caption(for: mail, calendar: calendar), "a little each day since Fri 2 Oct")
+        XCTAssertNotNil(mail.buildingSince)
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: mail, calendar: calendar))
 
         let weekStart = GrowthJournalService.weekStart(now: MarketingSample.now, calendar: calendar)
         let weekGroups = feed.days.filter { $0.day >= weekStart }.flatMap(\.groups)
@@ -399,18 +405,6 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             await manager.loadInventoryFromLatestSnapshot(refreshedAt: Date())
             XCTAssertEqual(manager.changeFeed, .loaded(feed))
         }
-    }
-
-    func testInitialSubcategoryWarmupDoesNotRepeatSameCategorySet() {
-        let manager = MenuBarManager()
-
-        manager.preloadInitialSubcategoryBreakdownsIfNeeded(for: [.developer, .downloads])
-        XCTAssertEqual(manager.subcategoryBreakdownLoadingCategories, [.developer, .downloads])
-
-        manager.subcategoryBreakdownLoadingCategories = []
-        manager.preloadInitialSubcategoryBreakdownsIfNeeded(for: [.downloads, .developer])
-
-        XCTAssertTrue(manager.subcategoryBreakdownLoadingCategories.isEmpty)
     }
 
     func testUpdateBannerVisibilityTracksDismissedVersion() {
@@ -521,34 +515,6 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
             home: home
         ).map(\.path)
         XCTAssertEqual(Set(result), Set([home.path, external.path]))
-    }
-
-    // MARK: - CACHE-01 subcategory vs contributor generation
-
-    func testSubcategoryBreakdownSurvivesContributorCacheInvalidation() {
-        let manager = MenuBarManager()
-        let group = SubcategoryGroup(
-            subcategory: .nodeModules,
-            displayName: "node_modules",
-            totalBytes: 1_024,
-            fileCount: 1,
-            topFiles: []
-        )
-
-        manager._testSeedSubcategoryReady(category: .developer, groups: [group])
-        XCTAssertTrue(manager.isSubcategoryBreakdownReady(for: .developer))
-
-        manager._testInvalidateGrowthContributorCache()
-        XCTAssertTrue(
-            manager.isSubcategoryBreakdownReady(for: .developer),
-            "Contributor-only invalidation must not stale subcategory readiness"
-        )
-
-        manager._testBumpSubcategoryCacheGeneration()
-        XCTAssertFalse(
-            manager.isSubcategoryBreakdownReady(for: .developer),
-            "Subcategory generation bump must stale readiness"
-        )
     }
 
 }

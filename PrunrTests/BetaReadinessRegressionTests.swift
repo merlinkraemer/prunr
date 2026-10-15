@@ -4,7 +4,7 @@ import GRDB
 
 final class BetaReadinessRegressionTests: PrunrTestCase {
     func testRestoreWorkingSetAfterFailedInlineScanUsesLatestCompleteSnapshot() async throws {
-        try await withEmptyTemporaryDatabase { trackedPathId in
+        try await withEmptyTemporaryDatabase { [self] trackedPathId in
             let goodSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
             let goodSnapshotId = try XCTUnwrap(goodSnapshot.id)
             try await DatabaseManager.shared.addEntries(
@@ -59,11 +59,12 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
             let restoredSize: Int64? = rows.first?.sizeBytes
             XCTAssertEqual(restoredPath, "/tmp/prunr/old.txt")
             XCTAssertEqual(restoredSize, 100)
+            try await self.assertDrilldownIndexExact(trackedPathId, "after restoring the working set")
         }
     }
 
     func testRestoreWorkingSetAfterFailedFirstInlineScanClearsPartialRows() async throws {
-        try await withEmptyTemporaryDatabase { trackedPathId in
+        try await withEmptyTemporaryDatabase { [self] trackedPathId in
             let failedSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
             let failedSnapshotId = try XCTUnwrap(failedSnapshot.id)
             try await DatabaseManager.shared.addEntriesWithWorkingSet(
@@ -90,11 +91,12 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
                 ) ?? 0
             }
             XCTAssertEqual(count, 0)
+            try await self.assertDrilldownIndexExact(trackedPathId, "after clearing the working set")
         }
     }
 
-    func testSnapshotSubcategoryBreakdownUsesPathClassificationFilter() async throws {
-        try await withTemporaryDatabase { _, snapshotId in
+    func testSubcategoryBreakdownUsesPathClassificationFilter() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
             var entries: [ScanResult] = []
             for index in 0..<20 {
                 entries.append(ScanResult(
@@ -126,12 +128,9 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
             ])
 
             try await DatabaseManager.shared.addEntries(to: snapshotId, entries: entries)
+            try await DatabaseManager.shared.rebuildWorkingSet(from: snapshotId, trackedPathId: trackedPathId)
 
-            let groups = try await DatabaseManager.shared.fetchSubcategoryGroupsByClassification(
-                for: snapshotId,
-                category: .developer,
-                topLimit: 2
-            )
+            let groups = await self.drilldownGroups(.developer, trackedPathIds: [trackedPathId])
 
             XCTAssertEqual(groups.reduce(0) { $0 + $1.fileCount }, 3)
             XCTAssertEqual(groups.reduce(Int64(0)) { $0 + $1.totalBytes }, 24_000)
@@ -140,6 +139,23 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
             let nodeModules = try XCTUnwrap(groups.first { $0.subcategory == .nodeModules })
             XCTAssertEqual(nodeModules.fileCount, 2)
             XCTAssertEqual(nodeModules.topFiles.map(\.currentSizeBytes), [10_000, 8_000])
+        }
+    }
+
+    /// Past used storage reads only complete snapshots of this path that
+    /// recorded free space, oldest first.
+    func testRecordedFreeSpaceReadsCompleteSnapshotsWithAValueOldestFirst() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let db = DatabaseManager.shared
+            _ = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: 300)
+            _ = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: nil)
+            _ = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: 999, lifecycle: .scanning)
+            _ = try await db.createSnapshot(trackedPathId: UUID(), freeBytes: 777)
+            _ = try await db.createSnapshot(trackedPathId: trackedPathId, freeBytes: 200)
+
+            let records = try await db.fetchRecordedFreeSpace(trackedPathId: trackedPathId)
+            XCTAssertEqual(records.map(\.freeBytes), [300, 200])
+            XCTAssertLessThanOrEqual(records[0].recordedAt, records[1].recordedAt)
         }
     }
 }

@@ -170,3 +170,52 @@ S3 **Navigation (UI, waits for Merlin)**: `DrilldownSelection`, synchronous `sel
    drive-bar entry, inline states, delete skeletons/contributor row/CGLV warm-up; tests §5.7.
 S4 **Cleanup (lands)**: v24 drops `subcategorySnapshot` + old pc index, removes snapshot-based fallbacks and
    `SkeletonListRow` styles, prunes lessons/docs; final perf numbers into docs/.
+
+## 7. Place contents (added for S1/S2)
+API: `DatabaseManager.fetchPlaceContents(unitRoot:trackedPathIds:offset:limit: = 50) -> PlaceContentsPage`
+(`children: [PlaceChild(name, path, isFolder, totalBytes, fileCount)]`, `hasMore`), wrapped by
+`MenuBarManager.loadPlaceContents(unitRoot:offset:)`. Input is the root path of a `UnitResolver` key.
+- Table `workingSetPlaceChild(trackedPathId, unitRoot NOCASE, name NOCASE, isFolder, totalBytes, fileCount)`,
+  PK (trackedPathId, unitRoot, name), index (trackedPathId, unitRoot, totalBytes DESC, name). One row per
+  direct child of a unit root: a folder aggregates everything below it, a file is its own row, a file unit
+  (a single download) has one row with an empty name (the root itself).
+- Why not a path-range query on the working set: the children of a root are only known after reading
+  every file below it. A 200 k-file place (Photos library, a big `node_modules` project) is 200 k
+  `paths` index entries plus 200 k `workingSetEntry` lookups, 0.2–0.5 s warm, worse cold on a 4.5 GB DB.
+  The table answers any place with one index range of ≤ 51 rows, independent of its size.
+- Why per unit and not per folder: units partition the files (every file has exactly one unit), the
+  journal already resolves the unit of every changed file, and a per-folder tree would need a row and an
+  update per ancestor folder (~400 k rows, ~10 upserts per file delta). Per unit it is one upsert per file
+  change and roughly one row per top-level item of each place. The contents of a place are exactly the
+  files its change rows count; a nested unit (e.g. a project's `node_modules` with its own rule) is not
+  repeated inside its parent.
+- Maintained in the same transaction as every working-set write (`applyWorkingSetChanges`), rebuilt with
+  the rest of the index; the scan accumulates it in memory (one `UnitResolver` call per scanned file).
+
+## 8. As built (S1 + S2, feat/s19-drill-index)
+- `groupKey` is not stored in `pathClassification` (that would rewrite 4.4 M rows on upgrade). It is
+  computed where a file is classified (`DrilldownGroupKey`) and stored only in the index tables; SQL-side
+  reads of a cache group use `prunr_cache_group(path)` on the cache subcategories only.
+- `workingSetTopEntry` is keyed (trackedPathId, pathId): a file is in one group, so deltas delete by path.
+  Inserts use the group's smallest stored size from before the batch (a slightly wider safe set than the
+  current minimum); the prefix invariant is checked by `verifyDrilldownIndex` after every delta kind.
+- Deltas are per file (old and new state read before the classification upsert), so a reclassified file
+  moves between groups and categories exactly; the journal gets the same per-file split.
+- Upgrade (v23): no data migration. The journal is cleared (pre-unit rows and coarse residuals go with it),
+  `subcategorySnapshot` is dropped, history restarts at the upgrade (`HistoryStart.restart`), and the index
+  is built in the background from the existing working set at the first launch (no rescan).
+- All other subcategory read paths (snapshot/working-set GROUP BYs, cache-app builders, growth
+  contributors, journal subcategory totals, warm-up, snapshot bypass) are deleted; the categories view
+  reads `DrilldownStore`.
+
+## 9. As built (S3 UI, feat/s20-drill-ui)
+- Main list: every category row opens the day's places (`FeedPage.group`); a place with a root opens its
+  contents (`FeedPage.place`, `PlaceContentsView` over `fetchPlaceContents`, 50 per page, "Show more" pages in
+  place). Contents rows are leaves. Right-click "Show in Finder" / "Copy Path" only on place and content rows.
+- Categories view: `MenuBarManager.openCategory` / `openSubcategory` / `closeDrilldownLevel` set the final
+  selection synchronously; a category without subcategories goes straight to its only group. File lists
+  read the group from `DrilldownStore` (prefetched on open) and fill in on the same page.
+- No loader pages and no skeletons in any drill: inline rows "Indexing files…", "No files found",
+  "Couldn't read · Retry" (`InlineStatus`). The first-launch category skeleton stays.
+- Footer: a full scan shows a progress ring filled to the scan % with "Scanning 42%" in the refresh
+  button's place; "Refreshing…" shows a spinning ring there.

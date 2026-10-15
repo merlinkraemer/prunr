@@ -24,10 +24,10 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
                 deltas: [
-                    .init(category: .developer, subcategory: nil): -20 * gb,
-                    .init(category: .downloads, subcategory: nil): 1 * gb,
+                    .init(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev"): -20 * gb,
+                    .init(category: .downloads, subcategory: nil, unitKey: "place|/Users/tester/dev"): 1 * gb,
                     // Sub-floor: hidden by the row renderer, still in the sum.
-                    .init(category: .applications, subcategory: nil): 800_000
+                    .init(category: .applications, subcategory: nil, unitKey: "place|/Users/tester/dev"): 800_000
                 ],
                 at: Date().addingTimeInterval(-3600)
             )
@@ -51,12 +51,12 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .cachesAndSystem, subcategory: nil): eightGB],
+                deltas: [.init(category: .cachesAndSystem, subcategory: nil, unitKey: "place|/Users/tester/dev"): eightGB],
                 at: Date().addingTimeInterval(-7200)
             )
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .cachesAndSystem, subcategory: nil): -eightGB],
+                deltas: [.init(category: .cachesAndSystem, subcategory: nil, unitKey: "place|/Users/tester/dev"): -eightGB],
                 at: Date().addingTimeInterval(-3600)
             )
 
@@ -76,13 +76,13 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .developer, subcategory: nil): inWindow],
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev"): inWindow],
                 at: Date().addingTimeInterval(-2 * day)
             )
             // 9 days back: outside the 7-day display window.
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .developer, subcategory: nil): outOfWindow],
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev"): outOfWindow],
                 at: Date().addingTimeInterval(-9 * day)
             )
 
@@ -126,7 +126,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             func daysAgo(_ days: Int) -> Date {
                 calendar.date(byAdding: .hour, value: 12, to: calendar.date(byAdding: .day, value: -days, to: today)!)!
             }
-            let key = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil)
+            let key = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev")
             try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 1_000], at: daysAgo(8))
             try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 2_000], at: daysAgo(29))
             try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: 4_000], at: daysAgo(30))
@@ -166,7 +166,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             )
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .developer, subcategory: .buildArtifacts): 128_000],
+                deltas: [.init(category: .developer, subcategory: .buildArtifacts, unitKey: "place|/Users/tester/dev"): 128_000],
                 at: Date()
             )
 
@@ -214,6 +214,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             let liveFile = tempDirectory.appendingPathComponent("existing.txt")
             try Data(repeating: 0xCD, count: 2_048).write(to: liveFile)
+            try self.dateBeforeHistory(liveFile)
 
             _ = try await DatabaseManager.shared.replaceWorkingSetSubtree(
                 trackedPathId: trackedPathId,
@@ -227,12 +228,11 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             try await DatabaseManager.shared.upsertGrowthJournalBuckets(
                 trackedPathId: trackedPathId,
                 bucketStart: Date(),
-                deltas: [.init(category: .other, subcategory: nil): 6_144]
+                deltas: [.init(category: .other, subcategory: nil, unitKey: "place|/Users/tester/dev"): 6_144]
             )
 
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
-            let snapshot = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
-            let snapshotId = try XCTUnwrap(snapshot.id)
+            _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
 
             let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
             let counts = try await dbPool.read { db in
@@ -247,15 +247,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             XCTAssertEqual(counts.0, 0)
             XCTAssertEqual(counts.1, 1)
-
-            let contributors = try await DatabaseManager.shared.fetchGrowthContributors(
-                trackedPathId: trackedPathId,
-                snapshotId: snapshotId,
-                category: .other,
-                subcategory: nil,
-                limit: 20
-            )
-            XCTAssertTrue(contributors.isEmpty)
+            try await self.assertDrilldownIndexExact(trackedPathId, "after the first full scan")
         }
     }
 
@@ -305,6 +297,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             let file = tempDirectory.appendingPathComponent("blob.bin")
             let initialBytes = 4_096
             try Data(repeating: 0xAB, count: initialBytes).write(to: file)
+            try self.dateBeforeHistory(file)
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
 
             let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
@@ -349,6 +342,68 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
+    func testClearedHistoryStaysClearedThroughTheNextScan() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrClearHistory")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+                HistoryStart.reset()
+            }
+
+            let file = tempDirectory.appendingPathComponent("blob.bin")
+            let initialBytes = 4_096
+            try Data(repeating: 0xAB, count: initialBytes).write(to: file)
+            try self.dateBeforeHistory(file)
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+
+            let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+            try await self.backdateSnapshot(s0, to: Self.wholeSecondNow().addingTimeInterval(-7_200))
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [self.journalKey(for: file): 10 * Self.mb],
+                at: Date().addingTimeInterval(-3_600)
+            )
+            try Data(repeating: 0xAB, count: initialBytes + Int(12 * Self.mb)).write(to: file)
+
+            let clearedAt = Date()
+            try await BaselineService.shared.clearHistory()
+            let afterClear = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertTrue(afterClear.isEmpty)
+            let kept = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
+            XCTAssertEqual(kept.map(\.id), [s0.id], "the baseline stays")
+            XCTAssertGreaterThanOrEqual(try XCTUnwrap(HistoryStart.stored()), clearedAt.addingTimeInterval(-1))
+
+            let s1 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+            let afterScan = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertTrue(afterScan.isEmpty, "changes from before the clear must not come back as a scan residual")
+            XCTAssertFalse(afterScan.contains { $0.source == .files }, "no file-date history after a clear")
+
+            let sizeBefore = try self.diskUsageBytes(at: file)
+            try Data(repeating: 0xAB, count: initialBytes + Int(15 * Self.mb)).write(to: file)
+            let newGrowth = try self.diskUsageBytes(at: file) - sizeBefore
+            _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+            let later = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertEqual(later.reduce(Int64(0)) { $0 + $1.deltaBytes }, newGrowth, "changes after the clear show")
+            XCTAssertFalse(later.isEmpty)
+            XCTAssertTrue(later.allSatisfy { abs(($0.observedSince ?? .distantPast).timeIntervalSince(s1.createdAt)) < 1 })
+        }
+    }
+
+    func testOnlyScanWindowsThatStartAfterTheClearKeepTheirResidual() throws {
+        let suite = "PrunrTests.HistoryClear.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let clearedAt = Date(timeIntervalSince1970: 5_000)
+
+        XCTAssertTrue(HistoryStart.scanWindowKeepsResidual(windowStart: Date(timeIntervalSince1970: 1_000), defaults: defaults))
+        HistoryStart.clear(at: clearedAt, defaults: defaults)
+        XCTAssertEqual(HistoryStart.stored(defaults: defaults), clearedAt)
+        XCTAssertFalse(HistoryStart.scanWindowKeepsResidual(windowStart: Date(timeIntervalSince1970: 4_999), defaults: defaults))
+        XCTAssertTrue(HistoryStart.scanWindowKeepsResidual(windowStart: clearedAt, defaults: defaults))
+        HistoryStart.reset(defaults: defaults)
+        XCTAssertNil(HistoryStart.cleared(defaults: defaults))
+    }
+
     /// A watch +10 MB followed by a scan that finds no change leaves a −10 MB residual.
     func testFullScanWritesNegativeResidualWhenWatcherOverCounted() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
@@ -357,6 +412,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             let file = tempDirectory.appendingPathComponent("blob.bin")
             try Data(repeating: 0xAB, count: 4_096).write(to: file)
+            try self.dateBeforeHistory(file)
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
 
             let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
@@ -401,6 +457,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             let initialBytes = 4_096
             let growthBytes = 3 * Self.mb
             try Data(repeating: 0xAB, count: initialBytes).write(to: file)
+            try self.dateBeforeHistory(file)
 
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
 
@@ -450,6 +507,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             let file = tempDirectory.appendingPathComponent("blob.bin")
             try Data(repeating: 0xAB, count: 4_096).write(to: file)
+            try self.dateBeforeHistory(file)
             let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
 
             let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
@@ -504,7 +562,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             }
         }
 
-        try migrator.migrate(dbQueue)
+        try migrator.migrate(dbQueue, upTo: "v22_journal_unit")
 
         try dbQueue.write { db in
             let buckets = try GrowthJournalBucket.fetchAll(
@@ -550,7 +608,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             try await GrowthJournalService.shared.recordDeltas(
                 trackedPath: trackedPath,
-                deltas: [.init(category: .developer, subcategory: .nodeModules): 2 * 1_024 * 1_024],
+                deltas: [.init(category: .developer, subcategory: .nodeModules, unitKey: "place|/Users/tester/dev"): 2 * 1_024 * 1_024],
                 at: Date()
             )
 

@@ -23,8 +23,8 @@ final class UnitRulesDeveloperTests: XCTestCase {
             ("\(xcode)/DerivedData/ModuleCache.noindex/x.pcm", .xcodeBuild, "\(xcode)/DerivedData/ModuleCache.noindex", "Xcode build files"),
             ("\(xcode)/DerivedData", .xcodeBuild, "\(xcode)/DerivedData", "Xcode build files"),
             ("\(xcode)/Archives/2026-10-01/Prunr.xcarchive/Products", .xcodeArchives, "\(xcode)/Archives", "Xcode archives"),
-            ("\(xcode)/iOS DeviceSupport/17.4 (21E213)/Symbols/usr/lib", .xcodeDeviceSupport, "\(xcode)/iOS DeviceSupport", "Xcode device support"),
-            ("/Users/tester/Library/Developer/CoreSimulator/Devices/ABC/data/x", .xcodeSimulator, "/Users/tester/Library/Developer/CoreSimulator", "Xcode simulators"),
+            ("\(xcode)/iOS DeviceSupport/17.4 (21E213)/Symbols/usr/lib", .xcodeDeviceSupport, "\(xcode)/iOS DeviceSupport", "Device support"),
+            ("/Users/tester/Library/Developer/CoreSimulator/Devices/ABC/data/x", .xcodeSimulator, "/Users/tester/Library/Developer/CoreSimulator", "Simulators"),
             ("/Users/tester/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", .docker, "/Users/tester/Library/Containers/com.docker.docker", "Docker disk"),
             ("/Users/tester/Library/Group Containers/group.com.docker/settings.json", .docker, "/Users/tester/Library/Group Containers/group.com.docker", "Docker disk"),
             ("/Users/tester/.docker/desktop/vms/0/data/Docker.raw", .docker, "/Users/tester/.docker", "Docker disk"),
@@ -71,7 +71,7 @@ final class UnitRulesDeveloperTests: XCTestCase {
         for entry in fixture {
             let unitName = name(entry.path)
             XCTAssertFalse(UnitNamer.containsForbiddenToken(unitName.title), unitName.title)
-            XCTAssertFalse(UnitNamer.containsForbiddenToken(unitName.detail ?? ""), unitName.detail ?? "")
+            XCTAssertFalse(UnitNamer.containsForbiddenToken(unitName.context ?? ""), unitName.context ?? "")
             XCTAssertFalse(unitName.title.contains(xcodeHash), unitName.title)
             XCTAssertFalse(unitName.title.contains("Library"), unitName.title)
         }
@@ -88,9 +88,9 @@ final class UnitRulesDeveloperTests: XCTestCase {
     func testDockerDiskNamingAndCaption() {
         let docker = name("/Users/tester/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw")
         XCTAssertEqual(docker.title, "Docker disk")
-        XCTAssertEqual(docker.detail, "images, containers, volumes")
+        XCTAssertEqual(docker.context, "images, containers, volumes")
         XCTAssertFalse(docker.title.localizedCaseInsensitiveContains("images"))
-        XCTAssertEqual(name("/Users/tester/.colima/default/disk").detail, "images, containers, volumes")
+        XCTAssertEqual(name("/Users/tester/.colima/default/disk").context, "images, containers, volumes")
     }
 
     func testOutermostNodeModulesWinsEvenForNestedBuildFolders() {

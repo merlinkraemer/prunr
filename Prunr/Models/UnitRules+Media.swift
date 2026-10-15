@@ -75,7 +75,7 @@ extension UnitRules {
                   let library = mediaStem(root.components[bundle], suffix: ".fcpbundle") else { return nil }
             let event = root.components.count - bundle >= 3 ? UnitNamer.displayComponent(root.components[bundle + 1]) : nil
             return UnitName(
-                title: "Final Cut Pro render files · \(library)", detail: event, category: .mediaAndDocuments, icon: .finalCutPro
+                title: "Final Cut Pro render files · \(library)", context: event, category: .mediaAndDocuments, icon: .finalCutPro
             )
         }
     )
@@ -114,7 +114,7 @@ extension UnitRules {
         }
     )
 
-    /// Any other `~/Library/Mobile Documents/<container>` → "<App> in iCloud".
+    /// Any other `~/Library/Mobile Documents/<container>` → "iCloud", owned by the app.
     static let icloudContainerRule = UnitRule(
         kind: .icloudContainer,
         resolve: { path in
@@ -124,11 +124,16 @@ extension UnitRules {
         },
         name: { root in
             guard let relative = root.relative, relative.count >= 3 else { return nil }
-            return UnitName(
-                title: "\(icloudContainerAppName(relative[2])) in iCloud",
-                category: .mediaAndDocuments,
-                icon: .icloudContainer(relative[2])
-            )
+            let container = relative[2]
+            let owner: UnitOwner
+            if let id = AppIdentity.icloudIdentifier(container) {
+                owner = .app(id: id)
+            } else if let name = UnitNamer.displayComponent(container.split(separator: "~").last.map(String.init) ?? container) {
+                owner = .named(name)
+            } else {
+                return UnitName(title: "iCloud", category: .mediaAndDocuments)
+            }
+            return UnitName(title: "iCloud", category: .mediaAndDocuments, icon: .owner(owner), owner: owner)
         }
     )
 
@@ -148,7 +153,7 @@ extension UnitRules {
             let isPacks = root.components.last?.lowercased() == "factory packs"
             return UnitName(
                 title: "Ableton library",
-                detail: isPacks ? "factory packs" : nil,
+                context: isPacks ? "factory packs" : nil,
                 category: .audioProduction,
                 icon: .abletonLive
             )
@@ -210,13 +215,5 @@ extension UnitRules {
     private static func mobileDocumentsContainer(_ relative: [String]) -> String? {
         guard relative.count >= 3, relative[0] == "library", relative[1] == "mobile documents" else { return nil }
         return relative[2]
-    }
-
-    /// `iCloud~com~culturedcode~ThingsMac` → "ThingsMac", `com~apple~Pages` → "Pages",
-    /// `27N4MQEA55~pro~writer` → "Writer".
-    private static func icloudContainerAppName(_ container: String) -> String {
-        let last = container.split(separator: "~").last.map(String.init) ?? container
-        let cleaned = UnitNamer.displayComponent(last) ?? "App"
-        return cleaned.prefix(1).uppercased() + cleaned.dropFirst()
     }
 }

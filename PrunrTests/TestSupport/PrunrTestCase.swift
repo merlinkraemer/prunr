@@ -60,3 +60,39 @@ class PrunrTestCase: XCTestCase {
         return FileScanner.diskUsageBytes(for: fileStat)
     }
 }
+
+extension XCTestCase {
+    /// Sets a fixture file's birth and last-write time. Birth first: macOS
+    /// pulls the birth time back when a last-write time precedes it.
+    func setFileDates(_ url: URL, birth: Date, modified: Date) throws {
+        try FileManager.default.setAttributes([.creationDate: birth], ofItemAtPath: url.path)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+    }
+
+    /// Dates a fixture file before the history a first scan rebuilds, so
+    /// the scan adds nothing for it to the journal.
+    func dateBeforeHistory(_ url: URL) throws {
+        let old = Date().addingTimeInterval(-60 * 24 * 60 * 60)
+        try setFileDates(url, birth: old, modified: old)
+    }
+
+    /// A category's drilldown groups with their stored top files, read the way
+    /// the categories view reads them.
+    @MainActor
+    func drilldownGroups(_ category: GrowthCategory, trackedPathIds: [UUID]) async -> [SubcategoryGroup] {
+        let store = DrilldownStore()
+        await store.reload(trackedPathIds: trackedPathIds)
+        await store.loadFiles(for: category, trackedPathIds: trackedPathIds)
+        return store.groupsByCategory[category] ?? []
+    }
+
+    func assertDrilldownIndexExact(
+        _ trackedPathId: UUID,
+        _ context: String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        let problems = try await DatabaseManager.shared.verifyDrilldownIndex(trackedPathId: trackedPathId)
+        XCTAssertEqual(problems, [], context, file: file, line: line)
+    }
+}

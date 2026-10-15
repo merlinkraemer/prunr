@@ -96,6 +96,12 @@ actor GrowthJournalService {
         return EpisodeBuilder.build(slots: slots, now: now, calendar: calendar, watchingSince: start)
     }
 
+    /// The free space every kept snapshot of this path recorded, for the
+    /// header's used storage at a past date.
+    func storageHistory(trackedPath: TrackedPath) async throws -> StorageHistory {
+        StorageHistory(records: try await db.fetchRecordedFreeSpace(trackedPathId: trackedPath.id))
+    }
+
     /// The oldest complete snapshot of these paths, for `HistoryStart`.
     func oldestCompleteSnapshotDate(trackedPaths: [TrackedPath]) async throws -> Date? {
         try await db.fetchOldestCompleteSnapshotDate(trackedPathIds: trackedPaths.map(\.id))
@@ -112,27 +118,6 @@ actor GrowthJournalService {
             )
         } catch {
             logger.error("Failed to fetch deltas since last snapshot: \(error.localizedDescription, privacy: .public)")
-            return [:]
-        }
-    }
-
-    /// Signed subcategory totals over the same window the category rows use, so
-    /// a drilldown decomposes the row above it rather than reading a second clock.
-    func subcategoryGrowthTotals(
-        trackedPath: TrackedPath,
-        category: GrowthCategory,
-        now: Date = Date()
-    ) async -> [GrowthSubcategory?: Int64] {
-        let cutoff = Self.weekStart(now: now)
-
-        do {
-            return try await db.fetchGrowthJournalTotalsBySubcategory(
-                trackedPathId: trackedPath.id,
-                category: category,
-                since: cutoff
-            )
-        } catch {
-            logger.error("Failed to fetch subcategory growth totals: \(error.localizedDescription, privacy: .public)")
             return [:]
         }
     }
@@ -207,6 +192,7 @@ actor GrowthJournalService {
 /// start forward and claim a short history after 30 days of watching.
 enum HistoryStart {
     static let defaultsKey = "changeHistoryStartedAt"
+    static let clearedKey = "changeHistoryClearedAt"
     static let testSuiteName = "com.prunr.tests.history-start"
 
     /// Where the start is kept. Unit tests run inside the app against
@@ -222,20 +208,84 @@ enum HistoryStart {
         return suite
     }()
 
-    /// The earlier of the remembered start and `oldestSnapshot`, remembered for
+    /// The remembered start; without one, `oldestSnapshot`, remembered for
     /// next time. Nil when neither is known.
     static func remember(oldestSnapshot: Date?, defaults: UserDefaults = HistoryStart.store) -> Date? {
-        let stored = defaults.object(forKey: defaultsKey) as? Date
-        guard let start = [stored, oldestSnapshot].compactMap({ $0 }).min() else { return nil }
-        if start != stored {
-            defaults.set(start, forKey: defaultsKey)
+        if let stored = defaults.object(forKey: defaultsKey) as? Date {
+            return stored
         }
-        return start
+        guard let oldestSnapshot else { return nil }
+        defaults.set(oldestSnapshot, forKey: defaultsKey)
+        return oldestSnapshot
+    }
+
+    /// History starts over at `date` while the snapshots are kept (the
+    /// journal was cleared by a schema upgrade).
+    static func restart(at date: Date, defaults: UserDefaults = HistoryStart.store) {
+        defaults.set(date, forKey: defaultsKey)
+    }
+
+    static func stored(defaults: UserDefaults = HistoryStart.store) -> Date? {
+        defaults.object(forKey: defaultsKey) as? Date
+    }
+
+    static func clear(at date: Date, defaults: UserDefaults = HistoryStart.store) {
+        restart(at: date, defaults: defaults)
+        defaults.set(date, forKey: clearedKey)
+    }
+
+    static func cleared(defaults: UserDefaults = HistoryStart.store) -> Date? {
+        defaults.object(forKey: clearedKey) as? Date
+    }
+
+    static func scanWindowKeepsResidual(windowStart: Date, defaults: UserDefaults = HistoryStart.store) -> Bool {
+        guard let cleared = cleared(defaults: defaults) else { return true }
+        return windowStart >= cleared
     }
 
     /// Forgets the start; called when the baseline is reset and history
     /// starts over.
     static func reset(defaults: UserDefaults = HistoryStart.store) {
         defaults.removeObject(forKey: defaultsKey)
+        defaults.removeObject(forKey: clearedKey)
+    }
+}
+
+/// Volume free space as one snapshot recorded it when its scan started.
+struct FreeSpaceRecord: Equatable, Sendable {
+    let recordedAt: Date
+    let freeBytes: Int64
+}
+
+/// Used storage on a past day: capacity minus the free space of the last
+/// snapshot recorded on or before that day.
+struct RecordedStorage: Equatable, Sendable {
+    let usedBytes: Int64
+    let recordedAt: Date
+    /// False when the day had no snapshot and an older day's value stands in.
+    let isFromThatDay: Bool
+}
+
+/// Free space as the kept snapshots recorded it. Never derived from rows:
+/// a day without a snapshot reads the nearest older one, and a day before
+/// the first snapshot has no value.
+struct StorageHistory: Equatable, Sendable {
+    /// Oldest first.
+    let records: [FreeSpaceRecord]
+
+    static let empty = StorageHistory(records: [])
+
+    func usedStorage(atEndOf day: Date, capacityBytes: Int64, calendar: Calendar = .current) -> RecordedStorage? {
+        guard capacityBytes > 0 else { return nil }
+        let dayStart = calendar.startOfDay(for: day)
+        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart),
+              let record = records.last(where: { $0.recordedAt < dayEnd }) else {
+            return nil
+        }
+        return RecordedStorage(
+            usedBytes: max(0, capacityBytes - record.freeBytes),
+            recordedAt: record.recordedAt,
+            isFromThatDay: record.recordedAt >= dayStart
+        )
     }
 }

@@ -2,20 +2,42 @@ import Foundation
 
 /// What the change list shows for a unit.
 struct UnitName: Equatable, Sendable {
-    /// Recognisable name, e.g. "Downloads · ubuntu.iso" or "Archive · Documents".
+    /// What the place is, read inside its owner: "Cache", "Celeste",
+    /// "Xcode build files · Weatherly", "Downloads · ubuntu.iso".
     let title: String
-    /// Optional muted detail for the caption, e.g. "Application Support".
-    let detail: String?
+    /// What survives when the title does not fit: the project or item name
+    /// ("Weatherly"). Nil when the title itself is that.
+    let shortTitle: String?
+    /// Optional muted caption, e.g. "images, containers, volumes".
+    let context: String?
     /// Category whose symbol the row uses when `icon` can't be shown.
     let category: GrowthCategory
     /// Where the row's real icon comes from; `.category` uses the category symbol.
     let icon: UnitIconSource
+    /// Who the place belongs to.
+    let owner: UnitOwner
 
-    init(title: String, detail: String? = nil, category: GrowthCategory, icon: UnitIconSource = .category) {
+    init(
+        title: String,
+        shortTitle: String? = nil,
+        context: String? = nil,
+        category: GrowthCategory,
+        icon: UnitIconSource = .category,
+        owner: UnitOwner? = nil
+    ) {
         self.title = title
-        self.detail = detail
+        self.shortTitle = shortTitle
+        self.context = context
         self.category = category
         self.icon = icon
+        self.owner = owner ?? .category(category)
+    }
+
+    /// The title where the owner is not shown next to it: "Google Chrome · Cache".
+    var standaloneTitle: String {
+        guard owner.isApp else { return title }
+        let ownerName = owner.fallbackDisplayName
+        return title.caseInsensitiveCompare(ownerName) == .orderedSame ? title : "\(ownerName) · \(title)"
     }
 }
 
@@ -26,8 +48,12 @@ enum UnitIconSource: Hashable, Sendable {
     case category
     /// The icon of the installed app with this bundle id.
     case app(bundleIdentifier: String)
+    /// The icon of the installed app with this name (see `AppCatalog`).
+    case namedApp(name: String, vendor: String?)
     /// The file's own icon (a single download).
     case file(path: String)
+    /// The generic app icon: an app whose data is left but which is not installed.
+    case genericApp
 
     static let xcode = UnitIconSource.app(bundleIdentifier: "com.apple.dt.Xcode")
     static let docker = UnitIconSource.app(bundleIdentifier: "com.docker.docker")
@@ -38,49 +64,19 @@ enum UnitIconSource: Hashable, Sendable {
     static let abletonLive = UnitIconSource.app(bundleIdentifier: "com.ableton.live")
     static let steam = UnitIconSource.app(bundleIdentifier: "com.valvesoftware.steam")
 
-    /// The app behind a `~/Library/<Area>/<item>` folder or file when the item is
-    /// a bundle id: `com.apple.Safari`, `group.com.apple.notes`,
-    /// `UBF8T346G9.com.microsoft.teams`, `com.apple.finder.plist`. Else `.category`.
-    static func libraryItem(_ item: String) -> UnitIconSource {
-        var identifier = item
-        if identifier.lowercased().hasPrefix("group.") {
-            identifier = String(identifier.dropFirst("group.".count))
+    /// The owner's app icon; `.category` for category and system owners.
+    static func owner(_ owner: UnitOwner) -> UnitIconSource {
+        switch owner {
+        case .app(let id): return .app(bundleIdentifier: id)
+        case .named(let name, let vendor): return .namedApp(name: name, vendor: vendor)
+        case .category, .system: return .category
         }
-        if let teamPrefix = identifier.range(of: "^[A-Z0-9]{10}\\.", options: .regularExpression) {
-            identifier.removeSubrange(teamPrefix)
-        }
-        if let dot = identifier.lastIndex(of: "."),
-           UnitNamer.identifierFileExtensions.contains(identifier[identifier.index(after: dot)...].lowercased()) {
-            identifier = String(identifier[..<dot])
-        }
-        return app(ifBundleIdentifier: identifier, minimumSegments: 3)
-    }
-
-    /// The app behind an iCloud container folder: `iCloud~com~culturedcode~ThingsMac`
-    /// → `com.culturedcode.ThingsMac`, `com~apple~Pages` → `com.apple.Pages`,
-    /// `27N4MQEA55~pro~writer` → `pro.writer`. Else `.category`.
-    static func icloudContainer(_ container: String) -> UnitIconSource {
-        var segments = container.split(separator: "~").map(String.init)
-        if segments.first?.lowercased() == "icloud" { segments.removeFirst() }
-        if let first = segments.first, first.range(of: "^[A-Z0-9]{10}$", options: .regularExpression) != nil {
-            segments.removeFirst()
-        }
-        return app(ifBundleIdentifier: segments.joined(separator: "."), minimumSegments: 2)
-    }
-
-    private static func app(ifBundleIdentifier text: String, minimumSegments: Int) -> UnitIconSource {
-        let segments = text.split(separator: ".", omittingEmptySubsequences: false)
-        let isIdentifier = segments.count >= minimumSegments && segments.allSatisfy { segment in
-            !segment.isEmpty && segment.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
-        }
-        return isIdentifier ? .app(bundleIdentifier: text) : .category
     }
 }
 
 /// Turns a unit key into a display name. Pure; computed at read time.
 enum UnitNamer {
-    /// Name for a persisted key. Keys without a kind (the legacy `''`) are named
-    /// as a place; callers that group legacy rows coarsely handle `''` themselves.
+    /// Name for a persisted key. Keys without a kind are named as a place.
     nonisolated static func name(forKey rawKey: String, home: String = UnitResolver.defaultHome) -> UnitName {
         let key = UnitKey(rawValue: rawKey) ?? UnitKey(kind: .place, rootPath: rawKey)
         return name(for: key, home: home)
@@ -99,8 +95,16 @@ enum UnitNamer {
         let raw = resolved ?? UnitRules.placeName(for: root)
 
         let title = sanitize(raw.title)
-        let detail = raw.detail.map { sanitize($0) }.flatMap { $0.isEmpty ? nil : $0 }
-        return UnitName(title: title.isEmpty ? "Files" : title, detail: detail, category: raw.category, icon: raw.icon)
+        let shortTitle = raw.shortTitle.map { sanitize($0) }.flatMap { $0.isEmpty || $0 == title ? nil : $0 }
+        let context = raw.context.map { sanitize($0) }.flatMap { $0.isEmpty ? nil : $0 }
+        return UnitName(
+            title: title.isEmpty ? "Files" : title,
+            shortTitle: shortTitle,
+            context: context,
+            category: raw.category,
+            icon: raw.icon,
+            owner: raw.owner
+        )
     }
 
     /// Resolves and names a path in one step.
@@ -127,7 +131,7 @@ enum UnitNamer {
         guard looksLikeIdentifier(component) else { return displayComponent(component) }
         var identifier = component
         if let dot = identifier.lastIndex(of: "."),
-           identifierFileExtensions.contains(identifier[identifier.index(after: dot)...].lowercased()) {
+           AppIdentity.identifierFileExtensions.contains(identifier[identifier.index(after: dot)...].lowercased()) {
             identifier = String(identifier[..<dot])
         }
         var text = identifier.contains(".")
@@ -139,14 +143,33 @@ enum UnitNamer {
         return displayComponent(text)
     }
 
-    /// Removes anything a name must never show: 32+ character hex runs and dotted
-    /// bundle ids (replaced by the app's name). Applied to every name.
+    /// A machine-made name in plain words, or nil when nothing machine-made is in
+    /// it: dates, times, numbers, versions, ids and release words are dropped.
+    /// "Prunr-backup-20261014-1439" → "Prunr backup",
+    /// "Xcode_26.1_Release_Candidate" → "Xcode", "Claude" → nil.
+    static func plainStem(_ text: String) -> String? {
+        let withoutIds = uuidRegex.stringByReplacingMatches(
+            in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " "
+        )
+        let tokens = withoutIds.split(whereSeparator: { "-_. ".contains($0) }).map(String.init)
+        let kept = tokens.filter { !isMachineToken($0) }
+        guard kept.count < tokens.count || withoutIds != text, !kept.isEmpty else { return nil }
+        return kept.joined(separator: " ")
+    }
+
+    /// Removes anything a name must never show: 32+ character hex runs, dashed
+    /// UUIDs and dotted bundle ids (replaced by the app's name). Applied to every name.
     static func sanitize(_ text: String) -> String {
         var result = text
         for match in bundleIdRegex.matches(in: result, range: NSRange(result.startIndex..., in: result)).reversed() {
             guard let range = Range(match.range, in: result) else { continue }
             result.replaceSubrange(range, with: GrowthCategory.cacheApplicationDisplayName(for: String(result[range])))
         }
+        result = uuidRegex.stringByReplacingMatches(
+            in: result,
+            range: NSRange(result.startIndex..., in: result),
+            withTemplate: ""
+        )
         result = hexRunRegex.stringByReplacingMatches(
             in: result,
             range: NSRange(result.startIndex..., in: result),
@@ -156,11 +179,12 @@ enum UnitNamer {
         return result.trimmingCharacters(in: CharacterSet(charactersIn: " ·-"))
     }
 
-    /// True if text contains a 32+ hex run or a dotted bundle id. Rule-pack tests
-    /// use this as their guard.
+    /// True if text contains a 32+ hex run, a dashed UUID or a dotted bundle id.
+    /// Rule-pack tests use this as their guard.
     static func containsForbiddenToken(_ text: String) -> Bool {
         let range = NSRange(text.startIndex..., in: text)
         return hexRunRegex.firstMatch(in: text, range: range) != nil
+            || uuidRegex.firstMatch(in: text, range: range) != nil
             || bundleIdRegex.firstMatch(in: text, range: range) != nil
     }
 
@@ -175,9 +199,22 @@ enum UnitNamer {
     /// 32 or more hex characters, with one leading separator.
     private static let hexRunRegex = try! NSRegularExpression(pattern: "[-_.]?[0-9A-Fa-f]{32,}")
 
-    static let identifierFileExtensions: Set<String> = [
-        "plist", "savedstate", "binarycookies", "log", "db", "sqlite", "json", "lock"
+    /// A dashed 36-character UUID, with one leading separator.
+    private static let uuidRegex = try! NSRegularExpression(
+        pattern: "[-_.]?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+    )
+
+    private static let releaseWords: Set<String> = [
+        "release", "candidate", "rc", "beta", "alpha", "universal", "arm64", "x64", "x86", "intel"
     ]
+
+    private static func isMachineToken(_ token: String) -> Bool {
+        let lower = token.lowercased()
+        if releaseWords.contains(lower) { return true }
+        if lower.range(of: "^v?[0-9]+[a-z]?$", options: .regularExpression) != nil { return true }
+        if lower.range(of: "^(rc|beta|alpha|b)[0-9]+$", options: .regularExpression) != nil { return true }
+        return lower.count >= 8 && lower.allSatisfy(\.isHexDigit) && lower.contains(where: \.isNumber)
+    }
 
     /// A single dotted token without spaces, e.g. `com.apple.Safari` or
     /// `UBF8T346G9.Office`.
@@ -210,6 +247,7 @@ extension UnitRules {
     )
 
     /// `~/Downloads/<item>/...` → "Downloads · <item>"; `~/Downloads` itself → "Downloads".
+    /// Installers read as what they install: "Xcode_26.1_Release_Candidate.xip" → "Xcode installer".
     static let downloadRule = UnitRule(
         kind: .download,
         resolve: { path in
@@ -217,37 +255,32 @@ extension UnitRules {
             return path.homeRoot(depth: 2)
         },
         name: { root in
-            guard let relative = root.relative, relative.count >= 2,
-                  let item = UnitNamer.displayComponent(UnitRules.strippingPartialDownloadSuffix(relative[1])) else {
+            guard let relative = root.relative, relative.count >= 2 else {
                 return UnitName(title: "Downloads", category: .downloads)
             }
-            return UnitName(title: "Downloads · \(item)", category: .downloads, icon: .file(path: root.path))
+            let file = UnitRules.strippingPartialDownloadSuffix(relative[1])
+            guard let item = UnitRules.installerName(file) ?? UnitNamer.displayComponent(file) else {
+                return UnitName(title: "Downloads", category: .downloads)
+            }
+            return UnitName(
+                title: "Downloads · \(item)", shortTitle: item, category: .downloads, icon: .file(path: root.path)
+            )
         }
     )
 
-    /// `~/Library/<Area>/<X>/...` → "X data", caption "<Area>".
+    /// `~/Library/<Area>/<X>/...`; named by `libraryName(for:)`. Preferences and
+    /// files lying directly in an area are one unit per area; vendor folders
+    /// (`Application Support/Google/Chrome`) go one level deeper.
     static let libraryRule = UnitRule(
         kind: .library,
         resolve: { path in
             guard let relative = path.lowercasedRelative, relative.first == "library" else { return nil }
+            if relative.count >= 2, relative[1] == "preferences" { return path.homeRoot(depth: 2) }
+            if relative.count == 3 { return path.homeRoot(depth: 2) }
+            if relative.count >= 5, libraryVendors.contains(relative[2]) { return path.homeRoot(depth: 4) }
             return path.homeRoot(depth: 3)
         },
-        name: { root in
-            guard let relative = root.relative, relative.first?.caseInsensitiveCompare("Library") == .orderedSame else {
-                return nil
-            }
-            let category = GrowthCategory.categorize(path: root.path)
-            guard relative.count >= 2 else {
-                return UnitName(title: "Library files", category: category)
-            }
-            let area = UnitNamer.displayComponent(relative[1]) ?? "Library files"
-            guard relative.count >= 3, let item = UnitNamer.appDisplayName(relative[2]) else {
-                return UnitName(title: area, category: category)
-            }
-            return UnitName(
-                title: "\(item) data", detail: area, category: category, icon: .libraryItem(relative[2])
-            )
-        }
+        name: { root in UnitRules.libraryName(for: root) }
     )
 
     /// Named-place fallback: the first two folders below home, e.g.
@@ -267,11 +300,11 @@ extension UnitRules {
     /// keys whose kind no rule knows.
     static func placeName(for root: UnitPath) -> UnitName {
         let parts = root.relative ?? root.components
-        let category = GrowthCategory.categorize(path: root.path)
+        let category = root.category
         let readable = parts.suffix(2).compactMap(UnitNamer.displayComponent)
         switch readable.count {
         case 2:
-            return UnitName(title: "\(readable[1]) · \(readable[0])", category: category)
+            return UnitName(title: "\(readable[1]) · \(readable[0])", shortTitle: readable[1], category: category)
         case 1:
             return UnitName(title: readable[0], category: category)
         default:
@@ -279,11 +312,100 @@ extension UnitRules {
         }
     }
 
+    // MARK: Library
+
+    /// Library areas macOS files under an app, and what a place there is to its app.
+    private static let appAreaTitles: [String: String] = [
+        "application support": "App data",
+        "containers": "App data",
+        "caches": "Cache",
+        "group containers": "Shared data",
+        "webkit": "Website data",
+        "httpstorages": "Website data",
+        "cookies": "Cookies",
+        "logs": "Logs",
+        "saved application state": "Saved windows"
+    ]
+
+    /// Vendors that nest their apps one level deeper: `Application Support/Google/Chrome`.
+    static let libraryVendors: Set<String> = ["google", "adobe", "microsoft", "mozilla", "jetbrains", "epic", "unity"]
+
+    /// Places whose app id says nothing readable on its own.
+    private static let knownItemTitles: [String: String] = [
+        "com.apple.wallpaper": "Aerial wallpapers"
+    ]
+
+    /// A `~/Library` root. Inside app areas (Application Support, Caches,
+    /// Containers, ...) the owner is the app and the title says what the place
+    /// is ("Cache", "App data"); other areas belong to the system and read as
+    /// the area ("Fonts", "Preferences").
+    static func libraryName(for root: UnitPath) -> UnitName? {
+        guard let rel = root.relative, rel.first?.caseInsensitiveCompare("Library") == .orderedSame else {
+            return nil
+        }
+        let category = root.category
+        let areaOwner: UnitOwner = category == .cachesAndSystem ? .system : .category(category)
+        guard rel.count >= 2 else {
+            return UnitName(title: "Library files", category: category, owner: areaOwner)
+        }
+        let area = rel[1].lowercased()
+        let areaName = UnitNamer.displayComponent(rel[1]) ?? "Library files"
+        switch area {
+        case "mail":
+            let owner = UnitOwner.app(id: "com.apple.mail")
+            return UnitName(title: "Mailboxes", category: category, icon: .mail, owner: owner)
+        case "messages":
+            let owner = UnitOwner.app(id: "com.apple.MobileSMS")
+            return UnitName(title: "Chat history", category: category, icon: .messages, owner: owner)
+        default:
+            break
+        }
+        guard rel.count >= 3 else {
+            return UnitName(title: areaName, category: category, owner: areaOwner)
+        }
+        let item = rel[2]
+        guard let kindTitle = appAreaTitles[area] else {
+            return UnitName(
+                title: areaName, context: UnitNamer.appDisplayName(item), category: category, owner: areaOwner
+            )
+        }
+
+        let owner: UnitOwner
+        var title = kindTitle
+        if rel.count >= 4, libraryVendors.contains(item.lowercased()), let app = UnitNamer.displayComponent(rel[3]) {
+            owner = .named(app, vendor: UnitNamer.displayComponent(item))
+        } else if let id = AppIdentity.canonical(item) {
+            owner = .app(id: id)
+            title = knownItemTitles[id] ?? kindTitle
+        } else if let stem = UnitNamer.plainStem(AppIdentity.bareName(item)) {
+            owner = .named(stem)
+            title = stem
+        } else if let name = UnitNamer.displayComponent(AppIdentity.bareName(item)) {
+            owner = .named(name)
+        } else {
+            return UnitName(title: areaName, category: category, owner: areaOwner)
+        }
+        return UnitName(title: title, category: category, icon: .owner(owner), owner: owner)
+    }
+
+    // MARK: Helpers
+
     private static func strippingPartialDownloadSuffix(_ item: String) -> String {
         for suffix in [".crdownload", ".download", ".part"] where item.lowercased().hasSuffix(suffix) {
             let stripped = String(item.dropLast(suffix.count))
             return stripped.isEmpty ? item : stripped
         }
         return item
+    }
+
+    private static let installerExtensions: Set<String> = ["dmg", "pkg", "mpkg", "xip"]
+
+    /// "Xcode_26.1_Release_Candidate.xip" → "Xcode installer"; nil for other files.
+    private static func installerName(_ file: String) -> String? {
+        guard let dot = file.lastIndex(of: "."),
+              installerExtensions.contains(file[file.index(after: dot)...].lowercased()) else { return nil }
+        let base = String(file[..<dot])
+        guard let stem = UnitNamer.plainStem(base) ?? UnitNamer.displayComponent(base) else { return nil }
+        return "\(stem) installer"
     }
 }

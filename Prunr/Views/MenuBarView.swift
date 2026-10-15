@@ -10,6 +10,7 @@ struct MenuBarView: View {
     @Bindable var manager: MenuBarManager
 
     @State private var settingsStore = SettingsStore.shared
+    @State private var devMode = DevMode.shared
     @State private var settingsHover = false
     @State private var refreshHover = false
     @State private var hasRequiredScanAccess: Bool? = nil
@@ -34,8 +35,7 @@ struct MenuBarView: View {
     /// The change list is the root page; the category overview and its drill
     /// sit one level below it.
     @State private var showsCategoryOverview = false
-    /// The day group open below the change list, if any.
-    @State private var openGroup: ChangeGroup? = nil
+    @State private var feedPage = FeedPage.feed
     @State private var expandedFeedDays: Set<Date> = []
     @State private var feedScrollAnchor: Date? = nil
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
@@ -60,8 +60,12 @@ struct MenuBarView: View {
         }
         return false
     }()
-    @State private var developerFolderExists = false
-    @State private var footerBackgroundScanPulse = false
+    @State private var skippedFullDiskAccess = false
+    @State private var previewOnboardingPage = OnboardingPage.folder
+    @State private var isRefreshRequested = false
+    @State private var footerNotice: String? = nil
+    @State private var footerNoticeTask: Task<Void, Never>? = nil
+    @State private var feedDrillTask: Task<Void, Never>? = nil
 
     private let outsideScopeSegmentID = "outside-scan-scope"
 
@@ -81,27 +85,6 @@ struct MenuBarView: View {
         case backward
     }
 
-    private enum OnboardingPage: Int, CaseIterable {
-        case folder
-        case permissions
-        case scan
-
-        var number: Int {
-            rawValue + 1
-        }
-
-        var title: String {
-            switch self {
-            case .folder:
-                return "Folder"
-            case .permissions:
-                return "Access"
-            case .scan:
-                return "Scan"
-            }
-        }
-    }
-
     private struct PendingOnboardingTransition {
         let from: OnboardingPage
         let to: OnboardingPage
@@ -111,7 +94,6 @@ struct MenuBarView: View {
     private struct FolderAvailabilitySnapshot: Sendable {
         let selectedScanFolderExists: Bool
         let onboardingChosenFolderExists: Bool
-        let developerFolderExists: Bool
     }
 
     private enum HeaderLevel: Int {
@@ -185,16 +167,20 @@ struct MenuBarView: View {
         hasRequiredScanAccess == true
     }
 
+    private var onboardingCanStartScan: Bool {
+        OnboardingPage.canStartScan(accessGranted: onboardingPermissionSatisfied, accessSkipped: skippedFullDiskAccess)
+    }
+
     private var maxUnlockedOnboardingPage: OnboardingPage {
-        if !onboardingFolderStepComplete {
-            return .folder
-        }
+        OnboardingPage.maxUnlocked(
+            folderChosen: onboardingFolderStepComplete,
+            accessGranted: onboardingPermissionSatisfied,
+            accessSkipped: skippedFullDiskAccess
+        )
+    }
 
-        if !onboardingPermissionSatisfied {
-            return .permissions
-        }
-
-        return .scan
+    private var isOnboardingPreview: Bool {
+        devMode.panelPreview == .onboarding
     }
 
     private var accessCheckRoots: [URL] {
@@ -206,32 +192,29 @@ struct MenuBarView: View {
     }
 
     private var currentOnboardingPage: OnboardingPage {
+        if isOnboardingPreview {
+            return previewOnboardingPage
+        }
         guard selectedOnboardingPage.rawValue <= maxUnlockedOnboardingPage.rawValue else {
             return maxUnlockedOnboardingPage
         }
         return selectedOnboardingPage
     }
 
-    private var onboardingCardFillColor: Color {
-        // Keep the content surface translucent so the panel's Liquid Glass
-        // remains visible on macOS 26+; the fallback panel still gets a quiet
-        // contrast layer on older systems.
-        Color.primary.opacity(0.045)
-    }
-
-    private var onboardingControlFillColor: Color {
-        Color.primary.opacity(0.06)
-    }
-
-    private var onboardingStrokeColor: Color {
-        Color(nsColor: .separatorColor).opacity(0.55)
-    }
-
     private func onboardingStepIsComplete(_ page: OnboardingPage) -> Bool {
-        page.rawValue < maxUnlockedOnboardingPage.rawValue
+        if isOnboardingPreview {
+            return page.rawValue < previewOnboardingPage.rawValue
+        }
+        if page == .permissions && !onboardingPermissionSatisfied {
+            return false
+        }
+        return page.rawValue < maxUnlockedOnboardingPage.rawValue
     }
 
     private func onboardingStepIsUnlocked(_ page: OnboardingPage) -> Bool {
+        if isOnboardingPreview {
+            return true
+        }
         if currentOnboardingPage == .scan {
             if manager.isLoading || manager.isAutoScanning {
                 return page == .scan
@@ -254,17 +237,13 @@ struct MenuBarView: View {
     private func refreshFolderAvailability() {
         let selectedFolderURL = selectedScanFolderURL.standardizedFileURL
         let chosenFolderURL = onboardingChosenFolderPath?.standardizedFileURL
-        let developerFolderURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("dev", isDirectory: true)
-            .standardizedFileURL
 
         folderValidationTask?.cancel()
         folderValidationTask = Task {
             let snapshot = await Task.detached(priority: .utility) {
                 FolderAvailabilitySnapshot(
                     selectedScanFolderExists: menuBarViewDirectoryExists(at: selectedFolderURL),
-                    onboardingChosenFolderExists: chosenFolderURL.map { menuBarViewDirectoryExists(at: $0) } ?? false,
-                    developerFolderExists: menuBarViewDirectoryExists(at: developerFolderURL)
+                    onboardingChosenFolderExists: chosenFolderURL.map { menuBarViewDirectoryExists(at: $0) } ?? false
                 )
             }.value
 
@@ -273,61 +252,27 @@ struct MenuBarView: View {
             await MainActor.run {
                 selectedScanFolderExists = snapshot.selectedScanFolderExists
                 onboardingChosenFolderExists = snapshot.onboardingChosenFolderExists
-                developerFolderExists = snapshot.developerFolderExists
             }
         }
     }
 
     private var scanFolderOptions: [OnboardingFolderOption] {
-        var options: [OnboardingFolderOption] = []
-
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let dev = home.appendingPathComponent("dev", isDirectory: true)
-
-        options.append(
-            OnboardingFolderOption(
-                id: "recommended",
-                title: "Recommended",
-                subtitle: shortDisplayPath(for: home),
-                url: home
-            )
+        OnboardingFolderOption.options(
+            home: FileManager.default.homeDirectoryForCurrentUser,
+            custom: customOnboardingFolderPath
         )
-        if developerFolderExists {
-            options.append(
-                OnboardingFolderOption(
-                    id: "dev",
-                    title: "Developer Folder",
-                    subtitle: shortDisplayPath(for: dev),
-                    url: dev
-                )
-            )
-        }
-        options.append(
-            OnboardingFolderOption(
-                id: "full-disk",
-                title: "Full Disk",
-                subtitle: "/",
-                url: URL(fileURLWithPath: "/", isDirectory: true)
-            )
-        )
+    }
 
-        // Add custom path if one was selected via file picker
-        if let customPath = customOnboardingFolderPath {
-            let isAlreadyInList = options.contains { $0.url.standardizedFileURL == customPath.standardizedFileURL }
-            if !isAlreadyInList {
-                options.insert(
-                    OnboardingFolderOption(
-                        id: "custom",
-                        title: "Custom Folder",
-                        subtitle: shortDisplayPath(for: customPath),
-                        url: customPath
-                    ),
-                    at: 0
-                )
-            }
+    private var highlightedOnboardingFolderURL: URL {
+        if !isOnboardingPreview, let chosen = onboardingChosenFolderPath {
+            return chosen.standardizedFileURL
         }
+        return FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+    }
 
-        return options
+    private func closePopoverAndOpenFolderSettings() {
+        manager.closePopover()
+        SettingsWindowController.shared.showFolder()
     }
 
     private func closePopoverAndOpenSettings() {
@@ -379,25 +324,19 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if hasRequiredScanAccess == false && !manager.noBaseline {
-                additionalAccessBanner
-            }
-
             Group {
-                // A manual scan takes over the panel with its progress card and
-                // Stop. The change list is kept underneath, never cleared, so it
-                // returns with the same or newer rows once the scan ends.
-                if manager.isLoading && !manager.isAutoScanning {
-                    manualScanLoadingView
-                } else if isBootstrapping && !manager.hasDisplayableInventory {
-                    initialLoadView
-                } else if manager.noBaseline {
+                switch devMode.panelPreview {
+                case .live:
+                    liveContent
+                case .onboarding:
                     setupOnboardingView
-                } else {
-                    VStack(spacing: 0) {
-                        // Main category view with monitoring path header
-                        mainCategoryView
-                    }
+                case .scanning:
+                    scanningPreviewView
+                        .allowsHitTesting(false)
+                case .dayOne, .error:
+                    mainCategoryView
+                case .sample:
+                    PanelSamplePreview()
                 }
             }
         }
@@ -421,6 +360,10 @@ struct MenuBarView: View {
         }
         .onChange(of: onboardingChosenFolderPath) { _, _ in
             refreshFolderAvailability()
+        }
+        .onChange(of: devMode.panelPreview) { _, _ in
+            previewOnboardingPage = .folder
+            synchronizeVisibleOnboardingToCurrent()
         }
         .onChange(of: manager.noBaseline) { _, _ in
             refreshScanAccess()
@@ -465,16 +408,50 @@ struct MenuBarView: View {
                 await manager.refreshChangeFeed()
             }
         }
-        .onChange(of: maxUnlockedOnboardingPage) { oldValue, newValue in
-            if selectedOnboardingPage.rawValue > newValue.rawValue || selectedOnboardingPage == oldValue {
-                selectedOnboardingPage = newValue
-                return
-            }
-
-            if selectedOnboardingPage.rawValue < newValue.rawValue {
-                selectedOnboardingPage = newValue
-            }
+        .onChange(of: maxUnlockedOnboardingPage) { _, newValue in
+            guard selectedOnboardingPage != .folder || newValue == .folder else { return }
+            selectedOnboardingPage = newValue
         }
+    }
+
+    @ViewBuilder
+    private var liveContent: some View {
+        // A manual scan takes over the panel with its progress card and
+        // Stop. The change list is kept underneath, never cleared, so it
+        // returns with the same or newer rows once the scan ends.
+        if manager.isLoading && !manager.isAutoScanning {
+            manualScanLoadingView
+        } else if isBootstrapping && !manager.hasDisplayableInventory {
+            initialLoadView
+        } else if manager.noBaseline {
+            setupOnboardingView
+        } else {
+            mainCategoryView
+        }
+    }
+
+    private var shownChangeFeed: ChangeFeedResult? {
+        devMode.panelPreview.changeFeed(over: manager.changeFeed)
+    }
+
+    private var shownErrorMessage: String? {
+        devMode.panelPreview.errorMessage(over: manager.errorMessage)
+    }
+
+    private var scanFolderName: ScanFolderName {
+        ScanFolderName(path: settingsStore.mainBasePath)
+    }
+
+    private var scanningPreviewView: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            scanStatusCard(clampedProgress: 0.42, showStopButton: true)
+                .padding(.horizontal, 16)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 18)
     }
 
     private var initialLoadView: some View {
@@ -559,12 +536,6 @@ struct MenuBarView: View {
     private var setupOnboardingView: some View {
         VStack(spacing: 0) {
             onboardingProgressHeader
-                .padding(.bottom, 14)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(onboardingStrokeColor.opacity(0.55))
-                        .frame(height: 1)
-                }
 
             GeometryReader { geometry in
                 let resolvedWidth = max(geometry.size.width, onboardingWidth)
@@ -632,8 +603,6 @@ struct MenuBarView: View {
                 .accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDisappear {
             onboardingTransitionTask?.cancel()
@@ -642,41 +611,47 @@ struct MenuBarView: View {
     }
 
     private var onboardingProgressHeader: some View {
-        VStack(spacing: 12) {
-            HStack {
-                if canNavigateBackInOnboarding {
-                    Button {
-                        let prevIndex = max(0, currentOnboardingPage.rawValue - 1)
-                        if let prevPage = OnboardingPage(rawValue: prevIndex) {
-                            selectedOnboardingPage = prevPage
-                        }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: 12, height: 12)
-                } else {
-                    Color.clear.frame(width: 12, height: 12)
-                }
+        ZStack(alignment: .top) {
+            Text("Setup")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .padding(.top, 14)
 
-                Spacer()
-
-                Text("Setup")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.primary)
-
-                Spacer()
-
-                Color.clear.frame(width: 12, height: 12)
-            }
-
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 ForEach(OnboardingPage.allCases, id: \.rawValue) { page in
                     onboardingStepPill(for: page)
                 }
             }
+            .padding(.top, 42)
+
+            if canNavigateBackInOnboarding {
+                HStack {
+                    Button {
+                        let prevIndex = max(0, currentOnboardingPage.rawValue - 1)
+                        if let prevPage = OnboardingPage(rawValue: prevIndex) {
+                            goToOnboardingPage(prevPage)
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back")
+
+                    Spacer()
+                }
+                .padding(.leading, 16)
+                .padding(.top, 12)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 82, maxHeight: 82, alignment: .top)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.09))
+                .frame(height: 1)
         }
     }
 
@@ -685,54 +660,44 @@ struct MenuBarView: View {
         let isActive = page == currentOnboardingPage
         let isUnlocked = onboardingStepIsUnlocked(page)
         let pillFill: Color = isActive
-            ? Color.accentColor.opacity(0.14)
-            : (isUnlocked ? onboardingControlFillColor : Color.gray.opacity(0.12))
-        let titleStyle: AnyShapeStyle = isActive
-            ? AnyShapeStyle(.primary)
-            : AnyShapeStyle(isUnlocked ? .secondary : .tertiary)
-        let numberStyle: AnyShapeStyle = isActive
-            ? AnyShapeStyle(Color.accentColor)
-            : AnyShapeStyle(isUnlocked ? .secondary : .tertiary)
+            ? Color.accentColor.opacity(0.22)
+            : Color.primary.opacity(isComplete ? 0.06 : 0.03)
+        let badgeFill: Color = isComplete
+            ? Color.green.opacity(0.16)
+            : (isActive ? Color.accentColor.opacity(0.20) : Color.primary.opacity(0.06))
 
         return Button {
             guard isUnlocked else { return }
-            selectedOnboardingPage = page
+            goToOnboardingPage(page)
         } label: {
             HStack(spacing: 6) {
                 ZStack {
                     Circle()
-                        .fill(
-                            isComplete
-                                ? Color.green.opacity(0.14)
-                                : (isActive ? Color.accentColor.opacity(0.14) : Color.gray.opacity(isUnlocked ? 0.1 : 0.07))
-                        )
-                        .frame(width: 22, height: 22)
+                        .fill(badgeFill)
+                        .frame(width: 20, height: 20)
 
                     if isComplete {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.green)
                     } else {
                         Text("\(page.number)")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(numberStyle)
+                            .foregroundStyle(isActive ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
                     }
                 }
 
                 Text(page.title)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(titleStyle)
+                    .foregroundStyle(isActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(pillFill)
-            )
+            .padding(.leading, 3)
+            .padding(.trailing, 10)
+            .frame(height: 26)
+            .background(Capsule().fill(pillFill))
         }
         .buttonStyle(.plain)
         .disabled(!isUnlocked)
-        .opacity(isUnlocked ? 1.0 : 0.72)
     }
 
     private func onboardingPage(for page: OnboardingPage, size: CGSize) -> some View {
@@ -740,11 +705,13 @@ struct MenuBarView: View {
             Spacer(minLength: 0)
 
             onboardingPageCard(for: page)
-                .frame(maxWidth: 284)
-                .frame(maxWidth: .infinity)
 
             Spacer(minLength: 0)
+
+            onboardingButtons(for: page)
+                .padding(.vertical, 16)
         }
+        .padding(.horizontal, 16)
         .frame(width: size.width, height: size.height)
         .transition(.identity)
     }
@@ -753,214 +720,330 @@ struct MenuBarView: View {
     private func onboardingPageCard(for page: OnboardingPage) -> some View {
         switch page {
         case .folder:
-            VStack(spacing: 10) {
-                onboardingTitleSection(
-                    number: 1,
-                    icon: "folder.badge.gearshape",
-                    title: "Setup Path",
-                    description: "Pick the scope for your first scan."
-                )
-
-                onboardingContentCard {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(scanFolderOptions) { option in
-                            let isSelected = onboardingChosenFolderPath?.standardizedFileURL == option.url.standardizedFileURL
-
-                            Button {
-                                applyOnboardingScanFolder(option.url)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(option.title)
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(isSelected ? Color.accentColor : .primary)
-
-                                        Text(option.subtitle)
-                                            .font(.system(size: 10, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                    }
-
-                                    Spacer()
-
-                                    if isSelected {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(Color.accentColor)
-                                    } else {
-                                        Circle()
-                                            .strokeBorder(Color.gray.opacity(0.4), lineWidth: 1.5)
-                                            .frame(width: 14, height: 14)
-                                    }
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        Divider()
-                            .padding(.vertical, 4)
-
-                        Button {
-                            manager.showOnboardingFolderPicker { url in
-                                if let url = url {
-                                    customOnboardingFolderPath = url
-                                    applyOnboardingScanFolder(url)
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "folder.badge.plus")
-                                    .font(.system(size: 12, weight: .medium))
-                                Text("Choose Custom Folder")
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                            .foregroundStyle(.primary)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
+            onboardingCard(title: "Choose a folder", subtitle: "Prunr scans it once, then keeps watch.") {
+                VStack(spacing: 0) {
+                    ForEach(scanFolderOptions) { option in
+                        onboardingFolderRow(option)
                     }
                 }
+                .padding(.top, 12)
+
+                onboardingHairline
+                    .padding(.top, 6)
+
+                Button {
+                    chooseCustomOnboardingFolder()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(width: 16)
+                        Text("Choose custom folder…")
+                            .font(.system(size: 13, weight: .medium))
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(.primary)
+                    .frame(height: 40)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, -6)
             }
 
         case .permissions:
-            VStack(spacing: 10) {
-                onboardingTitleSection(
-                    number: 2,
-                    icon: "lock.shield",
-                    title: "Review Privacy Access",
-                    description: "Prunr checks whether the folder you chose is actually reachable. Some protected locations may still need extra macOS privacy access."
-                )
-
-                VStack(spacing: 14) {
-                    if onboardingPermissionSatisfied {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("Selected scan scope is accessible")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundStyle(.green)
-                    } else {
-                        VStack(spacing: 10) {
-                            primaryActionButton("Open Privacy Settings", minWidth: 188) {
-                                openScanAccessSettings()
-                            }
-
-                            if !blockedScanAccessLocations.isEmpty {
-                                Text("Still blocked: \(blockedScanAccessLocations.prefix(3).joined(separator: ", "))")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                            } else {
-                                Text("Choose a folder first, then return here if macOS blocks protected locations inside it.")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
-                        }
-                    }
+            onboardingCard(
+                title: "Allow access to your files",
+                subtitle: "So Prunr can measure every folder.",
+                icon: "lock.shield"
+            ) {
+                VStack(spacing: 0) {
+                    onboardingNumberedStep(1, "Open System Settings")
+                    onboardingNumberedStep(2, "Allow Prunr in Full Disk Access")
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 22)
+                .padding(.top, 10)
             }
 
         case .scan:
-            VStack(spacing: 10) {
-                onboardingTitleSection(
-                    number: 3,
-                    icon: "waveform.path.ecg",
-                    title: "Run First Scan",
-                    description: "This can take a while for a full-disk scan or large drives."
-                )
+            onboardingCard(title: "Run first scan", subtitle: "Takes a few minutes.") {
+                onboardingHairline
+                    .padding(.top, 12)
 
-                onboardingContentCard {
-                    VStack(spacing: 14) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary)
+                onboardingSummaryRow(icon: "folder", label: scanFolderName.title) {
+                    Text(selectedScanFolderLabel)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
 
-                            Text(selectedScanFolderLabel)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                onboardingHairline
+
+                onboardingSummaryRow(icon: "lock.shield", label: "Full Disk Access") {
+                    if onboardingPermissionSatisfied || isOnboardingPreview {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.green)
+                            Text("On")
                         }
+                    } else {
+                        Text("Off")
+                    }
+                }
+                .padding(.bottom, -6)
+            }
+        }
+    }
 
-                        if !onboardingPermissionSatisfied {
-                            VStack(spacing: 8) {
-                                Text(
-                                    blockedScanAccessLocations.isEmpty
-                                        ? "Open Privacy Settings if macOS blocks protected locations inside this folder."
-                                        : "Protected locations still blocked: \(blockedScanAccessLocations.prefix(3).joined(separator: ", "))"
-                                )
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
+    @ViewBuilder
+    private func onboardingButtons(for page: OnboardingPage) -> some View {
+        switch page {
+        case .folder:
+            onboardingButton("Continue", style: .primary) {
+                continueFromOnboardingFolder()
+            }
 
-                                secondaryActionButton("Open Privacy Settings", minWidth: 168) {
-                                    openScanAccessSettings()
-                                }
-                            }
-                        }
+        case .permissions:
+            if onboardingPermissionSatisfied && !isOnboardingPreview {
+                onboardingButton("Continue", style: .primary) {
+                    goToOnboardingPage(.scan)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    onboardingButton("Not Now", style: .secondary) {
+                        skipOnboardingAccess()
+                    }
+                    .frame(width: 104)
 
-                        primaryActionButton("Start Scan", minWidth: 168) {
-                            startOnboardingFirstScan()
-                        }
-                        .opacity(onboardingPermissionSatisfied ? 1.0 : 0.5)
+                    onboardingButton("Open System Settings", style: .primary) {
+                        guard !isOnboardingPreview else { return }
+                        openScanAccessSettings()
                     }
                 }
             }
-        }
-    }
 
-    /// Title section displayed above the onboarding card
-    private func onboardingTitleSection(number: Int, icon: String, title: String, description: String) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20)
-
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
+        case .scan:
+            onboardingButton(
+                "Start Scan",
+                style: .primary,
+                isDisabled: !onboardingCanStartScan && !isOnboardingPreview
+            ) {
+                guard !isOnboardingPreview else { return }
+                startOnboardingFirstScan()
             }
-
-            Text(description)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 24)
     }
 
-    /// Card content wrapper - just the visual card with content
-    private func onboardingContentCard<Content: View>(
+    private func onboardingFolderRow(_ option: OnboardingFolderOption) -> some View {
+        let isSelected = highlightedOnboardingFolderURL == option.url.standardizedFileURL
+
+        return Button {
+            guard !isOnboardingPreview else { return }
+            applyOnboardingScanFolder(option.url)
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(option.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+
+                        if let badge = option.badge {
+                            Text(badge)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+
+                    Text(option.subtitle)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                onboardingRadio(isSelected: isSelected)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.primary.opacity(0.06) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, -8)
+    }
+
+    @ViewBuilder
+    private func onboardingRadio(isSelected: Bool) -> some View {
+        if isSelected {
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 16, height: 16)
+                .overlay(
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 6, height: 6)
+                )
+        } else {
+            Circle()
+                .strokeBorder(Color.primary.opacity(0.32), lineWidth: 1.5)
+                .frame(width: 16, height: 16)
+        }
+    }
+
+    private func onboardingNumberedStep(_ number: Int, _ text: String) -> some View {
+        HStack(spacing: 10) {
+            Text("\(number)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Color.primary.opacity(0.10)))
+
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+        .frame(height: 30)
+    }
+
+    private var onboardingHairline: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(height: 1)
+    }
+
+    private func onboardingSummaryRow<Value: View>(
+        icon: String,
+        label: String,
+        @ViewBuilder value: () -> Value
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            value()
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .frame(height: 36)
+    }
+
+    private func onboardingCard<Content: View>(
+        title: String,
+        subtitle: String,
+        icon: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 22, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.primary)
+
+                    Text(subtitle)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             content()
-                .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 22)
-        .frame(maxWidth: .infinity)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(onboardingCardFillColor)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(onboardingStrokeColor, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 10)
+    }
+
+    private enum OnboardingButtonStyle {
+        case primary
+        case secondary
+    }
+
+    private func onboardingButton(
+        _ title: String,
+        style: OnboardingButtonStyle,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: style == .primary ? .semibold : .medium))
+                .lineLimit(1)
+                .foregroundStyle(style == .primary ? AnyShapeStyle(Color.white) : AnyShapeStyle(.primary))
+                .frame(maxWidth: .infinity)
+                .frame(height: 32)
+                .background(
+                    Capsule()
+                        .fill(style == .primary ? Color.accentColor : Color.primary.opacity(0.08))
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.5 : 1.0)
+    }
+
+    private func goToOnboardingPage(_ page: OnboardingPage) {
+        if isOnboardingPreview {
+            previewOnboardingPage = page
+        } else {
+            selectedOnboardingPage = page
+        }
+    }
+
+    private func continueFromOnboardingFolder() {
+        if !isOnboardingPreview && onboardingChosenFolderPath == nil {
+            applyOnboardingScanFolder(highlightedOnboardingFolderURL)
+        }
+        goToOnboardingPage(onboardingPermissionSatisfied && !isOnboardingPreview ? .scan : .permissions)
+    }
+
+    private func skipOnboardingAccess() {
+        if !isOnboardingPreview {
+            skippedFullDiskAccess = true
+        }
+        goToOnboardingPage(.scan)
+    }
+
+    private func chooseCustomOnboardingFolder() {
+        guard !isOnboardingPreview else { return }
+        manager.showOnboardingFolderPicker { url in
+            if let url = url {
+                customOnboardingFolderPath = url
+                applyOnboardingScanFolder(url)
+            }
+        }
     }
 
     private func startOnboardingTransition(from previousPage: OnboardingPage, to newPage: OnboardingPage, width: CGFloat) {
@@ -1059,16 +1142,56 @@ struct MenuBarView: View {
         } row: {
             if showsCategoryOverview {
                 headerNavigationView
+            } else if let place = shownPlace, let group = shownGroup {
+                HeaderTitleRow(
+                    title: group.headerTitle(for: place),
+                    category: place.category,
+                    iconSource: group.headerIconSource(for: place),
+                    backHint: feedPage.parent == .feed
+                        ? "Return to the change list"
+                        : "Return to this day's \(group.owner.displayName) changes",
+                    onBack: navigateFeedBack
+                )
             } else if let group = shownGroup {
                 HeaderTitleRow(
-                    title: group.category.displayName,
+                    title: group.owner.displayName,
                     category: group.category,
+                    iconSource: group.isNamedOwner ? group.rowIconSource : nil,
                     backHint: "Return to the change list",
-                    onBack: closeGroup
+                    onBack: navigateFeedBack
                 )
             } else {
-                WeeklyChangeRow(weekly: WeeklyChange(manager.changeFeed))
+                switch changeListHeaderRow {
+                case .thisWeek(let weekly):
+                    WeeklyChangeRow(weekly: weekly)
+                case .balance(let balance):
+                    StorageBalanceRow(balance: balance, onNow: scrollFeedToTop)
+                }
             }
+        }
+    }
+
+    private var changeListHeaderRow: ChangeListHeaderRow {
+        ChangeListHeaderRow.make(
+            showsBalance: devMode.showsBalanceHeader,
+            feedResult: manager.changeFeed,
+            scrollAnchor: feedScrollAnchor,
+            history: manager.storageHistory,
+            usedBytes: manager.usedBytes,
+            capacityBytes: manager.totalBytes
+        )
+    }
+
+    /// The bar shows a past date's level only under that date's header row.
+    private var driveBarHistoricUsedBytes: Int64? {
+        guard !showsCategoryOverview, feedPage == .feed else { return nil }
+        return changeListHeaderRow.historicUsedBytes
+    }
+
+    private func scrollFeedToTop() {
+        guard let feed = manager.changeFeed?.feed else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            feedScrollAnchor = ChangeFeedRows.topAnchor(for: feed, now: Date())
         }
     }
 
@@ -1084,7 +1207,8 @@ struct MenuBarView: View {
             focusedLabel: focusedDriveBarLabel,
             focusedIcon: focusedDriveBarCategory?.category.icon,
             focusedIconColor: focusedDriveBarCategory?.category.color ?? .secondary,
-            disableHover: shouldDisableDriveBarHover
+            disableHover: shouldDisableDriveBarHover,
+            historicUsedBytes: driveBarHistoricUsedBytes
         )
     }
 
@@ -1200,48 +1324,11 @@ struct MenuBarView: View {
         }
     }
 
-    private var additionalAccessBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "lock.shield")
-                .font(.system(size: 11))
-                .foregroundStyle(.orange)
-
-            Text("Extra macOS privacy access may be required")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.primary)
-
-            Spacer()
-
-            Button("Open") {
-                openScanAccessSettings()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.12))
-    }
-
     // MARK: - Page Navigation Content
 
-    /// The change list is the root page. The categories view (with the
-    /// category → subcategory → files drill) and a day group's rows slide in
-    /// from the right over it; their title rows live in the header.
     private var pageNavigationContent: some View {
-        ZStack(alignment: .top) {
-            if showsCategoryOverview {
-                categoryListView
-                    .clearOfFooter()
-                    .transition(.move(edge: .trailing))
-            } else if let group = shownGroup {
-                ChangeGroupView(group: group)
-                    .id(group.id)
-                    .transition(.move(edge: .trailing))
-            } else {
-                changeFeedView
-                    .transition(.move(edge: .leading))
-            }
+        PushPager(page: shownListPage, retained: .feed(.feed), isForward: ListPage.isPush) { page in
+            listPage(for: page)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
@@ -1250,7 +1337,7 @@ struct MenuBarView: View {
                 isEnabled: canNavigateBackFromDrilldown || isShowingGroup,
                 onSwipeBack: {
                     if isShowingGroup {
-                        closeGroup()
+                        navigateFeedBack()
                     } else {
                         navigateBackFromDrilldown()
                     }
@@ -1260,6 +1347,40 @@ struct MenuBarView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .onDisappear {
             drillTransitionCoordinator.cancelAndReset()
+        }
+    }
+
+    private var shownListPage: ListPage {
+        showsCategoryOverview ? .categories : .feed(feedPage)
+    }
+
+    @ViewBuilder
+    private func listPage(for page: ListPage) -> some View {
+        switch page {
+        case .categories:
+            categoryListView
+                .clearOfFooter()
+        case .feed(let feedPage):
+            feedPageView(for: feedPage)
+        }
+    }
+
+    @ViewBuilder
+    private func feedPageView(for page: FeedPage) -> some View {
+        if let place = shownPlace(for: page), let unitRoot = place.rootPath {
+            PlaceContentsView(
+                category: place.category,
+                caption: shownGroup(for: page).flatMap {
+                    EpisodeBuilder.contentsCaption(for: place, headerTitle: $0.headerTitle(for: place))
+                },
+                isIndexing: manager.drilldownStore.isBuilding,
+                onReveal: revealPlace,
+                loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) }
+            )
+        } else if let group = shownGroup(for: page) {
+            ChangeGroupView(group: group, onOpenPlace: openPlace, onReveal: revealPlace)
+        } else {
+            changeFeedView
         }
     }
 
@@ -1319,7 +1440,7 @@ struct MenuBarView: View {
                 .transition(.identity)
         case .category, .files:
             if let category = resolvedHeaderCategory(for: screen) {
-                drillDownHeader(category: category, subcategory: resolvedHeaderSubcategory(for: screen))
+                drillDownHeader(category: category, subcategory: headerSubcategory(for: screen, in: category))
                     .transition(.identity)
             } else {
                 Color.clear
@@ -1337,6 +1458,12 @@ struct MenuBarView: View {
         }
 
         return selectedCategory.category == screenCategory.category ? selectedCategory : screenCategory
+    }
+
+    private func headerSubcategory(for screen: HeaderScreen, in category: CategoryInventoryItem) -> SubcategoryGroup? {
+        let groups = manager.subcategoryGroupsByCategory[category.category] ?? []
+        guard MenuBarManager.filesBackReturnsToSubcategories(for: category.category, groups: groups) else { return nil }
+        return resolvedHeaderSubcategory(for: screen)
     }
 
     private func resolvedHeaderSubcategory(for screen: HeaderScreen) -> SubcategoryGroup? {
@@ -1389,8 +1516,9 @@ struct MenuBarView: View {
     }
 
     private func drillDownHeader(category: CategoryInventoryItem, subcategory: SubcategoryGroup?) -> some View {
-        navigationHeader(
+        HeaderTitleRow(
             title: subcategory?.displayName ?? category.category.displayName,
+            category: category.category,
             backHint: "Return to category overview",
             onBack: navigateBackFromDrilldown
         )
@@ -1404,44 +1532,87 @@ struct MenuBarView: View {
 
     private var changeFeedView: some View {
         Group {
-            if let error = manager.errorMessage {
+            if let error = shownErrorMessage {
                 scanErrorView(error)
                     .clearOfFooter()
             } else {
                 ChangeFeedView(
-                    result: manager.changeFeed,
+                    result: shownChangeFeed,
+                    scanFolder: scanFolderName,
                     expandedDays: $expandedFeedDays,
                     scrollAnchor: $feedScrollAnchor,
                     onOpenGroup: openChangeGroup,
+                    soleItemPath: soleItemPath(of:),
+                    onReveal: revealPlace,
                     onRetry: { Task { await manager.refreshChangeFeed() } }
                 )
             }
         }
     }
 
-    /// The open group as the latest change list has it, so a refresh while it
-    /// is open shows the new rows; the opened copy if the group is gone.
     private var shownGroup: ChangeGroup? {
-        guard let openGroup else { return nil }
-        let fresh = manager.changeFeed?.feed?.days
+        shownGroup(for: feedPage)
+    }
+
+    private var shownPlace: ChangeEpisode? {
+        shownPlace(for: feedPage)
+    }
+
+    private func shownGroup(for page: FeedPage) -> ChangeGroup? {
+        guard let openGroup = page.group else { return nil }
+        let fresh = shownChangeFeed?.feed?.days
             .first { $0.day == openGroup.day }?
             .groups.first { $0.id == openGroup.id }
         return fresh ?? openGroup
     }
 
+    private func shownPlace(for page: FeedPage) -> ChangeEpisode? {
+        guard let place = page.place else { return nil }
+        return shownGroup(for: page)?.episodes.first { $0.id == place.id } ?? place
+    }
+
     private var isShowingGroup: Bool {
-        openGroup != nil && !showsCategoryOverview
+        feedPage != .feed && !showsCategoryOverview
     }
 
     private func openChangeGroup(_ group: ChangeGroup) {
-        withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
-            openGroup = group
+        drillFeed(to: feedPage.opening(group))
+    }
+
+    private func openPlace(_ place: ChangeEpisode) {
+        drillFeed(to: feedPage.opening(place))
+    }
+
+    private func drillFeed(to page: FeedPage) {
+        guard page != feedPage, let unitRoot = page.place?.rootPath else {
+            navigateFeed(to: page)
+            return
+        }
+        feedDrillTask?.cancel()
+        feedDrillTask = Task {
+            let solePath = await manager.soleItemPath(unitRoot: unitRoot)
+            guard !Task.isCancelled else { return }
+            if let solePath {
+                revealPlace(solePath)
+            } else {
+                navigateFeed(to: page)
+            }
         }
     }
 
-    private func closeGroup() {
+    private func soleItemPath(of group: ChangeGroup) async -> String? {
+        guard let unitRoot = FeedPage.soloPlace(of: group)?.rootPath else { return nil }
+        return await manager.soleItemPath(unitRoot: unitRoot)
+    }
+
+    private func navigateFeedBack() {
+        navigateFeed(to: feedPage.parent)
+    }
+
+    private func navigateFeed(to page: FeedPage) {
+        guard page != feedPage else { return }
         withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
-            openGroup = nil
+            feedPage = page
         }
     }
 
@@ -1456,7 +1627,7 @@ struct MenuBarView: View {
         }
         withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
             showsCategoryOverview = shows
-            openGroup = nil
+            feedPage = .feed
             highlightedStorageSegmentID = nil
         }
         synchronizeVisibleHeaderToCurrent()
@@ -1486,7 +1657,7 @@ struct MenuBarView: View {
 
     private var categoryListView: some View {
         Group {
-            if let error = manager.errorMessage {
+            if let error = shownErrorMessage {
                 scanErrorView(error)
             } else {
                 CategoryGrowthListView(
@@ -1514,9 +1685,7 @@ struct MenuBarView: View {
                         displayedHeader = headerScreen(for: pane)
                         activeHeaderTransition = nil
                     },
-                    onTapItem: { path in
-                        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
-                    }
+                    onTapItem: revealPlace
                 )
             }
         }
@@ -1525,33 +1694,28 @@ struct MenuBarView: View {
     // MARK: - Footer Buttons (Icon Toolbar)
 
     private var footerButtons: some View {
-        ZStack {
-            footerStatusText
+        let status = footerStatus
+        return ZStack {
+            if status.ring == nil {
+                footerStatusText(status)
+            }
 
             HStack {
-                Button {
-                    Task { await manager.checkGrowth() }
-                } label: {
-                    Image(systemName: manager.isCheckingGrowth ? "arrow.trianglehead.2.clockwise.rotate.90" : "arrow.clockwise")
-                        .font(.system(size: 13))
-                        .frame(width: 26, height: 26)
-                        .background(
-                            Circle()
-                                .fill(refreshHover ? Color.gray.opacity(0.12) : Color.clear)
-                        )
-                        .foregroundStyle(manager.isCheckingGrowth ? .secondary : .primary)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(manager.isLoading || manager.isAutoScanning || manager.isCheckingGrowth)
-                .accessibilityLabel("Refresh recent changes")
-                .accessibilityHint("Run a lightweight refresh without a full scan")
-                .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        refreshHover = hovering
+                if let ring = status.ring {
+                    HStack(spacing: 7) {
+                        FooterProgressRing(ring: ring)
+                            .id(ring == .spinning)
+                        Text(status.text())
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
+                    .padding(.leading, 5)
+                    .frame(height: 26)
+                    .accessibilityElement(children: .combine)
+                } else {
+                    refreshButton
                 }
-                .help("Refresh recent changes")
 
                 Spacer()
 
@@ -1583,13 +1747,131 @@ struct MenuBarView: View {
         .frame(height: SoftBottomEdge.footerHeight)
     }
 
+    private var refreshButton: some View {
+        Button {
+            Task { await refreshNow() }
+        } label: {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 13))
+                .frame(width: 26, height: 26)
+                .background(
+                    Circle()
+                        .fill(refreshHover ? Color.gray.opacity(0.12) : Color.clear)
+                )
+                .foregroundStyle(.primary)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(manager.isLoading || manager.isAutoScanning || isRefreshing)
+        .accessibilityLabel("Refresh recent changes")
+        .accessibilityHint("Run a lightweight refresh without a full scan")
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                refreshHover = hovering
+            }
+        }
+        .help("Refresh recent changes")
+    }
+
+    private var isRefreshing: Bool {
+        isRefreshRequested || manager.isCheckingGrowth
+    }
+
+    /// Runs the lightweight refresh and rereads the list. The footer says
+    /// "Refreshing…" for at least a moment, so a quick refresh still shows.
+    private func refreshNow() async {
+        guard !isRefreshRequested else { return }
+        isRefreshRequested = true
+        let started = Date()
+        await manager.checkGrowth()
+        await manager.refreshChangeFeed()
+        let remaining = 0.7 - Date().timeIntervalSince(started)
+        if remaining > 0 {
+            try? await Task.sleep(for: .seconds(remaining))
+        }
+        isRefreshRequested = false
+    }
+
+    private func retryAfterFailure() {
+        Task {
+            if shownErrorMessage != nil {
+                await manager.loadInventory()
+            }
+            await manager.refreshChangeFeed()
+        }
+    }
+
+    private func revealPlace(_ path: String) {
+        guard FileManager.default.fileExists(atPath: path) else {
+            showFooterNotice("No longer on disk")
+            return
+        }
+        manager.revealInFinder(path: path)
+    }
+
+    private func showFooterNotice(_ text: String) {
+        footerNoticeTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.15)) {
+            footerNotice = text
+        }
+        footerNoticeTask = Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.15)) {
+                footerNotice = nil
+            }
+        }
+    }
+
+    private var footerStatus: FooterStatus {
+        let activity = manager.footerActivity
+        return FooterStatus.resolve(
+            notice: footerNotice,
+            refreshFailed: shownErrorMessage != nil || shownChangeFeed == .failed,
+            scanText: activity.isFullScan ? activity.text : nil,
+            scanProgress: activity.progress,
+            isRefreshing: isRefreshing,
+            foldersNotReadable: !manager.isGrowthTrackingActive
+                || hasRequiredScanAccess == false
+                || !manager.runtimeBlockedLocations.isEmpty,
+            updateAvailable: manager.showsUpdateAvailableBanner,
+            groupDay: isShowingGroup ? shownGroup?.day : nil,
+            preview: devMode.panelPreview,
+            watchingSinceToday: shownChangeFeed?.feed?.watchingSinceToday(now: Date(), calendar: .current),
+            updatedAt: manager.updatedAt
+        )
+    }
+
     @ViewBuilder
-    private var footerStatusText: some View {
-        if isShowingGroup, let group = shownGroup {
-            Text(EpisodeBuilder.dayLabel(for: group.day, calendar: .current))
+    private func footerStatusText(_ status: FooterStatus) -> some View {
+        switch status {
+        case .refreshFailed:
+            HStack(spacing: 4) {
+                Text(status.text())
+                    .foregroundStyle(.secondary)
+                Text("\u{00B7}")
+                    .foregroundStyle(.tertiary)
+                Button("Retry", action: retryAfterFailure)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+            }
+            .font(.system(size: 11))
+        case .scanning, .refreshing:
+            EmptyView()
+        case .foldersNotReadable:
+            Button(action: closePopoverAndOpenFolderSettings) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.orange)
+                    Text(status.text())
+                        .foregroundStyle(.secondary)
+                }
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        } else if manager.showsUpdateAvailableBanner {
+            }
+            .buttonStyle(.plain)
+            .help("Prunr can't read some folders. Grant Full Disk Access in Folder settings.")
+        case .updateAvailable:
             HStack(spacing: 8) {
                 Circle()
                     .fill(Color.blue)
@@ -1598,7 +1880,7 @@ struct MenuBarView: View {
                 Button {
                     manager.checkForUpdates()
                 } label: {
-                    Text("Update available")
+                    Text(status.text())
                         .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
@@ -1615,98 +1897,19 @@ struct MenuBarView: View {
                 .accessibilityLabel("Dismiss update notice")
             }
             .font(.system(size: 11))
-        } else if !manager.isGrowthTrackingActive {
-            // Broken state: the engine can't see changes. Speak up loudly —
-            // otherwise this looks identical to a quiet, healthy drive.
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.orange)
-                Text("Not tracking — needs Full Disk Access")
-                    .foregroundStyle(.orange)
-            }
-            .font(.system(size: 11))
-            .help("Growth can't be detected for this scope. Grant Full Disk Access in Settings so Prunr can track changes.")
-        } else if manager.footerActivity != .idle {
-            let activity = manager.footerActivity
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(Color.secondary.opacity(activity.isFullScan && footerBackgroundScanPulse ? 0.78 : 0.55))
-                    .frame(width: 5, height: 5)
-                    .scaleEffect(activity.isFullScan && footerBackgroundScanPulse ? 1.0 : 0.82)
-                Text(activity.text)
+        case .updated:
+            TimelineView(.everyMinute) { context in
+                Text(status.text(now: context.date))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .opacity(activity.isFullScan && footerBackgroundScanPulse ? 0.96 : 0.72)
             }
-            .font(.system(size: 11))
-            .onAppear {
-                footerBackgroundScanPulse = false
-                if activity.isFullScan {
-                    withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
-                        footerBackgroundScanPulse = true
-                    }
-                }
-            }
-            .onChange(of: activity.isFullScan) { _, isFullScan in
-                footerBackgroundScanPulse = false
-                if isFullScan {
-                    withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
-                        footerBackgroundScanPulse = true
-                    }
-                }
-            }
-            .onDisappear {
-                footerBackgroundScanPulse = false
-            }
-        } else {
-            // Healthy idle state: leave the footer empty.
+        case .none:
             Color.clear.frame(height: 1)
+        case .notice, .groupDay, .preview, .watchingSince:
+            Text(status.text())
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
         }
-    }
-
-    private func primaryActionButton(
-        _ title: String,
-        minWidth: CGFloat = 140,
-        isDisabled: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(minWidth: minWidth)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(isDisabled ? Color.gray.opacity(0.25) : Color.blue)
-                )
-                .foregroundStyle(isDisabled ? .gray : .white)
-                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .opacity(isDisabled ? 0.5 : 1.0)
-    }
-
-    private func secondaryActionButton(
-        _ title: String,
-        minWidth: CGFloat = 140,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(minWidth: minWidth)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.blue, lineWidth: 1.25)
-                )
-                .foregroundStyle(.blue)
-                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
     }
 
     private func applyOnboardingScanFolder(_ url: URL) {
@@ -1719,31 +1922,14 @@ struct MenuBarView: View {
         if manager.noBaseline {
             settingsStore.clearPendingScopeChanges()
         }
-
-        selectedOnboardingPage = .permissions
     }
 
     private func shortDisplayPath(for url: URL) -> String {
-        let standardizedPath = url.standardizedFileURL.path
-        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
-
-        if standardizedPath == "/" {
-            return "/"
-        }
-
-        if standardizedPath.hasPrefix(homePath) {
-            let relativePath = String(standardizedPath.dropFirst(homePath.count))
-            if relativePath.isEmpty {
-                return "~"
-            }
-            return "~" + relativePath
-        }
-
-        return standardizedPath
+        OnboardingFolderOption.displayPath(for: url, home: FileManager.default.homeDirectoryForCurrentUser)
     }
 
     private func startOnboardingFirstScan() {
-        guard onboardingPermissionSatisfied else { return }
+        guard onboardingCanStartScan else { return }
         guard manager.noBaseline else { return }
         guard onboardingFolderStepComplete else { return }
         guard !manager.isLoading, !manager.isAutoScanning else { return }
@@ -1852,24 +2038,11 @@ struct MenuBarView: View {
             }
 
             if showStopButton {
-                HStack {
-                    Spacer()
-                    Button("Stop") {
-                        Task { await manager.stopScan() }
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(Color.red.opacity(0.5), lineWidth: 1)
-                    )
-                    .accessibilityLabel("Stop scan")
-                    .accessibilityHint("Cancel the current scan operation")
-                    Spacer()
+                onboardingButton("Stop", style: .secondary) {
+                    Task { await manager.stopScan() }
                 }
+                .accessibilityLabel("Stop scan")
+                .accessibilityHint("Cancel the current scan operation")
             }
         }
         .padding(.horizontal, 18)
@@ -1892,25 +2065,7 @@ struct MenuBarView: View {
     }
 
     private func navigateBackFromDrilldown() {
-        guard let category = manager.selectedInventoryCategory else { return }
-        let isFileLevel = manager.isSubcategoryDrillDown && manager.selectedSubcategory != nil
-
-        if isFileLevel {
-            if category.category.supportsSubcategories {
-                manager.isSubcategoryDrillDown = false
-                manager.selectedSubcategory = nil
-            } else {
-                manager.isSubcategoryDrillDown = false
-                manager.selectedSubcategory = nil
-                manager.selectedInventoryCategory = nil
-                manager.isDrilledDown = false
-            }
-        } else {
-            manager.selectedSubcategory = nil
-            manager.selectedInventoryCategory = nil
-            manager.isSubcategoryDrillDown = false
-            manager.isDrilledDown = false
-        }
+        manager.closeDrilldownLevel()
     }
 
     private func navigateFromDriveBar(segmentID: String) {
@@ -1920,45 +2075,12 @@ struct MenuBarView: View {
         guard let item = manager.sortedCategories
             .first(where: { $0.category == category }) else { return }
 
-        let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: category)
-        let groups = manager.subcategoryGroupsByCategory[category] ?? []
-        let selectedSubcategory = needsSubcategoryLoad || category.supportsSubcategories
-            ? nil
-            : groups.first(where: { $0.subcategory == nil }) ?? groups.first
-        let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
-
-        // Enter the drilldown immediately. The destination page owns the
-        // loading skeleton while an uncached breakdown is being fetched.
-        let shouldDrillDownImmediately = true
-
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             highlightedStorageSegmentID = segmentID
-            manager.selectedInventoryCategory = item
-            manager.selectedSubcategory = selectedSubcategory
-            manager.isDrilledDown = shouldDrillDownImmediately
-            manager.isSubcategoryDrillDown = isSubcategoryDrillDown
         }
-
-        guard needsSubcategoryLoad else { return }
-
-        Task { @MainActor in
-            let groups = await manager.loadSubcategoryBreakdown(for: category)
-            guard manager.selectedInventoryCategory?.category == category else { return }
-
-            guard !category.supportsSubcategories else { return }
-
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
-                manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
-                // Transition from main directly to files now that the single
-                // group is known, avoiding a visible intermediate subcategory step.
-                manager.isDrilledDown = true
-            }
-        }
+        manager.drillIntoCategory(item, reveal: revealPlace)
     }
 
 }
@@ -2052,13 +2174,6 @@ private struct DrilldownBackSwipeBridge: NSViewRepresentable {
             true
         }
     }
-}
-
-private struct OnboardingFolderOption: Identifiable {
-    let id: String
-    let title: String
-    let subtitle: String
-    let url: URL
 }
 
 #Preview {

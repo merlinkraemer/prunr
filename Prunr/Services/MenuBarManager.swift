@@ -159,6 +159,8 @@ final class MenuBarManager: NSObject {
     private var checkForUpdatesHandler: ((Any?) -> Void)?
     @ObservationIgnored
     private var checkForUpdatesInBackgroundHandler: (() -> Void)?
+    @ObservationIgnored
+    private var updaterSettings: UpdaterSettings?
     private static let sparkleLastCheckTimeKey = "SULastCheckTime"
     private static let panelOpenUpdateCheckCooldown: TimeInterval = 60 * 60
     var isUpdaterAvailable = false
@@ -206,6 +208,10 @@ final class MenuBarManager: NSObject {
     /// finishes (unknown); `.failed` when history could not be read. A rescan
     /// never clears it: the last list stays until a new read replaces it.
     var changeFeed: ChangeFeedResult?
+    /// Free space the snapshots of the primary path recorded, read with the
+    /// change list. Nil until read or when the read failed: past dates then
+    /// show no value.
+    var storageHistory: StorageHistory?
     @ObservationIgnored
     private var changeFeedRefreshTask: Task<Void, Never>?
     private static let changeFeedDebounce: Duration = .seconds(2)
@@ -221,23 +227,17 @@ final class MenuBarManager: NSObject {
     var isPermissionConfirmedForProtectedTraversal = false
     /// Most recent paths that failed with permission errors during runtime operations.
     var runtimeBlockedLocations: [String] = []
-    var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] = [:]
-    var hasCompletedInitialSubcategoryWarmup = false
-    private var subcategoryBreakdownCacheGenerationByCategory: [GrowthCategory: UInt64] = [:]
-    private var initialSubcategoryWarmupRequestSignature: String?
-    var subcategoryBreakdownLoadingCategories: Set<GrowthCategory> = []
-    var growthContributorsBySubcategory: [String: [GrowthContributor]] = [:]
-    var growthContributorCacheGeneration: UInt64 = 0
-    /// Generation for subcategory breakdown readiness. Bumped only when the
-    /// subcategory cache is wiped — independent of growth-contributor invalidation.
-    private var subcategoryCacheGeneration: UInt64 = 0
+    let drilldownStore = DrilldownStore()
+    var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] {
+        drilldownStore.groupsByCategory
+    }
+    @ObservationIgnored
+    private var drilldownRefillTask: Task<Void, Never>?
+    private static let drilldownRefillDebounce: Duration = .seconds(2)
     private var currentInventorySnapshotIDsByPath: [UUID: Int64] = [:]
-    private var currentGrowthBaselineSnapshotIDsByPath: [UUID: Int64] = [:]
     /// "Since" anchor for accumulated growth — the baseline snapshot date.
     /// Re-anchors to ~now after Accept/Reset. Nil when no baseline exists.
     var growthBaselineDate: Date?
-    @ObservationIgnored
-    private var subcategoryBreakdownLoadTasks: [GrowthCategory: Task<SubcategoryBreakdownLoadResult, Never>] = [:]
     var monitoredPathName: String = ""
 
     enum FooterActivity: Equatable {
@@ -269,6 +269,13 @@ final class MenuBarManager: NSObject {
             }
             return false
         }
+
+        var progress: Double? {
+            if case .fullScan(.scanning, let percentage?) = self {
+                return Double(percentage) / 100
+            }
+            return nil
+        }
     }
 
     /// The footer should describe work that is happening now, without treating a
@@ -290,14 +297,8 @@ final class MenuBarManager: NSObject {
         SettingsStore.shared.enabledTrackedPaths.count
     }
 
-    private enum SubcategoryBreakdownLoadResult {
-        case loaded([SubcategoryGroup])
-        case skipped
-    }
-
     private struct GrowthPresentationState {
         let allCategories: [CategoryInventoryItem]
-        let subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]]
     }
 
     /// Extract folder name from path for tag display
@@ -612,7 +613,7 @@ final class MenuBarManager: NSObject {
     /// Rolling diagnostics recorder — surfaces sustained FSEvents/refresh churn
     /// and CPU that the "constant CPU" alpha report points at. Appends periodic
     /// summaries to `~/Library/Logs/Prunr/diagnostics.log`; the tester can hand us
-    /// that file from Settings → Troubleshooting → Generate Diagnostics Report.
+    /// that file from Settings → Feedback → Show Diagnostics Report.
     @ObservationIgnored
     private let perfMeter = DiagnosticsReporter.shared
 
@@ -638,17 +639,26 @@ final class MenuBarManager: NSObject {
     nonisolated(unsafe) private var reconciliationBackstopTask: Task<Void, Never>?
     @ObservationIgnored
     nonisolated(unsafe) private var deferredAutoCleanupTask: Task<Void, Never>?
+    @ObservationIgnored
+    private(set) var queryPlannerOptimizationTask: Task<Void, Never>?
     private(set) var isInventoryRefreshInProgress = false
     private var pendingRecentChangePaths: Set<URL> = []
     private var pendingRecentChangeRequiresFullRefresh = false
     /// A dirty watcher signal survives active scans and full-scan cooldowns.
     /// It is cleared only after a successful authoritative refresh begins.
     private(set) var needsAuthoritativeReconciliation = false
-    private var lastFullScanCompletedAt: Date?
+    private(set) var lastFullScanCompletedAt: Date?
     private var lastFullScanAttemptAt: Date?
     private var consecutiveFailedFullScans = 0
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
+    private(set) var lastManualRefreshAt: Date?
+
+    /// When the shown data was last brought up to date: a scan, a watcher
+    /// refresh or a manual refresh, whichever came last.
+    var updatedAt: Date? {
+        [lastAutomaticScanAt, lastDetectedChangeAt, lastManualRefreshAt].compactMap { $0 }.max()
+    }
     private var isUnderDiskPressure = false
     private var lastFileEventAt: Date?
     var hasPendingRecentChanges = false
@@ -664,10 +674,6 @@ final class MenuBarManager: NSObject {
     private var dirtyRefreshScheduled = false
     private(set) var lastScheduledRecentChangeRefreshDelay: TimeInterval?
     private static let reconciliationBusyRetryDelay: TimeInterval = 5 * 60
-    /// True when incremental deltas have been applied since the last full scan snapshot.
-    /// Drill-down reads should then prefer the live working set over the stale snapshot.
-    private var hasIncrementalDeltasSinceSnapshot = false
-    private var liveWorkingSetDrillDownCategories: Set<GrowthCategory> = []
     /// True only when the user explicitly tapped the "Check Growth" button.
     var isCheckingGrowth = false {
         didSet { updateMenuBarActivityEffect() }
@@ -892,17 +898,13 @@ final class MenuBarManager: NSObject {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
-        let troubleshootingMenu = NSMenu(title: "Troubleshooting")
         let feedbackItem = NSMenuItem(
             title: "Send Feedback…",
             action: #selector(openFeedback),
             keyEquivalent: ""
         )
         feedbackItem.target = self
-        troubleshootingMenu.addItem(feedbackItem)
-        let troubleshootingItem = NSMenuItem(title: "Troubleshooting", action: nil, keyEquivalent: "")
-        troubleshootingItem.submenu = troubleshootingMenu
-        menu.addItem(troubleshootingItem)
+        menu.addItem(feedbackItem)
 
         let checkForUpdatesItem = NSMenuItem(
             title: "Check for Updates…",
@@ -983,12 +985,28 @@ final class MenuBarManager: NSObject {
         SettingsWindowController.shared.showFeedback()
     }
 
+    struct UpdaterSettings {
+        let automaticallyChecks: () -> Bool
+        let setAutomaticallyChecks: (Bool) -> Void
+    }
+
+    var automaticallyChecksForUpdates: Bool {
+        get { updaterSettings?.automaticallyChecks() ?? false }
+        set { updaterSettings?.setAutomaticallyChecks(newValue) }
+    }
+
+    var lastUpdateCheckDate: Date? {
+        UserDefaults.standard.object(forKey: Self.sparkleLastCheckTimeKey) as? Date
+    }
+
     func configureUpdater(
         checkForUpdates: @escaping (Any?) -> Void,
-        checkForUpdatesInBackground: (() -> Void)? = nil
+        checkForUpdatesInBackground: (() -> Void)? = nil,
+        settings: UpdaterSettings? = nil
     ) {
         checkForUpdatesHandler = checkForUpdates
         checkForUpdatesInBackgroundHandler = checkForUpdatesInBackground
+        updaterSettings = settings
         isUpdaterAvailable = true
         checkForUpdatesMenuItem?.isEnabled = true
         notifyUpdateNotAvailable()
@@ -997,6 +1015,7 @@ final class MenuBarManager: NSObject {
     func disableUpdater() {
         checkForUpdatesHandler = nil
         checkForUpdatesInBackgroundHandler = nil
+        updaterSettings = nil
         isUpdaterAvailable = false
         isUpdateAvailable = false
         availableUpdateShortVersion = nil
@@ -1071,6 +1090,17 @@ final class MenuBarManager: NSObject {
         }
     }
 
+    func clearHistory() async {
+        do {
+            try await baselineService.clearHistory()
+        } catch {
+            Self.logger.error("Failed to clear history: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        await loadInventoryFromLatestSnapshot()
+        await refreshChangeFeed()
+    }
+
     /// Applies scope changes that require deleting existing snapshots, then refreshes
     /// all visible menu-bar state so the popover reflects the new scope immediately.
     func applyScopeChanges() async throws {
@@ -1088,9 +1118,8 @@ final class MenuBarManager: NSObject {
         pendingRecentChangePaths.removeAll()
         pendingRecentChangeRequiresFullRefresh = false
         lastDetectedChangeAt = nil
+        lastManualRefreshAt = nil
         lastAutomaticScanAt = nil
-        hasIncrementalDeltasSinceSnapshot = false
-        liveWorkingSetDrillDownCategories = []
         updateMonitoredPathName()
         updateFreeSpace()
         await checkBaseline()
@@ -1128,19 +1157,6 @@ final class MenuBarManager: NSObject {
         return standardizedScannedPath
     }
 
-    private func snapshotIDsSignature(_ snapshotIDsByPath: [UUID: Int64]) -> String? {
-        guard !snapshotIDsByPath.isEmpty else { return nil }
-
-        return snapshotIDsByPath
-            .sorted { $0.key.uuidString < $1.key.uuidString }
-            .map { "\($0.key.uuidString):\($0.value)" }
-            .joined(separator: "|")
-    }
-
-    private func trackedPathsByID(_ trackedPaths: [TrackedPath]) -> [UUID: TrackedPath] {
-        Dictionary(uniqueKeysWithValues: trackedPaths.map { ($0.id, $0) })
-    }
-
     private func createBaselines(
         for trackedPaths: [TrackedPath],
         progressCallback: @escaping (TrackedPath, ScanService.ScanProgress) -> Void
@@ -1149,6 +1165,7 @@ final class MenuBarManager: NSObject {
         // `trackedPaths` are independent (no path is a subpath of another). Each gets
         // its own snapshot, so there are no DB write conflicts — safe to scan in parallel.
         recordFullScanAttempt()
+        let skipLog = ScanSkipLog()
 
         do {
             let snapshotsByPath: [UUID: Snapshot]
@@ -1161,6 +1178,7 @@ final class MenuBarManager: NSObject {
                     scanCurrentPathDisplay = "."
                     let snapshot = try await baselineService.createBaseline(
                         trackedPath: trackedPath,
+                        skipLog: skipLog,
                         progress: { progress in progressCallback(trackedPath, progress) }
                     )
                     snapshots[trackedPath.id] = snapshot
@@ -1175,6 +1193,7 @@ final class MenuBarManager: NSObject {
                         group.addTask {
                             let snapshot = try await self.baselineService.createBaseline(
                                 trackedPath: capturedPath,
+                                skipLog: skipLog,
                                 progress: { progress in progressCallback(capturedPath, progress) }
                             )
                             return (capturedPath.id, snapshot)
@@ -1190,6 +1209,7 @@ final class MenuBarManager: NSObject {
             }
 
             recordFullScanSuccess()
+            runtimeBlockedLocations = skipLog.locationLabels
             return snapshotsByPath
         } catch {
             if !isScanCancellation(error) {
@@ -1302,10 +1322,9 @@ final class MenuBarManager: NSObject {
             applyInventory(
                 aggregation.inventory,
                 snapshotIDsByPath: aggregation.latestSnapshotIdsByPath,
-                growthBaselineSnapshotIDsByPath: aggregation.baselineSnapshotIdsByPath,
-                baselineDate: aggregation.baselineSnapshotDate,
-                invalidateSubcategoryCache: true
+                baselineDate: aggregation.baselineSnapshotDate
             )
+            await reloadDrilldownStore()
             noBaseline = false
 
             // Also compute disk accounting for free space tracking
@@ -1336,10 +1355,8 @@ final class MenuBarManager: NSObject {
                case .insufficientSnapshots = baselineError {
                 noBaseline = false
                 allCategories = []
-                subcategoryGroupsByCategory = [:]
-                invalidateGrowthContributorCache()
+                drilldownStore.clear()
                 currentInventorySnapshotIDsByPath = [:]
-                currentGrowthBaselineSnapshotIDsByPath = [:]
                 growthBaselineDate = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
@@ -1347,10 +1364,8 @@ final class MenuBarManager: NSObject {
                case .noBaseline = baselineError {
                 noBaseline = true
                 allCategories = []
-                subcategoryGroupsByCategory = [:]
-                invalidateGrowthContributorCache()
+                drilldownStore.clear()
                 currentInventorySnapshotIDsByPath = [:]
-                currentGrowthBaselineSnapshotIDsByPath = [:]
                 growthBaselineDate = nil
                 reconciliationResult = nil
                 reconcileDrillDownSelection()
@@ -1389,14 +1404,13 @@ final class MenuBarManager: NSObject {
 
         if !completedSnapshotsByPath.isEmpty && !wasCancelled {
             await growthJournalService.prune(retentionDays: SettingsStore.shared.categoryHistoryRetentionDays)
+            scheduleQueryPlannerOptimization()
             scheduleDeferredAutoCleanup()
         }
 
         let scanWallDuration = Date().timeIntervalSince(startTime)
 
         isLoading = false
-        hasIncrementalDeltasSinceSnapshot = false
-        liveWorkingSetDrillDownCategories = []
         teardownProgressStream()
         scanProgress = ""
         scanCurrentPath = ""
@@ -1438,10 +1452,7 @@ final class MenuBarManager: NSObject {
         await loadInventoryFromLatestSnapshot()
     }
 
-    func loadInventoryFromLatestSnapshot(
-        refreshedAt: Date? = nil,
-        invalidateSubcategoryCache: Bool = false
-    ) async {
+    func loadInventoryFromLatestSnapshot(refreshedAt: Date? = nil) async {
         guard beginInventoryRefresh() else { return }
         defer {
             endInventoryRefresh()
@@ -1482,12 +1493,9 @@ final class MenuBarManager: NSObject {
         applyInventory(
             aggregation.inventory,
             snapshotIDsByPath: aggregation.latestSnapshotIdsByPath,
-            growthBaselineSnapshotIDsByPath: aggregation.baselineSnapshotIdsByPath,
-            baselineDate: aggregation.baselineSnapshotDate,
-            invalidateSubcategoryCache: invalidateSubcategoryCache
-                || snapshotIDsSignature(aggregation.latestSnapshotIdsByPath)
-                    != snapshotIDsSignature(currentInventorySnapshotIDsByPath)
+            baselineDate: aggregation.baselineSnapshotDate
         )
+        await reloadDrilldownStore()
 
         reconciliationResult = await Perf.measure("disk-accounting") {
             await baselineService.getDiskAccounting(
@@ -1538,12 +1546,7 @@ final class MenuBarManager: NSObject {
             }
 
             suppressGrowthIndicators = false
-            hasIncrementalDeltasSinceSnapshot = false
-            liveWorkingSetDrillDownCategories = []
-            await loadInventoryFromLatestSnapshot(
-                refreshedAt: Date(),
-                invalidateSubcategoryCache: true
-            )
+            await loadInventoryFromLatestSnapshot(refreshedAt: Date())
             lastAcceptedGrowthAt = Date()
         } catch {
             suppressGrowthIndicators = false
@@ -1572,6 +1575,7 @@ final class MenuBarManager: NSObject {
         recentChangeTask = nil
         configureFileWatcherIfNeeded()
         await performRecentChangeRefresh(allowFullRefresh: false)
+        lastManualRefreshAt = Date()
     }
 
     /// Silently reconciles the working set against a fresh full scan.
@@ -1735,10 +1739,7 @@ final class MenuBarManager: NSObject {
                 }
 
                 let groups = subcategoryGroupsByCategory[currentSelection.category] ?? []
-                let isReloadingCurrentCategory =
-                    subcategoryBreakdownLoadTasks[currentSelection.category] != nil
-                    || subcategoryBreakdownLoadingCategories.contains(currentSelection.category)
-                if groups.isEmpty, isReloadingCurrentCategory {
+                if groups.isEmpty, drilldownStore.isBuilding {
                     return
                 }
 
@@ -1754,233 +1755,201 @@ final class MenuBarManager: NSObject {
         }
     }
 
-    func isSubcategoryBreakdownReady(for category: GrowthCategory) -> Bool {
-        guard subcategoryGroupsByCategory[category] != nil else { return false }
-        return subcategoryBreakdownCacheGenerationByCategory[category] == subcategoryCacheGeneration
+    nonisolated static func directFileGroup(for category: GrowthCategory, groups: [SubcategoryGroup]) -> SubcategoryGroup? {
+        guard category.supportsSubcategories else {
+            return groups.first(where: { $0.subcategory == nil }) ?? groups.first
+        }
+        return SoloDrill.step(rows: groups.map { _ in .branch }, hasMore: false) == .skip ? groups.first : nil
     }
 
-    func isSubcategoryBreakdownLoading(for category: GrowthCategory) -> Bool {
-        subcategoryBreakdownLoadingCategories.contains(category)
+    nonisolated static func filesBackReturnsToSubcategories(for category: GrowthCategory, groups: [SubcategoryGroup]) -> Bool {
+        category.supportsSubcategories && directFileGroup(for: category, groups: groups) == nil
     }
 
-    func completeInitialSubcategoryWarmup() {
-        guard !hasCompletedInitialSubcategoryWarmup else { return }
-
+    func openCategory(_ item: CategoryInventoryItem) {
+        let fileGroup = Self.directFileGroup(for: item.category, groups: subcategoryGroupsByCategory[item.category] ?? [])
         withAnimationsDisabled {
-            hasCompletedInitialSubcategoryWarmup = true
+            selectedInventoryCategory = item
+            selectedSubcategory = fileGroup
+            isSubcategoryDrillDown = fileGroup != nil
+            isDrilledDown = true
+        }
+        prefetchDrilldownFiles(for: item.category)
+    }
+
+    func drillIntoCategory(_ item: CategoryInventoryItem, reveal: @escaping (String) -> Void) {
+        let fileGroup = Self.directFileGroup(for: item.category, groups: subcategoryGroupsByCategory[item.category] ?? [])
+        revealSoleFile(of: fileGroup, in: item.category, reveal: reveal) { [weak self] in
+            self?.openCategory(item)
         }
     }
 
-    func preloadSubcategoryBreakdowns(for categories: [GrowthCategory]) {
-        var seenCategories = Set<GrowthCategory>()
-
-        for category in categories where seenCategories.insert(category).inserted {
-            guard !isSubcategoryBreakdownReady(for: category) else { continue }
-            guard subcategoryBreakdownLoadTasks[category] == nil else { continue }
-            setSubcategoryBreakdownLoading(true, for: category)
-
-            Task { @MainActor in
-                _ = await loadSubcategoryBreakdown(for: category)
-            }
+    func drillIntoSubcategory(_ group: SubcategoryGroup, reveal: @escaping (String) -> Void) {
+        guard let category = selectedInventoryCategory?.category else { return }
+        revealSoleFile(of: group, in: category, reveal: reveal) { [weak self] in
+            self?.openSubcategory(group)
         }
     }
 
-    func preloadInitialSubcategoryBreakdownsIfNeeded(for categories: [GrowthCategory]) {
-        guard !hasCompletedInitialSubcategoryWarmup else { return }
-
-        let uniqueCategories = Array(Set(categories)).sorted { $0.rawValue < $1.rawValue }
-        guard !uniqueCategories.isEmpty else { return }
-
-        let signature = "\(growthContributorCacheGeneration):" +
-            uniqueCategories.map(\.rawValue).joined(separator: "|")
-        guard initialSubcategoryWarmupRequestSignature != signature else { return }
-
-        initialSubcategoryWarmupRequestSignature = signature
-        preloadSubcategoryBreakdowns(for: uniqueCategories)
-    }
-
-    func loadSubcategoryBreakdown(for category: GrowthCategory) async -> [SubcategoryGroup] {
-        if isSubcategoryBreakdownReady(for: category), let cached = subcategoryGroupsByCategory[category] {
-            setSubcategoryBreakdownLoading(false, for: category)
-            return cached
+    private func revealSoleFile(
+        of group: SubcategoryGroup?,
+        in category: GrowthCategory,
+        reveal: @escaping (String) -> Void,
+        orOpen open: @escaping () -> Void
+    ) {
+        guard let group, group.fileCount == 1 else {
+            open()
+            return
         }
-
-        if let existingTask = subcategoryBreakdownLoadTasks[category] {
-            return await resolveSubcategoryBreakdownLoad(existingTask, for: category)
-        }
-
-        setSubcategoryBreakdownLoading(true, for: category)
-
-        let loadTask = Task { @MainActor in
-            if Task.isCancelled {
-                return SubcategoryBreakdownLoadResult.skipped
-            }
-
-            let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-            let trackedPathsByID = trackedPathsByID(enabledPaths)
-            guard !trackedPathsByID.isEmpty else {
-                return .skipped
-            }
-
-            let groups: [SubcategoryGroup]
-            if shouldUseWorkingSetForSubcategoryDetails(category) {
-                groups = await baselineService.getSubcategoryBreakdownFromWorkingSet(
-                    for: category,
-                    trackedPathsById: trackedPathsByID,
-                    baselineSnapshotIdsByPath: currentGrowthBaselineSnapshotIDsByPath
-                )
+        Task {
+            await drilldownStore.loadFiles(for: category, trackedPathIds: enabledTrackedPathIDs())
+            let loaded = drilldownFileGroup(group, in: category)
+            let hasMore = CategorySizes.remainingFileCount(loaded) > 0
+            if let path = SoloDrill.revealPath(leaves: loaded.topFiles.map(\.path), hasMore: hasMore) {
+                reveal(path)
             } else {
-                // Prefer snapshot-backed structure whenever available.
-                // Recent growth is overlaid from the journal, which keeps
-                // drill-down responsive even when incremental deltas exist.
-                groups = await baselineService.getSubcategoryBreakdown(
-                    for: category,
-                    trackedPathsById: trackedPathsByID,
-                    latestSnapshotIdsByPath: currentInventorySnapshotIDsByPath,
-                    baselineSnapshotIdsByPath: currentGrowthBaselineSnapshotIDsByPath
-                )
+                open()
             }
-            if Task.isCancelled {
-                return .skipped
-            }
-
-            if suppressGrowthIndicators {
-                let hiddenGroups = groups.map { group in
-                    var updatedGroup = group
-                    updatedGroup.growthBytes = nil
-                    return updatedGroup
-                }
-                return .loaded(hiddenGroups)
-            }
-
-            return .loaded(groups)
         }
-
-        subcategoryBreakdownLoadTasks[category] = loadTask
-        return await resolveSubcategoryBreakdownLoad(loadTask, for: category)
     }
 
-    /// Loads more files for a specific subcategory (pagination support).
-    /// Updates the subcategoryGroupsByCategory cache with the new files.
-    /// - Parameter group: The SubcategoryGroup to load more files for
-    /// - Returns: Updated SubcategoryGroup with more files, or nil if failed/maxed out
+    func soleItemPath(unitRoot: String) async -> String? {
+        guard !drilldownStore.isBuilding, let page = try? await loadPlaceContents(unitRoot: unitRoot) else { return nil }
+        return SoloDrill.revealPath(leaves: page.children.map(\.path), hasMore: page.hasMore)
+    }
+
+    func openSubcategory(_ group: SubcategoryGroup) {
+        guard isDrilledDown, let category = selectedInventoryCategory?.category else { return }
+        withAnimationsDisabled {
+            selectedSubcategory = group
+            isSubcategoryDrillDown = true
+        }
+        prefetchDrilldownFiles(for: category)
+    }
+
+    func closeDrilldownLevel() {
+        guard let category = selectedInventoryCategory?.category else { return }
+        withAnimationsDisabled {
+            let groups = subcategoryGroupsByCategory[category] ?? []
+            if isSubcategoryDrillDown, selectedSubcategory != nil, Self.filesBackReturnsToSubcategories(for: category, groups: groups) {
+                isSubcategoryDrillDown = false
+                selectedSubcategory = nil
+            } else {
+                isSubcategoryDrillDown = false
+                selectedSubcategory = nil
+                selectedInventoryCategory = nil
+                isDrilledDown = false
+            }
+        }
+    }
+
+    func prefetchDrilldownFiles(for category: GrowthCategory) {
+        guard !drilldownStore.isFilesLoaded(for: category),
+              !drilldownStore.loadingFileCategories.contains(category) else { return }
+        let trackedPathIds = enabledTrackedPathIDs()
+        Task { [drilldownStore] in
+            await drilldownStore.loadFiles(for: category, trackedPathIds: trackedPathIds)
+        }
+    }
+
+    func retryDrilldownRead(for category: GrowthCategory?) {
+        Task {
+            if drilldownStore.groupsReadFailed {
+                await reloadDrilldownStore()
+            }
+            if let category {
+                prefetchDrilldownFiles(for: category)
+            }
+        }
+    }
+
+    func drilldownFileGroup(_ group: SubcategoryGroup, in category: GrowthCategory) -> SubcategoryGroup {
+        subcategoryGroupsByCategory[category]?.first(where: { $0.id == group.id }) ?? group
+    }
+
+    /// The category's groups with their largest files, from the drilldown index.
+    func loadSubcategoryBreakdown(for category: GrowthCategory) async -> [SubcategoryGroup] {
+        await drilldownStore.loadFiles(for: category, trackedPathIds: enabledTrackedPathIDs())
+        return subcategoryGroupsByCategory[category] ?? []
+    }
+
+    /// Loads the next page of files for the selected group.
     @discardableResult
     func loadMoreFiles(for group: SubcategoryGroup) async -> SubcategoryGroup? {
         guard let category = selectedInventoryCategory?.category else { return nil }
-        let requestedCategory = category
-        let requestedGroupId = group.id
-
-        // Check if we've hit the maximum
-        guard group.loadedFileCount < SubcategoryGroup.maxLoadableFiles else {
+        guard let updatedGroup = await drilldownStore.loadMoreFiles(
+            for: group,
+            category: category,
+            trackedPathIds: enabledTrackedPathIDs()
+        ) else {
             return nil
         }
-
-        // Check if there are more files to load
-        guard group.hasMoreFiles else { return nil }
-
-        let additionalFiles: [GrowthItem]
-        if shouldUseWorkingSetForSubcategoryDetails(category) {
-            let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-            let trackedPathsByID = trackedPathsByID(enabledPaths)
-            guard !trackedPathsByID.isEmpty else { return nil }
-            additionalFiles = await baselineService.loadMoreSubcategoryFilesFromWorkingSet(
-                for: category,
-                subcategory: group.subcategory,
-                trackedPathIds: Array(trackedPathsByID.keys),
-                totalBytes: group.totalBytes,
-                offset: group.loadedFileCount,
-                cacheApplicationKey: group.cacheApplicationKey
-            )
-        } else {
-            additionalFiles = await baselineService.loadMoreSubcategoryFiles(
-                for: category,
-                subcategory: group.subcategory,
-                snapshotIdsByPath: currentInventorySnapshotIDsByPath,
-                totalBytes: group.totalBytes,
-                offset: group.loadedFileCount,
-                cacheApplicationKey: group.cacheApplicationKey
-            )
-        }
-
-        guard !additionalFiles.isEmpty else { return nil }
-        guard !Task.isCancelled else { return nil }
-        guard selectedInventoryCategory?.category == requestedCategory else { return nil }
-
-        var updatedGroup = group
-        var seenPaths = Set(updatedGroup.topFiles.map(\.path))
-        for file in additionalFiles where seenPaths.insert(file.path).inserted {
-            updatedGroup.topFiles.append(file)
-        }
-        updatedGroup.topFiles.sort {
-            if $0.currentSizeBytes == $1.currentSizeBytes {
-                return $0.path.localizedStandardCompare($1.path) == .orderedAscending
-            }
-            return $0.currentSizeBytes > $1.currentSizeBytes
-        }
-
-        if var groups = subcategoryGroupsByCategory[requestedCategory] {
-            if let index = groups.firstIndex(where: { $0.id == requestedGroupId }) {
-                groups[index] = updatedGroup
-                subcategoryGroupsByCategory[requestedCategory] = groups
-            } else {
-                return nil
-            }
-        } else {
-            return nil
-        }
-
-        if selectedSubcategory?.id == requestedGroupId {
+        guard selectedInventoryCategory?.category == category else { return nil }
+        if selectedSubcategory?.id == updatedGroup.id {
             selectedSubcategory = updatedGroup
         }
-
         return updatedGroup
     }
 
-    /// Loads growth contributors for a specific subcategory group
-    func loadGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) async -> [GrowthContributor] {
-        guard !suppressGrowthIndicators else { return [] }
-        guard let snapshotSignature = snapshotIDsSignature(currentInventorySnapshotIDsByPath),
-              let baselineSignature = snapshotIDsSignature(currentGrowthBaselineSnapshotIDsByPath) else {
-            return []
-        }
-
-        let cacheKey = growthContributorCacheKey(
-            snapshotSignature: snapshotSignature,
-            baselineSnapshotSignature: baselineSignature,
-            category: category,
-            group: group
+    /// The biggest direct children of a place (a unit root), from the place index.
+    func loadPlaceContents(unitRoot: String, offset: Int = 0) async throws -> PlaceContentsPage {
+        try await drilldownStore.placeContents(
+            unitRoot: unitRoot,
+            trackedPathIds: enabledTrackedPathIDs(),
+            offset: offset
         )
-
-        if let cached = growthContributorsBySubcategory[cacheKey] {
-            return cached
-        }
-
-        // Only show contributors backed by the live working set. Falling back
-        // to historical snapshot diffs mixes older growth into the current
-        // drill-down and makes pre-baseline files appear newly grown.
-        let contributors = await baselineService.getGrowthContributors(
-            baselineSnapshotIdsByPath: currentGrowthBaselineSnapshotIDsByPath,
-            category: category,
-            subcategory: group.cacheApplicationKey == nil ? group.subcategory : nil,
-            cacheApplicationKey: group.cacheApplicationKey
-        )
-        growthContributorsBySubcategory[cacheKey] = contributors
-        return contributors
     }
 
-    func cachedGrowthContributors(for group: SubcategoryGroup, category: GrowthCategory) -> [GrowthContributor]? {
-        guard !suppressGrowthIndicators else { return [] }
-        guard let snapshotSignature = snapshotIDsSignature(currentInventorySnapshotIDsByPath),
-              let baselineSignature = snapshotIDsSignature(currentGrowthBaselineSnapshotIDsByPath) else {
-            return nil
+    private func enabledTrackedPathIDs() -> [UUID] {
+        effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths).map(\.id)
+    }
+
+    /// Re-reads the drilldown groups (and loaded files) after an inventory
+    /// load, then maps the drilldown selection onto the fresh groups.
+    func reloadDrilldownStore() async {
+        await drilldownStore.reload(trackedPathIds: enabledTrackedPathIDs())
+        reconcileDrillDownSelection()
+    }
+
+    /// Builds the drilldown index of paths upgraded from an older database,
+    /// off the main actor, then shows it.
+    func rebuildDrilldownIndexIfNeeded() {
+        Task { [weak self] in
+            let result = await Task.detached(priority: .utility) { () -> Result<[String], Error> in
+                do {
+                    return .success(try await DatabaseManager.shared.rebuildDrilldownIndexIfNeeded())
+                } catch {
+                    return .failure(error)
+                }
+            }.value
+            switch result {
+            case .success(let rebuilt):
+                guard !rebuilt.isEmpty else { return }
+                await self?.reloadDrilldownStore()
+            case .failure(let error):
+                Self.logger.error("Drilldown index rebuild failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
-        let cacheKey = growthContributorCacheKey(
-            snapshotSignature: snapshotSignature,
-            baselineSnapshotSignature: baselineSignature,
-            category: category,
-            group: group
-        )
-        return growthContributorsBySubcategory[cacheKey]
+    }
+
+    /// After watcher deltas, refills groups whose stored top files got
+    /// shorter, debounced so a burst of batches costs one pass.
+    private func scheduleDrilldownRefill() {
+        drilldownRefillTask?.cancel()
+        let trackedPathIds = enabledTrackedPathIDs()
+        drilldownRefillTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.drilldownRefillDebounce)
+            guard !Task.isCancelled else { return }
+            let refilled = await Task.detached(priority: .utility) { () -> Int in
+                var refilled = 0
+                for trackedPathId in trackedPathIds {
+                    refilled += (try? await DatabaseManager.shared.refillShortTopGroups(trackedPathId: trackedPathId)) ?? 0
+                }
+                return refilled
+            }.value
+            guard refilled > 0, !Task.isCancelled else { return }
+            await self?.reloadDrilldownStore()
+        }
     }
 
     private func directoryExistsOffMain(_ url: URL) async -> Bool {
@@ -2152,6 +2121,7 @@ final class MenuBarManager: NSObject {
         let accessReport = await PermissionsService.shared.evaluateScanScopeAccessAsync(scanRootURLs: scanRoots)
         isPermissionConfirmedForProtectedTraversal = accessReport.isGranted
         await checkBaseline(trackedPathsOverride: trackedPaths)
+        rebuildDrilldownIndexIfNeeded()
         scheduleReconciliationBackstop()
     }
 
@@ -2178,6 +2148,7 @@ final class MenuBarManager: NSObject {
 
         applyQuickInventory(items)
         noBaseline = false
+        await reloadDrilldownStore()
         return true
     }
 
@@ -2206,63 +2177,15 @@ final class MenuBarManager: NSObject {
     private func applyInventory(
         _ inventory: [CategoryInventoryItem],
         snapshotIDsByPath: [UUID: Int64],
-        growthBaselineSnapshotIDsByPath: [UUID: Int64],
-        baselineDate: Date?,
-        invalidateSubcategoryCache: Bool
+        baselineDate: Date?
     ) {
-        let previousSnapshotSignature = snapshotIDsSignature(currentInventorySnapshotIDsByPath)
-        let previousBaselineSignature = snapshotIDsSignature(currentGrowthBaselineSnapshotIDsByPath)
-        let newSnapshotSignature = snapshotIDsSignature(snapshotIDsByPath)
-        let newBaselineSignature = snapshotIDsSignature(growthBaselineSnapshotIDsByPath)
-        let shouldInvalidateSubcategoryCache =
-            invalidateSubcategoryCache
-            || previousSnapshotSignature != newSnapshotSignature
-            || previousBaselineSignature != newBaselineSignature
-
-        if previousSnapshotSignature != newSnapshotSignature {
-            hasIncrementalDeltasSinceSnapshot = false
-            liveWorkingSetDrillDownCategories = []
-        }
-
         let visibleInventory = inventory.map {
             suppressGrowthIndicators ? suppressedGrowthItem(from: $0) : $0
         }.sorted(by: Self.inventorySortsBefore)
 
         allCategories = visibleInventory
         currentInventorySnapshotIDsByPath = snapshotIDsByPath
-        currentGrowthBaselineSnapshotIDsByPath = growthBaselineSnapshotIDsByPath
         growthBaselineDate = baselineDate
-
-        if shouldInvalidateSubcategoryCache {
-            cancelSubcategoryBreakdownLoads()
-            subcategoryGroupsByCategory = [:]
-            subcategoryBreakdownCacheGenerationByCategory = [:]
-            subcategoryBreakdownLoadingCategories = []
-            hasCompletedInitialSubcategoryWarmup = false
-            initialSubcategoryWarmupRequestSignature = nil
-            subcategoryCacheGeneration &+= 1
-        } else {
-            let validCategories = Set(allCategories.map(\.category))
-            subcategoryGroupsByCategory = subcategoryGroupsByCategory.filter { validCategories.contains($0.key) }
-            subcategoryBreakdownCacheGenerationByCategory = subcategoryBreakdownCacheGenerationByCategory.filter {
-                validCategories.contains($0.key)
-            }
-            subcategoryBreakdownLoadingCategories = Set(
-                subcategoryBreakdownLoadingCategories.filter { validCategories.contains($0) }
-            )
-            for category in subcategoryBreakdownLoadTasks.keys where !validCategories.contains(category) {
-                subcategoryBreakdownLoadTasks[category]?.cancel()
-                subcategoryBreakdownLoadTasks[category] = nil
-            }
-        }
-        invalidateGrowthContributorCache()
-
-        if shouldInvalidateSubcategoryCache,
-           isDrilledDown,
-           let category = selectedInventoryCategory?.category,
-           allCategories.contains(where: { $0.category == category }) {
-            preloadSubcategoryBreakdowns(for: [category])
-        }
 
         reconcileDrillDownSelection()
         // Every journal write (watcher refresh, full scan, accept) ends in an
@@ -2289,10 +2212,12 @@ final class MenuBarManager: NSObject {
         do {
             let oldestSnapshot = try await growthJournalService.oldestCompleteSnapshotDate(trackedPaths: trackedPaths)
             let watchingSince = HistoryStart.remember(oldestSnapshot: oldestSnapshot)
-            result = .loaded(try await growthJournalService.changeFeed(
+            let feed = try await growthJournalService.changeFeed(
                 trackedPaths: trackedPaths,
                 watchingSince: watchingSince
-            ))
+            )
+            let catalog = AppCatalogProvider.shared.catalog(resolving: feed.ownerAppIdentifiers)
+            result = .loaded(feed.resolvingOwners(with: catalog))
         } catch {
             Self.logger.error("Failed to read change feed: \(error.localizedDescription, privacy: .public)")
             result = .failed
@@ -2300,99 +2225,39 @@ final class MenuBarManager: NSObject {
         if result != changeFeed {
             changeFeed = result
         }
+        await refreshStorageHistory()
+    }
+
+    private func refreshStorageHistory() async {
+        let history: StorageHistory?
+        if let trackedPath = primaryTrackedPath() {
+            do {
+                history = try await growthJournalService.storageHistory(trackedPath: trackedPath)
+            } catch {
+                Self.logger.error("Failed to read storage history: \(error.localizedDescription, privacy: .public)")
+                history = nil
+            }
+        } else {
+            history = .empty
+        }
+        if history != storageHistory {
+            storageHistory = history
+        }
     }
 
     private func clearInventoryState() {
         withAnimationsDisabled {
             allCategories = []
-            cancelSubcategoryBreakdownLoads()
-            subcategoryGroupsByCategory = [:]
-            subcategoryBreakdownCacheGenerationByCategory = [:]
-            subcategoryBreakdownLoadingCategories = []
-            subcategoryCacheGeneration &+= 1
-            invalidateGrowthContributorCache()
+            drilldownStore.clear()
             selectedInventoryCategory = nil
             selectedSubcategory = nil
             isDrilledDown = false
             isSubcategoryDrillDown = false
             reconciliationResult = nil
             currentInventorySnapshotIDsByPath = [:]
-            currentGrowthBaselineSnapshotIDsByPath = [:]
             growthBaselineDate = nil
-            hasIncrementalDeltasSinceSnapshot = false
-            liveWorkingSetDrillDownCategories = []
-            initialSubcategoryWarmupRequestSignature = nil
         }
         scheduleChangeFeedRefresh()
-    }
-
-    private func shouldUseWorkingSetForSubcategoryDetails(_ category: GrowthCategory) -> Bool {
-        guard !currentInventorySnapshotIDsByPath.isEmpty else { return true }
-        return hasIncrementalDeltasSinceSnapshot
-    }
-
-    private func resolveSubcategoryBreakdownLoad(
-        _ task: Task<SubcategoryBreakdownLoadResult, Never>,
-        for category: GrowthCategory
-    ) async -> [SubcategoryGroup] {
-        let result = await task.value
-
-        if subcategoryBreakdownLoadTasks[category] != nil {
-            subcategoryBreakdownLoadTasks[category] = nil
-        }
-
-        switch result {
-        case .loaded(let groups):
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) {
-                subcategoryGroupsByCategory[category] = groups
-                subcategoryBreakdownCacheGenerationByCategory[category] = subcategoryCacheGeneration
-                subcategoryBreakdownLoadingCategories.remove(category)
-            }
-            return groups
-        case .skipped:
-            setSubcategoryBreakdownLoading(false, for: category)
-            return subcategoryGroupsByCategory[category] ?? []
-        }
-    }
-
-    private func setSubcategoryBreakdownLoading(_ isLoading: Bool, for category: GrowthCategory) {
-        withAnimationsDisabled {
-            if isLoading {
-                subcategoryBreakdownLoadingCategories.insert(category)
-            } else {
-                subcategoryBreakdownLoadingCategories.remove(category)
-            }
-        }
-    }
-
-    private func cancelSubcategoryBreakdownLoads() {
-        for task in subcategoryBreakdownLoadTasks.values {
-            task.cancel()
-        }
-        subcategoryBreakdownLoadTasks = [:]
-    }
-
-    private func invalidateGrowthContributorCache() {
-        growthContributorsBySubcategory = [:]
-        growthContributorCacheGeneration &+= 1
-    }
-
-    /// Test hook: mark a subcategory breakdown ready at the current subcategory generation.
-    func _testSeedSubcategoryReady(category: GrowthCategory, groups: [SubcategoryGroup] = []) {
-        subcategoryGroupsByCategory[category] = groups
-        subcategoryBreakdownCacheGenerationByCategory[category] = subcategoryCacheGeneration
-    }
-
-    /// Test hook: invalidate only the growth-contributor cache (not subcategory readiness).
-    func _testInvalidateGrowthContributorCache() {
-        invalidateGrowthContributorCache()
-    }
-
-    /// Test hook: bump subcategory generation so existing stamped readiness becomes stale.
-    func _testBumpSubcategoryCacheGeneration() {
-        subcategoryCacheGeneration &+= 1
     }
 
     private func suppressedGrowthItem(from item: CategoryInventoryItem) -> CategoryInventoryItem {
@@ -2402,10 +2267,7 @@ final class MenuBarManager: NSObject {
     }
 
     private func captureGrowthPresentationState() -> GrowthPresentationState {
-        GrowthPresentationState(
-            allCategories: allCategories,
-            subcategoryGroupsByCategory: subcategoryGroupsByCategory
-        )
+        GrowthPresentationState(allCategories: allCategories)
     }
 
     private func clearVisibleGrowthIndicators() {
@@ -2413,15 +2275,6 @@ final class MenuBarManager: NSObject {
             allCategories = allCategories
                 .map(suppressedGrowthItem(from:))
                 .sorted(by: Self.inventorySortsBefore)
-
-            subcategoryGroupsByCategory = subcategoryGroupsByCategory.mapValues { groups in
-                groups.map { group in
-                    var updatedGroup = group
-                    updatedGroup.growthBytes = nil
-                    return updatedGroup
-                }
-            }
-            invalidateGrowthContributorCache()
             reconcileDrillDownSelection()
         }
     }
@@ -2429,8 +2282,6 @@ final class MenuBarManager: NSObject {
     private func restoreGrowthPresentationState(_ state: GrowthPresentationState) {
         withAnimationsDisabled {
             allCategories = state.allCategories
-            subcategoryGroupsByCategory = state.subcategoryGroupsByCategory
-            invalidateGrowthContributorCache()
             reconcileDrillDownSelection()
         }
     }
@@ -2441,15 +2292,6 @@ final class MenuBarManager: NSObject {
         withTransaction(transaction, updates)
     }
 
-    private func growthContributorCacheKey(
-        snapshotSignature: String,
-        baselineSnapshotSignature: String,
-        category: GrowthCategory,
-        group: SubcategoryGroup
-    ) -> String {
-        "\(snapshotSignature):\(baselineSnapshotSignature):\(category.rawValue):\(group.id)"
-    }
-
     private func updateMonitoredPathName() {
         if let path = primaryTrackedPath() {
             monitoredPathName = path.displayName
@@ -2458,20 +2300,22 @@ final class MenuBarManager: NSObject {
         }
     }
 
-    /// Reveals the given path in Finder and activates Finder
-    func revealInFinder(path: String) {
-        let url = URL(fileURLWithPath: path)
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+    static let finderBundleIdentifier = "com.apple.finder"
 
-        // Also activate Finder to bring it to front
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NSApp.activate()
-            if let finderBundle = Bundle(url: URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")),
-               let bundleId = finderBundle.bundleIdentifier {
-                let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
-                runningApp?.activate()
+    func revealInFinder(path: String) {
+        var isDirectory: ObjCBool = false
+        FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+        NSApp.yieldActivation(toApplicationWithBundleIdentifier: Self.finderBundleIdentifier)
+        switch FinderReveal.target(forPath: path, isDirectory: isDirectory.boolValue) {
+        case .select(let url):
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .open(let folder):
+            Self.logger.info("Opening hidden iCloud container folder instead of selecting: \(folder.path, privacy: .private)")
+            if !NSWorkspace.shared.open(folder) {
+                Self.logger.error("Finder could not open \(folder.path, privacy: .private)")
             }
         }
+        NSRunningApplication.runningApplications(withBundleIdentifier: Self.finderBundleIdentifier).first?.activate()
     }
 
     /// Shows a folder picker dialog for onboarding
@@ -2597,7 +2441,7 @@ final class MenuBarManager: NSObject {
             return
         }
 
-        let lastCheck = UserDefaults.standard.object(forKey: Self.sparkleLastCheckTimeKey) as? Date
+        let lastCheck = lastUpdateCheckDate
         if let lastCheck,
            Date().timeIntervalSince(lastCheck) < Self.panelOpenUpdateCheckCooldown {
             return
@@ -3318,17 +3162,10 @@ final class MenuBarManager: NSObject {
 
         if hadUpdate {
             lastDetectedChangeAt = Date()
-            hasIncrementalDeltasSinceSnapshot = true
-            liveWorkingSetDrillDownCategories.formUnion(allDeltas.keys.map(\.category))
-            // Reload inventory from DB ground truth instead of patching in-memory.
-            // The incremental refresh already updated workingSetEntry + category totals
-            // in the DB. Just read them back — no drift possible.
-            // applyInventory (via loadInventoryFromLatestSnapshot) already invalidates
-            // the growth-contributor cache; do not bump it again here.
-            await loadInventoryFromLatestSnapshot(
-                refreshedAt: Date(),
-                invalidateSubcategoryCache: false
-            )
+            // Reload inventory and drilldown index from DB ground truth: the
+            // incremental refresh already updated every working-set table.
+            await loadInventoryFromLatestSnapshot(refreshedAt: Date())
+            scheduleDrilldownRefill()
         }
 
         hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
@@ -3597,6 +3434,19 @@ final class MenuBarManager: NSObject {
 
         lastFileEventAt = Date()
         enqueuePendingRecentChangePaths(fallbackPaths, source: "requiresFullRescan")
+    }
+
+    func scheduleQueryPlannerOptimization() {
+        let logger = Self.logger
+        queryPlannerOptimizationTask = Task.detached(priority: .utility) {
+            do {
+                try await Perf.measure("query-planner-optimize") {
+                    try await DatabaseManager.shared.optimizeQueryPlanner()
+                }
+            } catch {
+                logger.error("Query planner optimize failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     private func scheduleDeferredAutoCleanup() {

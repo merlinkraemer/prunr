@@ -39,21 +39,25 @@ final class UnitRulesMediaTests: XCTestCase {
         XCTAssertEqual(name(path).title, "iCloud Drive")
     }
 
-    func testOtherICloudContainersNameTheApp() {
-        let cases: [(String, String)] = [
-            ("com~apple~Pages", "Pages in iCloud"),
-            ("iCloud~com~culturedcode~ThingsMac", "ThingsMac in iCloud"),
-            ("27N4MQEA55~pro~writer", "Writer in iCloud"),
-            ("com~apple~Numbers", "Numbers in iCloud")
+    func testOtherICloudContainersBelongToTheirApp() {
+        let cases: [(String, String, String)] = [
+            ("com~apple~Pages", "com.apple.Pages", "Pages · iCloud"),
+            ("iCloud~com~culturedcode~ThingsMac", "com.culturedcode.ThingsMac", "ThingsMac · iCloud"),
+            ("27N4MQEA55~pro~writer", "pro.writer", "Writer · iCloud"),
+            ("57T9237FN3~net~whatsapp~WhatsApp", "net.whatsapp.WhatsApp", "WhatsApp · iCloud"),
+            ("com~apple~Numbers", "com.apple.Numbers", "Numbers · iCloud")
         ]
-        for (container, title) in cases {
+        for (container, id, standalone) in cases {
             let path = "/Users/tester/Library/Mobile Documents/\(container)/Documents/a/b.bin"
             XCTAssertEqual(
                 key(path),
                 "icloud-container|/Users/tester/Library/Mobile Documents/\(container)",
                 container
             )
-            XCTAssertEqual(name(path).title, title, container)
+            XCTAssertEqual(name(path).title, "iCloud", container)
+            XCTAssertEqual(name(path).owner, .app(id: id), container)
+            XCTAssertEqual(name(path).standaloneTitle, standalone, container)
+            XCTAssertEqual(name(path).category, .mediaAndDocuments, container)
         }
     }
 
@@ -72,7 +76,7 @@ final class UnitRulesMediaTests: XCTestCase {
             XCTAssertEqual(
                 name(path),
                 UnitName(
-                    title: "Final Cut Pro render files · Trip", detail: "2024-05-01",
+                    title: "Final Cut Pro render files · Trip", context: "2024-05-01",
                     category: .mediaAndDocuments, icon: .finalCutPro
                 ),
                 folder
@@ -139,7 +143,7 @@ final class UnitRulesMediaTests: XCTestCase {
             XCTAssertNotEqual(resolved.kind, .library, path)
             let unitName = UnitNamer.name(for: resolved, home: home)
             XCTAssertFalse(UnitNamer.containsForbiddenToken(unitName.title), unitName.title)
-            XCTAssertFalse(UnitNamer.containsForbiddenToken(unitName.detail ?? ""), path)
+            XCTAssertFalse(UnitNamer.containsForbiddenToken(unitName.context ?? ""), path)
             XCTAssertFalse(unitName.title.contains("Library/"), unitName.title)
         }
     }

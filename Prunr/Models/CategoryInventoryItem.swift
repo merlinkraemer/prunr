@@ -45,8 +45,7 @@ struct GrowthJournalBucket: Codable, Identifiable, Sendable, Equatable, Hashable
     /// For `scan` buckets: start of the window the scan reconciled. The change
     /// happened somewhere in `(observedSince, bucketStart]`.
     let observedSince: Date?
-    /// `UnitResolver` key of the place this change belongs to; `''` for rows
-    /// written before v22 or at category grain (coarse residuals).
+    /// `UnitResolver` key of the place this change belongs to.
     let unitKey: String
 
     enum Source: String, Codable, Sendable {
@@ -54,6 +53,9 @@ struct GrowthJournalBucket: Codable, Identifiable, Sendable, Equatable, Hashable
         case watch
         /// Residual a full scan found that the watcher missed.
         case scan
+        /// History before the first scan, rebuilt from the birth dates of
+        /// files written once (`FileDateHistory`).
+        case files
     }
 }
 
@@ -80,8 +82,15 @@ struct SupplementalInventoryItem: Identifiable, Sendable, Equatable {
 struct SubcategoryGroup: Identifiable, Sendable, Equatable {
     let id: String
     let subcategory: GrowthSubcategory?
-    /// Set for cache groups that are split by the application owning the cache.
-    let cacheApplicationKey: String?
+    /// Set for an owner group in Apps & System: the resolved owner's key.
+    let ownerKey: String?
+    /// The owner's icon; nil shows the subcategory symbol.
+    let ownerIcon: UnitIconSource?
+    /// The drilldown index group (`DrilldownGroupKey`).
+    let groupKey: String
+    /// Every index group the row shows: one, or the owner groups merged into
+    /// one app or into "Other apps".
+    let groupKeys: [String]
     let displayName: String
     let totalBytes: Int64
     let fileCount: Int
@@ -95,13 +104,20 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
         fileCount: Int,
         growthBytes: Int64? = nil,
         topFiles: [GrowthItem],
-        cacheApplicationKey: String? = nil
+        groupKey: String? = nil,
+        ownerKey: String? = nil,
+        ownerIcon: UnitIconSource? = nil,
+        groupKeys: [String]? = nil
     ) {
-        self.id = cacheApplicationKey.map { "cache-application:\($0)" }
+        self.id = ownerKey.map { "owner:\($0)" }
             ?? subcategory?.rawValue
             ?? "__uncategorized__:\(displayName)"
         self.subcategory = subcategory
-        self.cacheApplicationKey = cacheApplicationKey
+        self.ownerKey = ownerKey
+        self.ownerIcon = ownerIcon
+        let groupKey = groupKey ?? subcategory?.rawValue ?? ""
+        self.groupKey = groupKey
+        self.groupKeys = groupKeys ?? [groupKey]
         self.displayName = displayName
         self.totalBytes = totalBytes
         self.fileCount = fileCount
@@ -119,8 +135,19 @@ struct SubcategoryGroup: Identifiable, Sendable, Equatable {
         topFiles.count
     }
 
+    static let otherOwnersKey = "other-apps"
+
+    /// "Other apps (N)": the owners too small for their own row.
+    var isRemainder: Bool { ownerKey == Self.otherOwnersKey }
+
     var icon: String {
-        cacheApplicationKey == nil ? (subcategory?.icon ?? "folder.fill") : "app.fill"
+        guard let ownerKey else { return subcategory?.icon ?? "folder.fill" }
+        if ownerKey == UnitOwner.system.key { return GrowthCategory.cachesAndSystem.icon }
+        if ownerKey.hasPrefix(UnitOwner.categoryKeyPrefix),
+           let category = GrowthCategory(rawValue: String(ownerKey.dropFirst(UnitOwner.categoryKeyPrefix.count))) {
+            return category.icon
+        }
+        return "app.fill"
     }
 
     // MARK: - Pagination Constants

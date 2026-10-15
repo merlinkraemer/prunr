@@ -3,7 +3,9 @@ import SwiftUI
 /// A list body without rows: one quiet sentence in the middle, with an
 /// optional Retry. Used for day one and for a history that cannot be read.
 struct ChangeFeedStateView: View {
-    static let dayOneText = "Watching your home folder since today. Changes show here from tomorrow."
+    static func dayOneText(folder: ScanFolderName) -> String {
+        "Watching \(folder.phrase) since today. Changes show here from tomorrow."
+    }
     static let failedText = "Couldn't read change history"
 
     let message: String

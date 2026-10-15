@@ -6,11 +6,14 @@ import SwiftUI
 struct ChangeFeedView: View {
     /// Nil while the first read is in flight.
     let result: ChangeFeedResult?
+    let scanFolder: ScanFolderName
     @Binding var expandedDays: Set<Date>
     /// The day at the top of the list, kept while a group is open so going
-    /// back lands where the list was.
+    /// back lands where the list was. The header shows this day's storage.
     @Binding var scrollAnchor: Date?
     let onOpenGroup: (ChangeGroup) -> Void
+    let soleItemPath: @MainActor (ChangeGroup) async -> String?
+    let onReveal: (String) -> Void
     let onRetry: () -> Void
 
     var body: some View {
@@ -26,11 +29,18 @@ struct ChangeFeedView: View {
                 ChangeFeedStateView(message: ChangeFeedStateView.failedText, onRetry: onRetry)
                     .clearOfFooter()
             case .loaded(let feed)? where feed.isDayOne(now: now):
-                ChangeFeedStateView(message: ChangeFeedStateView.dayOneText)
+                ChangeFeedStateView(message: ChangeFeedStateView.dayOneText(folder: scanFolder))
                     .clearOfFooter()
             case .loaded(let feed)?:
                 ScrollView {
-                    ChangeFeedRows(feed: feed, now: now, expandedDays: $expandedDays, onOpenGroup: onOpenGroup)
+                    ChangeFeedRows(
+                        feed: feed,
+                        now: now,
+                        expandedDays: $expandedDays,
+                        onOpenGroup: onOpenGroup,
+                        soleItemPath: soleItemPath,
+                        onReveal: onReveal
+                    )
                         .padding(.bottom, SoftBottomEdge.height)
                 }
                 .hiddenScrollIndicators()
@@ -49,10 +59,21 @@ struct ChangeFeedRows: View {
     /// Groups a day shows before its "Show all (N)" row.
     static let collapsedGroupLimit = 3
 
+    /// Scroll id of the "Nothing over 1 GB since" line above the first day.
+    static let quietLineID = Date.distantFuture
+
+    /// The scroll id at the very top of the list: the quiet line when it is
+    /// shown, else the newest day.
+    static func topAnchor(for feed: ChangeFeed, now: Date, calendar: Calendar = .current) -> Date? {
+        feed.quietSince(now: now, calendar: calendar) == nil ? feed.days.first?.day : quietLineID
+    }
+
     let feed: ChangeFeed
     let now: Date
     @Binding var expandedDays: Set<Date>
     let onOpenGroup: (ChangeGroup) -> Void
+    var soleItemPath: (@MainActor (ChangeGroup) async -> String?)? = nil
+    var onReveal: (String) -> Void = { _ in }
 
     private let calendar = Calendar.current
 
@@ -66,6 +87,7 @@ struct ChangeFeedRows: View {
                     .padding(.horizontal, 18)
                     .padding(.top, 8)
                     .padding(.bottom, 2)
+                    .id(Self.quietLineID)
             }
 
             ForEach(feed.days) { day in
@@ -102,7 +124,12 @@ struct ChangeFeedRows: View {
                 .accessibilityAddTraits(.isHeader)
 
             ForEach(shown) { group in
-                ChangeGroupRow(group: group) { onOpenGroup(group) }
+                ChangeGroupRow(
+                    group: group,
+                    onOpen: { onOpenGroup(group) },
+                    soleItemPath: soleItemPath.map { resolve in { @MainActor () async -> String? in await resolve(group) } },
+                    onReveal: onReveal
+                )
             }
 
             if isCollapsed {
@@ -116,13 +143,14 @@ struct ChangeFeedRows: View {
     }
 }
 
-/// One day's rows for one category: the drilldown under the main list.
 struct ChangeGroupView: View {
     let group: ChangeGroup
+    let onOpenPlace: (ChangeEpisode) -> Void
+    let onReveal: (String) -> Void
 
     var body: some View {
         ScrollView {
-            ChangeGroupRows(group: group)
+            ChangeGroupRows(group: group, onOpenPlace: onOpenPlace, onReveal: onReveal)
                 .padding(.bottom, SoftBottomEdge.height)
         }
         .hiddenScrollIndicators()
@@ -130,14 +158,15 @@ struct ChangeGroupView: View {
     }
 }
 
-/// The drilldown's rows without the scroll view, newest first.
 struct ChangeGroupRows: View {
     let group: ChangeGroup
+    let onOpenPlace: (ChangeEpisode) -> Void
+    let onReveal: (String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(group.episodes) { episode in
-                ChangeRow(episode: episode)
+                ChangeRow(episode: episode, onOpen: onOpenPlace, onReveal: onReveal)
             }
         }
         .padding(.top, 6)

@@ -58,11 +58,6 @@ actor BaselineService {
     /// Boundary configuration for stopping drill-down
     private let boundaryConfig = BoundaryConfig.default
 
-    private let maxCategoryDrilldownItems = 3000
-    private let maxCategoryBigItems = 500
-    // Initial files loaded per subcategory (user can load more)
-    private let initialSubcategoryFileLimit = SubcategoryGroup.initialLoadLimit
-
     /// MainActor-isolated property for UI state
     @MainActor var isCreatingBaseline = false
 
@@ -93,6 +88,7 @@ actor BaselineService {
     func createBaseline(
         trackedPath: TrackedPath,
         ignoredNames: Set<String>? = nil,
+        skipLog: ScanSkipLog? = nil,
         progress: ((ScanService.ScanProgress) -> Void)? = nil
     ) async throws -> Snapshot {
         // Get previous snapshot for delta calculation
@@ -115,13 +111,16 @@ actor BaselineService {
 
         // Run full scan into an isolated snapshot first. The working set is rebuilt
         // from that completed snapshot only after the scan succeeds.
-        let snapshot = try await scanService.scan(
+        let outcome = try await scanService.scanWithDrilldownIndex(
             path: trackedPath.url.path,
             trackedPathId: trackedPath.id,
             ignoredNames: ignoredNames,
             alsoWriteWorkingSet: false,
+            reconstructsFileHistory: previousSnapshotId == nil,
+            skipLog: skipLog,
             progress: progress
         )
+        let snapshot = outcome.snapshot
 
         guard let snapshotId = snapshot.id else {
             logger.error("Failed to create snapshot with ID")
@@ -132,18 +131,27 @@ actor BaselineService {
             ))
         }
 
-        try await db.rebuildWorkingSet(from: snapshotId, trackedPathId: trackedPath.id, updatedAt: snapshot.createdAt)
+        try await db.rebuildWorkingSet(
+            from: snapshotId,
+            trackedPathId: trackedPath.id,
+            updatedAt: snapshot.createdAt,
+            drilldownIndex: outcome.drilldownIndex
+        )
 
         if previousSnapshotId == nil {
             // A first successful baseline must clear stale realtime growth left behind from pre-baseline runs.
             try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)
+            if let fileHistory = outcome.fileHistory {
+                try await recordFileHistory(fileHistory, trackedPath: trackedPath)
+            }
         }
 
         // Record deltas to growth journal only when a previous snapshot exists.
         // On first scan (previousSnapshotId == nil) this block is skipped entirely —
         // no calculateDeltas call and no journal recording, so first-scan cost is
         // scan + insert only, with no expensive diff computation.
-        if let previous = previousSnapshots.first, let previousSnapshotId {
+        if let previous = previousSnapshots.first, let previousSnapshotId,
+           HistoryStart.scanWindowKeepsResidual(windowStart: previous.createdAt) {
             // The realtime watcher already recorded most of this window's changes
             // at the time they happened. Keep those timestamps and add only the
             // residual the watcher missed (or over-counted), so the window total
@@ -163,20 +171,11 @@ actor BaselineService {
                 authoritativeByKey[key, default: 0] += delta.changeBytes
             }
 
-            var recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
+            let recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
                 trackedPathId: trackedPath.id,
                 from: previous.createdAt,
                 to: snapshot.createdAt
             )
-
-            // Coarse grain: if the window still holds buckets without a unit
-            // (written before v22), per-unit residuals would show every change the
-            // old watcher recorded as a fake "found" row. Reconcile at category
-            // grain instead and write the residual without a unit.
-            if recordedByKey.keys.contains(where: { $0.unitKey.isEmpty }) {
-                authoritativeByKey = Self.coarsened(authoritativeByKey)
-                recordedByKey = Self.coarsened(recordedByKey)
-            }
 
             var residualByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
             for key in Set(authoritativeByKey.keys).union(recordedByKey.keys) {
@@ -200,14 +199,17 @@ actor BaselineService {
         return snapshot
     }
 
-    private static func coarsened(
-        _ deltas: [DatabaseManager.JournalDeltaKey: Int64]
-    ) -> [DatabaseManager.JournalDeltaKey: Int64] {
-        var result: [DatabaseManager.JournalDeltaKey: Int64] = [:]
-        for (key, bytes) in deltas {
-            result[key.coarse, default: 0] += bytes
-        }
-        return result
+    /// Writes the history rebuilt from file dates. Every bucket lies before
+    /// the first snapshot, so no later scan window reconciles it again.
+    private func recordFileHistory(_ history: FileDateHistory, trackedPath: TrackedPath) async throws {
+        let start = Date()
+        try await db.upsertGrowthJournalBuckets(
+            trackedPathId: trackedPath.id,
+            deltasByBucketStart: history.deltasByBucketStart,
+            source: .files
+        )
+        let milliseconds = Int(Date().timeIntervalSince(start) * 1000)
+        logger.info("File-date history: \(history.fileCount) files, \(history.totalBytes) bytes in \(history.bucketCount) slots, written in \(milliseconds) ms")
     }
 
     /// Checks whether at least one snapshot exists.
@@ -220,6 +222,11 @@ actor BaselineService {
         } catch {
             return false
         }
+    }
+
+    func clearHistory() async throws {
+        HistoryStart.clear(at: Date())
+        try await db.deleteAllGrowthJournalBuckets()
     }
 
     /// Resets the baseline by deleting all snapshots.
@@ -537,660 +544,6 @@ actor BaselineService {
         }.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
     }
 
-    func getSubcategoryBreakdown(for category: GrowthCategory, snapshotId: Int64) async -> [SubcategoryGroup] {
-        do {
-            if category == .cachesAndSystem {
-                return try await db.fetchCacheApplicationGroups(
-                    snapshotId: snapshotId,
-                    topLimit: initialSubcategoryFileLimit
-                )
-            }
-
-            let precomputedGroups = try await db.fetchSubcategoryGroups(for: snapshotId, category: category)
-            if !precomputedGroups.isEmpty {
-                return precomputedGroups
-            }
-
-            return try await db.fetchSubcategoryGroupsByClassification(
-                for: snapshotId,
-                category: category,
-                topLimit: initialSubcategoryFileLimit
-            )
-        } catch {
-            logger.error("Error getting subcategory breakdown for \(category.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return []
-        }
-    }
-
-    /// Builds subcategory breakdown from working set entries when incremental deltas
-    /// are newer than the latest full snapshot.
-    func getSubcategoryBreakdownFromWorkingSet(for category: GrowthCategory, trackedPathId: UUID) async -> [SubcategoryGroup] {
-        do {
-            if category == .cachesAndSystem {
-                return try await db.fetchWorkingSetCacheApplicationGroups(
-                    trackedPathId: trackedPathId,
-                    topLimit: initialSubcategoryFileLimit
-                )
-            }
-
-            return try await db.fetchWorkingSetSubcategoryGroupsByClassification(
-                trackedPathId: trackedPathId,
-                category: category,
-                topLimit: initialSubcategoryFileLimit
-            )
-        } catch {
-            logger.error("Error getting working set subcategory breakdown for \(category.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return []
-        }
-    }
-
-    func getSubcategoryBreakdownFromWorkingSet(
-        for category: GrowthCategory,
-        trackedPathsById: [UUID: TrackedPath],
-        baselineSnapshotIdsByPath: [UUID: Int64]
-    ) async -> [SubcategoryGroup] {
-        if category == .cachesAndSystem {
-            var aggregated: [String: SubcategoryGroup] = [:]
-
-            for trackedPathId in trackedPathsById.keys {
-                let groups = await getSubcategoryBreakdownFromWorkingSet(
-                    for: category,
-                    trackedPathId: trackedPathId
-                )
-                let growthTotals: [String: Int64]
-                if let baselineSnapshotId = baselineSnapshotIdsByPath[trackedPathId] {
-                    growthTotals = (try? await db.fetchGrowthTotalsByCacheApplication(
-                        trackedPathId: trackedPathId,
-                        snapshotId: baselineSnapshotId
-                    )) ?? [:]
-                } else {
-                    growthTotals = [:]
-                }
-
-                for group in groups {
-                    let key = group.cacheApplicationKey ?? "__other_cache__"
-                    let groupGrowthBytes = growthTotals[key]
-                    if let existing = aggregated[key] {
-                        aggregated[key] = SubcategoryGroup(
-                            subcategory: .appCaches,
-                            displayName: existing.displayName,
-                            totalBytes: existing.totalBytes + group.totalBytes,
-                            fileCount: existing.fileCount + group.fileCount,
-                            growthBytes: mergeOptionalBytes(existing.growthBytes, groupGrowthBytes),
-                            topFiles: mergedTopFiles(
-                                existing.topFiles,
-                                group.topFiles,
-                                limit: SubcategoryGroup.initialLoadLimit
-                            ),
-                            cacheApplicationKey: group.cacheApplicationKey ?? existing.cacheApplicationKey
-                        )
-                    } else {
-                        aggregated[key] = SubcategoryGroup(
-                            subcategory: .appCaches,
-                            displayName: group.displayName,
-                            totalBytes: group.totalBytes,
-                            fileCount: group.fileCount,
-                            growthBytes: groupGrowthBytes,
-                            topFiles: group.topFiles,
-                            cacheApplicationKey: group.cacheApplicationKey
-                        )
-                    }
-                }
-            }
-
-            return aggregated.values.sorted {
-                if $0.totalBytes == $1.totalBytes {
-                    return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
-                }
-                return $0.totalBytes > $1.totalBytes
-            }
-        }
-
-        var aggregated: [GrowthSubcategory?: SubcategoryGroup] = [:]
-
-        for (trackedPathId, trackedPath) in trackedPathsById {
-            let groups = await getSubcategoryBreakdownFromWorkingSet(for: category, trackedPathId: trackedPathId)
-
-            var growthTotals: [GrowthSubcategory?: Int64] = [:]
-            if let baselineSnapshotId = baselineSnapshotIdsByPath[trackedPathId] {
-                growthTotals = await getSubcategoryGrowthTotals(
-                    trackedPathId: trackedPathId,
-                    snapshotId: baselineSnapshotId,
-                    category: category
-                )
-            }
-
-            let journalTotals = await growthJournalService.subcategoryGrowthTotals(
-                trackedPath: trackedPath,
-                category: category
-            )
-            if !journalTotals.isEmpty {
-                for (subcategory, total) in journalTotals {
-                    growthTotals[subcategory] = total
-                }
-            }
-
-            for group in groups {
-                let groupGrowthBytes = growthTotals[group.subcategory]
-
-                if var existing = aggregated[group.subcategory] {
-                    existing = SubcategoryGroup(
-                        subcategory: existing.subcategory,
-                        displayName: existing.displayName,
-                        totalBytes: existing.totalBytes + group.totalBytes,
-                        fileCount: existing.fileCount + group.fileCount,
-                        growthBytes: mergeOptionalBytes(existing.growthBytes, groupGrowthBytes),
-                        topFiles: mergedTopFiles(
-                            existing.topFiles,
-                            group.topFiles,
-                            limit: SubcategoryGroup.initialLoadLimit
-                        )
-                    )
-                    aggregated[group.subcategory] = existing
-                } else {
-                    aggregated[group.subcategory] = SubcategoryGroup(
-                        subcategory: group.subcategory,
-                        displayName: group.displayName,
-                        totalBytes: group.totalBytes,
-                        fileCount: group.fileCount,
-                        growthBytes: groupGrowthBytes,
-                        topFiles: group.topFiles
-                    )
-                }
-            }
-        }
-
-        return aggregated.values.sorted {
-            if $0.totalBytes == $1.totalBytes {
-                return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
-            }
-            return $0.totalBytes > $1.totalBytes
-        }
-    }
-
-    /// Finds files that contributed to growth since the last snapshot for a specific category/subcategory.
-    func getGrowthContributors(
-        trackedPathId: UUID,
-        snapshotId: Int64,
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        limit: Int = 50,
-        cacheApplicationKey: String? = nil
-    ) async -> [GrowthContributor] {
-        do {
-            return try await db.fetchGrowthContributors(
-                trackedPathId: trackedPathId,
-                snapshotId: snapshotId,
-                category: category,
-                subcategory: subcategory,
-                limit: limit,
-                cacheApplicationKey: cacheApplicationKey
-            )
-        } catch {
-            logger.error("Error fetching growth contributors: \(error.localizedDescription, privacy: .public)")
-            return []
-        }
-    }
-
-    func getGrowthContributors(
-        baselineSnapshotIdsByPath: [UUID: Int64],
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        limit: Int = 50,
-        cacheApplicationKey: String? = nil
-    ) async -> [GrowthContributor] {
-        var contributorsByPath: [String: GrowthContributor] = [:]
-
-        for (trackedPathId, snapshotId) in baselineSnapshotIdsByPath {
-            let contributors = await getGrowthContributors(
-                trackedPathId: trackedPathId,
-                snapshotId: snapshotId,
-                category: category,
-                subcategory: subcategory,
-                limit: limit,
-                cacheApplicationKey: cacheApplicationKey
-            )
-
-            for contributor in contributors {
-                if let existing = contributorsByPath[contributor.path] {
-                    contributorsByPath[contributor.path] = GrowthContributor(
-                        path: contributor.path,
-                        currentSizeBytes: max(existing.currentSizeBytes, contributor.currentSizeBytes),
-                        growthBytes: existing.growthBytes + contributor.growthBytes
-                    )
-                } else {
-                    contributorsByPath[contributor.path] = contributor
-                }
-            }
-        }
-
-        return contributorsByPath.values.sorted {
-            if abs($0.growthBytes) == abs($1.growthBytes) {
-                return $0.path.localizedStandardCompare($1.path) == .orderedAscending
-            }
-            return abs($0.growthBytes) > abs($1.growthBytes)
-        }
-        .prefix(limit)
-        .map { $0 }
-    }
-
-    /// Loads additional files for a specific subcategory with pagination.
-    /// Used for "Load More" functionality to avoid loading all files at once.
-    ///
-    /// - Parameters:
-    ///   - category: The parent category
-    ///   - subcategory: The subcategory to load files for (nil for uncategorized)
-    ///   - snapshotId: The snapshot ID
-    ///   - totalBytes: Total bytes for the subcategory (used for percent calculation)
-    ///   - offset: Number of files to skip (already loaded)
-    ///   - limit: Maximum files to load
-    /// - Returns: Array of GrowthItem for the additional files
-    func loadMoreSubcategoryFiles(
-        for category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        snapshotId: Int64,
-        totalBytes: Int64,
-        offset: Int,
-        limit: Int = SubcategoryGroup.loadMoreBatchSize,
-        cacheApplicationKey: String? = nil
-    ) async -> [GrowthItem] {
-        do {
-            let page: [SnapshotEntryWithPath]
-            if category == .cachesAndSystem, subcategory == .appCaches {
-                page = try await db.fetchSnapshotEntriesByCacheApplication(
-                    snapshotId: snapshotId,
-                    applicationKey: cacheApplicationKey,
-                    offset: offset,
-                    limit: limit
-                )
-            } else {
-                page = try await db.fetchSnapshotEntriesByClassification(
-                    snapshotId: snapshotId,
-                    category: category,
-                    subcategory: subcategory,
-                    offset: offset,
-                    limit: limit
-                )
-            }
-
-            return page.map { entry in
-                let percent = totalBytes > 0
-                    ? Double(entry.sizeBytes) / Double(totalBytes)
-                    : 0
-
-                return GrowthItem(
-                    path: entry.path,
-                    growthBytes: entry.sizeBytes,
-                    currentSizeBytes: entry.sizeBytes,
-                    percentOfParent: percent,
-                    subcategory: subcategory
-                )
-            }
-        } catch {
-            logger.error("Error loading more files for subcategory: \(error.localizedDescription, privacy: .public)")
-            return []
-        }
-    }
-
-    func loadMoreSubcategoryFiles(
-        for category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        snapshotIdsByPath: [UUID: Int64],
-        totalBytes: Int64,
-        offset: Int,
-        limit: Int = SubcategoryGroup.loadMoreBatchSize,
-        cacheApplicationKey: String? = nil
-    ) async -> [GrowthItem] {
-        do {
-            let requestedCount = offset + limit
-            var entries: [SnapshotEntryWithPath] = []
-            for snapshotId in snapshotIdsByPath.values {
-                let rows: [SnapshotEntryWithPath]
-                if category == .cachesAndSystem, subcategory == .appCaches {
-                    rows = try await db.fetchSnapshotEntriesByCacheApplication(
-                        snapshotId: snapshotId,
-                        applicationKey: cacheApplicationKey,
-                        offset: 0,
-                        limit: requestedCount
-                    )
-                } else {
-                    rows = try await db.fetchSnapshotEntriesByClassification(
-                        snapshotId: snapshotId,
-                        category: category,
-                        subcategory: subcategory,
-                        offset: 0,
-                        limit: requestedCount
-                    )
-                }
-                entries.append(contentsOf: rows)
-            }
-
-            let page = entries
-                .sorted { lhs, rhs in
-                    if lhs.sizeBytes == rhs.sizeBytes {
-                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
-                    }
-                    return lhs.sizeBytes > rhs.sizeBytes
-                }
-                .dropFirst(offset)
-                .prefix(limit)
-
-            return page.map { entry in
-                let percent = totalBytes > 0
-                    ? Double(entry.sizeBytes) / Double(totalBytes)
-                    : 0
-
-                return GrowthItem(
-                    path: entry.path,
-                    growthBytes: entry.sizeBytes,
-                    currentSizeBytes: entry.sizeBytes,
-                    percentOfParent: percent,
-                    subcategory: subcategory
-                )
-            }
-        } catch {
-            logger.error("Error loading aggregated files for subcategory: \(error.localizedDescription, privacy: .public)")
-            return []
-        }
-    }
-
-    /// Loads more files from the working set for a category/subcategory when incremental
-    /// changes are newer than the latest snapshot.
-    func loadMoreSubcategoryFilesFromWorkingSet(
-        for category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        trackedPathId: UUID,
-        totalBytes: Int64,
-        offset: Int,
-        limit: Int = SubcategoryGroup.loadMoreBatchSize,
-        cacheApplicationKey: String? = nil
-    ) async -> [GrowthItem] {
-        do {
-            let page: [SnapshotEntryWithPath]
-            if category == .cachesAndSystem, subcategory == .appCaches {
-                page = try await db.fetchWorkingSetEntriesByCacheApplication(
-                    trackedPathId: trackedPathId,
-                    applicationKey: cacheApplicationKey,
-                    offset: offset,
-                    limit: limit
-                )
-            } else {
-                page = try await db.fetchWorkingSetEntriesByClassification(
-                    trackedPathId: trackedPathId,
-                    category: category,
-                    subcategory: subcategory,
-                    offset: offset,
-                    limit: limit
-                )
-            }
-
-            return page.map { entry in
-                let percent = totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0
-                return GrowthItem(
-                    path: entry.path,
-                    growthBytes: entry.sizeBytes,
-                    currentSizeBytes: entry.sizeBytes,
-                    percentOfParent: percent,
-                    subcategory: subcategory
-                )
-            }
-        } catch {
-            logger.error("Error loading working set files for subcategory: \(error.localizedDescription, privacy: .public)")
-            return []
-        }
-    }
-
-    func loadMoreSubcategoryFilesFromWorkingSet(
-        for category: GrowthCategory,
-        subcategory: GrowthSubcategory?,
-        trackedPathIds: [UUID],
-        totalBytes: Int64,
-        offset: Int,
-        limit: Int = SubcategoryGroup.loadMoreBatchSize,
-        cacheApplicationKey: String? = nil
-    ) async -> [GrowthItem] {
-        do {
-            let requestedCount = offset + limit
-            var entries: [SnapshotEntryWithPath] = []
-
-            for trackedPathId in trackedPathIds {
-                let rows: [SnapshotEntryWithPath]
-                if category == .cachesAndSystem, subcategory == .appCaches {
-                    rows = try await db.fetchWorkingSetEntriesByCacheApplication(
-                        trackedPathId: trackedPathId,
-                        applicationKey: cacheApplicationKey,
-                        offset: 0,
-                        limit: requestedCount
-                    )
-                } else {
-                    rows = try await db.fetchWorkingSetEntriesByClassification(
-                        trackedPathId: trackedPathId,
-                        category: category,
-                        subcategory: subcategory,
-                        offset: 0,
-                        limit: requestedCount
-                    )
-                }
-                entries.append(contentsOf: rows)
-            }
-
-            let page = entries
-                .sorted { lhs, rhs in
-                    if lhs.sizeBytes == rhs.sizeBytes {
-                        return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
-                    }
-                    return lhs.sizeBytes > rhs.sizeBytes
-                }
-                .dropFirst(offset)
-                .prefix(limit)
-
-            return page.map { entry in
-                let percent = totalBytes > 0 ? Double(entry.sizeBytes) / Double(totalBytes) : 0
-                return GrowthItem(
-                    path: entry.path,
-                    growthBytes: entry.sizeBytes,
-                    currentSizeBytes: entry.sizeBytes,
-                    percentOfParent: percent,
-                    subcategory: subcategory
-                )
-            }
-        } catch {
-            logger.error("Error loading aggregated working set files for subcategory: \(error.localizedDescription, privacy: .public)")
-            return []
-        }
-    }
-
-    func getSubcategoryGrowthTotals(
-        trackedPathId: UUID,
-        snapshotId: Int64,
-        category: GrowthCategory
-    ) async -> [GrowthSubcategory?: Int64] {
-        do {
-            return try await db.fetchGrowthTotalsBySubcategory(
-                trackedPathId: trackedPathId,
-                snapshotId: snapshotId,
-                category: category
-            )
-        } catch {
-            logger.error("Error fetching subcategory growth totals for \(category.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return [:]
-        }
-    }
-
-    func getSubcategoryBreakdown(
-        for category: GrowthCategory,
-        trackedPathsById: [UUID: TrackedPath],
-        latestSnapshotIdsByPath: [UUID: Int64],
-        baselineSnapshotIdsByPath: [UUID: Int64]
-    ) async -> [SubcategoryGroup] {
-        if category == .cachesAndSystem {
-            var aggregated: [String: SubcategoryGroup] = [:]
-
-            for (trackedPathId, snapshotId) in latestSnapshotIdsByPath {
-                let groups = await getSubcategoryBreakdown(for: category, snapshotId: snapshotId)
-                let growthTotals: [String: Int64]
-                if let baselineSnapshotId = baselineSnapshotIdsByPath[trackedPathId] {
-                    growthTotals = (try? await db.fetchGrowthTotalsByCacheApplication(
-                        trackedPathId: trackedPathId,
-                        snapshotId: baselineSnapshotId
-                    )) ?? [:]
-                } else {
-                    growthTotals = [:]
-                }
-
-                for group in groups {
-                    let key = group.cacheApplicationKey ?? "__other_cache__"
-                    let groupGrowthBytes = growthTotals[key]
-                    if let existing = aggregated[key] {
-                        aggregated[key] = SubcategoryGroup(
-                            subcategory: .appCaches,
-                            displayName: existing.displayName,
-                            totalBytes: existing.totalBytes + group.totalBytes,
-                            fileCount: existing.fileCount + group.fileCount,
-                            growthBytes: mergeOptionalBytes(existing.growthBytes, groupGrowthBytes),
-                            topFiles: mergedTopFiles(
-                                existing.topFiles,
-                                group.topFiles,
-                                limit: SubcategoryGroup.initialLoadLimit
-                            ),
-                            cacheApplicationKey: group.cacheApplicationKey ?? existing.cacheApplicationKey
-                        )
-                    } else {
-                        aggregated[key] = SubcategoryGroup(
-                            subcategory: .appCaches,
-                            displayName: group.displayName,
-                            totalBytes: group.totalBytes,
-                            fileCount: group.fileCount,
-                            growthBytes: groupGrowthBytes,
-                            topFiles: group.topFiles,
-                            cacheApplicationKey: group.cacheApplicationKey
-                        )
-                    }
-                }
-            }
-
-            return aggregated.values.sorted {
-                if $0.totalBytes == $1.totalBytes {
-                    return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
-                }
-                return $0.totalBytes > $1.totalBytes
-            }
-        }
-
-        var aggregated: [GrowthSubcategory?: SubcategoryGroup] = [:]
-
-        for (trackedPathId, snapshotId) in latestSnapshotIdsByPath {
-            let groups = await getSubcategoryBreakdown(for: category, snapshotId: snapshotId)
-
-            var growthTotals: [GrowthSubcategory?: Int64] = [:]
-            if let baselineSnapshotId = baselineSnapshotIdsByPath[trackedPathId] {
-                growthTotals = await getSubcategoryGrowthTotals(
-                    trackedPathId: trackedPathId,
-                    snapshotId: baselineSnapshotId,
-                    category: category
-                )
-            }
-
-            if let trackedPath = trackedPathsById[trackedPathId] {
-                let journalTotals = await growthJournalService.subcategoryGrowthTotals(
-                    trackedPath: trackedPath,
-                    category: category
-                )
-                if !journalTotals.isEmpty {
-                    for (subcategory, total) in journalTotals {
-                        growthTotals[subcategory] = total
-                    }
-                }
-            }
-
-            for group in groups {
-                let groupGrowthBytes = growthTotals[group.subcategory]
-
-                if var existing = aggregated[group.subcategory] {
-                    existing = SubcategoryGroup(
-                        subcategory: existing.subcategory,
-                        displayName: existing.displayName,
-                        totalBytes: existing.totalBytes + group.totalBytes,
-                        fileCount: existing.fileCount + group.fileCount,
-                        growthBytes: mergeOptionalBytes(existing.growthBytes, groupGrowthBytes),
-                        topFiles: mergedTopFiles(
-                            existing.topFiles,
-                            group.topFiles,
-                            limit: SubcategoryGroup.initialLoadLimit
-                        )
-                    )
-                    aggregated[group.subcategory] = existing
-                } else {
-                    aggregated[group.subcategory] = SubcategoryGroup(
-                        subcategory: group.subcategory,
-                        displayName: group.displayName,
-                        totalBytes: group.totalBytes,
-                        fileCount: group.fileCount,
-                        growthBytes: groupGrowthBytes,
-                        topFiles: group.topFiles
-                    )
-                }
-            }
-        }
-
-        return aggregated.values.sorted {
-            if $0.totalBytes == $1.totalBytes {
-                return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
-            }
-            return $0.totalBytes > $1.totalBytes
-        }
-    }
-
-    private func collectSnapshotEntries(
-        for snapshotId: Int64,
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?
-    ) async throws -> [SnapshotEntryWithPath] {
-        let pageSize = 5_000
-        var lastEntryId: Int64?
-        var matches: [SnapshotEntryWithPath] = []
-
-        while true {
-            try Task.checkCancellation()
-
-            let entries = try await db.fetchEntriesPaginatedUnordered(
-                for: snapshotId,
-                afterEntryId: lastEntryId,
-                limit: pageSize
-            )
-            guard !entries.isEmpty else { break }
-
-            for entry in entries {
-                guard GrowthCategory.categorize(path: entry.path) == category else { continue }
-                guard GrowthCategory.subcategorize(path: entry.path) == subcategory else { continue }
-                matches.append(entry)
-            }
-
-            lastEntryId = entries.last?.id
-        }
-
-        return matches
-    }
-
-    private func collectSnapshotEntries(
-        for snapshotIds: [Int64],
-        category: GrowthCategory,
-        subcategory: GrowthSubcategory?
-    ) async throws -> [SnapshotEntryWithPath] {
-        var matches: [SnapshotEntryWithPath] = []
-
-        for snapshotId in snapshotIds {
-            let snapshotMatches = try await collectSnapshotEntries(
-                for: snapshotId,
-                category: category,
-                subcategory: subcategory
-            )
-            matches.append(contentsOf: snapshotMatches)
-        }
-
-        return matches
-    }
-
     /// Gets inventory with recent growth stories merged.
     /// - Parameter trackedPath: The tracked path to analyze
     /// - Returns: Array of CategoryInventoryItem with recent growth attached where applicable
@@ -1374,47 +727,5 @@ actor BaselineService {
                 endedAt: max(lhs.endedAt, rhs.endedAt)
             )
         }
-    }
-
-    private func mergeOptionalBytes(_ lhs: Int64?, _ rhs: Int64?) -> Int64? {
-        switch (lhs, rhs) {
-        case (nil, nil):
-            return nil
-        case let (value?, nil), let (nil, value?):
-            return value
-        case let (lhs?, rhs?):
-            return lhs + rhs
-        }
-    }
-
-    private func mergedTopFiles(
-        _ lhs: [GrowthItem],
-        _ rhs: [GrowthItem],
-        limit: Int
-    ) -> [GrowthItem] {
-        var mergedByPath: [String: GrowthItem] = [:]
-
-        for item in lhs + rhs {
-            if let existing = mergedByPath[item.path] {
-                mergedByPath[item.path] = GrowthItem(
-                    path: item.path,
-                    growthBytes: max(existing.growthBytes, item.growthBytes),
-                    currentSizeBytes: max(existing.currentSizeBytes, item.currentSizeBytes),
-                    percentOfParent: max(existing.percentOfParent, item.percentOfParent),
-                    subcategory: item.subcategory ?? existing.subcategory
-                )
-            } else {
-                mergedByPath[item.path] = item
-            }
-        }
-
-        return mergedByPath.values.sorted {
-            if $0.currentSizeBytes == $1.currentSizeBytes {
-                return $0.path.localizedStandardCompare($1.path) == .orderedAscending
-            }
-            return $0.currentSizeBytes > $1.currentSizeBytes
-        }
-        .prefix(limit)
-        .map { $0 }
     }
 }

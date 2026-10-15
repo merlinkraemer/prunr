@@ -1,7 +1,8 @@
 import SwiftUI
 import AppKit
 
-/// List view showing inventory grouped by category with growth indicators and drill-down navigation
+/// The categories view: storage by category, biggest first, sizes only.
+/// Category → subcategories by size → files.
 struct CategoryGrowthListView: View {
     private let pageTopInset: CGFloat = 2
 
@@ -38,18 +39,13 @@ struct CategoryGrowthListView: View {
     /// Maximum height for the scrollable list
     var maxHeight: CGFloat = 360
 
-    @State private var isLoadingSubcategories = false
     @State private var isLoadingMoreFiles = false
-    @State private var subcategoryLoadTask: Task<Void, Never>? = nil
-    @State private var subcategoryLoadToken = UUID()
     @State private var displayedScreen: DrilldownListPane? = nil // nil until first appear
     @State private var activeTransition: ActiveTransition? = nil
     @State private var pageWidth: CGFloat = 0
     @State private var pendingTransition: PendingNavigationTransition? = nil
     @State private var hasInitializedDisplay = false
-    @State private var loadedContributorTaskID: String? = nil
     @State private var isDataReady = false
-    @State private var contributorPrefetchTask: Task<Void, Never>? = nil
 
     private enum NavigationDirection {
         case forward
@@ -125,7 +121,6 @@ struct CategoryGrowthListView: View {
                 if !categories.isEmpty {
                     isDataReady = true
                 }
-                preloadVisibleCategoriesIfNeeded()
             }
             .onChange(of: geometry.size.width) { _, newWidth in
                 guard newWidth > 0 else { return }
@@ -168,26 +163,12 @@ struct CategoryGrowthListView: View {
             if !ids.isEmpty {
                 isDataReady = true
             }
-            preloadVisibleCategoriesIfNeeded()
         }
         .onChange(of: manager.isPopoverShown) { _, isShown in
             guard isShown else { return }
             synchronizeVisibleScreenToCurrent()
-            preloadVisibleCategoriesIfNeeded()
-        }
-        .onChange(of: manager.isAnalyzingChanges) { _, isAnalyzing in
-            guard !isAnalyzing else { return }
-            preloadVisibleCategoriesIfNeeded()
-        }
-        .onChange(of: startupWarmupSignature) { _, _ in
-            updateStartupWarmupStateIfNeeded()
         }
         .onDisappear {
-            subcategoryLoadTask?.cancel()
-            subcategoryLoadTask = nil
-            isLoadingSubcategories = false
-            contributorPrefetchTask?.cancel()
-            contributorPrefetchTask = nil
             activeTransition = nil
             pendingTransition = nil
             drillTransitionCoordinator.cancelAndReset()
@@ -210,23 +191,15 @@ struct CategoryGrowthListView: View {
                 Color.clear
             }
         case .files:
-            fileListView(for: resolvedSubcategory(for: screen))
+            fileListView(for: resolvedSubcategory(for: screen), category: screen.category?.category)
                 .transition(.identity)
         }
     }
 
     private func resolvedSubcategory(for screen: DrilldownListPane) -> SubcategoryGroup? {
-        guard screen.level == .files else { return screen.subcategory }
-
-        guard let selectedSubcategory = manager.selectedSubcategory else {
-            return screen.subcategory
-        }
-
-        guard let screenSubcategory = screen.subcategory else {
-            return selectedSubcategory
-        }
-
-        return selectedSubcategory.id == screenSubcategory.id ? selectedSubcategory : screenSubcategory
+        guard screen.level == .files, let category = screen.category?.category else { return screen.subcategory }
+        let shown = screen.subcategory ?? manager.selectedSubcategory
+        return shown.map { manager.drilldownFileGroup($0, in: category) }
     }
 
     private func screenPage(for screen: DrilldownListPane, width: CGFloat) -> some View {
@@ -356,384 +329,101 @@ struct CategoryGrowthListView: View {
     // MARK: - Subcategory List View
 
     private func subcategoryListView(for category: CategoryInventoryItem) -> some View {
-        let groups = (manager.subcategoryGroupsByCategory[category.category] ?? [])
-            .sorted(by: subcategorySortsBefore)
-        let isLoading = isLoadingSubcategories ||
-            (manager.isSubcategoryBreakdownLoading(for: category.category) && groups.isEmpty)
+        let groups = CategorySizes.subcategoriesBySize(manager.subcategoryGroupsByCategory[category.category] ?? [])
+        let store = manager.drilldownStore
 
-        if isLoading {
-            return AnyView(
-                subcategorySkeletonView
-                .transaction { $0.disablesAnimations = true }
-            )
-        }
-
-        if groups.isEmpty {
-            return AnyView(
-                VStack(spacing: 8) {
-                    Image(systemName: "tray")
-                        .foregroundStyle(.secondary)
-                    Text("No files found")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: maxHeight)
-                .transaction { $0.disablesAnimations = true }
-            )
-        }
-
-        return AnyView(
-            ScrollView {
-                ExpandableList(
-                    items: groups,
-                    chunkSize: 10,
-                    canLoadMoreFromDB: false,
-                    isLoadingFromDB: false,
-                    onLoadMoreFromDB: {},
-                    remainingCountInDB: 0,
-                    remainingBytesInDB: 0,
-                    maxLoadableCount: groups.count
-                ) { group in
-                    SubcategoryRow(group: group) {
-                        selectSubcategory(group, category: category.category)
+        return ScrollView {
+            VStack(spacing: 0) {
+                if let status = CategorySizes.groupsStatus(
+                    isEmpty: groups.isEmpty,
+                    isIndexing: store.isBuilding,
+                    readFailed: store.groupsReadFailed
+                ) {
+                    InlineStatusRow(status: status, onRetry: { manager.retryDrilldownRead(for: category.category) })
+                } else {
+                    ForEach(groups) { group in
+                        SubcategoryRow(group: group) {
+                            selectSubcategory(group)
+                        }
                     }
                 }
-                .id(category.category)
-                .padding(.top, pageTopInset)
-                .padding(.bottom, pageTopInset)
             }
-            .scrollIndicators(.hidden)
-            .hiddenScrollIndicators()
-            .frame(maxHeight: maxHeight)
-            .transaction { $0.disablesAnimations = true }
-        )
+            .padding(.top, pageTopInset)
+            .padding(.bottom, pageTopInset)
+        }
+        .scrollIndicators(.hidden)
+        .hiddenScrollIndicators()
+        .frame(maxHeight: maxHeight)
+        .transaction { $0.disablesAnimations = true }
     }
-
-    @State private var growthContributors: [GrowthContributor] = []
-    @State private var isLoadingContributors = false
 
     // MARK: - File List View
 
-    private func fileListView(for group: SubcategoryGroup?) -> some View {
-        guard let group else {
-            return AnyView(
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                    Text("No folder selected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: maxHeight)
-                .transaction { $0.disablesAnimations = true }
-            )
-        }
-
-        let loadedFiles = group.topFiles.sorted { $0.currentSizeBytes > $1.currentSizeBytes }
-        let loadedBytes = loadedFiles.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
-        let remainingCount = max(0, group.fileCount - loadedFiles.count)
-        let remainingBytes = max(0, group.totalBytes - loadedBytes)
-        let canLoadMore = group.hasMoreFiles && group.loadedFileCount < SubcategoryGroup.maxLoadableFiles
-        let selectedCategory = manager.selectedInventoryCategory?.category
-        let contributorTaskID = selectedCategory.map {
-            contributorTaskKey(for: group, category: $0)
-        } ?? "contributors-\(group.id)"
-        let visibleGrowthContributors = loadedContributorTaskID == contributorTaskID ? growthContributors : []
-        let showFileSkeleton = isLoadingContributors && loadedFiles.isEmpty
-
-        // Keep changed files in the unified list, but remove them from the
-        // inventory-backed portion so each path appears exactly once.
-        let contributorPaths = Set(visibleGrowthContributors.map(\.path))
-        let nonGrowthFiles = loadedFiles.filter { !contributorPaths.contains($0.path) }
-        let orderedFiles = (
-            visibleGrowthContributors.map {
-                DrilldownFileListItem(
-                    path: $0.path,
-                    currentSizeBytes: $0.currentSizeBytes,
-                    growthBytes: $0.growthBytes
-                )
-            } + nonGrowthFiles.map {
-                DrilldownFileListItem(
-                    path: $0.path,
-                    currentSizeBytes: $0.currentSizeBytes,
-                    growthBytes: nil
-                )
-            }
-        ).sorted { lhs, rhs in
-            if lhs.sortPriority != rhs.sortPriority {
-                return lhs.sortPriority > rhs.sortPriority
-            }
+    private func fileListView(for group: SubcategoryGroup?, category: GrowthCategory?) -> some View {
+        let store = manager.drilldownStore
+        let files = (group?.topFiles ?? []).sorted { lhs, rhs in
             if lhs.currentSizeBytes != rhs.currentSizeBytes {
                 return lhs.currentSizeBytes > rhs.currentSizeBytes
             }
             return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
         }
+        let status = CategorySizes.filesStatus(
+            hasGroup: group != nil,
+            hasFiles: !files.isEmpty,
+            isIndexing: store.isBuilding,
+            isLoaded: category.map { store.isFilesLoaded(for: $0) } ?? false,
+            readFailed: category.map { store.failedFileCategories.contains($0) } ?? false
+        )
+        let remainingCount = CategorySizes.remainingFileCount(group)
 
-        return AnyView(
-            ScrollView {
-                VStack(spacing: 0) {
-                    if showFileSkeleton {
-                        fileListSkeletonView
-                    } else if loadedFiles.isEmpty && remainingCount == 0 {
-                        VStack(spacing: 8) {
-                            Image(systemName: "tray")
-                                .foregroundStyle(.secondary)
-                            Text("No files found")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 120)
-                        .padding(.top, 12)
-                    } else {
-                        if isLoadingContributors {
-                            contributorLoadingRow
-                        }
-
-                        ExpandableList(
-                            items: orderedFiles,
-                            chunkSize: 10,
-                            canLoadMoreFromDB: canLoadMore,
-                            isLoadingFromDB: isLoadingMoreFiles,
-                            onLoadMoreFromDB: {
-                                Task {
-                                    guard let currentGroup = manager.selectedSubcategory else { return }
-                                    isLoadingMoreFiles = true
-                                    _ = await manager.loadMoreFiles(for: currentGroup)
-                                    isLoadingMoreFiles = false
-                                }
-                            },
-                            remainingCountInDB: remainingCount,
-                            remainingBytesInDB: remainingBytes,
-                            maxLoadableCount: SubcategoryGroup.maxLoadableFiles
-                        ) { item in
-                            DrilldownFileRow(item: item, onTap: {
-                                onTapItem(item.path)
-                            })
+        return ScrollView {
+            VStack(spacing: 0) {
+                if let status {
+                    InlineStatusRow(status: status, onRetry: { manager.retryDrilldownRead(for: category) })
+                } else {
+                    ForEach(files, id: \.path) { file in
+                        DrilldownFileRow(path: file.path, sizeBytes: file.currentSizeBytes, onTap: { onTapItem(file.path) })
+                            .pathContextMenu(file.path, onShowInFinder: onTapItem)
+                    }
+                    if remainingCount > 0, let group {
+                        ShowMoreRow(title: "Show more (\(remainingCount.formatted()))", isEnabled: !isLoadingMoreFiles) {
+                            loadMoreFiles(of: group)
                         }
                     }
                 }
-                .padding(.top, pageTopInset)
-                .padding(.bottom, pageTopInset)
             }
-            .scrollIndicators(.hidden)
-            .hiddenScrollIndicators()
-            .frame(maxHeight: maxHeight)
-            .task(id: contributorTaskID) {
-                guard let category = selectedCategory else {
-                    loadedContributorTaskID = nil
-                    growthContributors = []
-                    isLoadingContributors = false
-                    return
-                }
-
-                if let cachedContributors = manager.cachedGrowthContributors(for: group, category: category) {
-                    growthContributors = cachedContributors
-                    loadedContributorTaskID = contributorTaskID
-                    isLoadingContributors = false
-                    return
-                }
-
-                loadedContributorTaskID = nil
-                growthContributors = []
-                isLoadingContributors = true
-                let contributors = await manager.loadGrowthContributors(for: group, category: category)
-                guard !Task.isCancelled else { return }
-                growthContributors = contributors
-                loadedContributorTaskID = contributorTaskID
-                isLoadingContributors = false
-            }
-            .transaction { $0.disablesAnimations = true }
-        )
-    }
-
-    private var contributorLoadingRow: some View {
-        HStack(spacing: 10) {
-            SkeletonBlock(width: 18, height: 18, cornerRadius: 5)
-
-            VStack(alignment: .leading, spacing: 2) {
-                SkeletonBlock(width: 136, height: 11, cornerRadius: 4)
-                SkeletonBlock(width: 164, height: 9, cornerRadius: 4)
-            }
-
-            Spacer()
+            .padding(.top, pageTopInset)
+            .padding(.bottom, pageTopInset)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .frame(minHeight: 34)
-        .padding(.horizontal, 6)
-    }
-
-    private func contributorTaskKey(for group: SubcategoryGroup, category: GrowthCategory) -> String {
-        [
-            "contributors",
-            String(manager.growthContributorCacheGeneration),
-            category.rawValue,
-            group.id
-        ].joined(separator: ":")
+        .scrollIndicators(.hidden)
+        .hiddenScrollIndicators()
+        .frame(maxHeight: maxHeight)
+        .transaction { $0.disablesAnimations = true }
     }
 
     // MARK: - Actions
 
+    private var canNavigate: Bool {
+        !manager.isDrillDownTransitionAnimating && activeTransition == nil && pendingTransition == nil
+    }
+
     private func selectCategory(_ item: CategoryInventoryItem) {
-        guard !manager.isDrillDownTransitionAnimating, activeTransition == nil, pendingTransition == nil else { return }
-        contributorPrefetchTask?.cancel()
-        contributorPrefetchTask = nil
-        let needsSubcategoryLoad = !manager.isSubcategoryBreakdownReady(for: item.category)
-
-        subcategoryLoadTask?.cancel()
-        let token = UUID()
-        subcategoryLoadToken = token
-
-        let groups = manager.subcategoryGroupsByCategory[item.category] ?? []
-        let selectedSubcategory = needsSubcategoryLoad || item.category.supportsSubcategories
-            ? nil
-            : groups.first(where: { $0.subcategory == nil }) ?? groups.first
-        let isSubcategoryDrillDown = !needsSubcategoryLoad && selectedSubcategory != nil
-
-        // Enter the drilldown immediately. If the uncached breakdown is slow,
-        // the destination page shows its existing skeleton instead of making
-        // the first click appear to do nothing.
-        let shouldDrillDownImmediately = true
-
-        // Suppress implicit animations from state mutations so only the
-        // explicit slide animation in startNavigationTransition runs.
-        var t = Transaction()
-        t.disablesAnimations = true
-        withTransaction(t) {
-            isLoadingSubcategories = needsSubcategoryLoad
-            manager.selectedInventoryCategory = item
-            manager.selectedSubcategory = selectedSubcategory
-            manager.isDrilledDown = shouldDrillDownImmediately
-            manager.isSubcategoryDrillDown = isSubcategoryDrillDown
-        }
-
-        guard needsSubcategoryLoad else {
-            subcategoryLoadTask = nil
-            let groups = manager.subcategoryGroupsByCategory[item.category] ?? []
-            prefetchGrowthContributors(for: groups, category: item.category)
-            return
-        }
-
-        let selectedCategory = item.category
-        let loadTask = Task { @MainActor in
-            let groups = await manager.loadSubcategoryBreakdown(for: selectedCategory)
-
-            guard subcategoryLoadToken == token else {
-                return
-            }
-
-            if Task.isCancelled {
-                var t = Transaction()
-                t.disablesAnimations = true
-                withTransaction(t) {
-                    isLoadingSubcategories = false
-                    subcategoryLoadTask = nil
-                }
-                return
-            }
-
-            guard manager.selectedInventoryCategory?.category == selectedCategory else {
-                var t = Transaction()
-                t.disablesAnimations = true
-                withTransaction(t) {
-                    isLoadingSubcategories = false
-                    subcategoryLoadTask = nil
-                }
-                return
-            }
-
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) {
-                isLoadingSubcategories = false
-                subcategoryLoadTask = nil
-
-                if !selectedCategory.supportsSubcategories {
-                    manager.selectedSubcategory = groups.first(where: { $0.subcategory == nil }) ?? groups.first
-                    manager.isSubcategoryDrillDown = manager.selectedSubcategory != nil
-                    // Replace the loading page with the single file group once
-                    // the uncached breakdown is available.
-                    manager.isDrilledDown = true
-                }
-            }
-            prefetchGrowthContributors(for: groups, category: selectedCategory)
-        }
-        subcategoryLoadTask = loadTask
+        guard canNavigate else { return }
+        manager.drillIntoCategory(item, reveal: onTapItem)
     }
 
-    private func selectSubcategory(_ group: SubcategoryGroup, category: GrowthCategory) {
-        guard !manager.isDrillDownTransitionAnimating, activeTransition == nil, pendingTransition == nil else { return }
-        contributorPrefetchTask?.cancel()
-
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-
-        let cached = manager.cachedGrowthContributors(for: group, category: category)
-
-        withTransaction(transaction) {
-            manager.selectedSubcategory = group
-            manager.isSubcategoryDrillDown = true
-
-            if let cached {
-                growthContributors = cached
-                loadedContributorTaskID = contributorTaskKey(for: group, category: category)
-                isLoadingContributors = false
-            } else {
-                loadedContributorTaskID = nil
-                growthContributors = []
-                isLoadingContributors = true
-            }
-        }
-
-        if cached == nil {
-            contributorPrefetchTask = Task { @MainActor in
-                _ = await manager.loadGrowthContributors(for: group, category: category)
-            }
-        }
+    private func selectSubcategory(_ group: SubcategoryGroup) {
+        guard canNavigate else { return }
+        manager.drillIntoSubcategory(group, reveal: onTapItem)
     }
 
-    private func prefetchGrowthContributors(for groups: [SubcategoryGroup], category: GrowthCategory) {
-        contributorPrefetchTask?.cancel()
-        guard !groups.isEmpty else { return }
-        contributorPrefetchTask = Task { @MainActor in
-            for group in groups {
-                guard !Task.isCancelled else { return }
-                _ = await manager.loadGrowthContributors(for: group, category: category)
-            }
+    private func loadMoreFiles(of group: SubcategoryGroup) {
+        guard !isLoadingMoreFiles else { return }
+        isLoadingMoreFiles = true
+        Task {
+            _ = await manager.loadMoreFiles(for: group)
+            isLoadingMoreFiles = false
         }
-    }
-
-    private var visibleCategories: [CategoryInventoryItem] {
-        categories
-    }
-
-    private var startupWarmupSignature: [String] {
-        visibleCategories.map { item in
-            let category = item.category
-            return "\(category.rawValue):\(manager.isSubcategoryBreakdownReady(for: category)):\(manager.isSubcategoryBreakdownLoading(for: category))"
-        }
-    }
-
-    private func preloadVisibleCategoriesIfNeeded() {
-        guard !manager.hasCompletedInitialSubcategoryWarmup else { return }
-        guard !manager.isAnalyzingChanges else { return }
-        let categories = visibleCategories.map(\.category)
-        guard !categories.isEmpty else { return }
-
-        guard !categories.allSatisfy({ manager.isSubcategoryBreakdownReady(for: $0) }) else {
-            manager.completeInitialSubcategoryWarmup()
-            return
-        }
-
-        manager.preloadInitialSubcategoryBreakdownsIfNeeded(for: categories)
-    }
-
-    private func updateStartupWarmupStateIfNeeded() {
-        guard !manager.hasCompletedInitialSubcategoryWarmup else { return }
-        let categories = visibleCategories.map(\.category)
-        guard !categories.isEmpty else { return }
-        guard categories.allSatisfy({ manager.isSubcategoryBreakdownReady(for: $0) }) else { return }
-        manager.completeInitialSubcategoryWarmup()
     }
 
     // MARK: - Skeletons
@@ -752,32 +442,6 @@ struct CategoryGrowthListView: View {
         .hiddenScrollIndicators()
         .frame(maxHeight: maxHeight)
     }
-
-    private var subcategorySkeletonView: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                ForEach(0..<6, id: \.self) { _ in
-                    SkeletonListRow(style: .subcategory)
-                }
-            }
-            .padding(.top, pageTopInset)
-            .padding(.bottom, pageTopInset)
-        }
-        .scrollIndicators(.hidden)
-        .hiddenScrollIndicators()
-        .frame(maxHeight: maxHeight)
-    }
-
-    private var fileListSkeletonView: some View {
-        VStack(spacing: 0) {
-            ForEach(0..<6, id: \.self) { _ in
-                SkeletonListRow(style: .file)
-            }
-        }
-        .padding(.top, pageTopInset)
-        .padding(.bottom, pageTopInset)
-    }
-
 }
 
 // MARK: - Category Inventory Row
@@ -786,7 +450,6 @@ private struct CategoryInventoryRow: View, Equatable {
     static func == (lhs: CategoryInventoryRow, rhs: CategoryInventoryRow) -> Bool {
         lhs.item.id == rhs.item.id &&
         lhs.item.currentSizeBytes == rhs.item.currentSizeBytes &&
-        lhs.item.recentGrowthStory == rhs.item.recentGrowthStory &&
         lhs.isNavigationReady == rhs.isNavigationReady &&
         lhs.isPreparing == rhs.isPreparing &&
         lhs.isHighlightedFromBar == rhs.isHighlightedFromBar
@@ -833,27 +496,11 @@ private struct CategoryInventoryRow: View, Equatable {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(alignment: .trailing, spacing: 2) {
-                // Signed delta, floored for presentation only. Sub-floor
-                // movement is still counted in the header — it just doesn't
-                // earn a line here.
-                if let delta = item.renderableGrowthDeltaBytes {
-                    HStack(spacing: 4) {
-                        Image(systemName: delta > 0 ? "arrow.up.right" : "arrow.down.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(delta > 0 ? Color.orange : Color.green)
-                        Text("\(delta > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(delta)))")
-                            .foregroundStyle(.primary)
-                    }
-                    .font(.system(size: 11, weight: .semibold))
-                }
-
-                Text(formattedBytes(item.currentSizeBytes))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-            }
-            .opacity(isPreparing ? 0.55 : 1)
+            Text(CategorySizes.sizeText(item.currentSizeBytes))
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.primary)
+                .fixedSize()
+                .opacity(isPreparing ? 0.55 : 1)
 
             Group {
                 if isPreparing {
@@ -897,21 +544,22 @@ private struct SupplementalInventoryRow: View {
                 .frame(width: 18, height: 18)
 
             Text(item.title)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(formattedBytes(item.currentSizeBytes))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-            }
+            Text(CategorySizes.sizeText(item.currentSizeBytes))
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .fixedSize()
+
+            Color.clear
+                .frame(width: 12, height: 12)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .frame(minHeight: 28)
+        .padding(.vertical, 7)
+        .frame(minHeight: 34)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill((hoverState || isHighlightedFromBar) ? Color.gray.opacity(0.1) : Color.clear)
@@ -928,138 +576,99 @@ private struct SupplementalInventoryRow: View {
 
 }
 
-private struct DrilldownFileListItem: Identifiable {
-    let path: String
-    let currentSizeBytes: Int64
-    let growthBytes: Int64?
-
-    var id: String { path }
-
-    var sortPriority: Int {
-        guard let growthBytes else { return 0 }
-        return growthBytes >= 0 ? 2 : 1
-    }
-
-    var isAddedFile: Bool {
-        guard let growthBytes else { return false }
-        return growthBytes > 0 && growthBytes == currentSizeBytes
-    }
-}
-
 private struct DrilldownFileRow: View {
-    let item: DrilldownFileListItem
+    let path: String
+    let sizeBytes: Int64
     let onTap: () -> Void
 
-    @State private var hoverState = false
-
-    private var isLargeFile: Bool {
-        item.currentSizeBytes >= bigFileThreshold
-    }
+    @State private var isHovering = false
 
     private var parentPath: String {
-        let fileURL = URL(fileURLWithPath: item.path)
-        let path = fileURL.deletingLastPathComponent().path
-        return (path as NSString).abbreviatingWithTildeInPath
-    }
-
-    private var growthIndicatorSymbol: String {
-        guard let growthBytes = item.growthBytes else { return "" }
-        if item.isAddedFile {
-            return "plus"
-        }
-        return growthBytes < 0 ? "arrow.down.right" : "arrow.up.right"
-    }
-
-    private var growthIndicatorColor: Color {
-        guard let growthBytes = item.growthBytes else { return .clear }
-        return growthBytes < 0 ? .green : .orange
-    }
-
-    private var growthValueText: String? {
-        guard let growthBytes = item.growthBytes else { return nil }
-        return "\(growthBytes < 0 ? "\u{2212}" : "+")\(formattedBytes(abs(growthBytes)))"
+        let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        return (parent as NSString).abbreviatingWithTildeInPath
     }
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 10) {
-                Image(systemName: isLargeFile ? "doc.fill" : "doc")
-                    .font(.system(size: 14))
-                    .foregroundStyle(isLargeFile ? .secondary : .tertiary)
-                    .frame(width: 18)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(URL(fileURLWithPath: item.path).lastPathComponent)
-                        .font(.system(size: 12, weight: isLargeFile ? .medium : .regular))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    Text(parentPath)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-
-                Spacer()
-
-                if let growthValueText {
-                    HStack(spacing: 3) {
-                        Image(systemName: growthIndicatorSymbol)
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(growthIndicatorColor)
-                        Text(growthValueText)
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.primary)
-                    }
-                } else {
-                    Text(formattedBytes(item.currentSizeBytes))
-                        .font(.system(size: isLargeFile ? 11 : 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(isLargeFile ? .secondary : .tertiary)
-                        .fixedSize()
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(minHeight: 34)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
-            )
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
+            content
         }
         .buttonStyle(.plain)
-        .help(item.path)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
-                hoverState = hovering
+                isHovering = hovering
             }
         }
+        .help(path)
+        .accessibilityHint("Shows it in Finder")
     }
 
+    private var content: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(URL(fileURLWithPath: path).lastPathComponent)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Text(parentPath)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(CategorySizes.sizeText(sizeBytes))
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 44)
+        .background(ListRowHoverBackground(isHovering: isHovering))
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+    }
 }
 
-private func subcategorySortsBefore(_ lhs: SubcategoryGroup, _ rhs: SubcategoryGroup) -> Bool {
-    let lhsGrowth = abs(lhs.growthBytes ?? 0)
-    let rhsGrowth = abs(rhs.growthBytes ?? 0)
-    let floor = GrowthJournalService.presentationFloorBytes
-    let lhsChanged = lhsGrowth >= floor
-    let rhsChanged = rhsGrowth >= floor
-
-    if lhsChanged != rhsChanged {
-        return lhsChanged
+enum CategorySizes {
+    static func sizeText(_ bytes: Int64) -> String {
+        formattedBytes(bytes)
     }
 
-    if lhsChanged && lhsGrowth != rhsGrowth {
-        return lhsGrowth > rhsGrowth
+    static func fileCountText(_ count: Int) -> String {
+        count == 1 ? "1 file" : "\(count.formatted()) files"
     }
 
-    if lhs.totalBytes != rhs.totalBytes {
-        return lhs.totalBytes > rhs.totalBytes
+    static func groupsStatus(isEmpty: Bool, isIndexing: Bool, readFailed: Bool) -> InlineStatus? {
+        guard isEmpty else { return nil }
+        if isIndexing { return .indexing }
+        return readFailed ? .failed : .empty
     }
 
-    return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
+    static func filesStatus(hasGroup: Bool, hasFiles: Bool, isIndexing: Bool, isLoaded: Bool, readFailed: Bool) -> InlineStatus? {
+        guard hasGroup else { return isIndexing ? .indexing : .empty }
+        guard !hasFiles else { return nil }
+        if isIndexing { return .indexing }
+        if readFailed { return .failed }
+        return isLoaded ? .empty : nil
+    }
+
+    static func remainingFileCount(_ group: SubcategoryGroup?) -> Int {
+        guard let group, group.loadedFileCount < SubcategoryGroup.maxLoadableFiles else { return 0 }
+        return max(0, group.fileCount - group.loadedFileCount)
+    }
+
+    static func subcategoriesBySize(_ groups: [SubcategoryGroup]) -> [SubcategoryGroup] {
+        DrilldownStore.sorted(groups)
+    }
 }
 
 private struct SubcategoryRow: View {
@@ -1069,57 +678,34 @@ private struct SubcategoryRow: View {
     @State private var hoverState = false
     @State private var nativeApplicationIcon: NSImage?
 
-    private var renderableGrowthBytes: Int64? {
-        guard let growthBytes = group.growthBytes,
-              abs(growthBytes) >= GrowthJournalService.presentationFloorBytes else {
-            return nil
-        }
-
-        return growthBytes
-    }
-
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
                 applicationIcon
                     .frame(width: 18, height: 18)
 
-                Text(group.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                VStack(alignment: .trailing, spacing: 2) {
-                    if let renderableGrowthBytes {
-                        HStack(spacing: 4) {
-                            Image(systemName: renderableGrowthBytes > 0 ? "arrow.up.right" : "arrow.down.right")
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundStyle(renderableGrowthBytes > 0 ? Color.orange : Color.green)
-                            Text("\(renderableGrowthBytes > 0 ? "+" : "\u{2212}")\(formattedBytes(abs(renderableGrowthBytes)))")
-                                .foregroundStyle(.primary)
-                        }
-                        .font(.system(size: 11, weight: .semibold))
-                    }
-
-                    Text(formattedBytes(group.totalBytes))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(group.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(CategorySizes.fileCountText(group.fileCount))
+                        .font(.system(size: 11).monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .fixedSize()
+                        .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                .frame(width: 12, height: 12)
+                Text(CategorySizes.sizeText(group.totalBytes))
+                    .font(.system(size: 13).monospacedDigit())
+                    .foregroundStyle(.primary)
+                    .fixedSize()
+
+                ListChevron()
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(minHeight: 34)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(hoverState ? Color.gray.opacity(0.1) : Color.clear)
-            )
+            .frame(height: 44)
+            .background(ListRowHoverBackground(isHovering: hoverState))
             .padding(.horizontal, 6)
             .contentShape(Rectangle())
         }
@@ -1129,11 +715,8 @@ private struct SubcategoryRow: View {
                 hoverState = hovering
             }
         }
-        .task(id: group.cacheApplicationKey) {
-            nativeApplicationIcon = nil
-            nativeApplicationIcon = CacheApplicationIconResolver.icon(
-                forBundleIdentifier: group.cacheApplicationKey
-            )
+        .task(id: group.ownerIcon) {
+            nativeApplicationIcon = group.ownerIcon.flatMap { UnitIconResolver.shared.icon(for: $0) }
         }
     }
 
@@ -1152,7 +735,6 @@ private struct SubcategoryRow: View {
                 .accessibilityHidden(true)
         }
     }
-
 }
 
 #Preview {

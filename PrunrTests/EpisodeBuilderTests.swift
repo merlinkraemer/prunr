@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import Prunr
 
 final class EpisodeBuilderTests: XCTestCase {
@@ -233,7 +234,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(episode.netBytes, 5 * Self.gb + 100 * Self.mb)
     }
 
-    // MARK: - Merging and legacy rows
+    // MARK: - Merging
 
     func testSameUnitFromTwoTrackedPathsMerges() {
         let utc = calendar()
@@ -246,29 +247,6 @@ final class EpisodeBuilderTests: XCTestCase {
 
         XCTAssertEqual(feed.days.first?.episodes.count, 1)
         XCTAssertEqual(feed.days.first?.episodes.first?.netBytes, 3 * Self.gb)
-    }
-
-    func testLegacyRowsAreOneCoarseRowPerCategoryAndSubcategory() throws {
-        let utc = calendar()
-        let now = date(2026, 10, 11, 20, 0, in: utc)
-        let feed = build([
-            slot("", at: date(2026, 10, 11, 9, 0, in: utc), net: 1 * Self.gb, category: "developer", subcategory: "buildArtifacts"),
-            slot("", at: date(2026, 10, 11, 15, 0, in: utc), net: 1 * Self.gb, category: "developer", subcategory: "buildArtifacts"),
-            slot("", at: date(2026, 10, 11, 10, 0, in: utc), net: 3 * Self.gb, category: "other"),
-            slot("", at: date(2026, 10, 11, 11, 0, in: utc), net: 4 * Self.gb, category: "downloads"),
-            slot("", at: date(2026, 10, 11, 12, 0, in: utc), net: 5 * Self.gb, category: "cachesAndSystem")
-        ], now: now, calendar: utc)
-
-        let episodes = try XCTUnwrap(feed.days.first?.episodes)
-        let byTitle = Dictionary(uniqueKeysWithValues: episodes.map { ($0.title, $0.netBytes) })
-        XCTAssertEqual(byTitle, [
-            "Build Artifacts": 2 * Self.gb,
-            "Files in your folders": 3 * Self.gb,
-            "Downloads": 4 * Self.gb,
-            "Files in Caches & System": 5 * Self.gb
-        ])
-        XCTAssertTrue(episodes.allSatisfy { $0.rootPath == nil })
-        XCTAssertFalse(episodes.contains { $0.title == "Other" || $0.title.contains("Other") })
     }
 
     // MARK: - Time zones
@@ -452,7 +430,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(row.netBytes, 1 * Self.gb)
         XCTAssertEqual(row.buildingSince, date(2026, 10, 2, 0, 0, in: utc))
         XCTAssertEqual(EpisodeBuilder.dayLabel(for: try XCTUnwrap(row.buildingSince), calendar: utc), "Fri 2 Oct")
-        XCTAssertTrue(row.isGrowth)
+        XCTAssertFalse(row.isLargeGrowth)
         // The header still counts all of this week's growth.
         XCTAssertEqual(feed.weekNetBytes, 500 * Self.mb)
     }
@@ -497,7 +475,7 @@ final class EpisodeBuilderTests: XCTestCase {
         ], now: now, calendar: utc)
 
         XCTAssertEqual(feed.episodes.map(\.netBytes), [1_200 * Self.mb, -1_200 * Self.mb, 1_200 * Self.mb])
-        XCTAssertEqual(feed.episodes.map(\.isGrowth), [true, false, true])
+        XCTAssertEqual(feed.episodes.map(\.isLargeGrowth), [false, false, false])
     }
 
     func testTheLineIsExactlyOneGigabyte() {
@@ -513,19 +491,23 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(EpisodeBuilder.rowThresholdBytes, 1 * Self.gb)
     }
 
-    /// Orange only for growth of 1 GB or more; shrinks and anything smaller
-    /// are grey.
-    func testOrangeOnlyForGrowthOfOneGigabyte() {
+    /// Orange only for growth of 5 GB or more; smaller growth and shrinks
+    /// are not.
+    func testOrangeOnlyForGrowthOfFiveGigabytes() {
         func episode(_ net: Int64) -> ChangeEpisode {
             ChangeEpisode(
                 id: "x", title: "x", detail: nil, category: .other, rootPath: nil,
                 netBytes: net, grossBytes: abs(net), day: Date(), time: Date(), isApproximateTime: false
             )
         }
-        XCTAssertTrue(episode(1 * Self.gb).isGrowth)
-        XCTAssertTrue(episode(31 * Self.gb).isGrowth)
-        XCTAssertFalse(episode(1 * Self.gb - 1).isGrowth)
-        XCTAssertFalse(episode(-4 * Self.gb).isGrowth)
+        XCTAssertEqual(EpisodeBuilder.largeGrowthBytes, 5 * Self.gb)
+        XCTAssertTrue(episode(5 * Self.gb).isLargeGrowth)
+        XCTAssertTrue(episode(31 * Self.gb).isLargeGrowth)
+        XCTAssertFalse(episode(5 * Self.gb - 1).isLargeGrowth)
+        XCTAssertFalse(episode(1 * Self.gb).isLargeGrowth)
+        XCTAssertFalse(episode(-8 * Self.gb).isLargeGrowth)
+        XCTAssertTrue(EpisodeBuilder.isLargeGrowth(5 * Self.gb), "the header uses the same line")
+        XCTAssertFalse(EpisodeBuilder.isLargeGrowth(4_900 * Self.mb))
     }
 
     /// Each place's count starts on the oldest shown day: growth before the
@@ -589,7 +571,7 @@ final class EpisodeBuilderTests: XCTestCase {
         let row = try XCTUnwrap(feed.episodes.first)
         XCTAssertEqual(row.title, "Trash emptied")
         XCTAssertEqual(row.netBytes, -4 * Self.gb)
-        XCTAssertFalse(row.isGrowth)
+        XCTAssertFalse(row.isLargeGrowth)
         XCTAssertFalse(row.isMovedToTrash)
     }
 
@@ -693,6 +675,7 @@ final class EpisodeBuilderTests: XCTestCase {
         defer { HistoryStart.reset() }
 
         XCTAssertFalse(HistoryStart.store === UserDefaults.standard)
+        HistoryStart.reset()
         let early = date(1990, 1, 1, 0, 0, in: calendar())
         XCTAssertEqual(HistoryStart.remember(oldestSnapshot: early), early)
         HistoryStart.reset()
@@ -708,6 +691,7 @@ final class EpisodeBuilderTests: XCTestCase {
         _ net: Int64,
         at time: Date,
         detail: String? = nil,
+        rootPath: String? = nil,
         calendar: Calendar,
         approximate: Bool = false,
         movedToTrash: Bool = false,
@@ -718,7 +702,7 @@ final class EpisodeBuilderTests: XCTestCase {
             title: id,
             detail: detail,
             category: category,
-            rootPath: nil,
+            rootPath: rootPath,
             netBytes: net,
             grossBytes: abs(net),
             day: calendar.startOfDay(for: time),
@@ -729,28 +713,35 @@ final class EpisodeBuilderTests: XCTestCase {
         )
     }
 
-    func testCaptionReadsTimeAndDetail() {
+    func testPlaceDetailGoesToTheContentsCaptionAndTheRowCaptionIsOnlyTheTime() {
         let utc = calendar()
-        let row = episode("Safari data", .cachesAndSystem, Self.gb, at: date(2026, 10, 11, 8, 40, in: utc),
-                          detail: "Application Support", calendar: utc)
-        XCTAssertEqual(EpisodeBuilder.caption(for: row, calendar: utc), "08:40 · Application Support")
+        let row = episode("Docker disk", .developer, Self.gb, at: date(2026, 10, 11, 8, 40, in: utc),
+                          detail: "images, containers, volumes",
+                          rootPath: "/Users/tester/Library/Containers/com.docker.docker", calendar: utc)
+        XCTAssertEqual(row.title, "Docker disk")
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "08:40")
+        XCTAssertEqual(
+            EpisodeBuilder.contentsCaption(for: row, headerTitle: "Docker disk", home: Self.home),
+            "images, containers, volumes · ~/Library/Containers/com.docker.docker"
+        )
+        XCTAssertEqual(EpisodeBuilder.tildePath("/Volumes/X/a", home: Self.home), "/Volumes/X/a")
     }
 
-    func testCaptionForScanBuildUpAndTrashMove() {
+    func testPlaceRowHasNoCaptionWithoutAKnownTime() {
         let utc = calendar()
         let at = date(2026, 10, 5, 14, 5, in: utc)
         let scanned = episode("a", .developer, Self.gb, at: at, detail: "ignored", calendar: utc, approximate: true)
-        XCTAssertEqual(EpisodeBuilder.caption(for: scanned, calendar: utc), "found by scan · ignored")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: scanned, calendar: utc))
 
         let slow = episode("b", .mediaAndDocuments, Self.gb, at: at, calendar: utc,
                            buildingSince: date(2026, 10, 2, 0, 0, in: utc))
-        XCTAssertEqual(EpisodeBuilder.caption(for: slow, calendar: utc), "a little each day since Fri 2 Oct")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: slow, calendar: utc))
 
-        let moved = episode("c", .downloads, -3 * Self.gb, at: at, detail: "ignored", calendar: utc, movedToTrash: true)
-        XCTAssertEqual(EpisodeBuilder.caption(for: moved, calendar: utc), "14:05 · moved to Trash")
+        let moved = episode("c", .downloads, -3 * Self.gb, at: at, calendar: utc, movedToTrash: true)
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: moved, calendar: utc), "14:05")
     }
 
-    func testBuiltRowsKeepTheirCaption() throws {
+    func testRowsFoundByScanHaveNoTime() throws {
         let utc = calendar()
         let now = date(2026, 10, 11, 15, 0, in: utc)
         let found = date(2026, 10, 11, 3, 0, in: utc)
@@ -758,7 +749,7 @@ final class EpisodeBuilderTests: XCTestCase {
             slot(Self.iso, at: found, net: 2 * Self.gb, source: .scan, observedSince: date(2026, 10, 10, 3, 0, in: utc))
         ], now: now, calendar: utc)
         let row = try XCTUnwrap(feed.episodes.first)
-        XCTAssertEqual(EpisodeBuilder.caption(for: row, calendar: utc), "found by scan")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: row, calendar: utc))
     }
 
     // MARK: - Groups (main list)
@@ -779,10 +770,10 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(developer.netBytes, 2_100 * Self.mb)
         XCTAssertEqual(developer.episodes.map(\.id), ["xcode", "node"], "rows stay newest first")
         XCTAssertEqual(developer.day, day.day)
-        XCTAssertTrue(developer.isGrowth)
+        XCTAssertFalse(developer.isLargeGrowth)
     }
 
-    func testGroupIsOrangeOnlyForGrowthOfOneGigabyte() {
+    func testGroupIsOrangeOnlyForGrowthOfFiveGigabytes() {
         let utc = calendar()
         let at = date(2026, 10, 5, 12, 0, in: utc)
         func group(_ nets: [Int64]) -> ChangeGroup {
@@ -792,9 +783,11 @@ final class EpisodeBuilderTests: XCTestCase {
                 episodes: nets.enumerated().map { episode("\($0.offset)", .developer, $0.element, at: at, calendar: utc) }
             )
         }
-        XCTAssertTrue(group([Self.gb]).isGrowth)
-        XCTAssertFalse(group([2 * Self.gb, -1_500 * Self.mb]).isGrowth)
-        XCTAssertFalse(group([-4 * Self.gb]).isGrowth)
+        XCTAssertTrue(group([5 * Self.gb]).isLargeGrowth)
+        XCTAssertTrue(group([3 * Self.gb, 2 * Self.gb]).isLargeGrowth)
+        XCTAssertFalse(group([6 * Self.gb, -1_500 * Self.mb]).isLargeGrowth)
+        XCTAssertFalse(group([Self.gb]).isLargeGrowth)
+        XCTAssertFalse(group([-8 * Self.gb]).isLargeGrowth)
         XCTAssertEqual(group([2 * Self.gb, -1_500 * Self.mb]).netBytes, 500 * Self.mb)
     }
 
@@ -806,5 +799,266 @@ final class EpisodeBuilderTests: XCTestCase {
         let b = ChangeGroup(day: tuesday, category: .developer, episodes: [])
         let c = ChangeGroup(day: monday, category: .downloads, episodes: [])
         XCTAssertEqual(Set([a.id, b.id, c.id]).count, 3)
+    }
+
+    private func group(_ places: [(id: String, rootPath: String?)]) -> ChangeGroup {
+        let utc = calendar()
+        let at = date(2026, 10, 5, 12, 0, in: utc)
+        return ChangeGroup(
+            day: utc.startOfDay(for: at),
+            category: .developer,
+            episodes: places.map { episode($0.id, .developer, Self.gb, at: at, rootPath: $0.rootPath, calendar: utc) }
+        )
+    }
+
+    func testGroupRowsWithSeveralPlacesOpenTheDaysPlaces() {
+        let pathless = group([("somewhere", nil)])
+        let several = group([("a", "/Users/tester/a"), ("b", nil)])
+        let bothWithPaths = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
+        for row in [pathless, several, bothWithPaths] {
+            XCTAssertEqual(FeedPage.feed.opening(row), .group(row))
+            XCTAssertEqual(FeedPage.group(row).parent, .feed)
+        }
+    }
+
+    func testGroupRowWithOnePlaceOpensItsContentsAndBackReturnsToTheList() throws {
+        let one = group([("xcode", "/Users/tester/Library/Developer/Xcode/DerivedData")])
+        let place = try XCTUnwrap(one.episodes.first)
+        let page = FeedPage.feed.opening(one)
+
+        XCTAssertEqual(FeedPage.soloPlace(of: one), place)
+        XCTAssertEqual(page, .place(one, place))
+        XCTAssertEqual(page.place, place)
+        XCTAssertEqual(page.parent, .feed)
+        XCTAssertNil(FeedPage.soloPlace(of: group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])))
+    }
+
+    func testPlaceRowsWithAPathOpenTheirContents() throws {
+        let day = group([("a", "/Users/tester/a"), ("b", nil)])
+        let withPath = try XCTUnwrap(day.episodes.first { $0.id == "a" })
+        let pathless = try XCTUnwrap(day.episodes.first { $0.id == "b" })
+
+        XCTAssertTrue(FeedPage.opensContents(withPath))
+        XCTAssertFalse(FeedPage.opensContents(pathless))
+        XCTAssertEqual(FeedPage.group(day).opening(withPath), .place(day, withPath))
+        XCTAssertEqual(FeedPage.group(day).opening(pathless), .group(day))
+        XCTAssertEqual(FeedPage.feed.opening(withPath), .feed)
+    }
+
+    func testBackGoesUpOneLevelAndTheFooterKeepsTheRowsDate() throws {
+        let day = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
+        let place = try XCTUnwrap(day.episodes.first)
+        let page = FeedPage.group(day).opening(place)
+
+        XCTAssertEqual(page.depth, 2)
+        XCTAssertEqual(page.group?.day, day.day)
+        XCTAssertEqual(page.place, place)
+        XCTAssertEqual(page.parent, .group(day))
+        XCTAssertEqual(page.parent.parent, .feed)
+        XCTAssertEqual(FeedPage.feed.parent, .feed)
+    }
+
+    func testEveryPageHasItsOwnIdentity() throws {
+        let day = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
+        let a = try XCTUnwrap(day.episodes.first { $0.id == "a" })
+        let b = try XCTUnwrap(day.episodes.first { $0.id == "b" })
+        let ids = [FeedPage.feed, .group(day), .place(day, a), .place(day, b)].map(\.id)
+        XCTAssertEqual(Set(ids).count, ids.count)
+    }
+
+    func testEveryLevelPushesWithTheSameSlide() {
+        XCTAssertEqual(PushSlide.offset(isIncoming: true, forward: true, progress: 0, width: 300), 300)
+        XCTAssertEqual(PushSlide.offset(isIncoming: false, forward: true, progress: 0, width: 300), 0)
+        XCTAssertEqual(PushSlide.offset(isIncoming: true, forward: true, progress: 1, width: 300), 0)
+        XCTAssertEqual(PushSlide.offset(isIncoming: false, forward: true, progress: 1, width: 300), -300)
+        XCTAssertEqual(PushSlide.offset(isIncoming: true, forward: false, progress: 0, width: 300), -300)
+        XCTAssertEqual(PushSlide.offset(isIncoming: false, forward: false, progress: 1, width: 300), 300)
+    }
+
+    func testDeeperPagesPushAndShallowerPagesPop() throws {
+        let day = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
+        let a = try XCTUnwrap(day.episodes.first { $0.id == "a" })
+        XCTAssertTrue(ListPage.isPush(from: .feed(.feed), to: .feed(.group(day))))
+        XCTAssertTrue(ListPage.isPush(from: .feed(.group(day)), to: .feed(.place(day, a))))
+        XCTAssertFalse(ListPage.isPush(from: .feed(.place(day, a)), to: .feed(.group(day))))
+        XCTAssertTrue(ListPage.isPush(from: .feed(.group(day)), to: .categories))
+        XCTAssertFalse(ListPage.isPush(from: .categories, to: .feed(.feed)))
+    }
+
+    func testContextMenuOnlyOnRowsWithAPath() {
+        XCTAssertEqual(RowPathAction.actions(forPath: "/Users/tester/a"), [.showInFinder, .copyPath])
+        XCTAssertEqual(RowPathAction.actions(forPath: nil), [])
+        XCTAssertEqual(RowPathAction.showInFinder.title, "Show in Finder")
+        XCTAssertEqual(RowPathAction.copyPath.title, "Copy Path")
+    }
+
+    func testFinderSelectsOrdinaryPathsAndOpensHiddenICloudContainerFolders() {
+        let home = "/Users/tester"
+        let whatsApp = "/Users/tester/Library/Mobile Documents/57T9237FN3~net~whatsapp~WhatsApp"
+        XCTAssertEqual(
+            FinderReveal.target(forPath: "/Users/tester/dev/app/build", isDirectory: true, home: home),
+            .select(URL(fileURLWithPath: "/Users/tester/dev/app/build"))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: whatsApp + "/Accounts", isDirectory: true, home: home),
+            .open(URL(fileURLWithPath: whatsApp + "/Accounts"))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: whatsApp + "/Accounts/backup.db", isDirectory: false, home: home),
+            .open(URL(fileURLWithPath: whatsApp + "/Accounts"))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: whatsApp, isDirectory: true, home: home),
+            .open(URL(fileURLWithPath: whatsApp))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: "/Users/tester/Library/Mobile Documents/com~apple~CloudDocs/Notes.txt", isDirectory: false, home: home),
+            .select(URL(fileURLWithPath: "/Users/tester/Library/Mobile Documents/com~apple~CloudDocs/Notes.txt"))
+        )
+        XCTAssertEqual(
+            FinderReveal.target(forPath: "/Users/tester/Library/Mobile Documents/iCloud~md~obsidian/Documents/Vault", isDirectory: true, home: home),
+            .select(URL(fileURLWithPath: "/Users/tester/Library/Mobile Documents/iCloud~md~obsidian/Documents/Vault"))
+        )
+    }
+
+    func testMainListRowIsNamedAfterThePageItOpens() {
+        let solo = group([("Build files", "/Users/tester/dev/app/build")])
+        XCTAssertEqual(solo.rowTitle, "Build files")
+        XCTAssertEqual(solo.rowIconSource, UnitIconSource.category)
+
+        let several = group([("a", "/Users/tester/a"), ("b", "/Users/tester/b")])
+        XCTAssertEqual(several.rowTitle, GrowthCategory.developer.displayName)
+        XCTAssertNil(several.rowIconSource)
+
+        let pathless = group([("somewhere", nil)])
+        XCTAssertEqual(pathless.rowTitle, GrowthCategory.developer.displayName)
+        XCTAssertNil(pathless.rowIconSource)
+    }
+
+    func testThePagerKeepsTheRetainedPageMountedBehindTheShownOne() {
+        struct Page: Identifiable, Equatable { let id: String }
+        let feed = Page(id: "feed")
+        let group = Page(id: "group")
+        let place = Page(id: "place")
+        XCTAssertEqual(PushSlide.mountedPages(retained: feed, outgoing: nil, shown: feed), [feed])
+        XCTAssertEqual(PushSlide.mountedPages(retained: feed, outgoing: feed, shown: group), [feed, group])
+        XCTAssertEqual(PushSlide.mountedPages(retained: feed, outgoing: nil, shown: place), [feed, place])
+        XCTAssertEqual(PushSlide.mountedPages(retained: feed, outgoing: group, shown: place), [feed, group, place])
+        XCTAssertEqual(PushSlide.mountedPages(retained: nil, outgoing: group, shown: place), [group, place])
+    }
+
+    // MARK: - Signs and the storage balance
+
+    func testRowAmountsReadWithSigns() {
+        XCTAssertEqual(signedBytes(9 * Self.gb), "+\(formattedBytes(9 * Self.gb))")
+        XCTAssertEqual(signedBytes(-4 * Self.gb), "\u{2212}\(formattedBytes(4 * Self.gb))")
+        XCTAssertEqual(signedBytes(300 * Self.mb), "+\(formattedBytes(300 * Self.mb))")
+        XCTAssertEqual(spokenChangeAmount(-4 * Self.gb), "down \(formattedBytes(4 * Self.gb))")
+    }
+
+    func testUsedOfCapacityUsesTheCapacitysUnit() {
+        XCTAssertEqual(StorageBalance.usedOfCapacity(1_730 * Self.gb, 2_000 * Self.gb), "1.73 of 2 TB")
+        XCTAssertEqual(StorageBalance.usedOfCapacity(1_981 * Self.gb, 2_000 * Self.gb), "1.98 of 2 TB")
+        XCTAssertEqual(StorageBalance.usedOfCapacity(312 * Self.gb, 500 * Self.gb), "312 of 500 GB")
+        XCTAssertEqual(StorageBalance.usedOfCapacity(45_300 * Self.mb, 64 * Self.gb), "45.3 of 64 GB")
+    }
+
+    private static let capacity: Int64 = 2_000 * gb
+
+    private func history(_ utc: Calendar) -> StorageHistory {
+        StorageHistory(records: [
+            FreeSpaceRecord(recordedAt: date(2026, 10, 5, 9, 0, in: utc), freeBytes: 400 * Self.gb),
+            FreeSpaceRecord(recordedAt: date(2026, 10, 5, 22, 0, in: utc), freeBytes: 320 * Self.gb),
+            FreeSpaceRecord(recordedAt: date(2026, 10, 7, 10, 0, in: utc), freeBytes: 300 * Self.gb)
+        ])
+    }
+
+    func testUsedStorageAtEndOfADayReadsThatDaysLastSnapshot() throws {
+        let utc = calendar()
+        let storage = try XCTUnwrap(history(utc).usedStorage(
+            atEndOf: date(2026, 10, 5, 0, 0, in: utc), capacityBytes: Self.capacity, calendar: utc
+        ))
+        XCTAssertEqual(storage.usedBytes, 1_680 * Self.gb)
+        XCTAssertEqual(storage.recordedAt, date(2026, 10, 5, 22, 0, in: utc))
+        XCTAssertTrue(storage.isFromThatDay)
+    }
+
+    func testDayWithoutSnapshotKeepsTheNearestOlderOneAndSaysSo() throws {
+        let utc = calendar()
+        let monday = date(2026, 10, 6, 0, 0, in: utc)
+        let storage = try XCTUnwrap(history(utc).usedStorage(atEndOf: monday, capacityBytes: Self.capacity, calendar: utc))
+        XCTAssertEqual(storage.usedBytes, 1_680 * Self.gb)
+        XCTAssertFalse(storage.isFromThatDay)
+
+        let balance = StorageBalance.recorded(day: monday, storage: storage, capacityBytes: Self.capacity)
+        XCTAssertEqual(balance.amountText, "~1.68 of 2 TB")
+        XCTAssertEqual(balance.olderRecordNote(calendar: utc), "Last recorded Mon 5 Oct")
+        XCTAssertEqual(balance.historicUsedBytes, 1_680 * Self.gb)
+    }
+
+    func testDayBeforeTheFirstSnapshotHasNoValue() {
+        let utc = calendar()
+        let day = date(2026, 10, 4, 0, 0, in: utc)
+        XCTAssertNil(history(utc).usedStorage(atEndOf: day, capacityBytes: Self.capacity, calendar: utc))
+        XCTAssertNil(StorageHistory.empty.usedStorage(atEndOf: day, capacityBytes: Self.capacity, calendar: utc))
+
+        let balance = StorageBalance.recorded(day: day, storage: nil, capacityBytes: Self.capacity)
+        XCTAssertEqual(balance.amountText, "\u{2014}")
+        XCTAssertNil(balance.historicUsedBytes)
+        XCTAssertEqual(balance.title(calendar: utc), "Sun 4 Oct")
+    }
+
+    func testHeaderShowsNowAtTheTopAndTheRecordedDateWhileScrolled() {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let feed = build([
+            slot(Self.iso, at: date(2026, 10, 11, 9, 0, in: utc), net: 3 * Self.gb),
+            slot(Self.project, at: date(2026, 10, 5, 10, 0, in: utc), net: 2 * Self.gb, category: "developer")
+        ], now: now, calendar: utc)
+        let used = 1_730 * Self.gb
+        func balance(_ anchor: Date?) -> StorageBalance {
+            StorageBalance.make(
+                scrollAnchor: anchor, feed: feed, history: history(utc),
+                usedBytes: used, capacityBytes: Self.capacity, now: now, calendar: utc
+            )
+        }
+
+        let top = StorageBalance.current(usedBytes: used, capacityBytes: Self.capacity)
+        XCTAssertEqual(balance(nil), top)
+        XCTAssertEqual(balance(utc.startOfDay(for: now)), top)
+        XCTAssertEqual(top.title(calendar: utc), "Used")
+        XCTAssertEqual(top.amountText, "1.73 of 2 TB")
+        XCTAssertFalse(top.isScrolled)
+        XCTAssertNil(top.historicUsedBytes)
+
+        let monday = date(2026, 10, 5, 0, 0, in: utc)
+        let scrolled = balance(monday)
+        XCTAssertTrue(scrolled.isScrolled)
+        XCTAssertEqual(scrolled.title(calendar: utc), "Mon 5 Oct")
+        XCTAssertEqual(scrolled.amountText, "1.68 of 2 TB")
+        XCTAssertNil(scrolled.olderRecordNote(calendar: utc))
+
+        XCTAssertEqual(balance(date(2026, 10, 3, 0, 0, in: utc)), top)
+    }
+
+    func testQuietLineIsTheTopWhenThisWeekHasNoRow() {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let feed = build([slot(Self.iso, at: date(2026, 10, 2, 9, 0, in: utc), net: 3 * Self.gb)], now: now, calendar: utc)
+        let friday = date(2026, 10, 2, 0, 0, in: utc)
+        XCTAssertEqual(ChangeFeedRows.topAnchor(for: feed, now: now, calendar: utc), ChangeFeedRows.quietLineID)
+
+        let atQuietLine = StorageBalance.make(
+            scrollAnchor: ChangeFeedRows.quietLineID, feed: feed, history: history(utc),
+            usedBytes: 1, capacityBytes: Self.capacity, now: now, calendar: utc
+        )
+        XCTAssertFalse(atQuietLine.isScrolled)
+
+        let atFirstDay = StorageBalance.make(
+            scrollAnchor: friday, feed: feed, history: nil,
+            usedBytes: 1, capacityBytes: Self.capacity, now: now, calendar: utc
+        )
+        XCTAssertTrue(atFirstDay.isScrolled)
+        XCTAssertEqual(atFirstDay.amountText, "\u{2014}")
     }
 }

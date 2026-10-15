@@ -15,7 +15,6 @@ actor DatabaseCleanupService {
         let snapshotEntrySnapshotsTrimmed: Int
         let orphanedPathsDeleted: Int
         let backfilledSnapshots: Int
-        let backfilledSubcategorySnapshots: Int
     }
 
     // MARK: - Constants
@@ -157,7 +156,6 @@ actor DatabaseCleanupService {
         guard shouldRun || shouldAggressiveCleanup else { return }
 
         _ = try? await backfillRecentCategorySnapshots()
-        _ = try? await backfillRecentSubcategorySnapshots()
         await performAutoCleanup()
 
         do {
@@ -250,7 +248,6 @@ actor DatabaseCleanupService {
         let before = databaseFileSizes()
         _ = try await cleanupAbandonedSnapshots()
         let backfilled = try await backfillRecentCategorySnapshots()
-        let backfilledSubcategories = try await backfillRecentSubcategorySnapshots()
         try await aggregateCategoryTotalsForOldSnapshots()
         let entriesDeleted = try await cleanupOldSnapshotEntries()
         let pathsDeleted = try await cleanupOrphanedPaths()
@@ -271,8 +268,7 @@ actor DatabaseCleanupService {
             snapshotsDeleted: snapshotsDeleted,
             snapshotEntrySnapshotsTrimmed: entriesDeleted,
             orphanedPathsDeleted: pathsDeleted,
-            backfilledSnapshots: backfilled,
-            backfilledSubcategorySnapshots: backfilledSubcategories
+            backfilledSnapshots: backfilled
         )
     }
 
@@ -412,22 +408,7 @@ actor DatabaseCleanupService {
 
         var backfilled = 0
         for snapshotId in snapshotIds {
-            let result = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
-            if result.categoryWritten {
-                backfilled += 1
-            }
-        }
-
-        return backfilled
-    }
-
-    private func backfillRecentSubcategorySnapshots() async throws -> Int {
-        let snapshotIds = try await recentSnapshotIDs()
-
-        var backfilled = 0
-        for snapshotId in snapshotIds {
-            let result = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
-            if result.subcategoryWritten {
+            if try await aggregateCategoryTotalsIfMissing(for: snapshotId) {
                 backfilled += 1
             }
         }
@@ -533,7 +514,7 @@ actor DatabaseCleanupService {
         }
 
         for snapshotId in snapshotIdsToAggregate {
-            _ = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
+            _ = try await aggregateCategoryTotalsIfMissing(for: snapshotId)
         }
     }
 
@@ -546,64 +527,26 @@ actor DatabaseCleanupService {
 
     @discardableResult
     private func aggregateCategoryTotalsIfMissing(for snapshotId: Int64) async throws -> Bool {
-        let result = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
-        return result.categoryWritten
-    }
-
-    @discardableResult
-    private func aggregateSubcategoryTotalsIfMissing(for snapshotId: Int64) async throws -> Bool {
-        let result = try await aggregateSnapshotSummariesIfMissing(for: snapshotId)
-        return result.subcategoryWritten
-    }
-
-    @discardableResult
-    private func aggregateSnapshotSummariesIfMissing(
-        for snapshotId: Int64
-    ) async throws -> (categoryWritten: Bool, subcategoryWritten: Bool) {
         guard let dbPool = db.dbPool else {
-            return (false, false)
+            return false
         }
 
-        let existing = try await dbPool.read { db in
-            let categoryCount = try Int.fetchOne(
+        let categoryCount = try await dbPool.read { db in
+            try Int.fetchOne(
                 db,
                 sql: "SELECT COUNT(*) FROM categorySnapshot WHERE snapshotId = ?",
                 arguments: [snapshotId]
             ) ?? 0
-            let subcategoryCount = try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) FROM subcategorySnapshot WHERE snapshotId = ?",
-                arguments: [snapshotId]
-            ) ?? 0
-
-            return (categoryCount: categoryCount, subcategoryCount: subcategoryCount)
         }
+        guard categoryCount == 0 else { return false }
 
-        let needsCategories = existing.categoryCount == 0
-        let needsSubcategories = existing.subcategoryCount == 0
-        guard needsCategories || needsSubcategories else {
-            return (false, false)
-        }
-
-        let summary = try await buildSnapshotSummary(for: snapshotId)
-
-        if needsCategories {
-            try await db.replaceCategorySnapshots(snapshotId: snapshotId, totals: summary.categoryTotals)
-        }
-
-        if needsSubcategories {
-            try await db.replaceSubcategorySnapshots(snapshotId: snapshotId, rows: summary.subcategoryRows)
-        }
-
-        return (
-            categoryWritten: needsCategories && !summary.categoryTotals.isEmpty,
-            subcategoryWritten: needsSubcategories && !summary.subcategoryRows.isEmpty
-        )
+        let totals = try await buildCategoryTotals(for: snapshotId)
+        try await db.replaceCategorySnapshots(snapshotId: snapshotId, totals: totals)
+        return !totals.isEmpty
     }
 
-    private func buildSnapshotSummary(for snapshotId: Int64) async throws -> SnapshotSummary {
+    private func buildCategoryTotals(for snapshotId: Int64) async throws -> [GrowthCategory: Int64] {
         var categoryTotals: [GrowthCategory: Int64] = [:]
-        var grouped: [DatabaseManager.JournalDeltaKey: SubcategoryAccumulator] = [:]
         let pageSize = 5_000
         var lastEntryId: Int64?
 
@@ -616,49 +559,13 @@ actor DatabaseCleanupService {
             guard !entries.isEmpty else { break }
 
             for entry in entries {
-                let (category, subcategory) = GrowthCategory.classify(path: entry.path)
-                categoryTotals[category, default: 0] += entry.sizeBytes
-
-                let key = DatabaseManager.JournalDeltaKey(category: category, subcategory: subcategory)
-                var value = grouped[key] ?? SubcategoryAccumulator()
-                value.add(path: entry.path, sizeBytes: entry.sizeBytes, subcategory: subcategory)
-                grouped[key] = value
+                categoryTotals[GrowthCategory.categorize(path: entry.path), default: 0] += entry.sizeBytes
             }
 
             lastEntryId = entries.last?.id
         }
 
-        let rows = grouped.map { key, accumulator in
-            let finalized = accumulator.topItems.sorted { lhs, rhs in
-                if lhs.currentSizeBytes == rhs.currentSizeBytes {
-                    return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
-                }
-                return lhs.currentSizeBytes > rhs.currentSizeBytes
-            }.map { item in
-                GrowthItem(
-                    path: item.path,
-                    growthBytes: item.currentSizeBytes,
-                    currentSizeBytes: item.currentSizeBytes,
-                    percentOfParent: accumulator.totalBytes > 0
-                        ? Double(item.currentSizeBytes) / Double(accumulator.totalBytes)
-                        : 0,
-                    subcategory: key.subcategory
-                )
-            }
-
-            return DatabaseManager.StoredSubcategorySnapshot(
-                category: key.category,
-                subcategory: key.subcategory,
-                totalBytes: accumulator.totalBytes,
-                fileCount: accumulator.fileCount,
-                topItems: finalized
-            )
-        }
-
-        return SnapshotSummary(
-            categoryTotals: categoryTotals,
-            subcategoryRows: rows
-        )
+        return categoryTotals
     }
 
     /// Deletes snapshotEntry rows for old snapshots, keeping only the latest full payload per tracked path
@@ -799,7 +706,7 @@ actor DatabaseCleanupService {
                 let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
 
                 // Delete snapshots older than retention or beyond the count cap.
-                // Cascades handle category/subcategory summaries automatically.
+                // Cascades handle category summaries automatically.
                 try db.execute(
                     sql: "DELETE FROM snapshot WHERE id IN (\(placeholders))",
                     arguments: StatementArguments(chunk)
@@ -841,43 +748,6 @@ actor DatabaseCleanupService {
         guard let dbPool = db.dbPool else { return }
 
         try await dbPool.vacuum()
-    }
-
-    private struct SnapshotSummary {
-        let categoryTotals: [GrowthCategory: Int64]
-        let subcategoryRows: [DatabaseManager.StoredSubcategorySnapshot]
-    }
-
-    private struct SubcategoryAccumulator {
-        var totalBytes: Int64 = 0
-        var fileCount = 0
-        var topItems: [GrowthItem] = []
-
-        mutating func add(path: String, sizeBytes: Int64, subcategory: GrowthSubcategory?) {
-            totalBytes += sizeBytes
-            fileCount += 1
-
-            let item = GrowthItem(
-                path: path,
-                growthBytes: sizeBytes,
-                currentSizeBytes: sizeBytes,
-                percentOfParent: 0,
-                subcategory: subcategory
-            )
-
-            if topItems.count < SubcategoryGroup.initialLoadLimit {
-                topItems.append(item)
-                return
-            }
-
-            guard let smallestIndex = topItems.indices.min(by: {
-                topItems[$0].currentSizeBytes < topItems[$1].currentSizeBytes
-            }) else {
-                return
-            }
-            guard sizeBytes > topItems[smallestIndex].currentSizeBytes else { return }
-            topItems[smallestIndex] = item
-        }
     }
 }
 

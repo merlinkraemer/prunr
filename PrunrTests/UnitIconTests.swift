@@ -64,7 +64,7 @@ final class UnitIconTests: XCTestCase {
         XCTAssertEqual(icon("\(lib)/Mail/V10/ABCDEF/INBOX.mbox/Data/Attachments/1/2/file.pdf"), mail)
         XCTAssertEqual(icon("\(lib)/Messages/chat.db"), messages)
         XCTAssertEqual(icon("\(lib)/Messages/Attachments/ab/12/IMG.heic"), messages)
-        XCTAssertEqual(icon("\(lib)/CloudStorage/Dropbox/a.txt"), .category)
+        XCTAssertEqual(icon("\(lib)/CloudStorage/Dropbox/a.txt"), .namedApp(name: "Dropbox", vendor: nil))
     }
 
     func testLibraryItemsWithBundleIdsUseThatApp() {
@@ -82,11 +82,11 @@ final class UnitIconTests: XCTestCase {
             icon("\(lib)/Application Support/com.spotify.client/x"),
             .app(bundleIdentifier: "com.spotify.client")
         )
-        XCTAssertEqual(icon("\(lib)/Preferences/com.apple.finder.plist"), .app(bundleIdentifier: "com.apple.finder"))
-        // Names, team-only ids and product folders have no reliable bundle id.
-        XCTAssertEqual(icon("\(lib)/Group Containers/UBF8T346G9.Office/x"), .category)
-        XCTAssertEqual(icon("\(lib)/Caches/Homebrew/downloads/a.tar.gz"), .category)
-        XCTAssertEqual(icon("\(lib)/Application Support/Google/Chrome/Default/x"), .category)
+        XCTAssertEqual(icon("\(lib)/Caches/com.google.Chrome.helper/x"), .app(bundleIdentifier: "com.google.Chrome"))
+        XCTAssertEqual(icon("\(lib)/Preferences/com.apple.finder.plist"), .category)
+        XCTAssertEqual(icon("\(lib)/Group Containers/UBF8T346G9.Office/x"), .namedApp(name: "Office", vendor: nil))
+        XCTAssertEqual(icon("\(lib)/Caches/Homebrew/downloads/a.tar.gz"), .namedApp(name: "Homebrew", vendor: nil))
+        XCTAssertEqual(icon("\(lib)/Application Support/Google/Chrome/Default/x"), .namedApp(name: "Chrome", vendor: "Google"))
     }
 
     func testDownloadFileUsesItsOwnIcon() {

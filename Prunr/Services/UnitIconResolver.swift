@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Turns a place's `UnitIconSource` into an image for the change list.
 ///
@@ -14,6 +15,8 @@ final class UnitIconResolver {
     struct Lookup {
         var applicationIcon: @MainActor (_ bundleIdentifier: String) -> NSImage?
         var fileIcon: @MainActor (_ path: String) -> NSImage?
+        var namedApplicationIcon: @MainActor (_ name: String, _ vendor: String?) -> NSImage? = { _, _ in nil }
+        var genericApplicationIcon: @MainActor () -> NSImage? = { nil }
 
         static var workspace: Lookup {
             Lookup(
@@ -22,7 +25,14 @@ final class UnitIconResolver {
                     // `icon(forFile:)` returns a generic icon for missing paths.
                     guard FileManager.default.fileExists(atPath: path) else { return nil }
                     return NSWorkspace.shared.icon(forFile: path)
-                }
+                },
+                namedApplicationIcon: { name, vendor in
+                    guard let entry = AppCatalogProvider.shared.catalog().entry(named: name, vendor: vendor) else {
+                        return nil
+                    }
+                    return NSWorkspace.shared.icon(forFile: entry.path)
+                },
+                genericApplicationIcon: { NSWorkspace.shared.icon(for: .application) }
             )
         }
     }
@@ -44,17 +54,21 @@ final class UnitIconResolver {
             return nil
         case .app(let bundleIdentifier):
             image = lookup.applicationIcon(bundleIdentifier)
+        case .namedApp(let name, let vendor):
+            image = lookup.namedApplicationIcon(name, vendor)
         case .file(let path):
             image = lookup.fileIcon(path)
+        case .genericApp:
+            image = lookup.genericApplicationIcon()
         }
         cache[source] = .some(image)
         return image
     }
 }
 
-/// App icons by bundle id (or product name), with aliases for helper processes
-/// and explicit paths for apps Launch Services may briefly miss. Shared by the
-/// cache drilldown and `UnitIconResolver`.
+/// App icons by bundle id or app name: the id itself, its canonical form
+/// (helper suffixes dropped), the id minus its last segment, then the installed
+/// app with that name. Shared by the cache drilldown and `UnitIconResolver`.
 enum CacheApplicationIconResolver {
     @MainActor
     static func icon(forBundleIdentifier bundleIdentifier: String?) -> NSImage? {
@@ -69,10 +83,9 @@ enum CacheApplicationIconResolver {
             }
         }
 
-        // Many cache directories use the application's product name rather
-        // than its bundle identifier (for example, Arc or Steam).
-        if let applicationPath = NSWorkspace.shared.fullPath(forApplication: bundleIdentifier) {
-            return NSWorkspace.shared.icon(forFile: applicationPath)
+        if AppIdentity.canonical(bundleIdentifier) == nil,
+           let entry = AppCatalogProvider.shared.catalog().entry(named: AppIdentity.bareName(bundleIdentifier)) {
+            return NSWorkspace.shared.icon(forFile: entry.path)
         }
 
         // Launch Services can briefly lag behind an app install/update. Keep
@@ -89,26 +102,14 @@ enum CacheApplicationIconResolver {
     }
 
     static func bundleIdentifierCandidates(for bundleIdentifier: String) -> [String] {
-        let helperBase = helperSuffixes.first(where: { bundleIdentifier.hasSuffix($0) })
-            .map { String(bundleIdentifier.dropLast($0.count)) }
+        let canonical = AppIdentity.canonical(bundleIdentifier)
+        let parent = (canonical ?? bundleIdentifier).split(separator: ".")
+        let dropped = parent.count > 3 ? parent.dropLast().joined(separator: ".") : nil
         var seen = Set<String>()
-        return [bundleIdentifier, aliases[bundleIdentifier], helperBase]
+        return [bundleIdentifier, canonical, dropped]
             .compactMap { $0 }
             .filter { seen.insert($0).inserted }
     }
-
-    private static let helperSuffixes = [".ShipIt", ".helper"]
-
-    private static let aliases: [String: String] = [
-        "com.apple.Safari.SafeBrowsing": "com.apple.Safari",
-        "com.apple.WebKit.Networking": "com.apple.Safari",
-        "com.apple.WebKit.WebContent": "com.apple.Safari",
-        "com.google.Chrome.helper": "com.google.Chrome",
-        "com.microsoft.VSCode.ShipIt": "com.microsoft.VSCode",
-        "Google": "com.google.Chrome",
-        "Adobe": "com.adobe.acc.AdobeCreativeCloud",
-        "Steam": "com.valvesoftware.steam"
-    ]
 
     private static let knownApplicationPaths: [String: [String]] = [
         "com.google.Chrome": [

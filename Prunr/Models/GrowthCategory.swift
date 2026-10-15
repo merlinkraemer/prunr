@@ -81,7 +81,7 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         case .applications: return "Applications"
         case .mediaAndDocuments: return "Media & Documents"
         case .downloads: return "Downloads"
-        case .cachesAndSystem: return "Caches & System"
+        case .cachesAndSystem: return "Apps & System"
         case .trash: return "Trash"
         case .other: return "Other"
         }
@@ -130,29 +130,34 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
     /// - Parameter path: The file system path to classify
     /// - Returns: The matching GrowthCategory, or .other if no match
     /// Combined classify: single lowercasing pass for both category and subcategory.
-    static func classify(path: String) -> (GrowthCategory, GrowthSubcategory?) {
+    static func classify(path: String, home: String? = nil) -> (GrowthCategory, GrowthSubcategory?) {
         let lowerPath = normalizedLowercasedPath(path)
-        let category = categorizeFromLowered(lowerPath)
-        let subcategory = subcategorizeFromLowered(lowerPath, category: category)
+        let home = loweredHome(home)
+        let category = categorizeFromLowered(lowerPath, home: home)
+        let subcategory = subcategorizeFromLowered(lowerPath, category: category, home: home)
         return (category, subcategory)
     }
 
-    static func categorize(path: String) -> GrowthCategory {
+    static func categorize(path: String, home: String? = nil) -> GrowthCategory {
         let lowerPath = normalizedLowercasedPath(path)
-        return categorizeFromLowered(lowerPath)
+        return categorizeFromLowered(lowerPath, home: loweredHome(home))
     }
 
-    private static func categorizeFromLowered(_ lowerPath: String) -> GrowthCategory {
-        if isTrashPath(lowerPath) {
+    private static func categorizeFromLowered(_ lowerPath: String, home: String) -> GrowthCategory {
+        if isTrashPath(lowerPath, home: home) {
             return .trash
         }
 
-        if isDownloadsPath(lowerPath) {
+        if isDownloadsPath(lowerPath, home: home) {
             return .downloads
         }
 
+        if isSteamGamePath(lowerPath) {
+            return .applications
+        }
+
         // High-confidence developer patterns (docker, node_modules, git, build artifacts, etc.)
-        if isSpecificDeveloperPath(lowerPath) {
+        if isSpecificDeveloperPath(lowerPath, home: home) {
             return .developer
         }
 
@@ -164,27 +169,41 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             return .applications
         }
 
-        if isMediaAndDocumentsPath(lowerPath) {
+        if isMediaAndDocumentsPath(lowerPath, home: home) {
             return .mediaAndDocuments
         }
 
-        if isCachesAndSystemPath(lowerPath) {
+        if isCachesAndSystemPath(lowerPath, home: home) {
             return .cachesAndSystem
         }
 
-        // Fallback: files under dev project roots (~/dev, ~/projects, etc.)
-        // that didn't match any more specific category above.
-        if isDevProjectPath(lowerPath) {
+        if isDevProjectPath(lowerPath, home: home) {
             return .developer
         }
 
-        return .other
+        return homeFolderCategory(lowerPath, home: home) ?? .other
     }
 
-    static func subcategorize(path: String) -> GrowthSubcategory? {
+    /// What is left in home: a hidden folder is a tool's state (Developer),
+    /// any visible folder or file is the user's (Media & Documents). Nil
+    /// outside home.
+    private static func homeFolderCategory(_ lowerPath: String, home: String) -> GrowthCategory? {
+        guard lowerPath.hasPrefix(home + "/") else { return nil }
+        let relative = lowerPath.dropFirst(home.count + 1)
+        guard let first = relative.split(separator: "/").first else { return nil }
+        return first.hasPrefix(".") ? .developer : .mediaAndDocuments
+    }
+
+    /// Home folders whose content is developer work by convention.
+    static let developerFolderNames: Set<String> = [
+        "dev", "projects", "code", "repos", "src", "workspace", "developer", "xcode", "android"
+    ]
+
+    static func subcategorize(path: String, home: String? = nil) -> GrowthSubcategory? {
         let lowerPath = normalizedLowercasedPath(path)
-        let category = categorizeFromLowered(lowerPath)
-        return subcategorizeFromLowered(lowerPath, category: category)
+        let home = loweredHome(home)
+        let category = categorizeFromLowered(lowerPath, home: home)
+        return subcategorizeFromLowered(lowerPath, category: category, home: home)
     }
 
     /// Returns the first application-owned directory below a Library/Caches
@@ -254,16 +273,16 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         return words.isEmpty ? key : words
     }
 
-    private static func subcategorizeFromLowered(_ lowerPath: String, category: GrowthCategory) -> GrowthSubcategory? {
+    private static func subcategorizeFromLowered(_ lowerPath: String, category: GrowthCategory, home: String) -> GrowthSubcategory? {
         switch category {
         case .developer:
             if isDockerPath(lowerPath) { return .docker }
             if isNodeModulesPath(lowerPath) { return .nodeModules }
             if isGitPath(lowerPath) { return .gitRepos }
-            if isBuildArtifactsPath(lowerPath) { return .buildArtifacts }
+            if isBuildArtifactsPath(lowerPath, home: home) { return .buildArtifacts }
             if isDatabasePath(lowerPath) { return .databases }
             if isPythonVenvPath(lowerPath) { return .pythonVenvs }
-            if isDevProjectPath(lowerPath) { return .devProjects }
+            if isDevProjectPath(lowerPath, home: home) { return .devProjects }
             return .devProjects
 
         case .audioProduction:
@@ -283,15 +302,15 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             if isPhotoPath(lowerPath) { return .photos }
             if isVideoPath(lowerPath) { return .videos }
             if isDesignFilePath(lowerPath) { return .designFiles }
-            if isDocumentPath(lowerPath) { return .documents }
+            if isDocumentPath(lowerPath, home: home) { return .documents }
             return nil
 
         case .cachesAndSystem:
             if isBrowserCachePath(lowerPath) { return .browserCaches }
             if isSpotifyPath(lowerPath) { return .spotifyCache }
             if isMailPath(lowerPath) { return .mailAttachments }
-            if isAppCachePath(lowerPath) { return .appCaches }
-            if isSystemSupportPath(lowerPath) { return .systemSupport }
+            if isAppCachePath(lowerPath, home: home) { return .appCaches }
+            if isSystemSupportPath(lowerPath, home: home) { return .systemSupport }
             return nil
 
         case .downloads, .trash, .other:
@@ -309,6 +328,11 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
 
     private static let homePathLowercased: String =
         FileManager.default.homeDirectoryForCurrentUser.path.lowercased()
+
+    private static func loweredHome(_ home: String?) -> String {
+        guard let home else { return homePathLowercased }
+        return normalizedLowercasedPath(home)
+    }
 
     private static func normalizedLowercasedPath(_ path: String) -> String {
         let expandedPath = (path as NSString).expandingTildeInPath
@@ -330,30 +354,28 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         suffixes.contains { lowerPath.hasSuffix($0) }
     }
 
-    private static func isTrashPath(_ lowerPath: String) -> Bool {
-        let home = homePathLowercased
+    private static func isTrashPath(_ lowerPath: String, home: String) -> Bool {
         return isUnderDirectory(lowerPath, home + "/.trash")
     }
 
-    private static func isDownloadsPath(_ lowerPath: String) -> Bool {
-        let home = homePathLowercased
+    private static func isDownloadsPath(_ lowerPath: String, home: String) -> Bool {
         return isUnderDirectory(lowerPath, home + "/downloads")
     }
 
     /// Matches specific developer artifact patterns (docker, node_modules, git, build output, etc.)
     /// Does NOT include the broad dev-project-root fallback.
-    private static func isSpecificDeveloperPath(_ lowerPath: String) -> Bool {
+    private static func isSpecificDeveloperPath(_ lowerPath: String, home: String) -> Bool {
         isDockerPath(lowerPath)
             || isNodeModulesPath(lowerPath)
             || isGitPath(lowerPath)
-            || isBuildArtifactsPath(lowerPath)
+            || isBuildArtifactsPath(lowerPath, home: home)
             || isDatabasePath(lowerPath)
             || isPythonVenvPath(lowerPath)
     }
 
     /// Legacy composite check — kept for subcategorization and context helpers.
-    private static func isDeveloperPath(_ lowerPath: String) -> Bool {
-        isSpecificDeveloperPath(lowerPath) || isDevProjectPath(lowerPath)
+    private static func isDeveloperPath(_ lowerPath: String, home: String) -> Bool {
+        isSpecificDeveloperPath(lowerPath, home: home) || isDevProjectPath(lowerPath, home: home)
     }
 
     private static func isAudioProductionPath(_ lowerPath: String) -> Bool {
@@ -369,19 +391,19 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             || isGlobalPackagePath(lowerPath)
     }
 
-    private static func isMediaAndDocumentsPath(_ lowerPath: String) -> Bool {
+    private static func isMediaAndDocumentsPath(_ lowerPath: String, home: String) -> Bool {
         isPhotoPath(lowerPath)
             || isVideoPath(lowerPath)
             || isDesignFilePath(lowerPath)
-            || isDocumentPath(lowerPath)
+            || isDocumentPath(lowerPath, home: home)
     }
 
-    private static func isCachesAndSystemPath(_ lowerPath: String) -> Bool {
+    private static func isCachesAndSystemPath(_ lowerPath: String, home: String) -> Bool {
         isBrowserCachePath(lowerPath)
             || isSpotifyPath(lowerPath)
             || isMailPath(lowerPath)
-            || isAppCachePath(lowerPath)
-            || isSystemSupportPath(lowerPath)
+            || isAppCachePath(lowerPath, home: home)
+            || isSystemSupportPath(lowerPath, home: home)
     }
 
     // MARK: Developer
@@ -407,8 +429,14 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         lowerPath.contains("/.git/") || lowerPath.hasSuffix("/.git")
     }
 
-    private static func isBuildArtifactsPath(_ lowerPath: String) -> Bool {
+    private static func isBuildArtifactsPath(_ lowerPath: String, home: String) -> Bool {
         if lowerPath.contains("/deriveddata/")
+            || lowerPath.contains("/index.noindex/")
+            || lowerPath.contains("/modulecache.noindex/")
+            || lowerPath.contains("/compilationcache.noindex/")
+            || lowerPath.contains("/sdkstatcaches.noindex/")
+            || lowerPath.contains("/build/intermediates.noindex/")
+            || lowerPath.contains("/build/products/")
             || lowerPath.contains("/target/release")
             || lowerPath.contains("/target/debug")
             || lowerPath.contains("/.build/")
@@ -417,11 +445,11 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         }
 
         if lowerPath.contains("/dist/") || lowerPath.hasSuffix("/dist") {
-            return isLikelyDeveloperContext(lowerPath)
+            return isLikelyDeveloperContext(lowerPath, home: home)
         }
 
         if lowerPath.contains("/build/") || lowerPath.hasSuffix("/build") {
-            return isLikelyDeveloperContext(lowerPath)
+            return isLikelyDeveloperContext(lowerPath, home: home)
         }
 
         return false
@@ -454,16 +482,18 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             || lowerPath.hasSuffix("/.pyenv")
     }
 
-    private static func isDevProjectPath(_ lowerPath: String) -> Bool {
-        let home = homePathLowercased
-        let devRoots = ["/dev", "/projects", "/code", "/repos", "/src"]
-            .map { home + $0 }
-
-        return devRoots.contains { isUnderDirectory(lowerPath, $0) }
+    private static func isDevProjectPath(_ lowerPath: String, home: String) -> Bool {
+        guard lowerPath.hasPrefix(home + "/") else { return false }
+        let first = lowerPath.dropFirst(home.count + 1).split(separator: "/").first.map(String.init) ?? ""
+        return developerFolderNames.contains(first)
     }
 
-    private static func isLikelyDeveloperContext(_ lowerPath: String) -> Bool {
-        isDevProjectPath(lowerPath)
+    private static func isSteamGamePath(_ lowerPath: String) -> Bool {
+        lowerPath.contains("/library/application support/steam/steamapps/common/")
+    }
+
+    private static func isLikelyDeveloperContext(_ lowerPath: String, home: String) -> Bool {
+        isDevProjectPath(lowerPath, home: home)
             || lowerPath.contains("/xcode/")
             || lowerPath.contains("/android/")
             || lowerPath.contains("/workspace/")
@@ -525,7 +555,6 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         lowerPath.hasPrefix("/opt/homebrew")
             || lowerPath.hasPrefix("/usr/local/cellar")
             || lowerPath.hasPrefix("/usr/local/caskroom")
-            || lowerPath.contains("library/caches/homebrew")
     }
 
     private static func isGlobalPackagePath(_ lowerPath: String) -> Bool {
@@ -568,8 +597,7 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
         hasAnySuffix(lowerPath, suffixes: designExtensions)
     }
 
-    private static func isDocumentPath(_ lowerPath: String) -> Bool {
-        let home = homePathLowercased
+    private static func isDocumentPath(_ lowerPath: String, home: String) -> Bool {
         if isUnderDirectory(lowerPath, home + "/documents") {
             return true
         }
@@ -578,8 +606,7 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
 
     // MARK: Caches & System
 
-    private static func isAppCachePath(_ lowerPath: String) -> Bool {
-        let home = homePathLowercased
+    private static func isAppCachePath(_ lowerPath: String, home: String) -> Bool {
         let libraryCacheRoot = home + "/library/caches"
         let isHomeLibraryCache = isUnderDirectory(lowerPath, libraryCacheRoot)
         let isNestedHomeLibraryCache = isUnderDirectory(lowerPath, home + "/library")
@@ -608,15 +635,14 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
             || lowerPath.contains("mail download")
     }
 
-    private static func isSystemSupportPath(_ lowerPath: String) -> Bool {
-        let home = homePathLowercased
+    private static func isSystemSupportPath(_ lowerPath: String, home: String) -> Bool {
         let libraryRoot = home + "/library"
 
         guard isUnderDirectory(lowerPath, libraryRoot) else {
             return false
         }
 
-        if isAppCachePath(lowerPath) || isHomebrewPath(lowerPath) {
+        if isAppCachePath(lowerPath, home: home) || isHomebrewPath(lowerPath) {
             return false
         }
 

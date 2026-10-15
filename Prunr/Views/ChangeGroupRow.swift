@@ -1,38 +1,35 @@
 import SwiftUI
 
-/// One category's changes on one day in the main list: coloured category
-/// glyph, category name, signed amount and a chevron. Same metrics as the
-/// categories view rows. Clicking opens the day's rows for that category.
 struct ChangeGroupRow: View {
     let group: ChangeGroup
     let onOpen: () -> Void
+    var soleItemPath: (@MainActor () async -> String?)? = nil
+    var onReveal: (String) -> Void = { _ in }
 
     @State private var isHovering = false
+    @State private var resolvedSoleItemPath: String?
 
     var body: some View {
         Button(action: onOpen) {
             HStack(spacing: 10) {
-                Image(systemName: group.category.icon)
-                    .font(.system(size: 15))
-                    .foregroundStyle(group.category.color)
-                    .frame(width: 18, height: 18)
+                if let iconSource = group.rowIconSource {
+                    UnitIconTile(category: group.category, source: iconSource, size: 18)
+                } else {
+                    Image(systemName: group.category.icon)
+                        .font(.system(size: 15))
+                        .foregroundStyle(group.category.color)
+                        .frame(width: 18, height: 18)
+                }
 
-                Text(group.category.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                FittingTitle(title: group.rowTitle, shortTitle: group.rowShortTitle, font: .system(size: 13, weight: .semibold))
 
-                Text(amountText)
+                Text(signedBytes(group.netBytes))
                     .font(.system(size: 13).monospacedDigit())
                     .foregroundStyle(changeAmountStyle(group.netBytes))
                     .lineLimit(1)
                     .fixedSize()
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 12, height: 12)
+                ListChevron()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
@@ -48,15 +45,21 @@ struct ChangeGroupRow: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(group.category.displayName), \(amountText)")
-        .accessibilityHint("Shows this day's changes in \(group.category.displayName)")
+        .accessibilityLabel("\(group.rowTitle), \(spokenChangeAmount(group.netBytes))")
+        .accessibilityHint(accessibilityHint)
         .accessibilityAddTraits(.isButton)
+        .pathContextMenu(resolvedSoleItemPath, onShowInFinder: onReveal)
+        .task(id: group) {
+            resolvedSoleItemPath = await soleItemPath?()
+        }
     }
 
-    private var amountText: String { signedBytes(group.netBytes) }
+    private var accessibilityHint: String {
+        if resolvedSoleItemPath != nil { return "Shows it in Finder" }
+        return FeedPage.soloPlace(of: group) == nil ? "Shows this day's changes of \(group.owner.displayName)" : "Shows what is in this place"
+    }
 }
 
-/// "Show all (N)" under a day's first groups; expands that day in place.
 struct ShowAllGroupsRow: View {
     let count: Int
     let onExpand: () -> Void
@@ -86,7 +89,6 @@ struct ShowAllGroupsRow: View {
     }
 }
 
-/// The list row hover: a soft rounded fill, like the categories view rows.
 struct ListRowHoverBackground: View {
     let isHovering: Bool
 

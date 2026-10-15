@@ -118,6 +118,33 @@ actor ScanService {
         alsoWriteWorkingSet: Bool = false,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> Snapshot {
+        try await scanWithDrilldownIndex(
+            path: path,
+            trackedPathId: trackedPathId,
+            ignoredNames: ignoredNames,
+            alsoWriteWorkingSet: alsoWriteWorkingSet,
+            progress: progress
+        ).snapshot
+    }
+
+    /// A completed scan and the drilldown index it accumulated in memory, for
+    /// `DatabaseManager.rebuildWorkingSet(from:trackedPathId:updatedAt:drilldownIndex:)`.
+    struct ScanOutcome: Sendable {
+        let snapshot: Snapshot
+        let drilldownIndex: DrilldownIndexBuilder
+        /// Set when the scan was asked to rebuild the history from file dates.
+        let fileHistory: FileDateHistory?
+    }
+
+    func scanWithDrilldownIndex(
+        path: String,
+        trackedPathId: UUID,
+        ignoredNames: Set<String>? = nil,
+        alsoWriteWorkingSet: Bool = false,
+        reconstructsFileHistory: Bool = false,
+        skipLog: ScanSkipLog? = nil,
+        progress: ((ScanProgress) -> Void)?
+    ) async throws -> ScanOutcome {
         let scanID = UUID()
         let cancellationToken = ScanCancellationToken()
         activeCancellationTokens[scanID] = cancellationToken
@@ -162,7 +189,9 @@ actor ScanService {
                 trackedPathId: trackedPathId,
                 ignoredNames: ignoredNames,
                 alsoWriteWorkingSet: alsoWriteWorkingSet,
+                reconstructsFileHistory: reconstructsFileHistory,
                 cancellationToken: cancellationToken,
+                skipLog: skipLog,
                 progress: progress
             )
         } onCancel: {
@@ -177,9 +206,11 @@ actor ScanService {
         trackedPathId: UUID,
         ignoredNames: Set<String>?,
         alsoWriteWorkingSet: Bool = false,
+        reconstructsFileHistory: Bool = false,
         cancellationToken: ScanCancellationToken,
+        skipLog: ScanSkipLog?,
         progress: ((ScanProgress) -> Void)?
-    ) async throws -> Snapshot {
+    ) async throws -> ScanOutcome {
         // Capture volume free space before creating snapshot
         let freeBytes = Self.captureVolumeFreeSpace(for: url)
         if let bytes = freeBytes {
@@ -216,57 +247,8 @@ actor ScanService {
         let progressUpdateInterval: TimeInterval = 0.25
         let historicalEntryEstimate = await historicalEntryEstimate(for: trackedPathId)
         var categoryTotals: [GrowthCategory: Int64] = [:]
-        struct SubcategoryKey: Hashable {
-            let category: GrowthCategory
-            let subcategory: GrowthSubcategory?
-        }
-        struct SubcategoryAccumulator {
-            var totalBytes: Int64 = 0
-            var fileCount = 0
-            var topItems: [GrowthItem] = []
-
-            mutating func add(path: String, sizeBytes: Int64, subcategory: GrowthSubcategory?) {
-                totalBytes += sizeBytes
-                fileCount += 1
-
-                let item = GrowthItem(
-                    path: path,
-                    growthBytes: sizeBytes,
-                    currentSizeBytes: sizeBytes,
-                    percentOfParent: 0,
-                    subcategory: subcategory
-                )
-
-                if topItems.count < SubcategoryGroup.initialLoadLimit {
-                    topItems.append(item)
-                } else if let smallestIndex = topItems.indices.min(by: {
-                    topItems[$0].currentSizeBytes < topItems[$1].currentSizeBytes
-                }), sizeBytes > topItems[smallestIndex].currentSizeBytes {
-                    topItems[smallestIndex] = item
-                }
-            }
-
-            func finalized(subcategory: GrowthSubcategory?) -> [GrowthItem] {
-                let sorted = topItems.sorted {
-                    if $0.currentSizeBytes == $1.currentSizeBytes {
-                        return $0.path.localizedStandardCompare($1.path) == .orderedAscending
-                    }
-                    return $0.currentSizeBytes > $1.currentSizeBytes
-                }
-                guard totalBytes > 0 else { return sorted }
-
-                return sorted.map { item in
-                    GrowthItem(
-                        path: item.path,
-                        growthBytes: item.currentSizeBytes,
-                        currentSizeBytes: item.currentSizeBytes,
-                        percentOfParent: Double(item.currentSizeBytes) / Double(totalBytes),
-                        subcategory: subcategory
-                    )
-                }
-            }
-        }
-        var subcategoryTotals: [SubcategoryKey: SubcategoryAccumulator] = [:]
+        var drilldownIndex = DrilldownIndexBuilder()
+        var fileHistory: FileDateHistory? = reconstructsFileHistory ? FileDateHistory(scanStart: snapshot.createdAt) : nil
 
         // Track scan start time for percentage estimation (ISS-033)
         let scanStartTime = Date()
@@ -300,7 +282,8 @@ actor ScanService {
                 url,
                 ignoredNames: resolvedIgnoredNames,
                 cancellationToken: cancellationToken,
-                backpressure: backpressure
+                backpressure: backpressure,
+                skipLog: skipLog
             )
 
             for try await result in stream {
@@ -313,11 +296,25 @@ actor ScanService {
                 batch.append(result)
                 count += 1
                 let category = result.category
+                let normalizedPath = DatabaseManager.normalizePath(result.path)
+                let unitKey = UnitResolver.resolve(path: normalizedPath)
                 categoryTotals[category, default: 0] += result.sizeBytes
-                let subcategory = result.subcategory
-                let subcategoryKey = SubcategoryKey(category: category, subcategory: subcategory)
-                subcategoryTotals[subcategoryKey, default: SubcategoryAccumulator()]
-                    .add(path: result.path, sizeBytes: result.sizeBytes, subcategory: subcategory)
+                drilldownIndex.add(
+                    path: normalizedPath,
+                    sizeBytes: result.sizeBytes,
+                    category: category,
+                    subcategory: result.subcategory,
+                    unitKey: unitKey
+                )
+                if let dates = result.fileDates {
+                    fileHistory?.add(
+                        unitKey: unitKey,
+                        sizeBytes: result.sizeBytes,
+                        category: category,
+                        subcategory: result.subcategory,
+                        dates: dates
+                    )
+                }
 
                 // Insert batch when full
                 if batch.count >= batchSize {
@@ -439,6 +436,7 @@ actor ScanService {
                 try await db.replaceWorkingSetCategoryTotals(
                     trackedPathId: trackedPathId,
                     totals: categoryTotals,
+                    drilldownIndex: drilldownIndex,
                     updatedAt: snapshot.createdAt
                 )
             }
@@ -446,17 +444,6 @@ actor ScanService {
             // Persist category totals while scan results are still hot in memory.
             try throwIfCancelled("category snapshot persistence preflight", token: cancellationToken)
             try await db.replaceCategorySnapshots(snapshotId: snapshotId, totals: categoryTotals)
-            let storedSubcategories = subcategoryTotals.map { key, accumulator in
-                DatabaseManager.StoredSubcategorySnapshot(
-                    category: key.category,
-                    subcategory: key.subcategory,
-                    totalBytes: accumulator.totalBytes,
-                    fileCount: accumulator.fileCount,
-                    topItems: accumulator.finalized(subcategory: key.subcategory)
-                )
-            }
-            try throwIfCancelled("subcategory snapshot persistence preflight", token: cancellationToken)
-            try await db.replaceSubcategorySnapshots(snapshotId: snapshotId, rows: storedSubcategories)
 
             // Send final progress update at 100% completion (UAT-001 fix)
             // Include complete category totals so the UI can show final categories before
@@ -476,11 +463,12 @@ actor ScanService {
             }
 
             try await db.markSnapshotComplete(id: snapshotId)
-            logger.info("Scan completed successfully: \(count) files scanned")
+            let skippedCount = skipLog?.count ?? 0
+            logger.info("Scan completed successfully: \(count) files scanned, \(skippedCount) unreadable entries skipped")
 
             var completedSnapshot = snapshot
             completedSnapshot.lifecycle = .complete
-            return completedSnapshot
+            return ScanOutcome(snapshot: completedSnapshot, drilldownIndex: drilldownIndex, fileHistory: fileHistory)
 
         } catch {
             // A failed DB write can stop consuming the stream before its normal

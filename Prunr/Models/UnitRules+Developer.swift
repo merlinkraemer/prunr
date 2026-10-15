@@ -29,6 +29,8 @@ extension UnitKind {
     static let pythonEnv = UnitKind(rawValue: "python-env")
     static let buildOutput = UnitKind(rawValue: "build-output")
     static let gitHistory = UnitKind(rawValue: "git")
+    /// A hidden home folder holding a tool's state: `~/.<tool>`, `~/.local/share/<tool>`.
+    static let tool = UnitKind(rawValue: "tool")
 }
 
 extension UnitRules {
@@ -37,7 +39,7 @@ extension UnitRules {
     static let developer: [UnitRule] = [
         xcodeBuildRule, xcodeArchivesRule, xcodeDeviceSupportRule, xcodeSimulatorRule,
         dockerRule, colimaRule, modelStoreRule, packageCacheRule,
-        nodeModulesRule, pythonEnvRule, buildOutputRule, gitHistoryRule
+        nodeModulesRule, pythonEnvRule, buildOutputRule, gitHistoryRule, toolRule
     ]
 
     // MARK: Xcode
@@ -49,21 +51,83 @@ extension UnitRules {
         return rel[3]
     }
 
-    /// `DerivedData/<Name-hash>` → "Xcode build files · Name".
+    /// `DerivedData/<Name-hash>` → "Xcode build files · Name". Also any folder
+    /// shaped like DerivedData, wherever `-derivedDataPath` or the custom
+    /// location points: it holds Xcode-only folders (`Index.noindex`,
+    /// `ModuleCache.noindex`, `Build/Intermediates.noindex`, `Build/Products`)
+    /// or is named `<Name>-<28 letter hash>` with a `Build`, `Logs`, ... inside.
     static let xcodeBuildRule = UnitRule(
         kind: .xcodeBuild,
         resolve: { path in
-            guard let rel = path.relative, xcodeArea(path) == "deriveddata" else { return nil }
-            return path.homeRoot(depth: rel.count >= 5 ? 5 : 4)
+            if let rel = path.relative, xcodeArea(path) == "deriveddata" {
+                return path.homeRoot(depth: rel.count >= 5 ? 5 : 4)
+            }
+            guard let index = derivedDataRootIndex(path) else { return nil }
+            return path.root(depth: index + 1)
         },
         name: { root in
-            guard let rel = root.relative, rel.count >= 5,
-                  let project = strippingXcodeHash(rel[4]) else {
+            let project: String?
+            if let rel = root.relative, xcodeArea(root) == "deriveddata" {
+                project = rel.count >= 5 ? strippingXcodeHash(rel[4]) : nil
+            } else {
+                project = derivedDataProjectName(root)
+            }
+            guard let project else {
                 return UnitName(title: "Xcode build files", category: .developer, icon: .xcode)
             }
-            return UnitName(title: "Xcode build files · \(project)", category: .developer, icon: .xcode)
+            return UnitName(title: "Xcode build files · \(project)", shortTitle: project, category: .developer, icon: .xcode)
         }
     )
+
+    private static let xcodeOnlyFolders: Set<String> = [
+        "index.noindex", "modulecache.noindex", "compilationcache.noindex", "sdkstatcaches.noindex"
+    ]
+    private static let derivedDataBuildFolders: Set<String> = ["intermediates.noindex", "products"]
+    private static let derivedDataHashedChildren: Set<String> = [
+        "build", "index.noindex", "logs", "info.plist", "sourcepackages", "textbasedinstallapi"
+    ]
+
+    /// Index of the outermost component that is a DerivedData folder by shape.
+    private static func derivedDataRootIndex(_ path: UnitPath) -> Int? {
+        let lower = path.components.map { $0.lowercased() }
+        guard lower.count >= 2 else { return nil }
+        for index in 0..<(lower.count - 1) {
+            let child = lower[index + 1]
+            if xcodeOnlyFolders.contains(child) { return index }
+            if child == "build", index + 2 < lower.count, derivedDataBuildFolders.contains(lower[index + 2]) {
+                return index
+            }
+            if derivedDataHashedChildren.contains(child), hasXcodeHash(path.components[index]) { return index }
+        }
+        return nil
+    }
+
+    /// The project a DerivedData folder outside Xcode's default location builds:
+    /// "Weatherly-<hash>" → "Weatherly", "pad-dd" → "pad", "<project>/build" →
+    /// "project". Words that only say "build output" are dropped; a folder made
+    /// only of them names its parent instead.
+    private static func derivedDataProjectName(_ root: UnitPath) -> String? {
+        let parts = root.relative ?? root.components
+        for folder in parts.reversed().prefix(4) {
+            if let project = strippingXcodeHash(folder) { return project }
+            let stem = UnitNamer.plainStem(folder)
+            let tokens = (stem ?? folder).split(whereSeparator: { "-_. ".contains($0) })
+            let kept = tokens.filter { !buildOutputWords.contains($0.lowercased()) }
+            if kept.isEmpty { continue }
+            if stem == nil, kept.count == tokens.count { return UnitNamer.displayComponent(folder) }
+            return UnitNamer.displayComponent(kept.joined(separator: " "))
+        }
+        return nil
+    }
+
+    private static let buildOutputWords: Set<String> = [
+        "dd", "derived", "deriveddata", "data", "build", "builds", "xcode", "xcodebuild",
+        "mac", "macos", "ios", "debug", "release", "dev"
+    ]
+
+    private static func hasXcodeHash(_ component: String) -> Bool {
+        component.range(of: "-[a-z]{28}$", options: .regularExpression) != nil
+    }
 
     static let xcodeArchivesRule = UnitRule(
         kind: .xcodeArchives,
@@ -78,7 +142,7 @@ extension UnitRules {
             guard let area = xcodeArea(path), area.hasSuffix("devicesupport") else { return nil }
             return path.homeRoot(depth: 4)
         },
-        name: { _ in UnitName(title: "Xcode device support", category: .developer, icon: .xcode) }
+        name: { _ in UnitName(title: "Device support", category: .developer, icon: .xcode) }
     )
 
     static let xcodeSimulatorRule = UnitRule(
@@ -88,7 +152,7 @@ extension UnitRules {
                   rel[0] == "library", rel[1] == "developer", rel[2] == "coresimulator" else { return nil }
             return path.homeRoot(depth: 3)
         },
-        name: { _ in UnitName(title: "Xcode simulators", category: .developer, icon: .xcode) }
+        name: { _ in UnitName(title: "Simulators", category: .developer, icon: .xcode) }
     )
 
     /// Xcode appends a 28 letter hash to the project name ("Prunr-bkgqx..."). Nil
@@ -119,13 +183,13 @@ extension UnitRules {
             }
             return nil
         },
-        name: { _ in UnitName(title: "Docker disk", detail: dockerDetail, category: .developer, icon: .docker) }
+        name: { _ in UnitName(title: "Docker disk", context: dockerDetail, category: .developer, icon: .docker) }
     )
 
     static let colimaRule = UnitRule(
         kind: .colima,
         resolve: { path in path.lowercasedRelative?.first == ".colima" ? path.homeRoot(depth: 1) : nil },
-        name: { _ in UnitName(title: "Docker disk · Colima", detail: dockerDetail, category: .developer, icon: .docker) }
+        name: { _ in UnitName(title: "Docker disk · Colima", context: dockerDetail, category: .developer, icon: .docker) }
     )
 
     // MARK: Model stores and package caches
@@ -175,9 +239,7 @@ extension UnitRules {
 
     // MARK: Project markers (outermost wins)
 
-    private static let projectRoots: Set<String> = [
-        "dev", "projects", "code", "repos", "src", "workspace", "developer", "xcode", "android"
-    ]
+    private static let projectRoots = GrowthCategory.developerFolderNames
     private static let globalPackageFolders: Set<String> = [
         ".npm-global", ".bun", ".yarn", ".nvm", ".volta", ".fnm", ".pnpm", ".pnpm-store", ".asdf"
     ]
@@ -234,7 +296,7 @@ extension UnitRules {
                 guard let project = projectName(of: root) else {
                     return UnitName(title: orphanTitle, category: .developer)
                 }
-                return UnitName(title: "\(title) · \(project)", category: .developer)
+                return UnitName(title: "\(title) · \(project)", shortTitle: project, category: .developer)
             }
         )
     }
@@ -243,4 +305,41 @@ extension UnitRules {
     static let pythonEnvRule = markerRule(.pythonEnv, title: "Python env", orphanTitle: "Python environments")
     static let buildOutputRule = markerRule(.buildOutput, title: "Build files", orphanTitle: "Build files")
     static let gitHistoryRule = markerRule(.gitHistory, title: "Git history", orphanTitle: "Git history")
+
+    // MARK: Tool state in hidden home folders
+
+    private static let xdgDataFolders: Set<String> = ["share", "state"]
+
+    /// A hidden folder in home is a tool's state by Unix convention: `~/.codex`
+    /// → "Codex data", one unit. XDG folders go one level deeper:
+    /// `~/.local/share/<tool>`, `~/.local/state/<tool>`, `~/.config/<tool>`.
+    /// Runs after every other developer rule, so Docker, Colima, package caches
+    /// and project markers inside hidden folders keep their own units.
+    static let toolRule = UnitRule(
+        kind: .tool,
+        resolve: { path in
+            guard let rel = path.lowercasedRelative, rel.count >= 2, let first = rel.first,
+                  first.hasPrefix("."), first.count > 1 else { return nil }
+            switch first {
+            case ".local":
+                if rel.count >= 4, xdgDataFolders.contains(rel[1]) { return path.homeRoot(depth: 3) }
+                return path.homeRoot(depth: rel.count >= 3 ? 2 : 1)
+            case ".config":
+                return path.homeRoot(depth: rel.count >= 3 ? 2 : 1)
+            default:
+                return path.homeRoot(depth: 1)
+            }
+        },
+        name: { root in
+            guard let rel = root.relative, let folder = rel.last else { return nil }
+            let tool = String(folder.drop(while: { $0 == "." }))
+            guard let readable = UnitNamer.displayComponent(tool) else {
+                return UnitName(title: "Tool data", category: .developer)
+            }
+            let name = readable.count > 3 ? readable.prefix(1).uppercased() + readable.dropFirst() : readable
+            return UnitName(
+                title: "\(name) data", shortTitle: name, category: .developer, icon: .namedApp(name: name, vendor: nil)
+            )
+        }
+    )
 }

@@ -17,8 +17,18 @@ final class UnitResolverTests: XCTestCase {
     func testDownloadItemIsItsOwnUnit() {
         XCTAssertEqual(key("/Users/tester/Downloads/ubuntu.iso"), "download|/Users/tester/Downloads/ubuntu.iso")
         XCTAssertEqual(name("/Users/tester/Downloads/ubuntu.iso"), UnitName(
-            title: "Downloads · ubuntu.iso", category: .downloads, icon: .file(path: "/Users/tester/Downloads/ubuntu.iso")
+            title: "Downloads · ubuntu.iso", shortTitle: "ubuntu.iso", category: .downloads,
+            icon: .file(path: "/Users/tester/Downloads/ubuntu.iso")
         ))
+    }
+
+    func testInstallersReadAsWhatTheyInstall() {
+        let path = "/Users/tester/Downloads/Xcode_26.1_Release_Candidate.xip"
+        XCTAssertEqual(key(path), "download|\(path)")
+        XCTAssertEqual(name(path).title, "Downloads · Xcode installer")
+        XCTAssertEqual(name(path).shortTitle, "Xcode installer")
+        XCTAssertEqual(name("/Users/tester/Downloads/Docker.dmg").shortTitle, "Docker installer")
+        XCTAssertEqual(name("/Users/tester/Downloads/Firefox 131.0.pkg").shortTitle, "Firefox installer")
     }
 
     func testFilesInsideDownloadedFolderBelongToThatFolder() {
@@ -62,7 +72,7 @@ final class UnitResolverTests: XCTestCase {
         let path = "/Users/tester/Documents/Archive/2024/taxes.pdf"
         XCTAssertEqual(key(path), "place|/Users/tester/Documents/Archive")
         XCTAssertEqual(name(path).title, "Archive · Documents")
-        XCTAssertNil(name(path).detail)
+        XCTAssertNil(name(path).context)
     }
 
     func testFallbackForLooseFilesAndHome() {
@@ -92,19 +102,42 @@ final class UnitResolverTests: XCTestCase {
 
     // MARK: - Library/<Area>/<X>
 
-    func testLibraryAreaItemReadsAsData() {
-        let path = "/Users/tester/Library/Application Support/Google/Chrome/Default/History"
-        XCTAssertEqual(key(path), "library|/Users/tester/Library/Application Support/Google")
-        XCTAssertEqual(name(path).title, "Google data")
-        XCTAssertEqual(name(path).detail, "Application Support")
+    func testLibraryAreaItemReadsAsAppData() {
+        let path = "/Users/tester/Library/Application Support/Claude/vm_bundles/x"
+        XCTAssertEqual(key(path), "library|/Users/tester/Library/Application Support/Claude")
+        XCTAssertEqual(name(path).title, "App data")
+        XCTAssertEqual(name(path).owner, .named("Claude"))
+        XCTAssertEqual(name(path).standaloneTitle, "Claude · App data")
+        XCTAssertNil(name(path).context)
     }
 
-    func testLibraryBundleIdsBecomeAppNames() {
-        XCTAssertEqual(name("/Users/tester/Library/Containers/com.apple.Safari/Data/x").title, "Safari data")
-        XCTAssertEqual(name("/Users/tester/Library/Group Containers/group.com.apple.notes/db").title, "Notes data")
-        XCTAssertEqual(name("/Users/tester/Library/Group Containers/UBF8T346G9.Office/x").title, "Office data")
-        XCTAssertEqual(name("/Users/tester/Library/Preferences/com.apple.finder.plist").title, "Finder data")
-        XCTAssertEqual(name("/Users/tester/Library/Caches/com.example.Widget/blob").title, "Widget cache")
+    func testLibraryBundleIdsBecomeAppOwners() {
+        let cases: [(String, UnitOwner, String)] = [
+            ("Containers/com.apple.Safari/Data/x", .app(id: "com.apple.Safari"), "App data"),
+            ("Group Containers/group.com.apple.notes/db", .app(id: "com.apple.notes"), "Shared data"),
+            ("Group Containers/UBF8T346G9.Office/x", .named("Office"), "Shared data"),
+            ("Group Containers/group.net.whatsapp.WhatsApp.shared/Message/x", .app(id: "net.whatsapp.WhatsApp"), "Shared data"),
+            ("Caches/com.example.Widget/blob", .app(id: "com.example.Widget"), "Cache"),
+            ("Caches/com.google.Chrome.helper/blob", .app(id: "com.google.Chrome"), "Cache"),
+            ("Caches/com.anthropic.claudefordesktop.ShipIt/x", .app(id: "com.anthropic.claudefordesktop"), "Cache"),
+            ("WebKit/com.steipete.codexbar/WebsiteDataStore/x", .app(id: "com.steipete.codexbar"), "Website data"),
+            ("Saved Application State/com.apple.Terminal.savedState/x", .app(id: "com.apple.Terminal"), "Saved windows"),
+            ("Logs/com.acme.Tool/x.log", .app(id: "com.acme.Tool"), "Logs"),
+            ("Application Support/com.apple.wallpaper/aerials/x.mov", .app(id: "com.apple.wallpaper"), "Aerial wallpapers"),
+            ("Application Support/Prunr-backup-20261014-1439/prunr.db", .named("Prunr backup"), "Prunr backup")
+        ]
+        for (relative, owner, title) in cases {
+            let unit = name("/Users/tester/Library/\(relative)")
+            XCTAssertEqual(unit.owner, owner, relative)
+            XCTAssertEqual(unit.title, title, relative)
+        }
+    }
+
+    func testNonAppLibraryAreasBelongToTheSystem() {
+        let unit = name("/Users/tester/Library/Preferences/com.apple.finder.plist")
+        XCTAssertEqual(unit.title, "Preferences")
+        XCTAssertEqual(unit.standaloneTitle, "Preferences")
+        XCTAssertEqual(unit.owner, .system)
     }
 
     func testLibraryAreaAndLibraryItself() {
@@ -146,7 +179,9 @@ final class UnitResolverTests: XCTestCase {
         let realHome = FileManager.default.homeDirectoryForCurrentUser.path
         let path = realHome + "/Downloads/thing.dmg"
         XCTAssertEqual(UnitResolver.resolve(path: path), "download|" + path)
-        XCTAssertEqual(UnitNamer.name(path: path), UnitName(title: "Downloads · thing.dmg", category: .downloads, icon: .file(path: path)))
+        XCTAssertEqual(UnitNamer.name(path: path), UnitName(
+            title: "Downloads · thing installer", shortTitle: "thing installer", category: .downloads, icon: .file(path: path)
+        ))
     }
 
     // MARK: - Guard: no hashes or bundle ids in names
@@ -192,7 +227,7 @@ final class UnitResolverTests: XCTestCase {
             let unit = name(path)
             XCTAssertFalse(unit.title.isEmpty, path)
             XCTAssertFalse(UnitNamer.containsForbiddenToken(unit.title), "\(path) → \(unit.title)")
-            if let detail = unit.detail {
+            if let detail = unit.context {
                 XCTAssertFalse(UnitNamer.containsForbiddenToken(detail), "\(path) → \(detail)")
             }
             XCTAssertFalse(unit.title.contains("/"), "\(path) → \(unit.title)")
