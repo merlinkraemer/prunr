@@ -81,4 +81,4 @@ schemes:
       targets:
         - PrunrTests
       environmentVariables:
-        CFFIXED_USER_HOME: $(PROJECT_TEMP_DIR)/TestHome
+        CFFIXED_USER_HOME: /tmp/PrunrTestHome
