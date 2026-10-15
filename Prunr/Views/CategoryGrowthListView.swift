@@ -336,8 +336,8 @@ struct CategoryGrowthListView: View {
             VStack(spacing: 0) {
                 if let status = CategorySizes.groupsStatus(
                     isEmpty: groups.isEmpty,
-                    isIndexing: store.isBuilding,
-                    readFailed: store.groupsReadFailed
+                    isPending: store.isGroupsPending(for: category.category),
+                    readFailed: store.groupsReadFailed || store.failedFileCategories.contains(category.category)
                 ) {
                     InlineStatusRow(status: status, onRetry: { manager.retryDrilldownRead(for: category.category) })
                 } else {
@@ -370,7 +370,7 @@ struct CategoryGrowthListView: View {
         let status = CategorySizes.filesStatus(
             hasGroup: group != nil,
             hasFiles: !files.isEmpty,
-            isIndexing: store.isBuilding,
+            isPending: category.map { store.isGroupsPending(for: $0) } ?? false,
             isLoaded: category.map { store.isFilesLoaded(for: $0) } ?? false,
             readFailed: category.map { store.failedFileCategories.contains($0) } ?? false
         )
@@ -647,16 +647,14 @@ enum CategorySizes {
         count == 1 ? "1 file" : "\(count.formatted()) files"
     }
 
-    static func groupsStatus(isEmpty: Bool, isIndexing: Bool, readFailed: Bool) -> InlineStatus? {
-        guard isEmpty else { return nil }
-        if isIndexing { return .indexing }
+    static func groupsStatus(isEmpty: Bool, isPending: Bool, readFailed: Bool) -> InlineStatus? {
+        guard isEmpty, !isPending else { return nil }
         return readFailed ? .failed : .empty
     }
 
-    static func filesStatus(hasGroup: Bool, hasFiles: Bool, isIndexing: Bool, isLoaded: Bool, readFailed: Bool) -> InlineStatus? {
-        guard hasGroup else { return isIndexing ? .indexing : .empty }
+    static func filesStatus(hasGroup: Bool, hasFiles: Bool, isPending: Bool, isLoaded: Bool, readFailed: Bool) -> InlineStatus? {
+        guard hasGroup else { return isPending ? nil : .empty }
         guard !hasFiles else { return nil }
-        if isIndexing { return .indexing }
         if readFailed { return .failed }
         return isLoaded ? .empty : nil
     }

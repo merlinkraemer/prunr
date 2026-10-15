@@ -22,11 +22,11 @@ final class DrilldownNavigationTests: XCTestCase {
         let (loader, offsets) = pages(all, pageSize: 2)
         let model = PlaceContentsModel(loader: loader)
 
-        XCTAssertNil(model.inlineStatus(isIndexing: false))
+        XCTAssertNil(model.inlineStatus)
         await model.load()
         XCTAssertEqual(model.children.map(\.name), ["item0", "item1"])
         XCTAssertTrue(model.hasMore)
-        XCTAssertNil(model.inlineStatus(isIndexing: false))
+        XCTAssertNil(model.inlineStatus)
 
         await model.loadMore()
         await model.loadMore()
@@ -41,14 +41,12 @@ final class DrilldownNavigationTests: XCTestCase {
         struct ReadFailure: Error {}
         let failing = PlaceContentsModel(loader: { _ in throw ReadFailure() })
         await failing.load()
-        XCTAssertEqual(failing.inlineStatus(isIndexing: false), .failed)
+        XCTAssertEqual(failing.inlineStatus, .failed)
         XCTAssertEqual(InlineStatus.failed.text, "Couldn't read")
 
         let empty = PlaceContentsModel(loader: { _ in PlaceContentsPage(children: [], hasMore: false) })
         await empty.load()
-        XCTAssertEqual(empty.inlineStatus(isIndexing: false), .empty)
-        XCTAssertEqual(empty.inlineStatus(isIndexing: true), .indexing)
-        XCTAssertEqual(InlineStatus.indexing.text, "Indexing files…")
+        XCTAssertEqual(empty.inlineStatus, .empty)
         XCTAssertEqual(InlineStatus.empty.text, "No files found")
     }
 
@@ -114,17 +112,17 @@ final class DrilldownNavigationTests: XCTestCase {
     }
 
     func testCategoriesViewInlineStatesReplaceLoaderPages() {
-        XCTAssertNil(CategorySizes.groupsStatus(isEmpty: false, isIndexing: true, readFailed: true))
-        XCTAssertEqual(CategorySizes.groupsStatus(isEmpty: true, isIndexing: true, readFailed: false), .indexing)
-        XCTAssertEqual(CategorySizes.groupsStatus(isEmpty: true, isIndexing: false, readFailed: true), .failed)
-        XCTAssertEqual(CategorySizes.groupsStatus(isEmpty: true, isIndexing: false, readFailed: false), .empty)
+        XCTAssertNil(CategorySizes.groupsStatus(isEmpty: false, isPending: true, readFailed: true))
+        XCTAssertNil(CategorySizes.groupsStatus(isEmpty: true, isPending: true, readFailed: false))
+        XCTAssertEqual(CategorySizes.groupsStatus(isEmpty: true, isPending: false, readFailed: true), .failed)
+        XCTAssertEqual(CategorySizes.groupsStatus(isEmpty: true, isPending: false, readFailed: false), .empty)
 
-        XCTAssertNil(CategorySizes.filesStatus(hasGroup: true, hasFiles: true, isIndexing: true, isLoaded: false, readFailed: false))
-        XCTAssertNil(CategorySizes.filesStatus(hasGroup: true, hasFiles: false, isIndexing: false, isLoaded: false, readFailed: false))
-        XCTAssertEqual(CategorySizes.filesStatus(hasGroup: true, hasFiles: false, isIndexing: true, isLoaded: false, readFailed: false), .indexing)
-        XCTAssertEqual(CategorySizes.filesStatus(hasGroup: true, hasFiles: false, isIndexing: false, isLoaded: false, readFailed: true), .failed)
-        XCTAssertEqual(CategorySizes.filesStatus(hasGroup: true, hasFiles: false, isIndexing: false, isLoaded: true, readFailed: false), .empty)
-        XCTAssertEqual(CategorySizes.filesStatus(hasGroup: false, hasFiles: false, isIndexing: false, isLoaded: false, readFailed: false), .empty)
+        XCTAssertNil(CategorySizes.filesStatus(hasGroup: true, hasFiles: true, isPending: true, isLoaded: false, readFailed: false))
+        XCTAssertNil(CategorySizes.filesStatus(hasGroup: true, hasFiles: false, isPending: false, isLoaded: false, readFailed: false))
+        XCTAssertNil(CategorySizes.filesStatus(hasGroup: false, hasFiles: false, isPending: true, isLoaded: false, readFailed: false))
+        XCTAssertEqual(CategorySizes.filesStatus(hasGroup: true, hasFiles: false, isPending: false, isLoaded: false, readFailed: true), .failed)
+        XCTAssertEqual(CategorySizes.filesStatus(hasGroup: true, hasFiles: false, isPending: false, isLoaded: true, readFailed: false), .empty)
+        XCTAssertEqual(CategorySizes.filesStatus(hasGroup: false, hasFiles: false, isPending: false, isLoaded: false, readFailed: false), .empty)
     }
 
     func testShowMoreCountsTheFilesNotShownYet() {

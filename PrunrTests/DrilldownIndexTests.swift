@@ -622,6 +622,36 @@ final class DrilldownIndexTests: PrunrTestCase {
             XCTAssertLessThan(fileDelta.best, 5)
             XCTAssertLessThan(subtreeDelta.best, 100)
             try await assertDrilldownIndexExact(id, "after the timed deltas")
+
+            let indexedTreePage = try await db.fetchPlaceContents(unitRoot: "/Data/Tree", trackedPathIds: [id], offset: 50)
+            try await dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE workingSetIndexState SET state = 'building' WHERE trackedPathId = ?",
+                    arguments: [id.uuidString]
+                )
+            }
+            var onDemandTreePage: PlaceContentsPage?
+            let onDemandTree = try await bestOf(3) {
+                onDemandTreePage = try await self.db.fetchPlaceContents(unitRoot: "/Data/Tree", trackedPathIds: [id], offset: 50)
+            }
+            let onDemandUsersTester = try await bestOf(3) {
+                _ = try await self.db.fetchPlaceContents(unitRoot: "/Users/tester", trackedPathIds: [id])
+            }
+            var developerGroups = 0
+            let onDemandDeveloper = try await bestOf(3) {
+                developerGroups = try await self.db.fetchDrilldownCategoryFromWorkingSet(trackedPathIds: [id], category: .developer).rows.count
+            }
+            var cacheGroups = 0
+            let onDemandCaches = try await bestOf(3) {
+                cacheGroups = try await self.db.fetchDrilldownCategoryFromWorkingSet(trackedPathIds: [id], category: .cachesAndSystem).rows.count
+            }
+            print(String(
+                format: "DRILLDOWN_INDEX_MEASURE onDemand placeTree200k=%.0f/%.0fms placeUsersTester=%.0f/%.0fms developer200k=%.0f/%.0fms caches100k groups=%d %.0f/%.0fms (best/median)",
+                onDemandTree.best, onDemandTree.median, onDemandUsersTester.best, onDemandUsersTester.median,
+                onDemandDeveloper.best, onDemandDeveloper.median, cacheGroups, onDemandCaches.best, onDemandCaches.median
+            ))
+            XCTAssertEqual(onDemandTreePage, indexedTreePage)
+            XCTAssertEqual(developerGroups, 1)
         }
     }
 

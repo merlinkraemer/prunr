@@ -1373,7 +1373,6 @@ struct MenuBarView: View {
                 caption: shownGroup(for: page).flatMap {
                     EpisodeBuilder.contentsCaption(for: place, headerTitle: $0.headerTitle(for: place))
                 },
-                isIndexing: manager.drilldownStore.isBuilding,
                 onReveal: revealPlace,
                 loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) }
             )
@@ -1830,7 +1829,7 @@ struct MenuBarView: View {
             refreshFailed: shownErrorMessage != nil || shownChangeFeed == .failed,
             scanText: activity.isFullScan ? activity.text : nil,
             scanProgress: activity.progress,
-            isRefreshing: isRefreshing,
+            isRefreshing: isRefreshing || manager.isUpdatingDrilldownIndex,
             foldersNotReadable: !manager.isGrowthTrackingActive
                 || hasRequiredScanAccess == false
                 || !manager.runtimeBlockedLocations.isEmpty,

@@ -231,6 +231,10 @@ final class MenuBarManager: NSObject {
     var subcategoryGroupsByCategory: [GrowthCategory: [SubcategoryGroup]] {
         drilldownStore.groupsByCategory
     }
+    private var isDrilldownIndexRebuildRunning = false
+    var isUpdatingDrilldownIndex: Bool {
+        isDrilldownIndexRebuildRunning && drilldownStore.isBuilding
+    }
     @ObservationIgnored
     private var drilldownRefillTask: Task<Void, Never>?
     private static let drilldownRefillDebounce: Duration = .seconds(2)
@@ -1778,6 +1782,17 @@ final class MenuBarManager: NSObject {
     }
 
     func drillIntoCategory(_ item: CategoryInventoryItem, reveal: @escaping (String) -> Void) {
+        guard drilldownStore.isGroupsPending(for: item.category) else {
+            drillIntoLoadedCategory(item, reveal: reveal)
+            return
+        }
+        Task {
+            await drilldownStore.loadFiles(for: item.category, trackedPathIds: enabledTrackedPathIDs())
+            drillIntoLoadedCategory(item, reveal: reveal)
+        }
+    }
+
+    private func drillIntoLoadedCategory(_ item: CategoryInventoryItem, reveal: @escaping (String) -> Void) {
         let fileGroup = Self.directFileGroup(for: item.category, groups: subcategoryGroupsByCategory[item.category] ?? [])
         revealSoleFile(of: fileGroup, in: item.category, reveal: reveal) { [weak self] in
             self?.openCategory(item)
@@ -1814,7 +1829,7 @@ final class MenuBarManager: NSObject {
     }
 
     func soleItemPath(unitRoot: String) async -> String? {
-        guard !drilldownStore.isBuilding, let page = try? await loadPlaceContents(unitRoot: unitRoot) else { return nil }
+        guard let page = try? await loadPlaceContents(unitRoot: unitRoot) else { return nil }
         return SoloDrill.revealPath(leaves: page.children.map(\.path), hasMore: page.hasMore)
     }
 
@@ -1914,7 +1929,9 @@ final class MenuBarManager: NSObject {
     /// Builds the drilldown index of paths upgraded from an older database,
     /// off the main actor, then shows it.
     func rebuildDrilldownIndexIfNeeded() {
+        isDrilldownIndexRebuildRunning = true
         Task { [weak self] in
+            defer { self?.isDrilldownIndexRebuildRunning = false }
             let result = await Task.detached(priority: .utility) { () -> Result<[String], Error> in
                 do {
                     return .success(try await DatabaseManager.shared.rebuildDrilldownIndexIfNeeded())

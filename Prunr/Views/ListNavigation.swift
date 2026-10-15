@@ -312,13 +312,11 @@ extension View {
 }
 
 enum InlineStatus: Equatable {
-    case indexing
     case empty
     case failed
 
     var text: String {
         switch self {
-        case .indexing: return "Indexing files…"
         case .empty: return "No files found"
         case .failed: return "Couldn't read"
         }

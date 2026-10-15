@@ -12,8 +12,16 @@ enum DrilldownGroupKey {
         category == ownerCategory ? ownerKey(path: path) : subcategory?.rawValue ?? ""
     }
 
+    static func make(category: GrowthCategory, subcategory: GrowthSubcategory?, unitKey: String) -> String {
+        category == ownerCategory ? ownerKey(unitKey: unitKey) : subcategory?.rawValue ?? ""
+    }
+
     static func ownerKey(path: String) -> String {
-        ownerPrefix + ownerTokens.token(forUnitKey: UnitResolver.resolve(path: path))
+        ownerKey(unitKey: UnitResolver.resolve(path: path))
+    }
+
+    static func ownerKey(unitKey: String) -> String {
+        ownerPrefix + ownerTokens.token(forUnitKey: unitKey)
     }
 
     /// The owner of an owner group key; nil for subcategory groups.
@@ -116,6 +124,11 @@ struct DrilldownIndexBuilder: Sendable {
     struct Totals: Sendable, Equatable {
         var totalBytes: Int64 = 0
         var fileCount = 0
+
+        mutating func add(_ sizeBytes: Int64) {
+            totalBytes += sizeBytes
+            fileCount += 1
+        }
     }
 
     static let topLimit = 200
@@ -135,23 +148,25 @@ struct DrilldownIndexBuilder: Sendable {
         unitKey: String? = nil
     ) {
         categoryTotals[category, default: 0] += sizeBytes
+        let unitKey = unitKey ?? UnitResolver.resolve(path: path)
 
         let id = GroupID(
             category: category,
-            groupKey: DrilldownGroupKey.make(category: category, subcategory: subcategory, path: path)
+            groupKey: DrilldownGroupKey.make(category: category, subcategory: subcategory, unitKey: unitKey)
         )
-        var group = groups[id] ?? GroupAccumulator()
+        Self.accumulate(path: path, pathId: pathId, sizeBytes: sizeBytes, into: &groups[id, default: GroupAccumulator()])
+
+        if let child = PlaceChildKey(path: path, unitKey: unitKey) {
+            placeChildren[child, default: Totals()].add(sizeBytes)
+        }
+    }
+
+    static func accumulate(path: String, pathId: Int64?, sizeBytes: Int64, into group: inout GroupAccumulator) {
         group.totalBytes += sizeBytes
         group.fileCount += 1
         group.candidates.append(TopFile(path: path, pathId: pathId, sizeBytes: sizeBytes))
-        if group.candidates.count >= Self.topLimit * 2 {
-            group.candidates = Self.ranked(group.candidates)
-        }
-        groups[id] = group
-
-        if let child = PlaceChildKey(path: path, unitKey: unitKey ?? UnitResolver.resolve(path: path)) {
-            placeChildren[child, default: Totals()].totalBytes += sizeBytes
-            placeChildren[child, default: Totals()].fileCount += 1
+        if group.candidates.count >= topLimit * 2 {
+            group.candidates = ranked(group.candidates)
         }
     }
 
@@ -160,7 +175,7 @@ struct DrilldownIndexBuilder: Sendable {
         Self.ranked(groups[id]?.candidates ?? [])
     }
 
-    private static func ranked(_ files: [TopFile]) -> [TopFile] {
+    static func ranked(_ files: [TopFile]) -> [TopFile] {
         Array(files.sorted {
             if $0.sizeBytes != $1.sizeBytes { return $0.sizeBytes > $1.sizeBytes }
             return $0.path < $1.path

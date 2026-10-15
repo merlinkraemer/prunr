@@ -48,6 +48,11 @@ struct PlaceChild: Identifiable, Sendable, Equatable {
     let fileCount: Int
 }
 
+struct DrilldownCategoryContents: Sendable, Equatable {
+    let rows: [DrilldownGroupRow]
+    let files: [DrilldownFileEntry]
+}
+
 struct PlaceContentsPage: Sendable, Equatable {
     let children: [PlaceChild]
     let hasMore: Bool
@@ -244,11 +249,12 @@ extension DatabaseManager {
         guard !effective.isEmpty else { return [:] }
 
         let resolved = effective.map { change in
-            ResolvedChange(
+            let unitKey = UnitResolver.resolve(path: change.path)
+            return ResolvedChange(
                 change: change,
-                unitKey: UnitResolver.resolve(path: change.path),
-                oldGroup: change.old.map { groupRef(for: $0, path: change.path) },
-                newGroup: change.new.map { groupRef(for: $0, path: change.path) }
+                unitKey: unitKey,
+                oldGroup: change.old.map { groupRef(for: $0, unitKey: unitKey) },
+                newGroup: change.new.map { groupRef(for: $0, unitKey: unitKey) }
             )
         }
 
@@ -294,10 +300,10 @@ extension DatabaseManager {
         return journal.filter { $0.value != 0 }
     }
 
-    private static func groupRef(for state: WorkingSetFileState, path: String) -> GroupRef {
+    private static func groupRef(for state: WorkingSetFileState, unitKey: String) -> GroupRef {
         GroupRef(
             category: state.category,
-            groupKey: DrilldownGroupKey.make(category: state.category, subcategory: state.subcategory, path: path)
+            groupKey: DrilldownGroupKey.make(category: state.category, subcategory: state.subcategory, unitKey: unitKey)
         )
     }
 
@@ -886,8 +892,7 @@ extension DatabaseManager {
     }
 
     /// The biggest direct children of a place (a unit root: the root path of a
-    /// `UnitResolver` key), folders aggregated, largest first. Reads the place
-    /// index only, so its cost does not depend on how many files the place holds.
+    /// `UnitResolver` key), folders aggregated, largest first.
     func fetchPlaceContents(
         unitRoot: String,
         trackedPathIds: [UUID],
@@ -897,11 +902,17 @@ extension DatabaseManager {
         guard let dbPool else { throw DatabaseError.notInitialized }
         guard !trackedPathIds.isEmpty, limit > 0 else { return PlaceContentsPage(children: [], hasMore: false) }
         let root = Self.normalizePath(unitRoot)
+        let ids = trackedPathIds.map(\.uuidString)
 
-        let rows: [(name: String, isFolder: Bool, totalBytes: Int64, fileCount: Int)] = try await dbPool.read { db in
+        let rows: [PlaceChildRow] = try await dbPool.read { db in
+            let building = try Self.buildingTrackedPathIds(ids, db: db)
+            guard building.isEmpty else {
+                let all = try Self.mergedPlaceChildren(root: root, trackedPathIds: ids, building: building, db: db)
+                return Array(all.dropFirst(offset).prefix(limit + 1))
+            }
             let sql: String
             var arguments: StatementArguments
-            if trackedPathIds.count == 1, let trackedPathId = trackedPathIds.first {
+            if ids.count == 1, let trackedPathId = ids.first {
                 sql = """
                     SELECT name, isFolder, totalBytes, fileCount
                     FROM workingSetPlaceChild
@@ -909,9 +920,9 @@ extension DatabaseManager {
                     ORDER BY totalBytes DESC, name
                     LIMIT ? OFFSET ?
                     """
-                arguments = [trackedPathId.uuidString, root]
+                arguments = [trackedPathId, root]
             } else {
-                let placeholders = Array(repeating: "?", count: trackedPathIds.count).joined(separator: ",")
+                let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
                 sql = """
                     SELECT name, MAX(isFolder) AS isFolder, SUM(totalBytes) AS totalBytes, SUM(fileCount) AS fileCount
                     FROM workingSetPlaceChild
@@ -920,17 +931,11 @@ extension DatabaseManager {
                     ORDER BY totalBytes DESC, name
                     LIMIT ? OFFSET ?
                     """
-                arguments = StatementArguments(trackedPathIds.map(\.uuidString))
+                arguments = StatementArguments(ids)
                 arguments += [root]
             }
             arguments += [limit + 1, offset]
-            return try Row.fetchAll(db, sql: sql, arguments: arguments).map { row in
-                let name: String = row["name"] ?? ""
-                let isFolder: Bool = row["isFolder"] ?? false
-                let totalBytes: Int64 = row["totalBytes"] ?? 0
-                let fileCount: Int = row["fileCount"] ?? 0
-                return (name: name, isFolder: isFolder, totalBytes: totalBytes, fileCount: fileCount)
-            }
+            return try Row.fetchAll(db, sql: sql, arguments: arguments).map { PlaceChildRow($0) }
         }
 
         let rootName = (root as NSString).lastPathComponent
@@ -944,6 +949,160 @@ extension DatabaseManager {
             )
         }
         return PlaceContentsPage(children: Array(children), hasMore: rows.count > limit)
+    }
+
+    private struct PlaceChildRow: Sendable {
+        var name: String
+        var isFolder: Bool
+        var totalBytes: Int64
+        var fileCount: Int
+
+        init(name: String, isFolder: Bool, totalBytes: Int64, fileCount: Int) {
+            self.name = name
+            self.isFolder = isFolder
+            self.totalBytes = totalBytes
+            self.fileCount = fileCount
+        }
+
+        init(_ row: Row) {
+            self.init(
+                name: row["name"] ?? "",
+                isFolder: row["isFolder"] ?? false,
+                totalBytes: row["totalBytes"] ?? 0,
+                fileCount: row["fileCount"] ?? 0
+            )
+        }
+    }
+
+    private static func buildingTrackedPathIds(_ ids: [String], db: Database) throws -> Set<String> {
+        guard !ids.isEmpty else { return [] }
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        var arguments: StatementArguments = [DrilldownIndexState.building.rawValue]
+        arguments += StatementArguments(ids)
+        return Set(try String.fetchAll(
+            db,
+            sql: "SELECT trackedPathId FROM workingSetIndexState WHERE state = ? AND trackedPathId IN (\(placeholders))",
+            arguments: arguments
+        ))
+    }
+
+    private static func mergedPlaceChildren(
+        root: String,
+        trackedPathIds: [String],
+        building: Set<String>,
+        db: Database
+    ) throws -> [PlaceChildRow] {
+        var merged: [String: PlaceChildRow] = [:]
+        func add(_ row: PlaceChildRow) {
+            let key = row.name.lowercased()
+            if var existing = merged[key] {
+                existing.isFolder = existing.isFolder || row.isFolder
+                existing.totalBytes += row.totalBytes
+                existing.fileCount += row.fileCount
+                merged[key] = existing
+            } else {
+                merged[key] = row
+            }
+        }
+        for trackedPathId in trackedPathIds {
+            if building.contains(trackedPathId) {
+                for (child, totals) in try placeChildrenFromWorkingSet(root: root, trackedPathId: trackedPathId, db: db) {
+                    add(PlaceChildRow(name: child.name, isFolder: child.isFolder, totalBytes: totals.totalBytes, fileCount: totals.fileCount))
+                }
+            } else {
+                try Row.fetchAll(
+                    db,
+                    sql: "SELECT name, isFolder, totalBytes, fileCount FROM workingSetPlaceChild WHERE trackedPathId = ? AND unitRoot = ?",
+                    arguments: [trackedPathId, root]
+                ).forEach { add(PlaceChildRow($0)) }
+            }
+        }
+        return merged.values.sorted {
+            if $0.totalBytes != $1.totalBytes { return $0.totalBytes > $1.totalBytes }
+            return $0.name.caseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    private static func placeChildrenFromWorkingSet(
+        root: String,
+        trackedPathId: String,
+        db: Database
+    ) throws -> [PlaceChildKey: DrilldownIndexBuilder.Totals] {
+        let cursor = try Row.fetchCursor(
+            db,
+            sql: """
+                SELECT p.path AS path, wse.sizeBytes AS sizeBytes
+                FROM paths p
+                CROSS JOIN workingSetEntry wse ON wse.trackedPathId = ? AND wse.pathId = p.id
+                WHERE p.path >= ? AND p.path < ?
+                """,
+            arguments: [trackedPathId, root, pathPrefixUpperBound(root)]
+        )
+        var children: [PlaceChildKey: DrilldownIndexBuilder.Totals] = [:]
+        while let row = try cursor.next() {
+            let path: String = row["path"] ?? ""
+            guard let child = PlaceChildKey(path: path, unitKey: UnitResolver.resolve(path: path)),
+                  child.unitRoot.caseInsensitiveCompare(root) == .orderedSame else { continue }
+            children[PlaceChildKey(unitRoot: root, name: child.name, isFolder: child.isFolder), default: .init()]
+                .add(row["sizeBytes"] ?? 0)
+        }
+        return children
+    }
+
+    func fetchDrilldownCategoryFromWorkingSet(
+        trackedPathIds: [UUID],
+        category: GrowthCategory
+    ) async throws -> DrilldownCategoryContents {
+        guard let dbPool else { throw DatabaseError.notInitialized }
+        guard !trackedPathIds.isEmpty else { return DrilldownCategoryContents(rows: [], files: []) }
+
+        return try await dbPool.read { db in
+            var groups: [String: DrilldownIndexBuilder.GroupAccumulator] = [:]
+            for trackedPathId in trackedPathIds {
+                let cursor = try Row.fetchCursor(
+                    db,
+                    sql: """
+                        SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes, pc.subcategory AS subcategory
+                        FROM pathClassification pc
+                        CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
+                        JOIN paths p ON p.id = wse.pathId
+                        WHERE wse.trackedPathId = ? AND pc.category = ?
+                        """,
+                    arguments: [trackedPathId.uuidString, category.rawValue]
+                )
+                while let row = try cursor.next() {
+                    let path: String = row["path"] ?? ""
+                    let rawSubcategory: String = row["subcategory"] ?? ""
+                    let groupKey = DrilldownGroupKey.make(
+                        category: category,
+                        subcategory: GrowthSubcategory(rawValue: rawSubcategory),
+                        path: path
+                    )
+                    DrilldownIndexBuilder.accumulate(
+                        path: path,
+                        pathId: row["pathId"],
+                        sizeBytes: row["sizeBytes"] ?? 0,
+                        into: &groups[groupKey, default: .init()]
+                    )
+                }
+            }
+            return DrilldownCategoryContents(
+                rows: groups.map { groupKey, group in
+                    DrilldownGroupRow(
+                        category: category,
+                        groupKey: groupKey,
+                        totalBytes: group.totalBytes,
+                        fileCount: group.fileCount,
+                        isTopShort: false
+                    )
+                },
+                files: groups.flatMap { groupKey, group in
+                    DrilldownIndexBuilder.ranked(group.candidates).map {
+                        DrilldownFileEntry(groupKey: groupKey, path: $0.path, sizeBytes: $0.sizeBytes)
+                    }
+                }.sorted(by: Self.fileRowSortsBefore)
+            )
+        }
     }
 
     // MARK: - Verification

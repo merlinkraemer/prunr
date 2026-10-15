@@ -43,8 +43,7 @@ final class PlaceContentsModel {
         hasMore = page.hasMore
     }
 
-    func inlineStatus(isIndexing: Bool) -> InlineStatus? {
-        if isIndexing { return .indexing }
+    var inlineStatus: InlineStatus? {
         switch phase {
         case .loading: return nil
         case .failed: return .failed
@@ -56,7 +55,6 @@ final class PlaceContentsModel {
 struct PlaceContentsView: View {
     let category: GrowthCategory
     let caption: String?
-    let isIndexing: Bool
     let onReveal: (String) -> Void
 
     @State private var model: PlaceContentsModel
@@ -64,13 +62,11 @@ struct PlaceContentsView: View {
     init(
         category: GrowthCategory,
         caption: String? = nil,
-        isIndexing: Bool,
         onReveal: @escaping (String) -> Void,
         loader: @escaping PlaceContentsModel.Loader
     ) {
         self.category = category
         self.caption = caption
-        self.isIndexing = isIndexing
         self.onReveal = onReveal
         _model = State(initialValue: PlaceContentsModel(loader: loader))
     }
@@ -81,7 +77,7 @@ struct PlaceContentsView: View {
                 category: category,
                 caption: caption,
                 children: model.children,
-                status: model.inlineStatus(isIndexing: isIndexing),
+                status: model.inlineStatus,
                 hasMore: model.hasMore,
                 isLoadingMore: model.isLoadingMore,
                 onShowMore: { Task { await model.loadMore() } },
@@ -92,8 +88,7 @@ struct PlaceContentsView: View {
         }
         .hiddenScrollIndicators()
         .softBottomEdge()
-        .task(id: isIndexing) {
-            guard !isIndexing else { return }
+        .task {
             await model.load()
         }
     }
