@@ -90,3 +90,4 @@
 2026-10-15 orchestrator - landed on branch: s30 owner UI O4–O5 (89fbd70, mac-queue PASS 20261015-084728), installed (20261015-085257)
 2026-10-15 orchestrator - merged feat/s30-owner-ui into main locally (baa0d96), not pushed; found: unit-test host opens the real DB and locks Merlin's app — fix spawned
 2026-10-15 orchestrator - landed on main: fix/test-host-db (7e0d02f, PASS 20261015-091953): test host isolated from real DB/prefs, busy timeout 10s, WAL checkpoint outside transaction
+2026-10-15 orchestrator - landed on branch: s31 no indexing page + rebuild 2x faster (fad2914; merged with main 262dadc, PASS 20261015-095954), installed
