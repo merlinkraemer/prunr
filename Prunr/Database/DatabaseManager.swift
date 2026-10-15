@@ -51,6 +51,7 @@ final class DatabaseManager {
         databasePath = dbURL.path
 
         var config = Configuration()
+        config.busyMode = .timeout(10)
         config.prepareDatabase { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             // Registered on every pool connection: journal writes group by it.
@@ -1062,7 +1063,7 @@ extension DatabaseManager {
             throw DatabaseError.notInitialized
         }
 
-        try await dbPool.write { db in
+        try await dbPool.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
         }
     }

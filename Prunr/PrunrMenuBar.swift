@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct PrunrEntryPoint {
     static func main() {
         let app = NSApplication.shared
-        let delegate = AppDelegate()
+        let delegate = TestHost.isActive ? nil : AppDelegate()
         app.delegate = delegate
         // Set activation policy BEFORE starting the run loop to prevent
         // the system UpdateCycle timer from running at 60fps for a menu-bar-only app.
