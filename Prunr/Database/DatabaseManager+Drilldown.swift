@@ -59,11 +59,11 @@ extension DatabaseManager {
         case ready
     }
 
-    /// `prunr_cache_group(path)`: the drilldown group key of a cache file
-    /// (`DrilldownGroupKey.cacheKey`). Pure, so SQLite may cache results within a statement.
-    static let cacheGroupFunction = DatabaseFunction("prunr_cache_group", argumentCount: 1, pure: true) { values in
+    /// `prunr_owner_group(path)`: the owner group key of an Apps & System file
+    /// (`DrilldownGroupKey.ownerKey`). Pure, so SQLite may cache results within a statement.
+    static let ownerGroupFunction = DatabaseFunction("prunr_owner_group", argumentCount: 1, pure: true) { values in
         guard let path = String.fromDatabaseValue(values[0]) else { return nil }
-        return DrilldownGroupKey.cacheKey(path: path)
+        return DrilldownGroupKey.ownerKey(path: path)
     }
 
     static func registerDrilldownIndexMigration(in migrator: inout DatabaseMigrator) {
@@ -166,6 +166,24 @@ extension DatabaseManager {
     }
 
     static let ownerUnitsMigrationIdentifier = "v24_owner_units"
+
+    static func registerOwnerGroupsMigration(in migrator: inout DatabaseMigrator) {
+        // Migration v25: Apps & System groups its files by owner instead of by
+        // cache subcategory. Only the drilldown index's group keys change, so the
+        // index is rebuilt in the background; history is kept.
+        migrator.registerMigration(ownerGroupsMigrationIdentifier) { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO workingSetIndexState (trackedPathId, state)
+                    SELECT DISTINCT trackedPathId, ? FROM workingSetCategoryTotal WHERE true
+                    ON CONFLICT(trackedPathId) DO UPDATE SET state = excluded.state
+                    """,
+                arguments: [DrilldownIndexState.building.rawValue]
+            )
+        }
+    }
+
+    static let ownerGroupsMigrationIdentifier = "v25_owner_groups"
 
     /// Reclassifies the paths whose category the v24 rules can change: the
     /// former "Other", Steam games, the Homebrew cache and Xcode build folders
@@ -636,7 +654,7 @@ extension DatabaseManager {
                 let rows = try Self.fetchGroupFiles(
                     trackedPathId: trackedPathIdString,
                     category: group.category,
-                    groupKey: group.groupKey,
+                    groupKeys: [group.groupKey],
                     offset: 0,
                     limit: DrilldownIndexBuilder.topLimit,
                     db: db
@@ -661,20 +679,22 @@ extension DatabaseManager {
 
     // MARK: - Reads
 
+    /// A page of the files of one group, or of several owner groups merged.
     private static func fetchGroupFiles(
         trackedPathId: String,
         category: GrowthCategory,
-        groupKey: String,
+        groupKeys: [String],
         offset: Int,
         limit: Int,
         db: Database
     ) throws -> [(pathId: Int64, path: String, sizeBytes: Int64)] {
+        guard !groupKeys.isEmpty else { return [] }
         let rows: [Row]
-        if DrilldownGroupKey.isCacheGroupKey(groupKey) {
-            let subcategories = DrilldownGroupKey.cacheSubcategories.map(\.rawValue).sorted()
+        if groupKeys.allSatisfy(DrilldownGroupKey.isOwnerGroupKey) {
+            let placeholders = Array(repeating: "?", count: groupKeys.count).joined(separator: ",")
             var arguments: StatementArguments = [trackedPathId, category.rawValue]
-            arguments += StatementArguments(subcategories)
-            arguments += [groupKey, limit, offset]
+            arguments += StatementArguments(groupKeys)
+            arguments += [limit, offset]
             rows = try Row.fetchAll(
                 db,
                 sql: """
@@ -683,14 +703,14 @@ extension DatabaseManager {
                     CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                     JOIN paths p ON p.id = wse.pathId
                     WHERE wse.trackedPathId = ? AND pc.category = ?
-                      AND pc.subcategory IN (?, ?, ?)
-                      AND prunr_cache_group(p.path) = ?
+                      AND prunr_owner_group(p.path) IN (\(placeholders))
                     ORDER BY wse.sizeBytes DESC, p.path ASC
                     LIMIT ? OFFSET ?
                     """,
                 arguments: arguments
             )
         } else {
+            let groupKey = groupKeys.first ?? ""
             rows = try Row.fetchAll(
                 db,
                 sql: """
@@ -821,23 +841,24 @@ extension DatabaseManager {
     }
 
     /// A page of a group's files straight from the working set, for paging
-    /// past the stored top files.
+    /// past the stored top files. Several keys page through owner groups the
+    /// store merged into one row.
     func fetchDrilldownFiles(
         trackedPathIds: [UUID],
         category: GrowthCategory,
-        groupKey: String,
+        groupKeys: [String],
         offset: Int,
         limit: Int
     ) async throws -> [DrilldownFileEntry] {
         guard let dbPool else { throw DatabaseError.notInitialized }
-        guard !trackedPathIds.isEmpty, limit > 0 else { return [] }
+        guard !trackedPathIds.isEmpty, limit > 0, let groupKey = groupKeys.first else { return [] }
 
         return try await dbPool.read { db in
             if trackedPathIds.count == 1, let trackedPathId = trackedPathIds.first {
                 return try Self.fetchGroupFiles(
                     trackedPathId: trackedPathId.uuidString,
                     category: category,
-                    groupKey: groupKey,
+                    groupKeys: groupKeys,
                     offset: offset,
                     limit: limit,
                     db: db
@@ -849,7 +870,7 @@ extension DatabaseManager {
                 files += try Self.fetchGroupFiles(
                     trackedPathId: trackedPathId.uuidString,
                     category: category,
-                    groupKey: groupKey,
+                    groupKeys: groupKeys,
                     offset: 0,
                     limit: offset + limit,
                     db: db

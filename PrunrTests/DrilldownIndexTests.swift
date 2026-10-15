@@ -97,7 +97,7 @@ final class DrilldownIndexTests: PrunrTestCase {
                 entry: ScanResult(path: cacheFile, sizeBytes: 96, category: .cachesAndSystem, subcategory: .browserCaches)
             )
             try await assertDrilldownIndexExact(id, "cache file between cache subcategories")
-            let cacheGroup = try await topState(id, .cachesAndSystem, "cache:com.example.app")
+            let cacheGroup = try await topState(id, .cachesAndSystem, DrilldownGroupKey.ownerKey(path: cacheFile))
             XCTAssertEqual(cacheGroup.sizes, [96])
 
             _ = try await db.removeWorkingSetPathOrSubtree(trackedPathId: id, rootPath: path("a/new.js"))

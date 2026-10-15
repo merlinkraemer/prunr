@@ -667,12 +667,7 @@ enum CategorySizes {
     }
 
     static func subcategoriesBySize(_ groups: [SubcategoryGroup]) -> [SubcategoryGroup] {
-        groups.sorted { lhs, rhs in
-            if lhs.totalBytes != rhs.totalBytes {
-                return lhs.totalBytes > rhs.totalBytes
-            }
-            return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
-        }
+        DrilldownStore.sorted(groups)
     }
 }
 
@@ -720,11 +715,8 @@ private struct SubcategoryRow: View {
                 hoverState = hovering
             }
         }
-        .task(id: group.cacheApplicationKey) {
-            nativeApplicationIcon = nil
-            nativeApplicationIcon = CacheApplicationIconResolver.icon(
-                forBundleIdentifier: group.cacheApplicationKey
-            )
+        .task(id: group.ownerIcon) {
+            nativeApplicationIcon = group.ownerIcon.flatMap { UnitIconResolver.shared.icon(for: $0) }
         }
     }
 

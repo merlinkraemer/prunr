@@ -25,6 +25,44 @@ enum UnitOwner: Hashable, Sendable {
         }
     }
 
+    /// The owner as text that keeps the names' case, for the drilldown index:
+    /// `app:com.google.Chrome`, `name:Google/Chrome`, `name:Claude`,
+    /// `category:developer`, `system`. A vendor sits before a `/`, which no
+    /// folder name contains.
+    var token: String {
+        switch self {
+        case .app(let id): return "app:\(id)"
+        case .named(let name, let vendor): return "name:" + (vendor.map { "\($0)/" } ?? "") + name
+        case .category(let category): return Self.categoryKeyPrefix + category.rawValue
+        case .system: return key
+        }
+    }
+
+    init?(token: String) {
+        if token == UnitOwner.system.key {
+            self = .system
+            return
+        }
+        guard let colon = token.firstIndex(of: ":") else { return nil }
+        let value = String(token[token.index(after: colon)...])
+        guard !value.isEmpty else { return nil }
+        switch token[..<colon] {
+        case "app":
+            self = .app(id: value)
+        case "name":
+            guard let slash = value.firstIndex(of: "/") else {
+                self = .named(value)
+                return
+            }
+            self = .named(String(value[value.index(after: slash)...]), vendor: String(value[..<slash]))
+        case "category":
+            guard let category = GrowthCategory(rawValue: value) else { return nil }
+            self = .category(category)
+        default:
+            return nil
+        }
+    }
+
     /// The owner's name without looking at installed apps.
     var fallbackDisplayName: String {
         switch self {

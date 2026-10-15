@@ -1,37 +1,53 @@
 import Foundation
 
 /// The row a file belongs to on the category drilldown page: its subcategory,
-/// or for application caches the application that owns the cache folder.
+/// or in Apps & System the owner of the file's place (an app, System, ...).
+/// Owners are stored unresolved; the store merges the ones that turn out to
+/// be the same installed app.
 enum DrilldownGroupKey {
-    static let cachePrefix = "cache:"
-    static let cacheSubcategories: Set<GrowthSubcategory> = [.appCaches, .browserCaches, .spotifyCache]
+    static let ownerPrefix = "owner:"
+    static let ownerCategory = GrowthCategory.cachesAndSystem
 
     static func make(category: GrowthCategory, subcategory: GrowthSubcategory?, path: String) -> String {
-        if isCacheGroup(category: category, subcategory: subcategory) {
-            return cacheKey(path: path)
+        category == ownerCategory ? ownerKey(path: path) : subcategory?.rawValue ?? ""
+    }
+
+    static func ownerKey(path: String) -> String {
+        ownerPrefix + ownerTokens.token(forUnitKey: UnitResolver.resolve(path: path))
+    }
+
+    /// The owner of an owner group key; nil for subcategory groups.
+    static func owner(of groupKey: String) -> UnitOwner? {
+        guard isOwnerGroupKey(groupKey) else { return nil }
+        return UnitOwner(token: String(groupKey.dropFirst(ownerPrefix.count)))
+    }
+
+    static func isOwnerGroupKey(_ groupKey: String) -> Bool {
+        groupKey.hasPrefix(ownerPrefix)
+    }
+
+    private static let ownerTokens = OwnerTokenCache()
+}
+
+/// Owner tokens by unit key: a place's owner depends only on its key, and the
+/// index asks once per file.
+private final class OwnerTokenCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokens: [String: String] = [:]
+
+    func token(forUnitKey unitKey: String) -> String {
+        lock.lock()
+        if let token = tokens[unitKey] {
+            lock.unlock()
+            return token
         }
-        return subcategory?.rawValue ?? ""
-    }
-
-    static func isCacheGroup(category: GrowthCategory, subcategory: GrowthSubcategory?) -> Bool {
-        guard category == .cachesAndSystem, let subcategory else { return false }
-        return cacheSubcategories.contains(subcategory)
-    }
-
-    static func cacheKey(path: String) -> String {
-        cachePrefix + (GrowthCategory.cacheApplicationKey(for: path) ?? "")
-    }
-
-    /// The owning application for a cache group key; nil for other groups and
-    /// for caches without an application folder.
-    static func cacheApplication(of groupKey: String) -> String? {
-        guard groupKey.hasPrefix(cachePrefix) else { return nil }
-        let application = String(groupKey.dropFirst(cachePrefix.count))
-        return application.isEmpty ? nil : application
-    }
-
-    static func isCacheGroupKey(_ groupKey: String) -> Bool {
-        groupKey.hasPrefix(cachePrefix)
+        lock.unlock()
+        let token = UnitNamer.name(forKey: unitKey).owner.token
+        lock.lock()
+        if tokens.count > 50_000 { tokens.removeAll(keepingCapacity: true) }
+        tokens[unitKey] = token
+        lock.unlock()
+        return token
     }
 }
 

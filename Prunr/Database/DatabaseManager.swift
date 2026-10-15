@@ -55,7 +55,7 @@ final class DatabaseManager {
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             // Registered on every pool connection: journal writes group by it.
             db.add(function: DatabaseManager.unitKeyFunction)
-            db.add(function: DatabaseManager.cacheGroupFunction)
+            db.add(function: DatabaseManager.ownerGroupFunction)
         }
 
         dbPool = try DatabasePool(path: dbURL.path, configuration: config)
@@ -549,6 +549,7 @@ final class DatabaseManager {
 
         registerDrilldownIndexMigration(in: &migrator)
         registerOwnerUnitsMigration(in: &migrator)
+        registerOwnerGroupsMigration(in: &migrator)
 
         return migrator
     }

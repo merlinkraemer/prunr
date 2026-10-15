@@ -174,7 +174,7 @@ final class PrunrSmokeTests: XCTestCase {
         )
     }
 
-    func testCacheDrilldownGroupsEntriesByApplication() async throws {
+    func testAppsAndSystemDrilldownGroupsEntriesByOwner() async throws {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
 
         XCTAssertEqual(
@@ -204,18 +204,19 @@ final class PrunrSmokeTests: XCTestCase {
             try await DatabaseManager.shared.addEntries(
                 to: snapshotId,
                 entries: [
-                    ScanResult(path: "\(home)/Library/Caches/com.apple.Safari/Cache.db", sizeBytes: 300),
-                    ScanResult(path: "\(home)/Library/Caches/com.apple.Safari/Blobs/blob", sizeBytes: 100),
-                    ScanResult(path: "\(home)/Library/Caches/com.google.Chrome/Cache/data", sizeBytes: 200)
+                    ScanResult(path: "\(home)/Library/Caches/com.prunrtest.Alpha/Cache.db", sizeBytes: 300),
+                    ScanResult(path: "\(home)/Library/Application Support/com.prunrtest.Alpha/Blobs/blob", sizeBytes: 100),
+                    ScanResult(path: "\(home)/Library/Caches/com.prunrtest.Beta/Cache/data", sizeBytes: 200)
                 ]
             )
             try await DatabaseManager.shared.rebuildWorkingSet(from: snapshotId, trackedPathId: trackedPathId)
 
             let groups = await self.drilldownGroups(.cachesAndSystem, trackedPathIds: [trackedPathId])
 
-            XCTAssertEqual(groups.map(\.displayName), ["Safari", "Google Chrome"])
+            XCTAssertEqual(groups.map(\.displayName), ["Alpha", "Beta"])
             XCTAssertEqual(groups.map(\.totalBytes), [400, 200])
-            XCTAssertEqual(groups.map(\.cacheApplicationKey), ["com.apple.Safari", "com.google.Chrome"])
+            XCTAssertEqual(groups.map(\.ownerKey), ["app:com.prunrtest.alpha", "app:com.prunrtest.beta"])
+            XCTAssertEqual(groups.first?.topFiles.map(\.currentSizeBytes), [300, 100])
         }
     }
 

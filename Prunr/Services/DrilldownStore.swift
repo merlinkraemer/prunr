@@ -17,6 +17,7 @@ final class DrilldownStore {
     private(set) var failedFileCategories: Set<GrowthCategory> = []
 
     @ObservationIgnored private var storedFilesByGroupID: [String: [GrowthItem]] = [:]
+    @ObservationIgnored private var ownerFileCounts: [String: Int] = [:]
     @ObservationIgnored private var generation: UInt64 = 0
     @ObservationIgnored private let db = DatabaseManager.shared
     @ObservationIgnored private let logger = Logger(subsystem: "com.prunr.app", category: "Drilldown")
@@ -56,9 +57,28 @@ final class DrilldownStore {
             $0[$1.id] = $1.topFiles.count
         }
         var groups: [GrowthCategory: [SubcategoryGroup]] = [:]
+        var ownerRows: [GrowthCategory: [DrilldownGroupRow]] = [:]
         for row in snapshot.rows where row.totalBytes > 0 {
-            groups[row.category, default: []].append(Self.makeGroup(row, files: []))
+            if DrilldownGroupKey.isOwnerGroupKey(row.groupKey) {
+                ownerRows[row.category, default: []].append(row)
+            } else {
+                groups[row.category, default: []].append(Self.makeGroup(row, files: []))
+            }
         }
+        if !ownerRows.isEmpty {
+            let identifiers = ownerRows.values.joined().compactMap { row -> String? in
+                guard case .app(let id)? = DrilldownGroupKey.owner(of: row.groupKey) else { return nil }
+                return id
+            }
+            let catalog = AppCatalogProvider.shared.catalog(resolving: Array(Set(identifiers)).sorted())
+            for (category, rows) in ownerRows {
+                groups[category, default: []] += Self.ownerGroups(rows, catalog: catalog)
+            }
+        }
+        ownerFileCounts = Dictionary(
+            snapshot.rows.filter { DrilldownGroupKey.isOwnerGroupKey($0.groupKey) }.map { ($0.groupKey, $0.fileCount) },
+            uniquingKeysWith: +
+        )
         groupsByCategory = groups.mapValues(Self.sorted)
         isBuilding = !snapshot.buildingTrackedPathIds.isEmpty
 
@@ -102,7 +122,8 @@ final class DrilldownStore {
         let rowsByGroupKey = Dictionary(grouping: rows, by: \.groupKey)
         for index in groups.indices {
             let group = groups[index]
-            let files = (rowsByGroupKey[group.groupKey] ?? []).map { Self.makeItem($0, group: group) }
+            let files = Self.mergedTopFiles(of: group.groupKeys, rowsByGroupKey: rowsByGroupKey, fileCounts: ownerFileCounts)
+                .map { Self.makeItem($0, group: group) }
             storedFilesByGroupID[group.id] = files
             let shown = max(SubcategoryGroup.initialLoadLimit, shownCounts[group.id] ?? 0)
             groups[index].topFiles = Array(files.prefix(shown))
@@ -125,7 +146,7 @@ final class DrilldownStore {
                 let rows = try await db.fetchDrilldownFiles(
                     trackedPathIds: trackedPathIds,
                     category: category,
-                    groupKey: group.groupKey,
+                    groupKeys: group.groupKeys,
                     offset: offset + next.count,
                     limit: limit - next.count
                 )
@@ -152,20 +173,72 @@ final class DrilldownStore {
         try await db.fetchPlaceContents(unitRoot: unitRoot, trackedPathIds: trackedPathIds, offset: offset)
     }
 
-    nonisolated static func makeGroup(_ row: DrilldownGroupRow, files: [GrowthItem]) -> SubcategoryGroup {
-        if DrilldownGroupKey.isCacheGroupKey(row.groupKey) {
-            let application = DrilldownGroupKey.cacheApplication(of: row.groupKey)
-            return SubcategoryGroup(
-                subcategory: .appCaches,
-                displayName: application.map(GrowthCategory.cacheApplicationDisplayName(for:)) ?? "Other Caches",
-                totalBytes: row.totalBytes,
-                fileCount: row.fileCount,
-                topFiles: files,
-                cacheApplicationKey: application,
-                groupKey: row.groupKey
-            )
-        }
+    /// Owner groups the categories view shows at most before the rest fold
+    /// into "Other apps (N)".
+    nonisolated static let shownOwnerLimit = 7
 
+    /// Apps & System's rows: one per owner, the index groups of the same
+    /// installed app merged, the smallest folded into "Other apps (N)" when
+    /// more than `shownOwnerLimit` owners would show.
+    nonisolated static func ownerGroups(_ rows: [DrilldownGroupRow], catalog: AppCatalog) -> [SubcategoryGroup] {
+        let resolvedRows = rows.map { row in
+            (row: row, owner: catalog.resolve(DrilldownGroupKey.owner(of: row.groupKey) ?? .system))
+        }
+        let owners = Dictionary(grouping: resolvedRows, by: { $0.owner.key })
+            .compactMap { key, members -> SubcategoryGroup? in
+                guard let owner = members.first?.owner else { return nil }
+                let groupKeys = members.map { $0.row.groupKey }.sorted()
+                return SubcategoryGroup(
+                    subcategory: nil,
+                    displayName: owner.displayName,
+                    totalBytes: members.reduce(Int64(0)) { $0 + $1.row.totalBytes },
+                    fileCount: members.reduce(0) { $0 + $1.row.fileCount },
+                    topFiles: [],
+                    groupKey: groupKeys[0],
+                    ownerKey: key,
+                    ownerIcon: owner.icon == .category ? nil : owner.icon,
+                    groupKeys: groupKeys
+                )
+            }
+        let bySize = sorted(owners)
+        guard bySize.count > shownOwnerLimit + 1 else { return bySize }
+        let rest = bySize.dropFirst(shownOwnerLimit)
+        let restKeys = rest.flatMap(\.groupKeys).sorted()
+        let other = SubcategoryGroup(
+            subcategory: nil,
+            displayName: "Other apps (\(rest.count))",
+            totalBytes: rest.reduce(Int64(0)) { $0 + $1.totalBytes },
+            fileCount: rest.reduce(0) { $0 + $1.fileCount },
+            topFiles: [],
+            groupKey: restKeys[0],
+            ownerKey: SubcategoryGroup.otherOwnersKey,
+            groupKeys: restKeys
+        )
+        return Array(bySize.prefix(shownOwnerLimit)) + [other]
+    }
+
+    /// The stored top files of a row's index groups, largest first. Merged
+    /// groups keep only the part that is a correct prefix of all their files:
+    /// down to the largest smallest-stored size of a group with unstored files.
+    nonisolated static func mergedTopFiles(
+        of groupKeys: [String],
+        rowsByGroupKey: [String: [DrilldownFileEntry]],
+        fileCounts: [String: Int]
+    ) -> [DrilldownFileEntry] {
+        guard groupKeys.count > 1 else { return groupKeys.first.flatMap { rowsByGroupKey[$0] } ?? [] }
+        var lowerBound = Int64.min
+        for key in groupKeys {
+            let stored = rowsByGroupKey[key] ?? []
+            guard stored.count < fileCounts[key] ?? 0, let smallest = stored.map(\.sizeBytes).min() else { continue }
+            lowerBound = max(lowerBound, smallest)
+        }
+        return groupKeys
+            .flatMap { rowsByGroupKey[$0] ?? [] }
+            .filter { $0.sizeBytes >= lowerBound }
+            .sorted(by: DatabaseManager.fileRowSortsBefore)
+    }
+
+    nonisolated static func makeGroup(_ row: DrilldownGroupRow, files: [GrowthItem]) -> SubcategoryGroup {
         let subcategory = GrowthSubcategory(rawValue: row.groupKey)
         return SubcategoryGroup(
             subcategory: subcategory,
@@ -188,8 +261,10 @@ final class DrilldownStore {
         )
     }
 
-    private nonisolated static func sorted(_ groups: [SubcategoryGroup]) -> [SubcategoryGroup] {
+    /// Biggest first; "Other apps" always last.
+    nonisolated static func sorted(_ groups: [SubcategoryGroup]) -> [SubcategoryGroup] {
         groups.sorted {
+            if $0.isRemainder != $1.isRemainder { return $1.isRemainder }
             if $0.totalBytes == $1.totalBytes {
                 return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
             }
