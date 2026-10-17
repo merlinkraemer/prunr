@@ -12,7 +12,7 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Next step pick (alpha / checkpoint table / #35) — rec: push main + ship alpha — branch: main
+1. Watch tester feedback on alpha.23 — rec: check-feedback in a few days — branch: none
 4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 

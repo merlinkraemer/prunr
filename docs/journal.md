@@ -93,3 +93,4 @@
 2026-10-15 orchestrator - landed on branch: s31 no indexing page + rebuild 2x faster (fad2914; merged with main 262dadc, PASS 20261015-095954), installed
 2026-10-15 orchestrator - merged feat/s31-no-indexing-page into main locally, not pushed
 2026-10-15 orchestrator - landed on main: fix/startup-vacuum (2c6319b, PASS 20261015-101233): VACUUM only when ≥18% free; installed main 775be4b
+2026-10-17 orchestrator - shipped: 0.1.5-alpha.23 build 24 (Release run 39022946840 green); main pushed (49763ca); logs healthy 2 days
