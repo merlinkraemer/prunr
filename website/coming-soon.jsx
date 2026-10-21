@@ -104,7 +104,7 @@
       <main style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "auto auto", alignItems: "center", justifyContent: "center", gap: 56, maxWidth: 1180, width: "100%", margin: "0 auto", padding: "0 44px 48px" }} className="hero-grid">
         {/* product shot, baked on the page color (#fafaf7 ≈ page bg) so it sits seamlessly */}
         <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minWidth: 0 }}>
-          <img src="assets/app-popover-page.png" alt="Prunr menu-bar popover"
+          <img src="assets/app-popover-main-dark.png" alt="Prunr menu-bar popover"
             style={{ display: "block", width: "100%", maxWidth: 360, maxHeight: "66vh", height: "auto" }} />
         </div>
 
