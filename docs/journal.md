@@ -94,3 +94,4 @@
 2026-10-15 orchestrator - merged feat/s31-no-indexing-page into main locally, not pushed
 2026-10-15 orchestrator - landed on main: fix/startup-vacuum (2c6319b, PASS 20261015-101233): VACUUM only when ≥18% free; installed main 775be4b
 2026-10-17 orchestrator - shipped: 0.1.5-alpha.23 build 24 (Release run 39022946840 green); main pushed (49763ca); logs healthy 2 days
+2026-10-21 orchestrator - landed on main: new app screenshots + website hero (reddit-screenshots, website-screenshots, website-mobile-gap a1abd83); pushed (Merlin: go live)
