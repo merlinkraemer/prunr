@@ -236,7 +236,6 @@ final class DrilldownIndexTests: PrunrTestCase {
         }
     }
 
-
     func testTopFilesStayACorrectPrefixAndRefill() async throws {
         try await withEmptyTemporaryDatabase { [self] id in
             let group = GrowthSubcategory.nodeModules.rawValue
