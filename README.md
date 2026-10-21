@@ -5,12 +5,19 @@
 
 # Prunr
 
-macOS menu bar utility for seeing what is growing on disk.
+A macOS menu bar app that shows what ate your storage and when.
 
-currently in open alpha - install from releases or download via https://merlinkraemer.github.io/prunr/
+Prunr keeps a simple list of what grew on your disk, grouped by day and by app: "Google Chrome +6.5 GB", "Steam +12.4 GB". Click a row to see which folders it was, and click again to open them in Finder. On day one it rebuilds recent history from file dates, so the list isn't empty. Nothing leaves your Mac and there is no account.
 
+Early beta: expect rough edges. Download the latest build from https://merlinkraemer.github.io/prunr/download.html or from [Releases](https://github.com/merlinkraemer/prunr/releases/latest). Updates arrive automatically.
 
-<img width="814" height="1034" alt="image" src="https://github.com/user-attachments/assets/e807917f-d0d9-4ba9-bc39-54bb4c473329" />
-
+<p align="center">
+  <img width="368" alt="Prunr main list: what grew, grouped by day and app" src="website/screenshots/reddit/prunr-1-main-dark.png" />
+  <img width="368" alt="Prunr drilldown: the places Google Chrome grew in" src="website/screenshots/reddit/prunr-2-app-places-dark.png" />
+</p>
+<p align="center">
+  <img width="368" alt="Prunr place contents: the files inside the Spotify cache" src="website/screenshots/reddit/prunr-3-place-contents-dark.png" />
+  <img width="368" alt="Prunr main list in light mode" src="website/screenshots/reddit/prunr-4-main-light.png" />
+</p>
 
 License: source-visible during alpha. See [LICENSE](LICENSE). Docs index: [docs/README.md](docs/README.md).
