@@ -1,8 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Renders a marketing-ready image from the real popover view at a controlled
-/// backing scale. This avoids the resolution ceiling of a screen capture.
 @MainActor
 enum MarketingScreenshotRenderer {
     static func run(arguments: [String]) -> Int32 {
@@ -36,6 +34,26 @@ enum MarketingScreenshotRenderer {
             fputs("[screenshot] \(error.localizedDescription)\n", stderr)
             return 2
         }
+    }
+
+    static func panelPNG(page: MarketingPanelPage, colorScheme: ColorScheme, scale: CGFloat = 2) throws -> Data {
+        let renderer = ImageRenderer(content: MarketingPanelShot(page: page, colorScheme: colorScheme))
+        renderer.scale = scale
+        renderer.isOpaque = false
+
+        var cgImage: CGImage?
+        let appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)
+        if let appearance {
+            appearance.performAsCurrentDrawingAppearance { cgImage = renderer.cgImage }
+        } else {
+            cgImage = renderer.cgImage
+        }
+        guard let cgImage,
+              let pngData = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:])
+        else {
+            throw RenderError("SwiftUI did not produce a PNG image for \(page.rawValue)")
+        }
+        return pngData
     }
 }
 
@@ -102,14 +120,8 @@ private struct MarketingScreenshotCanvas: View {
     @ViewBuilder
     private var screenshotSurface: some View {
         switch scene {
-        case .overview:
-            MarketingPopoverPreview(manager: manager)
-                .marketingGlass(cornerRadius: 24)
-                .frame(width: 320, height: 480)
-                .scaleEffect(1.55, anchor: .topTrailing)
-                .frame(width: 520, height: 760, alignment: .topTrailing)
-        case .drilldown:
-            MarketingDrilldownPreview()
+        case .overview, .drilldown, .contents:
+            MarketingPanel(page: scene.panelPage)
                 .marketingGlass(cornerRadius: 24)
                 .frame(width: 320, height: 480)
                 .scaleEffect(1.55, anchor: .topTrailing)
@@ -135,18 +147,23 @@ private extension View {
     }
 }
 
-/// The panel as it opens: the real header and change rows over the sample
-/// week. The rows are laid out without the scroll view (`ImageRenderer` leaves
-/// it blank) and clipped at the panel's height, like the real list.
-private struct MarketingPopoverPreview: View {
-    let manager: MenuBarManager
+enum MarketingPanelPage: String, CaseIterable {
+    case main
+    case app
+    case contents
+}
+
+struct MarketingPanel: View {
+    let page: MarketingPanelPage
 
     private var segments: [DriveBarSegment] {
-        let categories = manager.sortedCategories.filter { $0.currentSizeBytes > 0 }
+        let categories = MarketingSample.categories(endedAt: MarketingSample.now)
+            .filter { $0.currentSizeBytes > 0 }
+            .sorted { $0.currentSizeBytes > $1.currentSizeBytes }
         var segments = categories.map {
             DriveBarSegment(id: $0.category.rawValue, bytes: $0.currentSizeBytes, color: $0.category.color)
         }
-        let outsideScope = manager.usedBytes - categories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
+        let outsideScope = MarketingSample.usedBytes - categories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
         if outsideScope > 0 {
             segments.append(DriveBarSegment(id: "outside-scope", bytes: outsideScope, color: Color.gray.opacity(0.55)))
         }
@@ -157,248 +174,154 @@ private struct MarketingPopoverPreview: View {
         VStack(spacing: 0) {
             ChangesHeaderView(onOpenBar: nil) {
                 DriveBarView(
-                    totalBytes: manager.totalBytes,
-                    usedBytes: manager.usedBytes,
-                    freeBytes: manager.freeBytes,
+                    totalBytes: MarketingSample.totalBytes,
+                    usedBytes: MarketingSample.usedBytes,
+                    freeBytes: MarketingSample.freeBytes,
                     categorySegments: segments,
                     highlightedSegmentID: .constant(nil),
                     disableHover: true
                 )
             } row: {
-                WeeklyChangeRow(weekly: WeeklyChange(manager.changeFeed, now: MarketingSample.now))
+                headerRow
             }
 
-            Divider().overlay(.white.opacity(0.13))
+            Divider()
 
+            ZStack(alignment: .bottom) {
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .softBottomEdge()
+                    .clipped()
+
+                MarketingFooter(status: footerStatus)
+            }
+        }
+        .frame(width: 320, height: 480)
+    }
+
+    @ViewBuilder
+    private var headerRow: some View {
+        switch page {
+        case .main:
+            WeeklyChangeRow(weekly: WeeklyChange(.loaded(MarketingSample.feed), now: MarketingSample.now))
+        case .app:
+            let group = MarketingSample.appGroup
+            HeaderTitleRow(
+                title: group.owner.displayName,
+                category: group.category,
+                iconSource: group.isNamedOwner ? group.rowIconSource : nil,
+                backHint: "",
+                onBack: {}
+            )
+        case .contents:
+            let group = MarketingSample.contentsGroup
+            if let place = group.episodes.first {
+                HeaderTitleRow(
+                    title: group.headerTitle(for: place),
+                    category: place.category,
+                    iconSource: group.headerIconSource(for: place),
+                    backHint: "",
+                    onBack: {}
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch page {
+        case .main:
             ChangeFeedRows(
-                feed: manager.changeFeed?.feed ?? .empty,
+                feed: MarketingSample.feed,
                 now: MarketingSample.now,
                 expandedDays: .constant([]),
                 onOpenGroup: { _ in }
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .softBottomEdge()
-            .clipped()
-            .overlay(alignment: .bottom) {
-                MarketingFooter()
-            }
-        }
-        .frame(width: 320, height: 480)
-    }
-}
-
-/// The footer as the idle panel shows it: refresh, "Updated 2 min ago", settings.
-private struct MarketingFooter: View {
-    var body: some View {
-        ZStack {
-            Text(MarketingSample.footerStatus.text(now: MarketingSample.now))
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.52))
-            HStack {
-                Image(systemName: "arrow.clockwise")
-                Spacer()
-                Image(systemName: "gearshape")
-            }
-            .font(.system(size: 13))
-            .foregroundStyle(.white.opacity(0.82))
-        }
-        .padding(.horizontal, 20)
-        .frame(height: SoftBottomEdge.footerHeight)
-    }
-}
-
-/// Privacy-safe sample content for the marketing screenshot: a busy week on a
-/// 2 TB Mac with 19 GB left, as in mockup S1. Fixed to Thursday 8 Oct 2026,
-/// 09:12 local time, so the days read Wed 7 Oct back to Thu 1 Oct.
-enum MarketingSample {
-    static let totalBytes: Int64 = 2_000_000_000_000
-    static let freeBytes: Int64 = 19_000_000_000
-    static var usedBytes: Int64 { totalBytes - freeBytes }
-    /// The header: everything this week, rows or not.
-    static let weekNetBytes: Int64 = 48_000_000_000
-
-    private static let calendar = Calendar.current
-
-    static let now: Date = date(day: 8, hour: 9, minute: 12)
-    static let footerStatus = FooterStatus.resolve(updatedAt: now.addingTimeInterval(-2 * 60))
-    /// Long before the shown 30 days, so the list has no "Watching since" end.
-    static let watchingSince: Date = date(month: 8, day: 1, hour: 9, minute: 0)
-
-    /// Newest first. Mail built up over days; the rest moved in one go. Each
-    /// category's rows this week add up to its change in `categories`.
-    /// Tuesday's Developer group has two places. Monday has four categories,
-    /// so it shows "Show all (4)".
-    static let rows: [ChangeEpisode] = [
-        episode("xcode", "Xcode build files", detail: "Prunr", .developer,
-                "/Users/sample/Library/Developer/Xcode/DerivedData", 6_900_000_000, day: 7, hour: 17, minute: 5),
-        episode("docker", "Docker disk", detail: nil, .developer,
-                "/Users/sample/Library/Containers/com.docker.docker", 27_000_000_000, day: 6, hour: 14, minute: 20),
-        episode("simulator", "iOS Simulator", detail: nil, .developer,
-                "/Users/sample/Library/Developer/CoreSimulator", 4_000_000_000, day: 6, hour: 13, minute: 10),
-        episode("recordings", "Screen recordings", detail: "Movies", .mediaAndDocuments,
-                "/Users/sample/Movies", 1_200_000_000, day: 6, hour: 11, minute: 30),
-        episode("iso", "Downloads", detail: "ubuntu-24.04.1-desktop-amd64.iso", .downloads,
-                "/Users/sample/Downloads/ubuntu-24.04.1-desktop-amd64.iso", 5_000_000_000, day: 5, hour: 21, minute: 40),
-        episode("safari", "Safari data", detail: "Caches", .cachesAndSystem,
-                "/Users/sample/Library/Caches/com.apple.Safari", 4_300_000_000, day: 5, hour: 19, minute: 30),
-        episode("mail", "Mail attachments", detail: nil, .mediaAndDocuments,
-                "/Users/sample/Library/Mail", 1_500_000_000, day: 5, hour: 18, minute: 0,
-                buildingSince: date(day: 2, hour: 0, minute: 0)),
-        episode("node", "node_modules", detail: "acme", .developer,
-                "/Users/sample/dev/acme/node_modules", 2_100_000_000, day: 5, hour: 9, minute: 5),
-        episode("trash", "Trash emptied", detail: nil, .trash,
-                "/Users/sample/.Trash", -4_000_000_000, day: 4, hour: 10, minute: 15),
-        episode("photos", "Photos library", detail: nil, .mediaAndDocuments,
-                "/Users/sample/Pictures/Photos Library.photoslibrary", 2_400_000_000, day: 1, hour: 20, minute: 30)
-    ]
-
-    static let feed: ChangeFeed = {
-        let days = Dictionary(grouping: rows, by: \.day)
-            .map { ChangeFeedDay(day: $0.key, episodes: $0.value.sorted { $0.time > $1.time }) }
-            .sorted { $0.day > $1.day }
-        return ChangeFeed(days: days, weekNetBytes: weekNetBytes, watchingSince: watchingSince)
-    }()
-
-    /// The categories view behind the header. Sizes add up to 1,858.6 GB, so
-    /// "Not watched" carries the other 122.4 GB; the changes add up to the week.
-    /// The Developer subcategories in the drilldown scene, biggest first.
-    static let developerSubcategories: [(title: String, bytes: Int64, files: Int, icon: String)] = [
-        ("Docker", 64_000_000_000, 38, "shippingbox.fill"),
-        ("Xcode", 48_000_000_000, 212_880, "hammer.fill"),
-        ("node_modules", 31_000_000_000, 418_307, "cube.box.fill"),
-        ("Other dev files", 21_800_000_000, 12_402, "doc.fill"),
-        ("Python", 18_000_000_000, 96_114, "chevron.left.forwardslash.chevron.right")
-    ]
-
-    static func categories(endedAt now: Date) -> [CategoryInventoryItem] {
-        let weekStart = GrowthJournalService.weekStart(now: now, calendar: calendar)
-        func item(_ category: GrowthCategory, _ size: Int64, _ delta: Int64?) -> CategoryInventoryItem {
-            CategoryInventoryItem(
-                category: category,
-                currentSizeBytes: size,
-                recentGrowthStory: delta.map {
-                    RecentGrowthStory(category: category, subcategory: nil, deltaBytes: $0, startedAt: weekStart, endedAt: now)
-                }
+        case .app:
+            ChangeGroupRows(group: MarketingSample.appGroup, onOpenPlace: { _ in }, onReveal: { _ in })
+        case .contents:
+            let group = MarketingSample.contentsGroup
+            PlaceContentsRows(
+                category: group.category,
+                caption: group.episodes.first.flatMap {
+                    EpisodeBuilder.contentsCaption(
+                        for: $0,
+                        headerTitle: group.headerTitle(for: $0),
+                        home: MarketingSample.home
+                    )
+                },
+                children: MarketingSample.contents,
+                status: nil,
+                hasMore: false,
+                isLoadingMore: false,
+                onShowMore: {},
+                onRetry: {},
+                onReveal: { _ in }
             )
         }
-        return [
-            item(.audioProduction, 640_000_000_000, nil),
-            item(.other, 476_800_000_000, nil),
-            item(.mediaAndDocuments, 300_000_000_000, 2_700_000_000),
-            item(.cachesAndSystem, 228_200_000_000, 4_300_000_000),
-            item(.developer, 160_000_000_000, 40_000_000_000),
-            item(.applications, 30_000_000_000, nil),
-            item(.downloads, 22_400_000_000, 5_000_000_000),
-            item(.trash, 1_200_000_000, -4_000_000_000)
-        ]
     }
 
-    private static func date(month: Int = 10, day: Int, hour: Int, minute: Int) -> Date {
-        calendar.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour, minute: minute)) ?? Date()
-    }
-
-    private static func episode(
-        _ id: String,
-        _ title: String,
-        detail: String?,
-        _ category: GrowthCategory,
-        _ rootPath: String?,
-        _ netBytes: Int64,
-        day: Int,
-        hour: Int,
-        minute: Int,
-        buildingSince: Date? = nil
-    ) -> ChangeEpisode {
-        let time = date(day: day, hour: hour, minute: minute)
-        return ChangeEpisode(
-            id: id,
-            title: title,
-            detail: detail,
-            category: category,
-            rootPath: rootPath,
-            netBytes: netBytes,
-            grossBytes: abs(netBytes),
-            day: calendar.startOfDay(for: time),
-            time: time,
-            isApproximateTime: false,
-            buildingSince: buildingSince
-        )
+    private var footerStatus: FooterStatus {
+        switch page {
+        case .main: return MarketingSample.footerStatus
+        case .app: return .groupDay(MarketingSample.appGroup.day)
+        case .contents: return .groupDay(MarketingSample.contentsGroup.day)
+        }
     }
 }
 
+private struct MarketingFooter: View {
+    let status: FooterStatus
 
-private struct MarketingDrilldownPreview: View {
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 2) {
-                Rectangle().fill(.orange).frame(width: 60)
-                Rectangle().fill(.teal).frame(width: 44)
-                Rectangle().fill(.pink).frame(width: 28)
-                Rectangle().fill(.purple).frame(width: 18)
-                Spacer(minLength: 0)
-            }
-            .clipShape(Capsule())
-            .padding(16)
-            .frame(height: 64)
-
-            Divider().overlay(.white.opacity(0.13))
-
+        ZStack {
+            Text(status.text(now: MarketingSample.now))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
             HStack {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .bold))
-                    .frame(width: 26)
+                footerIcon("arrow.clockwise")
                 Spacer()
-                Label {
-                    Text(GrowthCategory.developer.displayName)
-                } icon: {
-                    Image(systemName: GrowthCategory.developer.icon)
-                        .foregroundStyle(GrowthCategory.developer.color)
-                }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.92))
-                Spacer()
-                Color.clear.frame(width: 26)
+                footerIcon("gearshape")
             }
-            .foregroundStyle(.white.opacity(0.72))
-            .padding(.horizontal, 12)
-            .frame(height: HeaderRowMetrics.height)
-
-            Divider().overlay(.white.opacity(0.13))
-
-            VStack(spacing: 0) {
-                ForEach(MarketingSample.developerSubcategories, id: \.title) { row in
-                    HStack(spacing: 10) {
-                        Image(systemName: row.icon)
-                            .font(.system(size: 14))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .frame(width: 18)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(row.title)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.92))
-                            Text(CategorySizes.fileCountText(row.files))
-                                .font(.system(size: 11).monospacedDigit())
-                                .foregroundStyle(.white.opacity(0.52))
-                        }
-                        Spacer(minLength: 4)
-                        Text(CategorySizes.sizeText(row.bytes))
-                            .font(.system(size: 13).monospacedDigit())
-                            .foregroundStyle(.white.opacity(0.88))
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.34))
-                    }
-                    .padding(.horizontal, 18)
-                    .frame(height: 44)
-                }
-            }
-            .padding(.top, 6)
-
-            Spacer(minLength: 0)
-
-            MarketingFooter()
         }
-        .frame(width: 320, height: 480)
+        .padding(.horizontal, 14)
+        .frame(height: SoftBottomEdge.footerHeight)
+    }
+
+    private func footerIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 13))
+            .foregroundStyle(.primary)
+            .frame(width: 26, height: 26)
+    }
+}
+
+private struct MarketingPanelShot: View {
+    static let margin: CGFloat = 24
+    static let cornerRadius: CGFloat = 12
+
+    let page: MarketingPanelPage
+    let colorScheme: ColorScheme
+
+    private var fill: Color {
+        colorScheme == .dark
+            ? Color(red: 0.165, green: 0.165, blue: 0.175)
+            : Color(red: 0.965, green: 0.965, blue: 0.965)
+    }
+
+    private var stroke: Color {
+        colorScheme == .dark ? .white.opacity(0.14) : .black.opacity(0.12)
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+        MarketingPanel(page: page)
+            .background(fill)
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(stroke, lineWidth: 1))
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0.18), radius: 14, y: 6)
+            .padding(Self.margin)
+            .environment(\.colorScheme, colorScheme)
     }
 }
 
@@ -513,7 +436,16 @@ private struct MarketingSettingsPreview: View {
 private enum Scene: String {
     case overview
     case drilldown
+    case contents
     case settings
+
+    var panelPage: MarketingPanelPage {
+        switch self {
+        case .overview, .settings: return .main
+        case .drilldown: return .app
+        case .contents: return .contents
+        }
+    }
 }
 
 private struct Config {
@@ -541,7 +473,7 @@ private struct Config {
                 index += 2
             case "--scene":
                 guard index + 1 < arguments.count, let value = Scene(rawValue: arguments[index + 1]) else {
-                    throw RenderError("--scene must be overview, drilldown, or settings")
+                    throw RenderError("--scene must be overview, drilldown, contents, or settings")
                 }
                 scene = value
                 index += 2
@@ -551,7 +483,7 @@ private struct Config {
         }
 
         guard let outputPath, !outputPath.isEmpty else {
-            throw RenderError("usage: render-screenshot --output /path/to/image.png [--scene overview|drilldown|settings] [--scale 2]")
+            throw RenderError("usage: render-screenshot --output /path/to/image.png [--scene overview|drilldown|contents|settings] [--scale 2]")
         }
 
         self.outputURL = URL(fileURLWithPath: outputPath)

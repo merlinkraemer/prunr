@@ -1,13 +1,19 @@
 import SwiftUI
 
-/// A place's icon in the change list: the real app or file icon when one
-/// resolves, else the category symbol in its colour, both without a tile.
 struct UnitIconTile: View {
     let category: GrowthCategory
     let source: UnitIconSource
-    var size: CGFloat = 20
+    let size: CGFloat
 
     @State private var resolvedIcon: NSImage?
+
+    @MainActor
+    init(category: GrowthCategory, source: UnitIconSource, size: CGFloat = 20) {
+        self.category = category
+        self.source = source
+        self.size = size
+        _resolvedIcon = State(initialValue: UnitIconResolver.shared.icon(for: source))
+    }
 
     var body: some View {
         Group {
