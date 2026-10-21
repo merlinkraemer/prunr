@@ -22,27 +22,27 @@ enum MarketingSample {
         AppCatalogEntry(bundleIdentifier: "com.spotify.client", name: "Spotify", path: "/Applications/Spotify.app"),
         AppCatalogEntry(bundleIdentifier: "com.tinyspeck.slackmacgap", name: "Slack", path: "/Applications/Slack.app"),
         AppCatalogEntry(bundleIdentifier: "com.valvesoftware.steam", name: "Steam", path: "/Applications/Steam.app"),
-        AppCatalogEntry(bundleIdentifier: "com.docker.docker", name: "Docker", path: "/Applications/Docker.app")
+        AppCatalogEntry(bundleIdentifier: "com.docker.docker/Data/vms/0/data/Docker.raw", name: "Docker", path: "/Applications/Docker.app")
     ])
 
     private static let chromeCache = "/Users/alex/Library/Caches/Google/Chrome"
     private static let spotifyCache = "/Users/alex/Library/Caches/com.spotify.client"
 
     static let rows: [ChangeEpisode] = [
-        place("/Users/alex/Library/Developer/Xcode/DerivedData/Weatherly-bxkqhfzlygrjeqgdbsjnpwhqdyvm",
+        place("/Users/alex/Library/Developer/Xcode/DerivedData/Weatherly-bxkqhfzlygrjeqgdbsjnpwhqdyvm/Build/Intermediates.noindex/Weatherly.o",
               3_400_000_000, day: 21, hour: 15, minute: 47),
-        place(chromeCache, 4_100_000_000, day: 21, hour: 13, minute: 52),
-        place("/Users/alex/dev/acme-web/node_modules", 1_800_000_000, day: 21, hour: 11, minute: 5),
-        place("/Users/alex/Library/Application Support/Google/Chrome", 1_300_000_000, day: 21, hour: 10, minute: 18),
-        place("/Users/alex/Library/HTTPStorages/com.google.Chrome", 1_100_000_000, day: 21, hour: 10, minute: 2),
-        place("/Users/alex/Library/Caches/com.tinyspeck.slackmacgap", 1_400_000_000, day: 21, hour: 9, minute: 30),
-        place("/Users/alex/Library/Application Support/Steam/steamapps/common/Cyberpunk 2077",
+        place(chromeCache + "/Default/Cache/Cache_Data/f_0a81c2", 4_100_000_000, day: 21, hour: 13, minute: 52),
+        place("/Users/alex/dev/acme-web/node_modules/next/package.json", 1_800_000_000, day: 21, hour: 11, minute: 5),
+        place("/Users/alex/Library/Application Support/Google/Chrome/Default/History", 1_300_000_000, day: 21, hour: 10, minute: 18),
+        place("/Users/alex/Library/HTTPStorages/com.google.Chrome/httpstorages.sqlite", 1_100_000_000, day: 21, hour: 10, minute: 2),
+        place("/Users/alex/Library/Caches/com.tinyspeck.slackmacgap/Cache.db", 1_400_000_000, day: 21, hour: 9, minute: 30),
+        place("/Users/alex/Library/Application Support/Steam/steamapps/common/Cyberpunk 2077/archive/pc/content/basegame_1.archive",
               12_400_000_000, day: 20, hour: 21, minute: 15),
-        place(spotifyCache, 2_300_000_000, day: 20, hour: 18, minute: 40),
+        place(spotifyCache + "/Data/0a/0a81c2", 2_300_000_000, day: 20, hour: 18, minute: 40),
         place("/Users/alex/Downloads/ubuntu-24.04.1-arm64.iso", 3_100_000_000, day: 20, hour: 12, minute: 26),
-        place("/Users/alex/.Trash", -6_800_000_000, day: 19, hour: 17, minute: 5),
-        place("/Users/alex/Library/Containers/com.docker.docker", 3_500_000_000, day: 19, hour: 14, minute: 20),
-        place("/Users/alex/Pictures/Photos Library.photoslibrary", 2_600_000_000, day: 17, hour: 20, minute: 30,
+        place("/Users/alex/.Trash/old-backup.zip", -6_800_000_000, day: 19, hour: 17, minute: 5),
+        place("/Users/alex/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", 3_500_000_000, day: 19, hour: 14, minute: 20),
+        place("/Users/alex/Pictures/Photos Library.photoslibrary/originals/A/IMG_4471.heic", 2_600_000_000, day: 17, hour: 20, minute: 30,
               buildingSince: date(day: 15, hour: 0, minute: 0))
     ]
 
