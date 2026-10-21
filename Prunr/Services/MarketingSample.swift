@@ -6,7 +6,7 @@ enum MarketingSample {
     static let totalBytes: Int64 = 1_000_000_000_000
     static let freeBytes: Int64 = 186_400_000_000
     static var usedBytes: Int64 { totalBytes - freeBytes }
-    static let weekNetBytes: Int64 = 30_200_000_000
+    static let weekNetBytes: Int64 = 27_600_000_000
 
     private static let calendar = Calendar.current
 
@@ -41,9 +41,7 @@ enum MarketingSample {
         place(spotifyCache + "/Data/0a/0a81c2", 2_300_000_000, day: 20, hour: 18, minute: 40),
         place("/Users/alex/Downloads/ubuntu-24.04.1-arm64.iso", 3_100_000_000, day: 20, hour: 12, minute: 26),
         place("/Users/alex/.Trash/old-backup.zip", -6_800_000_000, day: 19, hour: 17, minute: 5),
-        place("/Users/alex/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", 3_500_000_000, day: 19, hour: 14, minute: 20),
-        place("/Users/alex/Pictures/Photos Library.photoslibrary/originals/A/IMG_4471.heic", 2_600_000_000, day: 17, hour: 20, minute: 30,
-              buildingSince: date(day: 15, hour: 0, minute: 0))
+        place("/Users/alex/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", 3_500_000_000, day: 19, hour: 14, minute: 20)
     ]
 
     static let feed: ChangeFeed = {
@@ -84,7 +82,7 @@ enum MarketingSample {
         }
         return [
             item(.developer, 214_000_000_000, 8_700_000_000),
-            item(.mediaAndDocuments, 188_000_000_000, 2_600_000_000),
+            item(.mediaAndDocuments, 188_000_000_000, nil),
             item(.applications, 96_000_000_000, 12_400_000_000),
             item(.other, 92_000_000_000, nil),
             item(.cachesAndSystem, 74_000_000_000, 10_200_000_000),
@@ -111,8 +109,7 @@ enum MarketingSample {
         _ netBytes: Int64,
         day: Int,
         hour: Int,
-        minute: Int,
-        buildingSince: Date? = nil
+        minute: Int
     ) -> ChangeEpisode {
         let key = UnitResolver.resolveKey(path: path, home: home)
         let name = UnitNamer.name(for: key, home: home)
@@ -130,7 +127,6 @@ enum MarketingSample {
             day: startOfDay,
             time: time,
             isApproximateTime: false,
-            buildingSince: buildingSince,
             iconSource: name.icon == .category && !isTrash ? .file(path: key.rootPath) : name.icon,
             shortTitle: name.shortTitle,
             unitOwner: name.owner

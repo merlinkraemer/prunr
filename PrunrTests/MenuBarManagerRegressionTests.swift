@@ -311,10 +311,10 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         let feed = MarketingSample.feed
         let calendar = Calendar.current
 
-        XCTAssertEqual(WeeklyChange(.loaded(feed), now: MarketingSample.now), .bytes(30_200_000_000))
+        XCTAssertEqual(WeeklyChange(.loaded(feed), now: MarketingSample.now), .bytes(27_600_000_000))
         XCTAssertEqual(
             feed.days.map { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) },
-            ["Wed 21 Oct", "Tue 20 Oct", "Mon 19 Oct", "Sat 17 Oct"]
+            ["Wed 21 Oct", "Tue 20 Oct", "Mon 19 Oct"]
         )
         XCTAssertTrue(feed.days.allSatisfy { $0.groups.count <= ChangeFeedRows.collapsedGroupLimit })
         XCTAssertEqual(feed.days[0].groups.map(\.rowTitle), ["Google Chrome", "Developer", "Slack"])
