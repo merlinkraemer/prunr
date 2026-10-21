@@ -70,6 +70,7 @@
 		8DFEA284FF2CC8A4A2523653 /* FileDateHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92612773CF2247656E2DF705 /* FileDateHistory.swift */; };
 		90EDEF69EAA62103B45A6B9C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE320653A13DE8203E50C2A /* SettingsView.swift */; };
 		9141C590488D1407627FFD48 /* UnitIconTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27EABA1FF91C9E0983186F5 /* UnitIconTests.swift */; };
+		93292E7506EADF4F84F081BD /* MarketingScreenshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D8FE67BA86F47FB3B7CA95 /* MarketingScreenshotTests.swift */; };
 		9749C587B031638E0AF31CCA /* TestHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FDB12D3557B6AA59BDB39C /* TestHost.swift */; };
 		97BBACB71AB4AA756B107646 /* FeedbackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F776C3C717DBA7FC64554F6B /* FeedbackService.swift */; };
 		9D605AC42435FF5F0928CDA1 /* CategoryGrowthListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAC89EB552188712FB917B53 /* CategoryGrowthListView.swift */; };
@@ -111,6 +112,7 @@
 		F3ED05960EF85A2BBE4D45EB /* GrowthJournalService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B0E8371562FF170C5B1E542 /* GrowthJournalService.swift */; };
 		F4C350CADF72B37F75417E70 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 225146949C55B77C0509C557 /* SettingsWindowController.swift */; };
 		F7E29A6815DD78AEDA1362B4 /* OwnerGroupsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C23D9981F283628262314B8 /* OwnerGroupsTests.swift */; };
+		FD479374DA1CFB28EC118371 /* MarketingSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36292C5B48D4947B28EE5A0D /* MarketingSample.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -128,6 +130,7 @@
 		08EB343218571F3B97D51611 /* MenuBarManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarManager.swift; sourceTree = "<group>"; };
 		096E22DA954F439802DC05E3 /* DrilldownIndexTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrilldownIndexTests.swift; sourceTree = "<group>"; };
 		0C5D1554E1020847E7F94508 /* AppCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCatalog.swift; sourceTree = "<group>"; };
+		10D8FE67BA86F47FB3B7CA95 /* MarketingScreenshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketingScreenshotTests.swift; sourceTree = "<group>"; };
 		1393130BB45D84D6B2D5C48F /* OwnerFeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerFeedTests.swift; sourceTree = "<group>"; };
 		14CFD6B00057E08E333E4BCA /* DatabaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseManager.swift; sourceTree = "<group>"; };
 		194BBC77F7C637F11B7F4DD6 /* UnitResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnitResolverTests.swift; sourceTree = "<group>"; };
@@ -147,6 +150,7 @@
 		303D3B747088C2665CA0FAC0 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		305464B5E33DC2FA2E47292F /* ChangeFeedStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeFeedStateView.swift; sourceTree = "<group>"; };
 		346A454CD5E69D90C84D7375 /* ScanResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanResult.swift; sourceTree = "<group>"; };
+		36292C5B48D4947B28EE5A0D /* MarketingSample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketingSample.swift; sourceTree = "<group>"; };
 		38637F37D3A1771F44AD4C7F /* Prunr.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Prunr.entitlements; sourceTree = "<group>"; };
 		3B2EDBB7047DCEE4C3652DC8 /* ScanService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanService.swift; sourceTree = "<group>"; };
 		3C23D9981F283628262314B8 /* OwnerGroupsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerGroupsTests.swift; sourceTree = "<group>"; };
@@ -301,6 +305,7 @@
 				8834DB1F78EB9D61CD16B641 /* FeedbackServiceRegressionTests.swift */,
 				9DC99705542A31350084F18E /* FileDateHistoryTests.swift */,
 				7838C44A5C7D03130D4EA168 /* FooterStatusTests.swift */,
+				10D8FE67BA86F47FB3B7CA95 /* MarketingScreenshotTests.swift */,
 				D4E1ECC974C4E402965F0B80 /* MenuBarManagerRegressionTests.swift */,
 				D21D39F40F0BE8275A4195F9 /* OnboardingFlowTests.swift */,
 				1393130BB45D84D6B2D5C48F /* OwnerFeedTests.swift */,
@@ -419,6 +424,7 @@
 				C918D45CF08B646E3ABAE820 /* FSEventsNoiseFilter.swift */,
 				ADFA692654D900931A96C796 /* FSEventsWatcher.swift */,
 				5B0E8371562FF170C5B1E542 /* GrowthJournalService.swift */,
+				36292C5B48D4947B28EE5A0D /* MarketingSample.swift */,
 				7BB6D844265BBE22C4B3CD31 /* MarketingScreenshotRenderer.swift */,
 				08EB343218571F3B97D51611 /* MenuBarManager.swift */,
 				2B953D7CD08AC50B0B235D07 /* PermissionsService.swift */,
@@ -575,6 +581,7 @@
 				4DD9E17A601953BA4DBB1CAB /* FeedbackServiceRegressionTests.swift in Sources */,
 				175E7383CE34CFC5EC8D27FF /* FileDateHistoryTests.swift in Sources */,
 				814D7C0D81FBB9547F9400C4 /* FooterStatusTests.swift in Sources */,
+				93292E7506EADF4F84F081BD /* MarketingScreenshotTests.swift in Sources */,
 				A2075B826B9DF97C49F42362 /* MenuBarManagerRegressionTests.swift in Sources */,
 				1B81CA354E361250AAEFC5F4 /* OnboardingFlowTests.swift in Sources */,
 				2B6EA141F971F9DE1665147D /* OwnerFeedTests.swift in Sources */,
@@ -636,6 +643,7 @@
 				D9E9E0DE3E5C48997CA164C7 /* ListNavigation.swift in Sources */,
 				A0303104A5915091362D75C3 /* Logger+Prunr.swift in Sources */,
 				25D53FEECF12CC55C4083ED4 /* MainViewModel.swift in Sources */,
+				FD479374DA1CFB28EC118371 /* MarketingSample.swift in Sources */,
 				8544011316A0B70538CE78C6 /* MarketingScreenshotRenderer.swift in Sources */,
 				F106F7F5C105C8CD3A15021D /* MenuBarManager.swift in Sources */,
 				2885805D6C1159CC536F1DDB /* MenuBarView.swift in Sources */,
