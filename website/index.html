@@ -141,11 +141,11 @@
     .v2-page > div:not(.site-menubar):not(.hero-mobile-logo) { display: contents !important; }
     .hero-main { display: contents !important; }
     .hero-body { display: contents !important; }
-    .site-menubar { position: static !important; width: 100% !important; }
+    .site-menubar { position: relative !important; width: 100% !important; }
     .popover-open {
       position: static !important; right: auto !important; top: auto !important;
       width: min(96vw, 600px) !important; max-height: none !important;
-      margin: 12px auto 0 !important;
+      margin: calc(11px - min(96vw, 600px) * 48 / 736) auto 0 !important;
     }
     .hero-subtitle p { max-width: none !important; }
     .hero-cta {
