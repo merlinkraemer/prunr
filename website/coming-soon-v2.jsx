@@ -295,8 +295,8 @@
           {/* Popover hangs open from the "447.9 GB" indicator — coupled to the menubar.
               Desktop: absolute, top-right under the pill. Mobile: flows directly below the
               bar (still hanging from the right) so the bar + screenshot read as one unit. */}
-          <img className="popover-open" src="assets/app-popover-page.png" alt="Prunr menu-bar popover"
-            style={{ position: "absolute", top: 34, right: 64, width: "clamp(300px, 30vw, 380px)", height: "auto",
+          <img className="popover-open" src="assets/app-popover-main-dark.png" alt="Prunr menu-bar popover"
+            style={{ position: "absolute", top: 14, right: 64, width: "clamp(300px, 30vw, 380px)", height: "auto",
               maxHeight: "calc(100vh - 60px)", zIndex: 10 }} />
           <Hero />
           <Footer />

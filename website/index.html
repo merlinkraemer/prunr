@@ -119,7 +119,7 @@
       align-items: flex-start !important;
       min-height: 0 !important;
       /* Clear absolute popover: top offset + rendered image height + gap */
-      margin-top: calc(34px + clamp(300px, 30vw, 380px) * 1034 / 814 + 32px) !important;
+      margin-top: calc(14px + clamp(300px, 30vw, 380px) * 1104 / 736 + 32px) !important;
       padding: 0 56px 40px !important;
     }
     .site-footer { flex: none !important; margin-top: auto !important; }
@@ -141,11 +141,11 @@
     .v2-page > div:not(.site-menubar):not(.hero-mobile-logo) { display: contents !important; }
     .hero-main { display: contents !important; }
     .hero-body { display: contents !important; }
-    .site-menubar { position: static !important; width: 100% !important; }
+    .site-menubar { position: relative !important; width: 100% !important; }
     .popover-open {
       position: static !important; right: auto !important; top: auto !important;
       width: min(96vw, 600px) !important; max-height: none !important;
-      margin: 12px auto 0 !important;
+      margin: calc(11px - min(96vw, 600px) * 48 / 736) auto 0 !important;
     }
     .hero-subtitle p { max-width: none !important; }
     .hero-cta {

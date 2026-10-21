@@ -116,9 +116,5 @@ final class FooterStatusTests: PrunrTestCase {
         let middle = SubcategoryGroup(subcategory: nil, displayName: "Xcode", totalBytes: 48_000_000_000,
                                       fileCount: 1, growthBytes: -5_000_000_000, topFiles: [])
         XCTAssertEqual(CategorySizes.subcategoriesBySize([small, middle, big]).map(\.displayName), ["Docker", "Xcode", "Python"])
-        XCTAssertEqual(
-            MarketingSample.developerSubcategories.map(\.bytes),
-            MarketingSample.developerSubcategories.map(\.bytes).sorted(by: >)
-        )
     }
 }

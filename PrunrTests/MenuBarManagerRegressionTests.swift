@@ -307,35 +307,42 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         )
     }
 
-    /// The marketing screenshot's sample reads like mockup X1: real dates from
-    /// Wed 7 Oct back, one group per category a day, Monday with four
-    /// one-place groups (so "Show all (4)"), Tuesday's two-place Developer
-    /// group, Mail's slow growth caption, and a header of +48 GB
-    /// that the categories view and the week's groups add up to.
     func testMarketingSampleReadsAsTheNewScreen() throws {
         let feed = MarketingSample.feed
         let calendar = Calendar.current
 
-        XCTAssertEqual(WeeklyChange(.loaded(feed), now: MarketingSample.now), .bytes(48_000_000_000))
+        XCTAssertEqual(WeeklyChange(.loaded(feed), now: MarketingSample.now), .bytes(27_600_000_000))
         XCTAssertEqual(
             feed.days.map { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) },
-            ["Wed 7 Oct", "Tue 6 Oct", "Mon 5 Oct", "Sun 4 Oct", "Thu 1 Oct"]
+            ["Wed 21 Oct", "Tue 20 Oct", "Mon 19 Oct"]
         )
-        let monday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Mon 5 Oct" })
-        XCTAssertEqual(monday.groups.map(\.category), [.downloads, .cachesAndSystem, .developer, .mediaAndDocuments])
-        XCTAssertGreaterThan(monday.groups.count, ChangeFeedRows.collapsedGroupLimit)
-        XCTAssertTrue(monday.groups.allSatisfy { $0.episodes.count == 1 })
-        let tuesday = try XCTUnwrap(feed.days.first { EpisodeBuilder.dayLabel(for: $0.day, calendar: calendar) == "Tue 6 Oct" })
-        let developer = try XCTUnwrap(tuesday.groups.first { $0.category == .developer })
-        XCTAssertEqual(developer.episodes.count, 2)
-        let mail = try XCTUnwrap(monday.episodes.first { $0.title == "Mail attachments" })
-        XCTAssertNotNil(mail.buildingSince)
-        XCTAssertNil(EpisodeBuilder.timeCaption(for: mail, calendar: calendar))
+        XCTAssertTrue(feed.days.allSatisfy { $0.groups.count <= ChangeFeedRows.collapsedGroupLimit })
+        XCTAssertEqual(feed.days[0].groups.map(\.rowTitle), ["Google Chrome", "Developer", "Slack"])
+        XCTAssertEqual(feed.days[1].groups.map(\.rowTitle), ["Steam", "Downloads · ubuntu-24.04.1-arm64.iso", "Spotify"])
+
+        let chrome = MarketingSample.appGroup
+        XCTAssertEqual(chrome.owner.displayName, "Google Chrome")
+        XCTAssertEqual(chrome.rowIconSource, .app(bundleIdentifier: "com.google.Chrome"))
+        XCTAssertEqual(chrome.episodes.map(\.title), ["Cache", "App data", "Website data"])
+        XCTAssertNil(FeedPage.soloPlace(of: chrome))
+        XCTAssertTrue(chrome.isLargeGrowth)
+
+        let spotify = MarketingSample.contentsGroup
+        let place = try XCTUnwrap(FeedPage.soloPlace(of: spotify))
+        XCTAssertEqual(spotify.headerTitle(for: place), "Spotify")
+        XCTAssertEqual(
+            EpisodeBuilder.contentsCaption(for: place, headerTitle: "Spotify", home: MarketingSample.home),
+            "Cache · ~/Library/Caches/com.spotify.client"
+        )
+        XCTAssertEqual(MarketingSample.contents.map(\.totalBytes), MarketingSample.contents.map(\.totalBytes).sorted(by: >))
+
+        XCTAssertTrue(feed.episodes.allSatisfy { $0.rootPath?.hasPrefix(MarketingSample.home + "/") == true })
+        XCTAssertTrue(MarketingSample.contents.allSatisfy { $0.path.hasPrefix(MarketingSample.home + "/") })
 
         let weekStart = GrowthJournalService.weekStart(now: MarketingSample.now, calendar: calendar)
-        let weekGroups = feed.days.filter { $0.day >= weekStart }.flatMap(\.groups)
+        let weekRows = feed.days.filter { $0.day >= weekStart }.flatMap(\.episodes)
         for item in MarketingSample.categories(endedAt: MarketingSample.now) {
-            let rows = weekGroups.filter { $0.category == item.category }.reduce(Int64(0)) { $0 + $1.netBytes }
+            let rows = weekRows.filter { $0.category == item.category }.reduce(Int64(0)) { $0 + $1.netBytes }
             XCTAssertEqual(rows, item.growthDeltaBytes, item.category.displayName)
         }
         XCTAssertTrue(feed.episodes.allSatisfy { abs($0.netBytes) >= EpisodeBuilder.rowThresholdBytes })
@@ -345,7 +352,7 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         let categories = MarketingSample.categories(endedAt: MarketingSample.now)
         XCTAssertEqual(categories.reduce(Int64(0)) { $0 + $1.growthDeltaBytes }, feed.weekNetBytes)
         let tracked = categories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
-        XCTAssertEqual(MarketingSample.totalBytes - MarketingSample.freeBytes - tracked, 122_400_000_000)
+        XCTAssertEqual(MarketingSample.totalBytes - MarketingSample.freeBytes - tracked, 105_500_000_000)
     }
 
     // MARK: - Change list states
