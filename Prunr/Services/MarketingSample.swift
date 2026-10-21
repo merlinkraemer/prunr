@@ -60,9 +60,9 @@ enum MarketingSample {
 
     static let contents: [PlaceChild] = [
         PlaceChild(name: "Data", path: spotifyCache + "/Data", isFolder: true,
-                   totalBytes: 3_420_000_000, fileCount: 9_812),
+                   totalBytes: 3_420_000_000, fileCount: 962),
         PlaceChild(name: "fsCachedData", path: spotifyCache + "/fsCachedData", isFolder: true,
-                   totalBytes: 214_000_000, fileCount: 1_406),
+                   totalBytes: 214_000_000, fileCount: 418),
         PlaceChild(name: "Browser", path: spotifyCache + "/Browser", isFolder: true,
                    totalBytes: 96_000_000, fileCount: 312),
         PlaceChild(name: "Cache.db", path: spotifyCache + "/Cache.db", isFolder: false,

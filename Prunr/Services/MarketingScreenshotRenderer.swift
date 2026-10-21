@@ -189,7 +189,7 @@ struct MarketingPanel: View {
 
             ZStack(alignment: .bottom) {
                 content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
                     .softBottomEdge()
                     .clipped()
 
@@ -316,10 +316,13 @@ private struct MarketingPanelShot: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
         MarketingPanel(page: page)
-            .background(fill)
             .clipShape(shape)
+            .background(
+                shape
+                    .fill(fill)
+                    .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0.18), radius: 14, y: 6)
+            )
             .overlay(shape.strokeBorder(stroke, lineWidth: 1))
-            .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0.18), radius: 14, y: 6)
             .padding(Self.margin)
             .environment(\.colorScheme, colorScheme)
     }
