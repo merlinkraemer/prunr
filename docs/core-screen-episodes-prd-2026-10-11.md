@@ -253,6 +253,7 @@ Every slice is validated from lab2 with `mac-queue add <checkout> <ref> test Pru
 - **L1: exact per-change detail for all 30 days.** Depends on L0. A `growthJournalDetail` table (per bucket, unit and top 20 children) written on every delta path, so L0 can show exactly what changed in any episode, not only recent ones.
 - **L2: real icons** (pulled into v1 as s11). `CacheApplicationIconResolver` (`CategoryGrowthListView.swift:1189`) for bundle-id units, and `NSWorkspace.icon(forFile:)` for bundles and download items, cached per unit. Depends on s6.
 - **L3: more names.** Logic, iMovie, Music library, TV. Depends on s7.
+- **L6: pair moves (later).** Today a move or rename across places shows as a shrink row plus a growth row (only moves inside one place net out). Pair a shrink and a growth of about the same size in the same time slot into one "moved" row, e.g. "Moved 4 GB from Downloads to Project". Also covers renaming a place's root folder. Raised by a Reddit tester 2026-10-22; Merlin: "merge in same timestamp or something". Related edge cases: APFS clones count at full size; first-scan file-date history books moved files at their birth date in the new place.
 
 ## Revision 2026-10-11 (after Merlin's review of the v1 build)
 
