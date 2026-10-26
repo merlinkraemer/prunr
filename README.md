@@ -20,4 +20,4 @@ Early beta: expect rough edges. Download the latest build from https://merlinkra
   <img width="368" alt="Prunr main list in light mode" src="website/screenshots/reddit/prunr-4-main-light.png" />
 </p>
 
-License: source-visible during alpha. See [LICENSE](LICENSE). Docs index: [docs/README.md](docs/README.md).
+Open source under the [MIT License](LICENSE). Build it yourself for free, or grab the signed DMG. Docs index: [docs/README.md](docs/README.md).
