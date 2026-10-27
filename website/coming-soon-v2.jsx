@@ -5,15 +5,6 @@
   const DS = window.PrunrDesignSystem_225e08;
   const { Button, Icon } = DS;
 
-  function AppleLogo({ size = 18, color = "currentColor" }) {
-    return (
-      <svg viewBox="0 0 384 512" width={size} height={size} fill={color} aria-hidden="true"
-        style={{ display: "block", marginTop: -2 }}>
-        <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/>
-      </svg>
-    );
-  }
-
   function Wordmark({ size = 27 }) {
     return (
       <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
@@ -119,14 +110,11 @@
   const ERR = "#d92d20"; // inline error red
 
   function Signup() {
-    const [open, setOpen] = React.useState(false);
     const [focus, setFocus] = React.useState(false);
     const [email, setEmail] = React.useState("");
     const [error, setError] = React.useState("");        // "" = no error
     const [status, setStatus] = React.useState("idle");  // idle | loading | done
     const inputRef = React.useRef(null);
-
-    React.useEffect(() => { if (open && inputRef.current) inputRef.current.focus(); }, [open]);
 
     function validate(value) {
       const v = value.trim();
@@ -160,65 +148,79 @@
       }
     }
 
-    if (status === "done") {
-      return (
-        <div className="signup-root reveal" style={{ marginTop: 32 }}>
-          <div className="signup-success">
-            <span style={{ flex: "none", width: 24, height: 24, borderRadius: "50%", background: "var(--theme-accent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-              <Icon name="check" size={14} color="var(--theme-accent-ink)" />
-            </span>
-            <span style={{ fontFamily: "var(--font-body)", fontWeight: 600, fontSize: 15, color: "var(--heading-color)" }}>
-              Check your mail - dmg is on its way!
-            </span>
-          </div>
-        </div>
-      );
-    }
-
     const hasError = !!error;
     const ring = hasError
       ? `inset 0 0 0 1.5px ${ERR}`
       : (focus ? "inset 0 0 0 1.5px var(--theme-accent), var(--focus-ring)" : "inset 0 0 0 1px var(--border)");
-    const layer = (on) => "signup-layer " + (on ? "signup-layer--in" : "signup-layer--out");
 
     return (
       <div className="signup-root" style={{ marginTop: 32 }}>
-        <div className={layer(!open) + " signup-layer--cta"} aria-hidden={open}>
-          <span className="cta-nudge" style={{ display: "inline-block" }}>
-            <Button variant="primary" type="button" onClick={() => setOpen(true)}
-              style={{ height: 54, padding: "0 30px", fontSize: 16 }}
-              iconLeft={<AppleLogo size={18} />}>
-              Join the alpha
-            </Button>
-          </span>
+        <div className="signup-row">
+          {status === "done" ? (
+            <div className="signup-success reveal">
+              <span style={{ flex: "none", width: 24, height: 24, borderRadius: "50%", background: "var(--theme-accent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon name="check" size={14} color="var(--theme-accent-ink)" />
+              </span>
+              <span style={{ fontFamily: "var(--font-body)", fontWeight: 600, fontSize: 15, color: "var(--heading-color)" }}>
+                You're on the list. Check your mail!
+              </span>
+            </div>
+          ) : (
+            <form onSubmit={submit} noValidate className="signup-form">
+              <input ref={inputRef} type="email" placeholder="Your email" value={email}
+                aria-label="Email address"
+                aria-invalid={hasError} aria-describedby="signup-error"
+                disabled={status === "loading"}
+                onChange={(e) => { setEmail(e.target.value); if (hasError) setError(""); }}
+                onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+                style={{ flex: 1, minWidth: 0, height: 54, padding: "0 22px", borderRadius: "var(--radius-pill)",
+                  border: "none", outline: "none", background: "var(--card)", boxShadow: ring,
+                  fontFamily: "var(--font-body)", fontWeight: 500, fontSize: 15.5, color: "var(--body-color)",
+                  transition: "box-shadow var(--dur-fast) var(--ease)" }} />
+              <Button variant="primary" type="submit" disabled={status === "loading"} className="signup-submit"
+                style={{ flex: "none", height: 54, padding: "0 24px", fontSize: 15.5, opacity: status === "loading" ? 0.7 : 1 }}
+                iconRight={status === "loading" ? null : <Icon name="arrow-right" size={17} />}>
+                {status === "loading" ? "Sending…" : "Notify me"}
+              </Button>
+            </form>
+          )}
+          <DownloadIcon />
         </div>
-
-        <div className={layer(open) + " signup-layer--form"} aria-hidden={!open}>
-          <form onSubmit={submit} noValidate style={{ display: "flex", gap: 10 }}>
-            <input ref={inputRef} type="email" placeholder="you@example.com" value={email}
-              aria-invalid={hasError} aria-describedby="signup-error"
-              disabled={status === "loading" || !open}
-              tabIndex={open ? 0 : -1}
-              onChange={(e) => { setEmail(e.target.value); if (hasError) setError(""); }}
-              onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
-              style={{ flex: 1, minWidth: 0, height: 54, padding: "0 22px", borderRadius: "var(--radius-pill)",
-                border: "none", outline: "none", background: "var(--card)", boxShadow: ring,
-                fontFamily: "var(--font-body)", fontWeight: 500, fontSize: 15.5, color: "var(--body-color)",
-                transition: "box-shadow var(--dur-fast) var(--ease)" }} />
-            <Button variant="primary" type="submit" disabled={status === "loading" || !open}
-              tabIndex={open ? 0 : -1}
-              style={{ flex: "none", height: 54, padding: "0 24px", fontSize: 15.5, opacity: status === "loading" ? 0.7 : 1 }}
-              iconRight={status === "loading" ? null : <Icon name="arrow-right" size={17} />}>
-              {status === "loading" ? "Joining…" : "Join"}
-            </Button>
-          </form>
-          <div id="signup-error" role="alert" aria-live="polite"
-            style={{ height: 20, marginTop: 8, paddingLeft: 22, fontFamily: "var(--font-body)", fontWeight: 500,
-              fontSize: 13.5, color: ERR, opacity: hasError ? 1 : 0, transition: "opacity var(--dur-fast) var(--ease)" }}>
-            {error || " "}
-          </div>
+        <div className="signup-note">
+          <span id="signup-error" role="alert" aria-live="polite" className="signup-error"
+            style={{ color: ERR, opacity: hasError ? 1 : 0 }}>
+            {error || " "}
+          </span>
+          <span className="download-caption" style={{ opacity: hasError ? 0 : undefined }}>free beta · macOS 14+</span>
         </div>
       </div>
+    );
+  }
+
+  const DOWNLOAD_ENDPOINT = "https://prunr-web.vercel.app/api/download";
+
+  function downloadHref() {
+    const src = new URLSearchParams(window.location.search).get("src");
+    return DOWNLOAD_ENDPOINT + "?src=" + encodeURIComponent(src && /^[a-z0-9_-]{1,32}$/i.test(src) ? src : "home");
+  }
+
+  function DownloadGlyph({ size = 21 }) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+        strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block" }}>
+        <path d="M12 15V3" />
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+      </svg>
+    );
+  }
+
+  function DownloadIcon() {
+    return (
+      <a id="download-beta" className="download-icon" href={downloadHref()}
+        aria-label="Download Prunr beta" title="Download beta">
+        <DownloadGlyph />
+      </a>
     );
   }
 
