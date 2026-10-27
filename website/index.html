@@ -22,39 +22,13 @@
   @keyframes revealIn { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
   .reveal { animation: revealIn 0.28s cubic-bezier(.4,0,.2,1); }
 
-  /* Signup: fixed slot — no layout shift between button, form, success. */
-  .signup-root {
-    position: relative;
-    width: 100%;
-    max-width: 466px;
-    min-height: 82px; /* 54px row + error reserve */
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .signup-layer {
-    grid-area: 1 / 1;
-    align-self: start;
-    width: 100%;
-    transition:
-      opacity 0.26s cubic-bezier(.4,0,.2,1),
-      transform 0.26s cubic-bezier(.4,0,.2,1),
-      visibility 0.26s step-end;
-  }
-  .signup-layer--in {
-    opacity: 1;
-    transform: none;
-    visibility: visible;
-    pointer-events: auto;
-  }
-  .signup-layer--out {
-    opacity: 0;
-    transform: scale(0.985) translateY(3px);
-    visibility: hidden;
-    pointer-events: none;
-  }
-  .signup-layer--cta.signup-layer--out { transform: scale(0.97); }
-  .signup-layer--form { transform-origin: left center; }
+  /* Signup row: email form (or success) + download icon; note line reserves error space. */
+  .signup-root { width: 100%; max-width: 530px; }
+  .signup-row { display: flex; align-items: center; gap: 10px; }
+  .signup-form { flex: 1; min-width: 0; display: flex; gap: 10px; }
   .signup-success {
+    flex: 1;
+    min-width: 0;
     display: inline-flex;
     align-items: center;
     gap: 11px;
@@ -64,33 +38,30 @@
     box-shadow: var(--shadow-hairline);
     min-height: 54px;
   }
-
-  .download-root { display: flex; flex-direction: column; align-items: flex-start; }
-  .download-btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
-    height: 54px; padding: 0 30px; border-radius: var(--radius-pill);
-    background: var(--theme-accent); color: var(--theme-accent-ink);
-    font-family: var(--font-body); font-weight: 600; font-size: 16px; line-height: 1;
-    text-decoration: none; white-space: nowrap; cursor: pointer;
-    box-shadow: var(--shadow-hairline);
-    transition: opacity var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  .download-icon {
+    flex: none; width: 54px; height: 54px; border-radius: var(--radius-pill);
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--card); color: var(--theme-accent);
+    box-shadow: var(--shadow-hairline); text-decoration: none;
+    transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
   }
-  .download-btn:hover { opacity: 0.92; box-shadow: var(--shadow-soft); }
-  .download-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-  .download-caption {
-    margin: 10px 0 0; padding-left: 4px;
-    font-family: var(--font-body); font-weight: 500; font-size: 13px;
-    color: var(--body-color); opacity: 0.55;
+  .download-icon:hover { transform: translateY(-1px); box-shadow: var(--shadow-hairline), var(--shadow-soft); }
+  .download-icon:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--theme-accent), var(--focus-ring); }
+  .signup-note {
+    display: grid; height: 20px; margin-top: 8px;
+    font-family: var(--font-body); font-weight: 500; font-size: 13.5px;
   }
-  .signup-toggle {
-    appearance: none; border: none; background: none; padding: 4px;
-    font-family: var(--font-body); font-weight: 500; font-size: 14px;
-    color: var(--body-color); opacity: 0.7; cursor: pointer;
-    text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border);
+  .signup-error, .download-caption {
+    grid-area: 1 / 1;
     transition: opacity var(--dur-fast) var(--ease);
   }
-  .signup-toggle:hover { opacity: 1; }
-  .signup-toggle:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 6px; }
+  .signup-error { padding-left: 22px; }
+  .download-caption { justify-self: end; white-space: nowrap; font-size: 13px; color: var(--body-color); opacity: 0.55; }
+  @media (max-width: 420px) {
+    .signup-form input { padding: 0 18px !important; }
+    .signup-submit { padding: 0 20px !important; }
+    .signup-submit > span:last-child:not(.ds-glare) { display: none !important; }
+  }
 
   /* Mobile-only line break inside the hero headline. */
   .m-br { display: none; }
@@ -119,8 +90,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     .emoji-bug, .emoji-leaf, .popover-open { animation: none; }
-    .signup-layer { transition: none; }
-    .signup-layer--out { opacity: 0; transform: none; }
   }
 
   /* Mobile-only app icon above hero headline. */
@@ -156,10 +125,7 @@
       display: flex !important; justify-content: center !important;
       width: 100% !important;
     }
-    .hero-cta { flex-direction: column !important; align-items: center !important; }
     .hero-cta > div { margin-left: auto !important; margin-right: auto !important; }
-    .hero-cta .download-root { align-items: center !important; }
-    .hero-cta .download-caption { padding-left: 0 !important; }
   }
 
   /* ---- Mobile: full reflow — menubar + screenshot become document flow ---- */
@@ -184,10 +150,7 @@
       align-items: center !important; justify-content: center !important;
       width: 100% !important;
     }
-    .hero-cta .download-root { margin-top: 0 !important; align-items: center !important; }
-    .hero-cta .download-caption { padding-left: 0 !important; text-align: center; }
-    .hero-cta .signup-root { margin-inline: auto !important; }
-    .hero-cta .signup-layer--cta { display: flex !important; justify-content: center !important; }
+    .hero-cta .signup-root { margin-top: 0 !important; margin-inline: auto !important; }
     .site-nav { display: none !important; }
     .hero-mobile-logo {
       display: block !important;
