@@ -37,9 +37,7 @@
     text-decoration: none; cursor: pointer;
     box-shadow: var(--shadow-hairline); transition: opacity 0.15s;
   }
-  .btn.loading { opacity: 0.4; pointer-events: none; }
   .build { margin-top: 14px; font-size: 13px; opacity: 0.38; }
-  .err { color: #d92d20; font-size: 14px; margin-top: 14px; }
 
   /* Footer — mirrors the landing page. */
   .site-footer {
@@ -62,9 +60,8 @@
     <img class="icon" src="assets/favicon.png" alt="" width="32" height="32" />
     <span class="logotype">Prunr</span>
   </div>
-  <a id="dl" class="btn loading" href="#">Download Prunr</a>
+  <a id="dl" class="btn" href="https://prunr-web.vercel.app/api/download?src=site">Download Prunr</a>
   <p id="build" class="build" hidden></p>
-  <p id="err" class="err" hidden></p>
 </main>
 <footer class="site-footer">
   <a class="footer-link" href="https://github.com/merlinkraemer/prunr" target="_blank" rel="noopener noreferrer">
@@ -78,9 +75,12 @@
 <script>
 (function () {
   var REPO = "merlinkraemer/prunr";
+  var DOWNLOAD_ENDPOINT = "https://prunr-web.vercel.app/api/download";
   var dl = document.getElementById("dl");
   var build = document.getElementById("build");
-  var err = document.getElementById("err");
+
+  var src = new URLSearchParams(location.search).get("src");
+  dl.href = DOWNLOAD_ENDPOINT + "?src=" + encodeURIComponent(src && /^[a-z0-9_-]{1,32}$/i.test(src) ? src : "site");
 
   fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
     headers: { Accept: "application/vnd.github+json" },
@@ -90,21 +90,14 @@
       var assets = rel.assets || [];
       var asset = assets.find(function (a) { return /-macos\.dmg$/i.test(a.name); })
                || assets.find(function (a) { return /-macos\.zip$/i.test(a.name) && !/dsym/i.test(a.name); });
-      if (!asset) throw new Error();
-      dl.href = asset.browser_download_url;
-      dl.classList.remove("loading");
+      if (!asset) return;
       var m = asset.name.match(/build(\d+)/i);
       var parts = [];
       if (rel.tag_name || rel.name) parts.push(rel.tag_name || rel.name);
       if (m) parts.push("build " + m[1]);
       if (parts.length) { build.textContent = parts.join(" · "); build.hidden = false; }
     })
-    .catch(function () {
-      dl.href = "https://github.com/" + REPO + "/releases/latest";
-      dl.classList.remove("loading");
-      err.textContent = "Couldn’t find a download — view releases on GitHub.";
-      err.hidden = false;
-    });
+    .catch(function () {});
 })();
 </script>
 </body>
