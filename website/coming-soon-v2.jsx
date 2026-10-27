@@ -162,13 +162,13 @@
 
     if (status === "done") {
       return (
-        <div className="signup-root reveal" style={{ marginTop: 32 }}>
+        <div className="signup-root reveal" style={{ marginTop: 18 }}>
           <div className="signup-success">
             <span style={{ flex: "none", width: 24, height: 24, borderRadius: "50%", background: "var(--theme-accent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="check" size={14} color="var(--theme-accent-ink)" />
             </span>
             <span style={{ fontFamily: "var(--font-body)", fontWeight: 600, fontSize: 15, color: "var(--heading-color)" }}>
-              Check your mail - dmg is on its way!
+              You're on the list. Check your mail!
             </span>
           </div>
         </div>
@@ -182,20 +182,16 @@
     const layer = (on) => "signup-layer " + (on ? "signup-layer--in" : "signup-layer--out");
 
     return (
-      <div className="signup-root" style={{ marginTop: 32 }}>
+      <div className="signup-root" style={{ marginTop: 18 }}>
         <div className={layer(!open) + " signup-layer--cta"} aria-hidden={open}>
-          <span className="cta-nudge" style={{ display: "inline-block" }}>
-            <Button variant="primary" type="button" onClick={() => setOpen(true)}
-              style={{ height: 54, padding: "0 30px", fontSize: 16 }}
-              iconLeft={<AppleLogo size={18} />}>
-              Join the alpha
-            </Button>
-          </span>
+          <button type="button" className="signup-toggle" onClick={() => setOpen(true)} tabIndex={open ? -1 : 0}>
+            or get notified about new releases
+          </button>
         </div>
 
         <div className={layer(open) + " signup-layer--form"} aria-hidden={!open}>
           <form onSubmit={submit} noValidate style={{ display: "flex", gap: 10 }}>
-            <input ref={inputRef} type="email" placeholder="you@example.com" value={email}
+            <input ref={inputRef} type="email" placeholder="Your email" value={email}
               aria-invalid={hasError} aria-describedby="signup-error"
               disabled={status === "loading" || !open}
               tabIndex={open ? 0 : -1}
@@ -209,7 +205,7 @@
               tabIndex={open ? 0 : -1}
               style={{ flex: "none", height: 54, padding: "0 24px", fontSize: 15.5, opacity: status === "loading" ? 0.7 : 1 }}
               iconRight={status === "loading" ? null : <Icon name="arrow-right" size={17} />}>
-              {status === "loading" ? "Joining…" : "Join"}
+              {status === "loading" ? "Sending…" : "Notify me"}
             </Button>
           </form>
           <div id="signup-error" role="alert" aria-live="polite"
@@ -218,6 +214,27 @@
             {error || " "}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  const DOWNLOAD_ENDPOINT = "https://prunr-web.vercel.app/api/download";
+
+  function downloadHref() {
+    const src = new URLSearchParams(window.location.search).get("src");
+    return DOWNLOAD_ENDPOINT + "?src=" + encodeURIComponent(src && /^[a-z0-9_-]{1,32}$/i.test(src) ? src : "home");
+  }
+
+  function Download() {
+    return (
+      <div className="download-root" style={{ marginTop: 32 }}>
+        <span className="cta-nudge">
+          <a id="download-beta" className="download-btn" href={downloadHref()}>
+            <AppleLogo size={18} />
+            Download beta
+          </a>
+        </span>
+        <p className="download-caption">macOS 14+ · free during beta</p>
       </div>
     );
   }
@@ -240,6 +257,7 @@
           </div>
 
           <div className="hero-cta">
+            <Download />
             <Signup />
           </div>
         </div>
@@ -305,5 +323,5 @@
     );
   }
 
-  window.PrunrComingSoonV2 = { Page, MenuBar, Nav, Hero, Signup, Footer };
+  window.PrunrComingSoonV2 = { Page, MenuBar, Nav, Hero, Download, Signup, Footer };
 })();

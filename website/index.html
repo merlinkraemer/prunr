@@ -29,6 +29,7 @@
     max-width: 466px;
     min-height: 82px; /* 54px row + error reserve */
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
   }
   .signup-layer {
     grid-area: 1 / 1;
@@ -63,6 +64,33 @@
     box-shadow: var(--shadow-hairline);
     min-height: 54px;
   }
+
+  .download-root { display: flex; flex-direction: column; align-items: flex-start; }
+  .download-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    height: 54px; padding: 0 30px; border-radius: var(--radius-pill);
+    background: var(--theme-accent); color: var(--theme-accent-ink);
+    font-family: var(--font-body); font-weight: 600; font-size: 16px; line-height: 1;
+    text-decoration: none; white-space: nowrap; cursor: pointer;
+    box-shadow: var(--shadow-hairline);
+    transition: opacity var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  }
+  .download-btn:hover { opacity: 0.92; box-shadow: var(--shadow-soft); }
+  .download-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .download-caption {
+    margin: 10px 0 0; padding-left: 4px;
+    font-family: var(--font-body); font-weight: 500; font-size: 13px;
+    color: var(--body-color); opacity: 0.55;
+  }
+  .signup-toggle {
+    appearance: none; border: none; background: none; padding: 4px;
+    font-family: var(--font-body); font-weight: 500; font-size: 14px;
+    color: var(--body-color); opacity: 0.7; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border);
+    transition: opacity var(--dur-fast) var(--ease);
+  }
+  .signup-toggle:hover { opacity: 1; }
+  .signup-toggle:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 6px; }
 
   /* Mobile-only line break inside the hero headline. */
   .m-br { display: none; }
@@ -128,7 +156,10 @@
       display: flex !important; justify-content: center !important;
       width: 100% !important;
     }
+    .hero-cta { flex-direction: column !important; align-items: center !important; }
     .hero-cta > div { margin-left: auto !important; margin-right: auto !important; }
+    .hero-cta .download-root { align-items: center !important; }
+    .hero-cta .download-caption { padding-left: 0 !important; }
   }
 
   /* ---- Mobile: full reflow — menubar + screenshot become document flow ---- */
@@ -153,7 +184,9 @@
       align-items: center !important; justify-content: center !important;
       width: 100% !important;
     }
-    .hero-cta .signup-root { margin-top: 0 !important; margin-inline: auto !important; }
+    .hero-cta .download-root { margin-top: 0 !important; align-items: center !important; }
+    .hero-cta .download-caption { padding-left: 0 !important; text-align: center; }
+    .hero-cta .signup-root { margin-inline: auto !important; }
     .hero-cta .signup-layer--cta { display: flex !important; justify-content: center !important; }
     .site-nav { display: none !important; }
     .hero-mobile-logo {
