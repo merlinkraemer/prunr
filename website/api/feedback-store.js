@@ -14,7 +14,7 @@ function redisConfig() {
   return { url: url.replace(/\/$/, ""), token };
 }
 
-async function redisCommand(...command) {
+export async function redisCommand(...command) {
   const { url, token } = redisConfig();
   const response = await fetch(url, {
     method: "POST",
@@ -31,7 +31,7 @@ async function redisCommand(...command) {
   return payload.result;
 }
 
-async function redisTransaction(commands) {
+export async function redisTransaction(commands) {
   const { url, token } = redisConfig();
   const response = await fetch(`${url}/multi-exec`, {
     method: "POST",

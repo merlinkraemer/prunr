@@ -9,6 +9,7 @@ Notes, reviews, and plans. Product entrypoint: [../README.md](../README.md).
 | [brevo-welcome-email.md](brevo-welcome-email.md) | Brevo welcome email (alpha download link) |
 | [cpu-leak-analysis-2026-06-15.md](cpu-leak-analysis-2026-06-15.md) | Prunr CPU Leak Analysis — 2026-06-15 |
 | [feedback-agent-api.md](feedback-agent-api.md) | Agent feedback API |
+| [download-stats.md](download-stats.md) | Site download counter and stats API |
 | [growth-framing-2026-08-21.md](growth-framing-2026-08-21.md) | Prunr — What should the growth number *mean*? |
 | [lessons.md](lessons.md) | Lessons |
 | [performance-quality-logic-review-2026-10-03.md](performance-quality-logic-review-2026-10-03.md) | Performance, code quality, and system logic review |
