@@ -33,11 +33,12 @@ Link-preview bots that GET the URL count under `ua.bot`.
 
 ## Reading counts
 
-Uses the same `FEEDBACK_AGENT_TOKEN` as the feedback agent API
-(`docs/feedback-agent-api.md`):
+Accepts `DOWNLOAD_STATS_TOKEN` (read-only, download stats only; give this one
+to outside bots) or `FEEDBACK_AGENT_TOKEN` (`docs/feedback-agent-api.md`). The
+stats token cannot read feedback.
 
 ```sh
-curl -sS -H "Authorization: Bearer $FEEDBACK_AGENT_TOKEN" \
+curl -sS -H "Authorization: Bearer $DOWNLOAD_STATS_TOKEN" \
   'https://prunr-web.vercel.app/api/download-stats?days=30'
 ```
 
@@ -49,8 +50,7 @@ days, and `byDay` (newest first) with the same counters per day. `days` is
 
 `prunr-web` is deployed with the Vercel CLI from `website/` (the folder is
 linked to the project). `KV_REST_API_URL`, `KV_REST_API_TOKEN`, and
-`FEEDBACK_AGENT_TOKEN` are already set in production, so no new env vars are
-needed:
+`FEEDBACK_AGENT_TOKEN` and `DOWNLOAD_STATS_TOKEN` are set in production:
 
 ```sh
 cd website && npx vercel deploy --prod

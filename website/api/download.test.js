@@ -3,6 +3,7 @@ import test from "node:test";
 
 import downloadHandler, { FALLBACK_URL, resetReleaseCache, userAgentClass } from "./download.js";
 import statsHandler from "./download-stats.js";
+import { requireAgentAuth } from "./agent-feedback-auth.js";
 
 const DMG_URL = "https://github.com/merlinkraemer/prunr/releases/download/v0.12.0/Prunr-0.12.0-build42-macos.dmg";
 const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15";
@@ -74,6 +75,7 @@ global.fetch = async (url, options = {}) => {
 process.env.KV_REST_API_URL = "https://kv.example.test";
 process.env.KV_REST_API_TOKEN = "kv-token";
 process.env.FEEDBACK_AGENT_TOKEN = "agent-token";
+process.env.DOWNLOAD_STATS_TOKEN = "stats-token";
 
 function response() {
   return {
@@ -172,6 +174,18 @@ test("download stats return totals by day and source", async () => {
   assert.equal(res.body.byDay.length, 1);
   assert.equal(res.body.byDay[0].date, new Date().toISOString().slice(0, 10));
   assert.equal(res.body.byDay[0].total, 3);
+});
+
+test("download stats accept the read-only stats token", async () => {
+  const res = response();
+  await statsHandler({ method: "GET", headers: { authorization: "Bearer stats-token" }, query: {} }, res);
+  assert.equal(res.statusCode, 200);
+});
+
+test("the stats token cannot read feedback", async () => {
+  const res = response();
+  assert.equal(requireAgentAuth({ headers: { authorization: "Bearer stats-token" } }, res), false);
+  assert.equal(res.statusCode, 401);
 });
 
 test("download stats reject invalid day ranges", async () => {
