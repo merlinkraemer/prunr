@@ -538,6 +538,27 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
+    func testDiskUsageOfSparseFileIsAllocatedBytesNotLogicalSize() throws {
+        let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrSparse")
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let file = tempDirectory.appendingPathComponent("sparse.bin")
+        let logicalBytes = 16 * Self.mb
+        let descriptor = open(file.path, O_CREAT | O_WRONLY, 0o644)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        XCTAssertEqual(ftruncate(descriptor, off_t(logicalBytes)), 0)
+        close(descriptor)
+
+        var fileStat = stat()
+        XCTAssertEqual(lstat(file.path, &fileStat), 0)
+        XCTAssertEqual(Int64(fileStat.st_size), logicalBytes)
+        XCTAssertEqual(
+            FileScanner.diskUsageBytes(for: fileStat),
+            Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
+        )
+        XCTAssertLessThan(FileScanner.diskUsageBytes(for: fileStat), logicalBytes)
+    }
+
     /// Buckets written before v21 read back as watcher buckets, and the identity
     /// index lets a scan residual share a minute and key with a watch bucket.
     func testJournalSourceMigrationTagsExistingBucketsAsWatch() throws {

@@ -162,8 +162,7 @@ final class FileScanner {
     ]
 
     static func diskUsageBytes(for fileStat: stat) -> Int64 {
-        let allocatedBytes = Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
-        return allocatedBytes > 0 ? allocatedBytes : Int64(fileStat.st_size)
+        Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
     }
 
     // MARK: - Public API
