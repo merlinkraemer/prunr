@@ -1061,4 +1061,99 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertTrue(atFirstDay.isScrolled)
         XCTAssertEqual(atFirstDay.amountText, "\u{2014}")
     }
+
+    // MARK: - Estimated history
+
+    func testOnlyFileHistoryRowsAreAllEstimated() {
+        let utc = calendar()
+        let now = date(2026, 10, 20, 12, 0, in: utc)
+        let slots = [
+            slot(Self.iso, at: date(2026, 10, 10, 9, 0, in: utc), net: 3 * Self.gb, source: .files),
+            slot(Self.project, at: date(2026, 10, 12, 9, 0, in: utc), net: 2 * Self.gb, source: .files)
+        ]
+
+        let feed = build(slots, now: now, calendar: utc, watchingSince: now)
+
+        XCTAssertTrue(feed.hasEstimatedRows)
+        XCTAssertTrue(feed.measuredDays.isEmpty)
+        XCTAssertEqual(feed.estimatedDays, feed.days)
+        XCTAssertEqual(feed.quietLineSince(now: now, calendar: utc), EpisodeBuilder.windowStart(now: now, calendar: utc))
+    }
+
+    func testMeasuredTodayStaysAboveEstimatedOlderDays() {
+        let utc = calendar()
+        let now = date(2026, 10, 20, 12, 0, in: utc)
+        let slots = [
+            slot(Self.iso, at: date(2026, 10, 10, 9, 0, in: utc), net: 3 * Self.gb, source: .files),
+            slot(Self.project, at: date(2026, 10, 20, 9, 0, in: utc), net: 2 * Self.gb, source: .watch)
+        ]
+
+        let feed = build(slots, now: now, calendar: utc, watchingSince: date(2026, 10, 20, 8, 0, in: utc))
+
+        XCTAssertTrue(feed.hasEstimatedRows)
+        XCTAssertEqual(feed.measuredDays.map(\.day), [date(2026, 10, 20, 0, 0, in: utc)])
+        XCTAssertEqual(feed.estimatedDays.map(\.day), [date(2026, 10, 10, 0, 0, in: utc)])
+        XCTAssertEqual(feed.measuredDays.flatMap(\.episodes).map(\.isEstimated), [false])
+        XCTAssertEqual(feed.estimatedDays.flatMap(\.episodes).map(\.isEstimated), [true])
+        XCTAssertNil(feed.quietLineSince(now: now, calendar: utc))
+    }
+
+    func testDayMixingBothSourcesShowsEachRowInOneSectionOnly() {
+        let utc = calendar()
+        let now = date(2026, 10, 20, 18, 0, in: utc)
+        let slots = [
+            slot(Self.iso, at: date(2026, 10, 20, 7, 0, in: utc), net: 3 * Self.gb, source: .files),
+            slot(Self.project, at: date(2026, 10, 20, 15, 0, in: utc), net: 2 * Self.gb, source: .watch)
+        ]
+
+        let feed = build(slots, now: now, calendar: utc, watchingSince: date(2026, 10, 20, 12, 0, in: utc))
+        let measured = feed.measuredDays.flatMap(\.episodes).map(\.id)
+        let estimated = feed.estimatedDays.flatMap(\.episodes).map(\.id)
+
+        XCTAssertEqual(measured.count, 1)
+        XCTAssertEqual(estimated.count, 1)
+        XCTAssertTrue(Set(measured).isDisjoint(with: estimated))
+        XCTAssertEqual(Set(measured + estimated), Set(feed.episodes.map(\.id)))
+    }
+
+    func testEstimatedOnlyMeasuredQuietLineIgnoresEstimatedRowThisWeek() {
+        let utc = calendar()
+        let now = date(2026, 10, 20, 12, 0, in: utc)
+        let slots = [slot(Self.iso, at: date(2026, 10, 19, 9, 0, in: utc), net: 3 * Self.gb, source: .files)]
+
+        let feed = build(slots, now: now, calendar: utc, watchingSince: now)
+
+        XCTAssertNil(feed.quietSince(now: now, calendar: utc))
+        XCTAssertNotNil(feed.quietLineSince(now: now, calendar: utc))
+    }
+
+    func testNoFileHistoryMeansNoSections() {
+        let utc = calendar()
+        let now = date(2026, 10, 20, 12, 0, in: utc)
+        let slots = [
+            slot(Self.iso, at: date(2026, 10, 18, 9, 0, in: utc), net: 3 * Self.gb, source: .watch),
+            slot(Self.project, at: date(2026, 10, 19, 9, 0, in: utc), net: 2 * Self.gb, source: .scan)
+        ]
+
+        let feed = build(slots, now: now, calendar: utc, watchingSince: date(2026, 10, 1, 0, 0, in: utc))
+
+        XCTAssertFalse(feed.hasFileHistory)
+        XCTAssertFalse(feed.hasEstimatedRows)
+        XCTAssertEqual(feed.quietLineSince(now: now, calendar: utc), feed.quietSince(now: now, calendar: utc))
+        XCTAssertFalse(feed.episodes.contains(where: \.isEstimated))
+    }
+
+    func testEstimatedDaysOutsideTheWindowLeaveNoSections() {
+        let utc = calendar()
+        let now = date(2026, 12, 20, 12, 0, in: utc)
+        let slots = [
+            slot(Self.iso, at: date(2026, 10, 10, 9, 0, in: utc), net: 3 * Self.gb, source: .files),
+            slot(Self.project, at: date(2026, 12, 19, 9, 0, in: utc), net: 2 * Self.gb, source: .watch)
+        ]
+
+        let feed = build(slots, now: now, calendar: utc, watchingSince: date(2026, 10, 10, 12, 0, in: utc))
+
+        XCTAssertFalse(feed.hasFileHistory)
+        XCTAssertFalse(feed.hasEstimatedRows)
+    }
 }

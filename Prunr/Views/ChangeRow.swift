@@ -30,9 +30,10 @@ struct ChangeRow: View {
     private func content(opens: Bool) -> some View {
         HStack(spacing: 10) {
             UnitIconTile(category: episode.category, source: episode.rowIconSource, size: 18)
+                .estimatedLook(episode.isEstimated)
 
             VStack(alignment: .leading, spacing: 1) {
-                FittingTitle(title: title, shortTitle: episode.shortTitle, font: .system(size: 13, weight: .medium))
+                FittingTitle(title: title, shortTitle: episode.shortTitle, font: .system(size: 13, weight: .medium), isDimmed: episode.isEstimated)
                 if let time {
                     Text(time)
                         .font(.system(size: 11).monospacedDigit())
@@ -44,7 +45,7 @@ struct ChangeRow: View {
 
             Text(signedBytes(episode.netBytes))
                 .font(.system(size: 13).monospacedDigit())
-                .foregroundStyle(changeAmountStyle(episode.netBytes))
+                .foregroundStyle(changeAmountStyle(episode.netBytes, isEstimated: episode.isEstimated))
                 .lineLimit(1)
                 .fixedSize()
 
@@ -79,6 +80,7 @@ struct FittingTitle: View {
     let title: String
     var shortTitle: String?
     let font: Font
+    var isDimmed = false
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -95,12 +97,22 @@ struct FittingTitle: View {
     private func label(_ text: String) -> some View {
         Text(text)
             .font(font)
-            .foregroundStyle(.primary)
+            .foregroundStyle(isDimmed ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
             .lineLimit(1)
     }
 }
 
-func changeAmountStyle(_ netBytes: Int64) -> AnyShapeStyle {
+extension View {
+    func estimatedLook(_ isEstimated: Bool) -> some View {
+        saturation(isEstimated ? 0.35 : 1)
+            .opacity(isEstimated ? 0.78 : 1)
+    }
+}
+
+func changeAmountStyle(_ netBytes: Int64, isEstimated: Bool = false) -> AnyShapeStyle {
+    if isEstimated {
+        return AnyShapeStyle(.secondary)
+    }
     if EpisodeBuilder.isLargeGrowth(netBytes) {
         return AnyShapeStyle(Color.orange)
     }

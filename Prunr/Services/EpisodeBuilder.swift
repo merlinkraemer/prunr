@@ -45,6 +45,9 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// A shrink whose bytes went to the Trash in the same slots: a move, not
     /// freed space.
     var isMovedToTrash = false
+    /// True when every slot behind the row was rebuilt from file dates before
+    /// Prunr was installed, so the amount is an estimate, not a measurement.
+    var isEstimated = false
     /// Set when the amount built up over several days: the day it started.
     /// The caption then reads "a little each day since Fri 2 Oct".
     var buildingSince: Date?
@@ -131,6 +134,9 @@ struct ChangeGroup: Identifiable, Equatable, Sendable {
 
     var id: String { "\(owner.key)@\(Int64(day.timeIntervalSince1970))" }
 
+    /// A group holds one day's rows of one section, so its rows agree.
+    var isEstimated: Bool { episodes.allSatisfy(\.isEstimated) }
+
     /// True for an app or System: the row always reads the owner's name.
     var isNamedOwner: Bool { !owner.isCategory }
 
@@ -179,6 +185,34 @@ struct ChangeFeed: Equatable, Sendable {
     }
 
     var hasRows: Bool { !days.isEmpty }
+
+    /// True when the list shows rows rebuilt from file dates, so it splits
+    /// into "Since install" and "Found on disk · estimated".
+    var hasEstimatedRows: Bool { hasFileHistory && episodes.contains(where: \.isEstimated) }
+
+    /// The days of rows the watcher or a scan measured. A day that mixes
+    /// both appears in each list with only its own rows, so no row shows twice.
+    var measuredDays: [ChangeFeedDay] { daysKeeping { !$0.isEstimated } }
+
+    /// The days of rows rebuilt from file dates.
+    var estimatedDays: [ChangeFeedDay] { daysKeeping(\.isEstimated) }
+
+    private func daysKeeping(_ keep: (ChangeEpisode) -> Bool) -> [ChangeFeedDay] {
+        days.compactMap { day in
+            let kept = day.episodes.filter(keep)
+            return kept.isEmpty ? nil : ChangeFeedDay(day: day.day, episodes: kept)
+        }
+    }
+
+    /// The date for the quiet line at the top of the list. With an estimated
+    /// section it speaks for "Since install" alone, so estimated rows do not
+    /// silence it.
+    func quietLineSince(now: Date, calendar: Calendar) -> Date? {
+        guard hasEstimatedRows else { return quietSince(now: now, calendar: calendar) }
+        var measured = self
+        measured.days = measuredDays
+        return measured.quietSince(now: now, calendar: calendar)
+    }
 
     /// Day one: nothing earned a row, nothing was rebuilt from file dates and
     /// watching started under 24 hours ago (or its start is unknown). There is
@@ -495,6 +529,7 @@ enum EpisodeBuilder {
         home: String
     ) -> ChangeEpisode {
         let first = daySlots[0]
+        let isEstimated = daySlots.allSatisfy { $0.source == .files }
 
         let bySlot = Dictionary(grouping: daySlots, by: \.slot)
         let netOfSlot = bySlot.mapValues { $0.reduce(Int64(0)) { $0 + $1.netBytes } }
@@ -540,6 +575,7 @@ enum EpisodeBuilder {
             time: time,
             isApproximateTime: approximate,
             isMovedToTrash: movedToTrash,
+            isEstimated: isEstimated,
             buildingSince: isOneGo ? nil : countStart,
             iconSource: icon,
             shortTitle: name.shortTitle,

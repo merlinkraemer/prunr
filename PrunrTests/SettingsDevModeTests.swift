@@ -188,7 +188,9 @@ final class SettingsDevModeTests: PrunrTestCase {
         XCTAssertFalse(feed.isShortHistory(now: now, calendar: calendar))
         XCTAssertEqual(feed.watchingSince, now)
         XCTAssertEqual(feed.watchingSinceToday(now: now, calendar: calendar), now)
-        XCTAssertTrue(feed.days.allSatisfy { $0.day < calendar.startOfDay(for: now) })
+        XCTAssertTrue(feed.hasEstimatedRows)
+        XCTAssertEqual(feed.measuredDays.map(\.day), [calendar.startOfDay(for: now)])
+        XCTAssertTrue(feed.estimatedDays.allSatisfy { $0.day < calendar.startOfDay(for: now) })
     }
 
     func testPanelPreviewNeverTouchesTheDatabaseOrManagerState() async throws {

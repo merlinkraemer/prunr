@@ -65,7 +65,7 @@ struct ChangeFeedRows: View {
     /// The scroll id at the very top of the list: the quiet line when it is
     /// shown, else the newest day.
     static func topAnchor(for feed: ChangeFeed, now: Date, calendar: Calendar = .current) -> Date? {
-        feed.quietSince(now: now, calendar: calendar) == nil ? feed.days.first?.day : quietLineID
+        feed.quietLineSince(now: now, calendar: calendar) == nil ? feed.days.first?.day : quietLineID
     }
 
     let feed: ChangeFeed
@@ -79,7 +79,11 @@ struct ChangeFeedRows: View {
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
-            if let since = feed.quietSince(now: now, calendar: calendar) {
+            if feed.hasEstimatedRows {
+                ChangeFeedSectionHeader(title: "Since install")
+            }
+
+            if let since = feed.quietLineSince(now: now, calendar: calendar) {
                 Text(EpisodeBuilder.quietLabel(since: since, calendar: calendar))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -90,9 +94,28 @@ struct ChangeFeedRows: View {
                     .id(Self.quietLineID)
             }
 
-            ForEach(feed.days) { day in
-                daySection(day)
-                    .id(day.id)
+            if feed.hasEstimatedRows {
+                let measuredDays = feed.measuredDays
+                let measuredDates = Set(measuredDays.map(\.day))
+                ForEach(measuredDays) { day in
+                    daySection(day)
+                        .id(day.id)
+                }
+
+                ChangeFeedSectionHeader(title: "Found on disk \u{B7} estimated", isEstimated: true)
+                ForEach(feed.estimatedDays) { day in
+                    if measuredDates.contains(day.day) {
+                        daySection(day)
+                    } else {
+                        daySection(day)
+                            .id(day.id)
+                    }
+                }
+            } else {
+                ForEach(feed.days) { day in
+                    daySection(day)
+                        .id(day.id)
+                }
             }
 
             if feed.isShortHistory(now: now, calendar: calendar), let since = feed.watchingSince {
@@ -203,5 +226,73 @@ extension View {
 
     func clearOfFooter() -> some View {
         padding(.bottom, SoftBottomEdge.footerHeight)
+    }
+}
+
+struct ChangeFeedSectionHeader: View {
+    let title: String
+    var isEstimated = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.3)
+                .foregroundStyle(isEstimated ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+            if isEstimated {
+                EstimatedInfoButton()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.top, 14)
+        .padding(.bottom, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// The `info.circle` after "Found on disk · estimated". The system popover
+/// opens after a short hover or on click, and closes when the pointer leaves.
+struct EstimatedInfoButton: View {
+    static let explanation = "Estimated from file dates before Prunr was installed."
+    static let hoverDelay: Duration = .milliseconds(300)
+
+    @State private var isShown = false
+    @State private var pendingShow: Task<Void, Never>?
+
+    var body: some View {
+        Button {
+            pendingShow?.cancel()
+            isShown.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            pendingShow?.cancel()
+            if hovering {
+                pendingShow = Task { @MainActor in
+                    try? await Task.sleep(for: Self.hoverDelay)
+                    guard !Task.isCancelled else { return }
+                    isShown = true
+                }
+            } else {
+                isShown = false
+            }
+        }
+        .popover(isPresented: $isShown, arrowEdge: .bottom) {
+            Text(Self.explanation)
+                .font(.system(size: 12))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 220, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+        }
+        .accessibilityLabel("Estimated history")
+        .accessibilityHint(Self.explanation)
     }
 }

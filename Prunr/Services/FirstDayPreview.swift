@@ -10,6 +10,8 @@ enum FirstDayPreview {
     }
 
     private static let rows = [
+        Row(path: "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Google Chrome Framework",
+            netBytes: 300_000_000, daysAgo: 0, hour: 9, minute: 20),
         Row(path: "/Users/alex/Downloads/ubuntu-24.04.1-arm64.iso", netBytes: 3_100_000_000, daysAgo: 1, hour: 18, minute: 12),
         Row(path: "/Users/alex/Library/Developer/CoreSimulator/Devices/5E1C0B7A/data/Containers/Data/Weatherly.sqlite",
             netBytes: 7_800_000_000, daysAgo: 2, hour: 10, minute: 31),
@@ -36,7 +38,9 @@ enum FirstDayPreview {
         let episodes = rows.map { row -> ChangeEpisode in
             let day = calendar.date(byAdding: .day, value: -row.daysAgo, to: today) ?? today
             let time = calendar.date(bySettingHour: row.hour, minute: row.minute, second: 0, of: day) ?? day
-            return MarketingSample.episode(row.path, row.netBytes, at: time)
+            var episode = MarketingSample.episode(row.path, row.netBytes, at: time)
+            episode.isEstimated = row.daysAgo > 0
+            return episode
         }
         let days = Dictionary(grouping: episodes, by: \.day)
             .map { ChangeFeedDay(day: $0.key, episodes: $0.value.sorted { $0.time > $1.time }) }

@@ -14,18 +14,20 @@ struct ChangeGroupRow: View {
             HStack(spacing: 10) {
                 if let iconSource = group.rowIconSource {
                     UnitIconTile(category: group.category, source: iconSource, size: 18)
+                        .estimatedLook(group.isEstimated)
                 } else {
                     Image(systemName: group.category.icon)
                         .font(.system(size: 15))
                         .foregroundStyle(group.category.color)
                         .frame(width: 18, height: 18)
+                        .estimatedLook(group.isEstimated)
                 }
 
-                FittingTitle(title: group.rowTitle, shortTitle: group.rowShortTitle, font: .system(size: 13, weight: .semibold))
+                FittingTitle(title: group.rowTitle, shortTitle: group.rowShortTitle, font: .system(size: 13, weight: .semibold), isDimmed: group.isEstimated)
 
                 Text(signedBytes(group.netBytes))
                     .font(.system(size: 13).monospacedDigit())
-                    .foregroundStyle(changeAmountStyle(group.netBytes))
+                    .foregroundStyle(changeAmountStyle(group.netBytes, isEstimated: group.isEstimated))
                     .lineLimit(1)
                     .fixedSize()
 
