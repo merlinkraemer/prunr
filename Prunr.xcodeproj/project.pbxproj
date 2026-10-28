@@ -43,6 +43,7 @@
 		53BD8763724D3CC68ED76FCB /* FSEventsNoiseFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C918D45CF08B646E3ABAE820 /* FSEventsNoiseFilter.swift */; };
 		5474497B734859A564238117 /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E245227FBA99587A6DF0C4A /* Snapshot.swift */; };
 		568A6B4175387523687ED559 /* SnapshotEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03FCFE74B7D3EE5B8B0F729C /* SnapshotEntry.swift */; };
+		5C1DA25992DD6CE81AF8EABA /* FirstDayPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AAE6D1295509598E288C845 /* FirstDayPreview.swift */; };
 		633035A1AE5750C4AAA1FDA5 /* RecentChangeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E6413BC5E09F3DB8AA03F4 /* RecentChangeService.swift */; };
 		650E2A6C6CDF0B45A84B5957 /* DrilldownListPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE8A8886A955FB6030EB2BB5 /* DrilldownListPane.swift */; };
 		6653FC659FE7068CDF28824B /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B3CF2AD939B5B3B85D4CA22 /* SettingsStore.swift */; };
@@ -129,6 +130,7 @@
 		03FCFE74B7D3EE5B8B0F729C /* SnapshotEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotEntry.swift; sourceTree = "<group>"; };
 		08EB343218571F3B97D51611 /* MenuBarManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarManager.swift; sourceTree = "<group>"; };
 		096E22DA954F439802DC05E3 /* DrilldownIndexTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrilldownIndexTests.swift; sourceTree = "<group>"; };
+		0AAE6D1295509598E288C845 /* FirstDayPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstDayPreview.swift; sourceTree = "<group>"; };
 		0C5D1554E1020847E7F94508 /* AppCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCatalog.swift; sourceTree = "<group>"; };
 		10D8FE67BA86F47FB3B7CA95 /* MarketingScreenshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketingScreenshotTests.swift; sourceTree = "<group>"; };
 		1393130BB45D84D6B2D5C48F /* OwnerFeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerFeedTests.swift; sourceTree = "<group>"; };
@@ -421,6 +423,7 @@
 				870CE23067BCE3685A979080 /* EpisodeBuilder.swift */,
 				F776C3C717DBA7FC64554F6B /* FeedbackService.swift */,
 				40E989B2BA4D011B5C20B82D /* FileScanner.swift */,
+				0AAE6D1295509598E288C845 /* FirstDayPreview.swift */,
 				C918D45CF08B646E3ABAE820 /* FSEventsNoiseFilter.swift */,
 				ADFA692654D900931A96C796 /* FSEventsWatcher.swift */,
 				5B0E8371562FF170C5B1E542 /* GrowthJournalService.swift */,
@@ -635,6 +638,7 @@
 				97BBACB71AB4AA756B107646 /* FeedbackService.swift in Sources */,
 				8DFEA284FF2CC8A4A2523653 /* FileDateHistory.swift in Sources */,
 				8D1CA082042D60BC7B5D588C /* FileScanner.swift in Sources */,
+				5C1DA25992DD6CE81AF8EABA /* FirstDayPreview.swift in Sources */,
 				A52D91FB9C98E0C7328C1666 /* FooterStatus.swift in Sources */,
 				C51BB0A8E9DBA9CC3F92608C /* FormattedBytes.swift in Sources */,
 				B632B7B36A8CC8106FA8B352 /* GrowthCategory.swift in Sources */,
@@ -698,7 +702,7 @@
 				CODE_SIGN_ENTITLEMENTS = Prunr/Prunr.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = PM5QWB5426;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -707,7 +711,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = "0.1.5-alpha.23";
+				MARKETING_VERSION = "0.1.5-alpha.24";
 				PRODUCT_BUNDLE_IDENTIFIER = com.prunr.app;
 				PRODUCT_NAME = Prunr;
 				SDKROOT = macosx;
@@ -862,7 +866,7 @@
 				CODE_SIGN_ENTITLEMENTS = Prunr/Prunr.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 24;
+				CURRENT_PROJECT_VERSION = 25;
 				DEVELOPMENT_TEAM = PM5QWB5426;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -871,7 +875,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = "0.1.5-alpha.23";
+				MARKETING_VERSION = "0.1.5-alpha.24";
 				PRODUCT_BUNDLE_IDENTIFIER = com.prunr.app;
 				PRODUCT_NAME = Prunr;
 				SDKROOT = macosx;
