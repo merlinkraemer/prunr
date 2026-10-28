@@ -177,6 +177,20 @@ final class SettingsDevModeTests: PrunrTestCase {
         XCTAssertEqual(PanelPreview.dayOne.changeFeed(over: live, now: now)?.feed?.isDayOne(now: now), true)
     }
 
+    func testFirstDayPreviewReadsAsRebuiltFromFileDatesWatchingSinceToday() throws {
+        let now = Date()
+        let calendar = Calendar.current
+        let feed = try XCTUnwrap(PanelPreview.firstDay.changeFeed(over: nil, now: now)?.feed)
+
+        XCTAssertTrue(feed.hasFileHistory)
+        XCTAssertTrue(feed.hasRows)
+        XCTAssertFalse(feed.isDayOne(now: now))
+        XCTAssertFalse(feed.isShortHistory(now: now, calendar: calendar))
+        XCTAssertEqual(feed.watchingSince, now)
+        XCTAssertEqual(feed.watchingSinceToday(now: now, calendar: calendar), now)
+        XCTAssertTrue(feed.days.allSatisfy { $0.day < calendar.startOfDay(for: now) })
+    }
+
     func testPanelPreviewNeverTouchesTheDatabaseOrManagerState() async throws {
         try await withTemporaryDatabase { trackedPathId, _ in
             let snapshotsBefore = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)

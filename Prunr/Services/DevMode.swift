@@ -9,6 +9,7 @@ enum PanelPreview: String, CaseIterable, Identifiable {
     case onboarding
     case scanning
     case dayOne
+    case firstDay
     case error
     case sample
 
@@ -20,6 +21,7 @@ enum PanelPreview: String, CaseIterable, Identifiable {
         case .onboarding: return "Onboarding"
         case .scanning: return "Scanning"
         case .dayOne: return "Day one"
+        case .firstDay: return "First day (after scan)"
         case .error: return "Error"
         case .sample: return "Sample"
         }
@@ -28,6 +30,7 @@ enum PanelPreview: String, CaseIterable, Identifiable {
     func changeFeed(over live: ChangeFeedResult?, now: Date = Date()) -> ChangeFeedResult? {
         switch self {
         case .dayOne: return .loaded(ChangeFeed(days: [], weekNetBytes: 0, watchingSince: now))
+        case .firstDay: return .loaded(FirstDayPreview.feed(now: now))
         case .error: return .failed
         case .sample: return .loaded(MarketingSample.feed)
         case .live, .onboarding, .scanning: return live

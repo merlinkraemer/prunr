@@ -333,7 +333,7 @@ struct MenuBarView: View {
                 case .scanning:
                     scanningPreviewView
                         .allowsHitTesting(false)
-                case .dayOne, .error:
+                case .dayOne, .firstDay, .error:
                     mainCategoryView
                 case .sample:
                     PanelSamplePreview()

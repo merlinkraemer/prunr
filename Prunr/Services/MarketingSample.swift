@@ -111,10 +111,13 @@ enum MarketingSample {
         hour: Int,
         minute: Int
     ) -> ChangeEpisode {
+        episode(path, netBytes, at: date(day: day, hour: hour, minute: minute))
+    }
+
+    static func episode(_ path: String, _ netBytes: Int64, at time: Date) -> ChangeEpisode {
         let key = UnitResolver.resolveKey(path: path, home: home)
         let name = UnitNamer.name(for: key, home: home)
         let isTrash = key.kind == .trash
-        let time = date(day: day, hour: hour, minute: minute)
         let startOfDay = calendar.startOfDay(for: time)
         return ChangeEpisode(
             id: "\(key.rawValue)@\(Int64(startOfDay.timeIntervalSince1970))",
