@@ -22,6 +22,7 @@ targets: hardening + real-data usefulness. Rows like "folder grew +x" whose dril
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
+review: none yet. Q6 adds a phone review page for snapshot PNGs/GIFs (own ports.tsv row, https://dev.tail87069a.ts.net:<port>); URL goes here
 
 ## Queue
 
@@ -41,7 +42,7 @@ do not touch: delete nothing on the Mac.
 ### Q4 Core-screen design prep [landed] - PRD docs/core-screen-episodes-prd-2026-10-11.md
 ### Q5 Build core screen per PRD [landed] [mac] - v1 + s10-s31 on main, alpha.23/24
 ### Q6 Real-data test infra [queued] [mac]
-goal: DB snapshot from the Mac to dev, replay harness that rebuilds feed + drilldowns from a snapshot, headless SwiftUI snapshot tests (panel, drilldown) rendered to PNG via mac-queue.
+goal: DB snapshot from the Mac to dev, replay harness that rebuilds feed + drilldowns from a snapshot, headless SwiftUI snapshot tests (panel, drilldown) rendered to PNG via mac-queue, published on a static phone review page (ports.tsv row, Tailscale URL in ## Run review:).
 acceptance: harness + snapshot tests in `make test`; synthetic fixtures modelled on the real snapshot.
 
 ### Q7 Real-data usefulness audit [queued] [box]
