@@ -25,13 +25,7 @@ visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched und
 
 ## Queue
 
-### Q1 Baseline Mac test run from lab2 [landed] [mac]
-result: green 2026-10-10 (xcodegen + make test PASS).
-goal: prove the lab2 checkout builds and tests on the Mac via mac-queue.
-acceptance: mac-queue job 20261010-100621-prunr-f616b88c4-test green (117+ tests, 0 failures).
-validation: `mac-queue show 20261010-100621-prunr-f616b88c4-test`
-do not touch: app code.
-
+### Q1 Baseline Mac test run [landed] [mac] - green 2026-10-10
 ### Q2 Pin down #35 status [queued] [box]
 goal: is #35 (full-scan failure → infinite retry / CPU) fixed in alpha.22 or still open? Read GitHub issue, docs/cpu-leak-analysis-2026-06-15.md, git log.
 acceptance: one-paragraph finding in docs/ with the remaining fix (if any) and its size.
@@ -44,22 +38,8 @@ acceptance: note in place, list in STATE.md.
 validation: none.
 do not touch: delete nothing on the Mac.
 
-### Q4 Core-screen design prep [landed] [box]
-result: design settled on G3 (day-grouped list of named changes) after 8 rounds; mockups https://claude.ai/artifact/UGa7vWtZTh1LmtKvLEVfMX; PRD docs/core-screen-episodes-prd-2026-10-11.md (9 slices).
-goal: one-page brief for Merlin's design session: the "growth as a sentence" lens, 3 concrete core-screen variants, from docs/product-definition-notes-2026-09-06.md and growth-framing-2026-08-21.md.
-acceptance: docs/core-screen-brief-<date>.md, on a branch, unlanded (taste stays Merlin's).
-validation: none.
-do not touch: app code, website.
-
-### Q5 Build core screen per PRD [landed] [mac]
-goal: v1 slices of docs/core-screen-episodes-prd-2026-10-11.md, one worktree branch per slice. Order {s1, s2a} → {s2b, s5, s6, s7} → s3 → s4 → s9. Drilldown (L0) after v1.
-landed: s2a, s5, s6, s7. on branch: s1–s9 (feat/s9-cleanup, installed on Mac, reviewed: too hard to read). s10 1 GB rule + s11 real icons green and combined in feat/v1-review (mac-queue PASS 20261011-131629), installed on the Mac.
-followup: feed rebuild ~2.4 s on a worst-case 200k-bucket fixture; accepted for now (off main thread, debounced), re-measure on real alpha data before s9.
-acceptance: per slice in the PRD; `make test` green via mac-queue.
-validation: mac-queue test Prunr on the slice branch.
-do not touch: release/appcast/workflows; nothing user-visible lands without Merlin (holiday 10-30→11-16: nothing lands).
-landing: non-UI slices (s1, s2a, s5–s7) land when mac-queue test is green; UI slices (s2b, s3, s4, s9) wait for Merlin.
-
+### Q4 Core-screen design prep [landed] - PRD docs/core-screen-episodes-prd-2026-10-11.md
+### Q5 Build core screen per PRD [landed] [mac] - v1 + s10-s31 on main, alpha.23/24
 ### Q6 Real-data test infra [queued] [mac]
 goal: DB snapshot from the Mac to dev, replay harness that rebuilds feed + drilldowns from a snapshot, headless SwiftUI snapshot tests (panel, drilldown) rendered to PNG via mac-queue.
 acceptance: harness + snapshot tests in `make test`; synthetic fixtures modelled on the real snapshot.
