@@ -11,4 +11,5 @@ may land: docs, scripts, tests, website/api backend, and non-UI app slices of th
 must ask: user-visible (UI, copy, UX, visuals, website pages), data/schema, scan/storage logic, pricing, roadmap/scope
 never: push to main (CI + Pages deploy), release workflow, notarise, Sparkle appcast, Vercel/Pages deploy, Brevo sends, secrets
 scope fence: `docs/appcast.xml`, `Releases/`, `.github/workflows/`, release/notarise scripts
+mac batching: Mac is a travelling laptop; workers `mac-queue add` only, never drain or ssh mbp until the orchestrator relays Grok's "Mac open" (Merlin 2026-10-30)
 lane rules: core screen settled 2026-10-11 (Merlin lifted the "no code" rule); build per docs/core-screen-episodes-prd-2026-10-11.md
