@@ -83,6 +83,14 @@ final class UnitResolverTests: XCTestCase {
         XCTAssertEqual(name("/Users/tester").title, "Home folder")
     }
 
+    func testFallbackDropsAGenericOuterFolder() {
+        XCTAssertEqual(key("/Users/tester/local/3-Resources/a/b.bin"), "place|/Users/tester/local/3-Resources")
+        XCTAssertEqual(name("/Users/tester/local/3-Resources/a/b.bin").title, "3-Resources")
+        XCTAssertEqual(name("/Users/tester/dev/game/research/x.bin").title, "game")
+        XCTAssertEqual(name("/Users/tester/Developer/game/x.bin").title, "game")
+        XCTAssertEqual(name("/Users/tester/Documents/Archive/x.pdf").title, "Archive · Documents")
+    }
+
     func testFallbackOutsideHomeUsesTwoParts() {
         XCTAssertEqual(key("/Applications/Foo.app/Contents/MacOS/Foo"), "place|/Applications/Foo.app")
         XCTAssertEqual(name("/Applications/Foo.app/Contents/MacOS/Foo").title, "Foo.app · Applications")

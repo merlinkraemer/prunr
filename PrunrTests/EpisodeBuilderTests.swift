@@ -177,7 +177,7 @@ final class EpisodeBuilderTests: XCTestCase {
         ], now: now, calendar: utc)
 
         XCTAssertEqual(feed.days.count, 2)
-        XCTAssertEqual(feed.days.first?.episodes.map(\.title), ["acme · dev", "Downloads · ubuntu.iso"])
+        XCTAssertEqual(feed.days.first?.episodes.map(\.title), ["acme", "Downloads · ubuntu.iso"])
     }
 
     /// The list reaches back 30 local days: today plus the 29 before it.
@@ -731,7 +731,7 @@ final class EpisodeBuilderTests: XCTestCase {
         let utc = calendar()
         let at = date(2026, 10, 5, 14, 5, in: utc)
         let scanned = episode("a", .developer, Self.gb, at: at, detail: "ignored", calendar: utc, approximate: true)
-        XCTAssertNil(EpisodeBuilder.timeCaption(for: scanned, calendar: utc))
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: scanned, calendar: utc), "found by scan")
 
         let slow = episode("b", .mediaAndDocuments, Self.gb, at: at, calendar: utc,
                            buildingSince: date(2026, 10, 2, 0, 0, in: utc))
@@ -741,7 +741,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(EpisodeBuilder.timeCaption(for: moved, calendar: utc), "14:05")
     }
 
-    func testRowsFoundByScanHaveNoTime() throws {
+    func testRowsFoundByScanReadFoundByScan() throws {
         let utc = calendar()
         let now = date(2026, 10, 11, 15, 0, in: utc)
         let found = date(2026, 10, 11, 3, 0, in: utc)
@@ -749,7 +749,51 @@ final class EpisodeBuilderTests: XCTestCase {
             slot(Self.iso, at: found, net: 2 * Self.gb, source: .scan, observedSince: date(2026, 10, 10, 3, 0, in: utc))
         ], now: now, calendar: utc)
         let row = try XCTUnwrap(feed.episodes.first)
-        XCTAssertNil(EpisodeBuilder.timeCaption(for: row, calendar: utc))
+        XCTAssertEqual(row.scanWindowStart, date(2026, 10, 10, 3, 0, in: utc))
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "found by scan")
+    }
+
+    func testCatchUpScanRowNamesTheWindowStart() throws {
+        let utc = calendar()
+        let now = date(2026, 10, 26, 15, 0, in: utc)
+        let feed = build([
+            slot(Self.project, at: date(2026, 10, 26, 12, 39, in: utc), net: 32 * Self.gb,
+                 source: .scan, observedSince: date(2026, 10, 18, 9, 16, in: utc))
+        ], now: now, calendar: utc)
+        let row = try XCTUnwrap(feed.episodes.first)
+        XCTAssertTrue(row.isApproximateTime)
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "found by scan \u{00B7} since Sun 18 Oct")
+    }
+
+    func testScanRowWithoutWindowReadsFoundByScan() throws {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let feed = build([
+            slot(Self.iso, at: date(2026, 10, 11, 3, 0, in: utc), net: 2 * Self.gb, source: .scan)
+        ], now: now, calendar: utc)
+        let row = try XCTUnwrap(feed.episodes.first)
+        XCTAssertNil(row.scanWindowStart)
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "found by scan")
+    }
+
+    func testWatcherRowKeepsItsClockTimeAndNoScanWindow() throws {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let feed = build([slot(Self.iso, at: date(2026, 10, 11, 14, 20, in: utc), net: 2 * Self.gb)], now: now, calendar: utc)
+        let row = try XCTUnwrap(feed.episodes.first)
+        XCTAssertNil(row.scanWindowStart)
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "14:20")
+    }
+
+    func testScanRowWithFreshWindowIsTimedLikeAWatcherRow() throws {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let at = date(2026, 10, 11, 14, 20, in: utc)
+        let feed = build([
+            slot(Self.iso, at: at, net: 2 * Self.gb, source: .scan, observedSince: at.addingTimeInterval(-600))
+        ], now: now, calendar: utc)
+        let row = try XCTUnwrap(feed.episodes.first)
+        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "14:20")
     }
 
     // MARK: - Groups (main list)
