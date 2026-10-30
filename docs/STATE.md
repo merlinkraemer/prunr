@@ -1,18 +1,18 @@
 # Prunr — state
 
-_Updated: 2026-10-10 18:10 by orchestrator. Live state only, max ~80 lines. History → docs/journal.md, facts → memory, long-term → docs/product-roadmap-2026-09-07.md._
+_Updated: 2026-10-30 by orchestrator (on dev). Live state only, max ~80 lines. History → docs/journal.md, facts → memory, long-term → docs/product-roadmap-2026-09-07.md._
 
 ## Direction
-Compass: not iced, design mode, alongside Pad/Bounce. Infrastructure is done (notarized DMG, Sparkle, signup). The core screen is unsettled: answer "where did my storage go" at once, without over-detail. Lens to test: growth as a sentence ("Since last week, 14 GB appeared: 9 in Xcode caches…"). No app code until the core screen is settled. Loose end: fix #35 when a morning opens. Parked: website DMG vs App Store, price (~€5.99 one-time).
+Compass: not iced, design mode, alongside Pad/Bounce. Infrastructure is done (notarized DMG, Sparkle, signup). The core screen is unsettled: answer "where did my storage go" at once, without over-detail. Lens to test: growth as a sentence ("Since last week, 14 GB appeared: 9 in Xcode caches…"). Core screen settled 2026-10-11; build per docs/core-screen-episodes-prd-2026-10-11.md. Loose end: fix #35 when a morning opens. Parked: website DMG vs App Store, price (~€5.99 one-time).
 
 ## Ship target
-A stranger downloads the alpha from the website and gets a one-glance answer to "what grew". Done for the current queue: code runs from lab2 with a green Mac test run, and #35 status is known.
+A stranger downloads the alpha from the website and gets a one-glance answer to "what grew". Done for the current queue: code runs from dev with a green Mac test run, and #35 status is known.
 
 ## Rulebook
-AGENTS.md ## Unattended. Thread-specific limits: app code frozen (Compass lane rule); holiday 2026-10-30 → 11-16, nothing user-visible lands.
+AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Watch tester feedback on alpha.23 — rec: check-feedback in a few days — branch: none
+1. Watch tester feedback on alpha.24 (shipped 2026-10-28) — rec: check-feedback in a few days — branch: none
 4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 
@@ -32,7 +32,7 @@ validation: none (read-only).
 do not touch: app code.
 
 ### Q3 Mac copy recon [queued] [mac]
-goal: drop CODE-LIVES-ON-LAB2.md into the Mac checkout; list bulky Mac-only files (tmp/stress-tree 11 GB, .build 2 GB, Releases/dist 250 MB) for Merlin to keep or delete.
+goal: drop CODE-LIVES-ON-DEV.md into the Mac checkout; list bulky Mac-only files (tmp/stress-tree 11 GB, .build 2 GB, Releases/dist 250 MB) for Merlin to keep or delete.
 acceptance: note in place, list in STATE.md.
 validation: none.
 do not touch: delete nothing on the Mac.
@@ -54,7 +54,8 @@ do not touch: release/appcast/workflows; nothing user-visible lands without Merl
 landing: non-UI slices (s1, s2a, s5–s7) land when mac-queue test is green; UI slices (s2b, s3, s4, s9) wait for Merlin.
 
 ## Rundown
-- Core screen v1 landed on main (s1–s13 + fade fix): change log grouped by day and category, drilldown, bar opens categories. 240 tests green; Merlin reviewed on the Mac.
-- Not pushed. Merged main green on the Mac (20261012-035415).
-- In progress: top-number mockups (free per date / balance on scroll), settings review + hidden Developer tab mockups.
+- 2026-10-30: thread moved lab2 → dev. alpha.24 shipped 10-28 (since-install vs estimated history, first-day preview, allocated-bytes fix); main = origin.
+- Website: download counter + Download beta button live (10-27).
+- Open: Q2 #35 status [box], Q3 Mac recon [mac]. Holiday to 11-16: nothing user-visible lands.
 - Later: L0 drilldown detail, L1, L3 names, L4 cleanup awareness, L5 hover-with-click, checkpoint table.
+

@@ -5,7 +5,7 @@ Docs index: `docs/README.md`. Lessons: `docs/lessons.md`.
 
 ## Unattended
 
-platform: mac for the app (code on lab2, builds/tests via `mac-queue`); box for `website/`
+platform: mac for the app (code on dev, builds/tests via `mac-queue`); box for `website/`
 validation: app → `mac-queue add <dir> <ref> test Prunr` green; website → `cd website && npm ci && npx vite build && npm run test:api`
 may land: docs, scripts, tests, website/api backend, and non-UI app slices of the core-screen PRD (validation green); UI slices wait for Merlin
 must ask: user-visible (UI, copy, UX, visuals, website pages), data/schema, scan/storage logic, pricing, roadmap/scope

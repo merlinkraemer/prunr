@@ -98,3 +98,5 @@
 2026-10-21 orchestrator - landed on main + pushed: fix/ci-green (CI green again, run 39577487938); reminder set 10-22 12:00 for more subreddit posts
 2026-10-26 orchestrator - social demo GIF/MP4 made (chore/social-gif d22e12f, PASS 20261026-100337, not merged); MIT license pushed; Mac→lab2 ssh mux stale + taskpolicy -b throttling slowed mac-queue checkout (follow-up in lab-infra)
 2026-10-27 orchestrator - shipped: download counter (/api/download + /api/download-stats, Vercel prod deployed), download.html routed through it; social-media/ gitignored
+2026-10-28 github-actions - shipped: 0.1.5-alpha.24 build 25 (26f6d6d; since-install vs estimated history, first-day preview, allocated-bytes fix); journaled late on 10-30
+2026-10-30 orchestrator - moved: thread lab2 → dev (repo, branches, worktrees, transcripts identical); box refs in STATE/AGENTS/CLAUDE now dev; lab2 copy to be renamed *.moved-to-dev-2026-10-30
