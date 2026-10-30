@@ -10,3 +10,5 @@ Remaining gaps, fixed on branch `drain/Q9-2026-10-30`:
 Not resolved (needs real data, Merlin): the original trigger, the `code=0` failure in the DB finalize phase on a home-sized scan, was never captured. If it still occurs on alpha.24 it will now show in `diagnostics.log` as `scans(success/failed/cancelled)` and the error code, and costs at most one scan per backoff step. Recommendation: leave #35 open until a tester diagnostics log shows no failed scans, then close.
 
 Idle CPU: `IdleCPUTests` measures process CPU (getrusage) of a MenuBarManager with a baseline, watcher and reconciliation backstop armed, idle for 30s, and fails above 5% average. See the Q9 report for numbers. A true 24h run does not fit mac-queue (job timeout 2700s); it needs the real app with `npm run monitor` per issue #31 on a machine Merlin owns.
+
+Long soak (not run, Mac offline): `scripts/idle-cpu-soak.sh <pid> 2 30` against a throwaway Prunr instance for 2h as a quick check, 24h for #31 gating.
