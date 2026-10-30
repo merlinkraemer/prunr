@@ -141,7 +141,7 @@ final class MenuBarManager: NSObject {
     private static let enableAutomaticFileWatcher = true
     private static let requiresFullRescanCooldown: TimeInterval = 30 * 60
     private static let failedFullScanInitialBackoff: TimeInterval = 60
-    private static let failedFullScanMaximumBackoff: TimeInterval = 30 * 60
+    private static let failedFullScanMaximumBackoff: TimeInterval = 6 * 60 * 60
     private static let maxPendingRecentChangePaths = 50_000
     private static let deferredCleanupDelay: TimeInterval = 5 * 60
     private static let cleanupSkipAfterFullScanWindow: TimeInterval = 30
@@ -653,7 +653,7 @@ final class MenuBarManager: NSObject {
     private(set) var needsAuthoritativeReconciliation = false
     private(set) var lastFullScanCompletedAt: Date?
     private var lastFullScanAttemptAt: Date?
-    private var consecutiveFailedFullScans = 0
+    private(set) var consecutiveFailedFullScans = 0
     private(set) var lastAutomaticScanAt: Date?
     var lastDetectedChangeAt: Date?
     private(set) var lastManualRefreshAt: Date?
@@ -3343,7 +3343,7 @@ final class MenuBarManager: NSObject {
         consecutiveFailedReconciliations += 1
     }
 
-    private func failedScanBackoff(for consecutiveFailures: Int) -> TimeInterval {
+    func failedScanBackoff(for consecutiveFailures: Int) -> TimeInterval {
         guard consecutiveFailures > 0 else { return 0 }
         return min(
             Self.failedFullScanInitialBackoff * pow(2, Double(consecutiveFailures - 1)),
@@ -3358,7 +3358,7 @@ final class MenuBarManager: NSObject {
         return error is CancellationError
     }
 
-    private func isWithinFullRescanCooldown(at now: Date = Date()) -> Bool {
+    func isWithinFullRescanCooldown(at now: Date = Date()) -> Bool {
         guard let referenceDate = lastFullScanAttemptAt ?? lastFullScanCompletedAt else { return false }
 
         if consecutiveFailedFullScans > 0 {
