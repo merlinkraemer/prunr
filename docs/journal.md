@@ -105,3 +105,5 @@
 2026-10-30 10:15 orchestrator Q6 spawn: real-data test infra + phone review page (sonnet high, seat worktree)
 2026-10-30 10:15 orchestrator Q9 spawn: #35 CPU loop finding/fix + 24h idle test (sonnet high, seat worktree)
 2026-10-30 orchestrator - decided: Mac jobs batched, drained only after Grok relays "Mac open" (Merlin: laptop travels); workers told; AGENTS rule added
+2026-10-30 orchestrator Q9 on branch: drain/Q9-2026-10-30 aea951c; #35 loop fixed since Aug (backoff), cap 30min→6h + tests + soak script; mac-queue job pending (Mac batch); doc docs/issue-35-status-2026-10-30.md
+2026-10-30 orchestrator Q11 spawn: old issue triage #23-#34, report only (sonnet medium, seat worktree)

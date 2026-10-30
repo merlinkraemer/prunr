@@ -55,7 +55,7 @@ acceptance: docs/real-data-audit-<date>.md with cases (anonymised) + fix proposa
 goal: fix Q7's top cases: drilldown shows what grew inside (deltas), building toward L0/L1 per the PRD.
 acceptance: failing fixture tests from Q7 go green; snapshot PNGs reviewed by a worker.
 
-### Q9 #35 CPU loop + 24h idle test [running] [mac]
+### Q9 #35 CPU loop + 24h idle test [on branch, Mac check pending] - drain/Q9-2026-10-30 aea951c: loop already fixed since Aug; backoff cap 30min→6h, regression + 30s idle-CPU tests, scripts/idle-cpu-soak.sh; job 20261030-101017-...-9a2d41dff-test pending; 24h soak needs a Mac night [mac]
 goal: confirm/fix #35 (absorbs Q2); headless 24h idle CPU run (#31) via mac-queue.
 acceptance: finding + fix with test; idle run logs CPU under target.
 
@@ -63,7 +63,7 @@ acceptance: finding + fix with test; idle run logs CPU under target.
 goal: re-measure feed rebuild, scan, drilldown on the real snapshot; fix the worst.
 acceptance: before/after numbers in the journal.
 
-### Q11 Old issue triage [queued] [box]
+### Q11 Old issue triage [running] [box]
 goal: #23–#34 against current code: close obsolete, fix small ones, list the rest.
 acceptance: list in STATE; closures wait for a gh-capable step (no outward action without Merlin).
 
