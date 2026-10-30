@@ -16,6 +16,13 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 
+## Run
+status: proposed · since 2026-10-30 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
+targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
+plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11, then Q3 if the Mac is idle; skip L6, L3, website, pricing
+data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
+visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
+
 ## Queue
 
 ### Q1 Baseline Mac test run from lab2 [landed] [mac]
@@ -52,6 +59,30 @@ acceptance: per slice in the PRD; `make test` green via mac-queue.
 validation: mac-queue test Prunr on the slice branch.
 do not touch: release/appcast/workflows; nothing user-visible lands without Merlin (holiday 10-30→11-16: nothing lands).
 landing: non-UI slices (s1, s2a, s5–s7) land when mac-queue test is green; UI slices (s2b, s3, s4, s9) wait for Merlin.
+
+### Q6 Real-data test infra [queued] [mac]
+goal: DB snapshot from the Mac to dev, replay harness that rebuilds feed + drilldowns from a snapshot, headless SwiftUI snapshot tests (panel, drilldown) rendered to PNG via mac-queue.
+acceptance: harness + snapshot tests in `make test`; synthetic fixtures modelled on the real snapshot.
+
+### Q7 Real-data usefulness audit [queued] [box]
+goal: run the harness on Merlin's data, list rows/drilldowns that don't explain growth (e.g. folder +x, drilldown shows only children), with root causes.
+acceptance: docs/real-data-audit-<date>.md with cases (anonymised) + fix proposals.
+
+### Q8 Drilldown explains growth [queued] [mac]
+goal: fix Q7's top cases: drilldown shows what grew inside (deltas), building toward L0/L1 per the PRD.
+acceptance: failing fixture tests from Q7 go green; snapshot PNGs reviewed by a worker.
+
+### Q9 #35 CPU loop + 24h idle test [queued] [mac]
+goal: confirm/fix #35 (absorbs Q2); headless 24h idle CPU run (#31) via mac-queue.
+acceptance: finding + fix with test; idle run logs CPU under target.
+
+### Q10 Perf on real data [queued] [mac]
+goal: re-measure feed rebuild, scan, drilldown on the real snapshot; fix the worst.
+acceptance: before/after numbers in the journal.
+
+### Q11 Old issue triage [queued] [box]
+goal: #23–#34 against current code: close obsolete, fix small ones, list the rest.
+acceptance: list in STATE; closures wait for a gh-capable step (no outward action without Merlin).
 
 ## Rundown
 - 2026-10-30: thread moved lab2 → dev. alpha.24 shipped 10-28 (since-install vs estimated history, first-day preview, allocated-bytes fix); main = origin.
