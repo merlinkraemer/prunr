@@ -308,6 +308,7 @@ actor ScanService {
                 )
                 if let dates = result.fileDates {
                     fileHistory?.add(
+                        path: normalizedPath,
                         unitKey: unitKey,
                         sizeBytes: result.sizeBytes,
                         category: category,

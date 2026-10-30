@@ -237,8 +237,9 @@ extension DatabaseManager {
 
     /// Applies file changes to every working-set derived table (category totals,
     /// drilldown groups, top files, place children) inside the caller's write
-    /// transaction, after `workingSetEntry` itself was updated. Returns the
-    /// journal deltas per (category, subcategory, unit).
+    /// transaction, after `workingSetEntry` itself was updated, and records the
+    /// per-child journal detail of the watcher's bucket at `updatedAt`. Returns
+    /// the journal deltas per (category, subcategory, unit).
     static func applyWorkingSetChanges(
         _ changes: [WorkingSetFileChange],
         trackedPathId: String,
@@ -296,6 +297,13 @@ extension DatabaseManager {
         try applyGroupDeltas(groupDeltas, trackedPathId: trackedPathId, db: db)
         try applyTopEntryChanges(resolved, trackedPathId: trackedPathId, db: db)
         try applyPlaceChildDeltas(placeDeltas, trackedPathId: trackedPathId, db: db)
+        try writeJournalDetail(
+            placeDeltas.mapValues(\.totalBytes),
+            trackedPathId: trackedPathId,
+            bucketStart: GrowthJournalService.bucketStart(for: updatedAt),
+            source: .watch,
+            db: db
+        )
 
         return journal.filter { $0.value != 0 }
     }

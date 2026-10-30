@@ -551,6 +551,7 @@ final class DatabaseManager {
         registerDrilldownIndexMigration(in: &migrator)
         registerOwnerUnitsMigration(in: &migrator)
         registerOwnerGroupsMigration(in: &migrator)
+        registerJournalDetailMigration(in: &migrator)
 
         return migrator
     }
@@ -659,6 +660,7 @@ extension DatabaseManager {
                 sql: "DELETE FROM growthJournalBucket WHERE trackedPathId = ?",
                 arguments: [trackedPathId.uuidString]
             )
+            try Self.deleteJournalDetail(trackedPathId: trackedPathId.uuidString, db: db)
         }
     }
 
@@ -669,6 +671,7 @@ extension DatabaseManager {
 
         try await dbPool.write { db in
             try db.execute(sql: "DELETE FROM growthJournalBucket")
+            try Self.deleteJournalDetail(trackedPathId: nil, db: db)
         }
     }
 
@@ -2083,6 +2086,10 @@ extension DatabaseManager {
                 sql: "DELETE FROM growthJournalBucket WHERE bucketStart < ?",
                 arguments: [cutoff]
             )
+            try db.execute(
+                sql: "DELETE FROM growthJournalDetail WHERE bucketStart < ?",
+                arguments: [cutoff]
+            )
         }
     }
 
@@ -2112,6 +2119,7 @@ extension DatabaseManager {
                 try db.execute(sql: "DELETE FROM workingSetCategoryTotal")
                 try db.execute(sql: "DELETE FROM growthJournalBucket")
             }
+            try Self.deleteJournalDetail(trackedPathId: trackedPathIdString, db: db)
             try Self.clearDrilldownIndex(trackedPathId: trackedPathIdString, db: db)
         }
     }
