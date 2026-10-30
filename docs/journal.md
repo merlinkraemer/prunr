@@ -110,3 +110,7 @@
 2026-10-30 orchestrator Q6 on branch: drain/Q6-2026-10-30 5937574 replay harness + fixtures + PNG snapshots, uncompiled; slim DB snapshot on dev; review page :4181 (lab-infra ports.tsv a1076d6, local); Mac job pending
 2026-10-30 orchestrator Q7 spawn: real-data audit straight from the snapshot DB with sqlite (Mac replay pending) (sonnet high, seat worktree)
 2026-10-30 orchestrator Q11 landed on main: issue triage doc (1c6bb30, docs only); Q12 queued for the 4 small nav bugs; issue closes added to Waiting on Merlin (outward)
+2026-10-30 orchestrator Q7 landed on main: real-data audit + scripts/audit (0edd755, docs/scripts only)
+2026-10-30 orchestrator - decided: L1 growthJournalDetail schema per audit rec (loose run, Merlin: land what you want; reversible migration, on branch until Mac-green)
+2026-10-30 orchestrator Q8a spawn: L1 detail + row-scoped place page + fallback (opus medium, seat worktree)
+2026-10-30 orchestrator Q8b spawn: row captions + names (sonnet medium, seat worktree)

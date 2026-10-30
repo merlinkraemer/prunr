@@ -15,6 +15,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 1. Watch tester feedback on alpha.24 (shipped 2026-10-28) — rec: check-feedback in a few days — branch: none
 4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
 5. Close obsolete GitHub issues #29 #32 #34 #18 #11 (+ #26 by design) — rec: yes, I close them with a short note — branch: none
+6. Category groups net unrelated places ("Developer +9.9 GB" = +44 up, -34 down) and header vs rows don't reconcile — rec: per-place rows inside groups with up/down split + a "smaller changes" row; mockups first — branch: none
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 
 ## Run
@@ -48,14 +49,13 @@ do not touch: delete nothing on the Mac.
 goal: DB snapshot from the Mac to dev, replay harness that rebuilds feed + drilldowns from a snapshot, headless SwiftUI snapshot tests (panel, drilldown) rendered to PNG via mac-queue, published on a static phone review page (ports.tsv row, Tailscale URL in ## Run review:).
 acceptance: harness + snapshot tests in `make test`; synthetic fixtures modelled on the real snapshot.
 
-### Q7 Real-data usefulness audit [running] [box]
-goal: run the harness on Merlin's data, list rows/drilldowns that don't explain growth (e.g. folder +x, drilldown shows only children), with root causes.
-acceptance: docs/real-data-audit-<date>.md with cases (anonymised) + fix proposals.
-
-### Q8 Drilldown explains growth [queued] [mac]
-goal: fix Q7's top cases: drilldown shows what grew inside (deltas), building toward L0/L1 per the PRD.
-acceptance: failing fixture tests from Q7 go green; snapshot PNGs reviewed by a worker.
-
+### Q7 Real-data usefulness audit [landed] [box] - docs/real-data-audit-2026-10-30.md: only 6/46 rows explained; place page shows sizes not growth (no per-child deltas stored), 43/46 rows lack time/caption, category groups net unrelated places
+### Q8a Drilldown explains growth: L1 detail + row-scoped page [running] [mac]
+goal: audit fixes 1, 2, 4: record per-child deltas (growthJournalDetail, schema migration) at scan/watcher/file-date write points; place page scoped to the row's time span, children sorted by change, removed children shown; honest fallback for rows without detail.
+acceptance: unit tests on fixtures; make test green via mac-queue (Mac batch).
+### Q8b Row captions + names [running] [mac]
+goal: audit fixes 5, 7: "found by scan" / "since <date>" captions; names without parent "dev" or "<inner> · <outer>".
+acceptance: unit tests; make test green via mac-queue (Mac batch).
 ### Q9 #35 CPU loop + 24h idle test [on branch, Mac check pending] - drain/Q9-2026-10-30 aea951c: loop already fixed since Aug; backoff cap 30min→6h, regression + 30s idle-CPU tests, scripts/idle-cpu-soak.sh; job 20261030-101017-...-9a2d41dff-test pending; 24h soak needs a Mac night [mac]
 goal: confirm/fix #35 (absorbs Q2); headless 24h idle CPU run (#31) via mac-queue.
 acceptance: finding + fix with test; idle run logs CPU under target.
