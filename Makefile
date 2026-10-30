@@ -39,7 +39,7 @@ E2E_FILE_COUNT ?= 5000
 SCREENSHOT_OUTPUT_DIR ?= $(PWD)/website/screenshots/marketing
 SCREENSHOT_SCALE ?= 2
 
-.PHONY: all build install-app run dev launch clean clean-build reset-dev-state help doctor test open logs release stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean e2e e2e-runtime screenshot
+.PHONY: all build install-app run dev launch clean clean-build reset-dev-state help doctor test open logs release stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean e2e e2e-runtime screenshot replay snapshots-fetch
 
 all: help
 
@@ -62,6 +62,8 @@ help:
 	@echo "$(GREEN)make stress-clean$(NC)  - Remove the synthetic scan tree"
 	@echo "$(GREEN)make e2e$(NC)           - Run headless E2E test suite (build + scan + watcher + perf)"
 	@echo "$(GREEN)make e2e-runtime$(NC)    - Run full runtime E2E (installs + launches app + monitors)"
+	@echo "$(GREEN)make replay$(NC)         - Replay a snapshot DB (DB=path) into change-list dumps and panel PNGs"
+	@echo "$(GREEN)make snapshots-fetch$(NC) - Copy test PNGs and dumps from the Mac to the review folder"
 	@echo "$(GREEN)make screenshot$(NC)     - Render 4K overview, drilldown, and settings images"
 	@echo "$(GREEN)make open$(NC)     - Open in Xcode"
 	@echo "$(GREEN)make logs$(NC)     - Show recent app logs"
@@ -175,6 +177,21 @@ test:
 		exit $$status; \
 	fi; \
 	rm -f "$$output_file"
+
+replay:
+	@test -n "$(DB)" || (echo "usage: make replay DB=/path/to/snapshot.db"; exit 1)
+	@echo "$(BLUE)Replaying $(DB)...$(NC)"
+	exec env TEST_RUNNER_PRUNR_REPLAY_DB="$(DB)" $(XCODEBUILD) test \
+		-project $(SCHEME).xcodeproj \
+		-scheme $(SCHEME) \
+		-configuration $(CONFIG) \
+		-derivedDataPath $(DERIVED_DATA) \
+		-clonedSourcePackagesDirPath $(SOURCE_PACKAGES) \
+		-only-testing:PrunrTests/ReplayHarnessTests \
+		$(XCODE_EXTRA_FLAGS)
+
+snapshots-fetch:
+	exec bash scripts/snapshots-fetch.sh
 
 screenshot: build
 	@echo "$(BLUE)Rendering marketing screenshots...$(NC)"
