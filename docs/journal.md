@@ -101,3 +101,6 @@
 2026-10-28 github-actions - shipped: 0.1.5-alpha.24 build 25 (26f6d6d; since-install vs estimated history, first-day preview, allocated-bytes fix); journaled late on 10-30
 2026-10-30 orchestrator - moved: thread lab2 → dev (repo, branches, worktrees, transcripts identical); box refs in STATE/AGENTS/CLAUDE now dev; lab2 copy to be renamed *.moved-to-dev-2026-10-30
 2026-10-30 orchestrator - decided: two-week run plan via Q&A with Merlin (hardening + real-data usefulness, Q6–Q11, loose, land green on local main, no push/release); ## Run proposed
+2026-10-30 10:15 orchestrator - run-start: holiday queue (PM relayed Merlin: "start all projects on the holiday queue now"); seat subagents, cap 2, loose
+2026-10-30 10:15 orchestrator Q6 spawn: real-data test infra + phone review page (sonnet high, seat worktree)
+2026-10-30 10:15 orchestrator Q9 spawn: #35 CPU loop finding/fix + 24h idle test (sonnet high, seat worktree)

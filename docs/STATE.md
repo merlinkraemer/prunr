@@ -17,9 +17,10 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 
 ## Run
-status: proposed · since 2026-10-30 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
+status: running · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11, then Q3 if the Mac is idle; skip L6, L3, website, pricing
+mac-queue from dev: LAB2_HOST=dev (default points at lab2), MAC_QUEUE_IGNORE_BATTERY=1, no drain timer on dev so workers drain themselves
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: none yet. Q6 adds a phone review page for snapshot PNGs/GIFs (own ports.tsv row, https://dev.tail87069a.ts.net:<port>); URL goes here
@@ -41,7 +42,7 @@ do not touch: delete nothing on the Mac.
 
 ### Q4 Core-screen design prep [landed] - PRD docs/core-screen-episodes-prd-2026-10-11.md
 ### Q5 Build core screen per PRD [landed] [mac] - v1 + s10-s31 on main, alpha.23/24
-### Q6 Real-data test infra [queued] [mac]
+### Q6 Real-data test infra [running] [mac]
 goal: DB snapshot from the Mac to dev, replay harness that rebuilds feed + drilldowns from a snapshot, headless SwiftUI snapshot tests (panel, drilldown) rendered to PNG via mac-queue, published on a static phone review page (ports.tsv row, Tailscale URL in ## Run review:).
 acceptance: harness + snapshot tests in `make test`; synthetic fixtures modelled on the real snapshot.
 
@@ -53,7 +54,7 @@ acceptance: docs/real-data-audit-<date>.md with cases (anonymised) + fix proposa
 goal: fix Q7's top cases: drilldown shows what grew inside (deltas), building toward L0/L1 per the PRD.
 acceptance: failing fixture tests from Q7 go green; snapshot PNGs reviewed by a worker.
 
-### Q9 #35 CPU loop + 24h idle test [queued] [mac]
+### Q9 #35 CPU loop + 24h idle test [running] [mac]
 goal: confirm/fix #35 (absorbs Q2); headless 24h idle CPU run (#31) via mac-queue.
 acceptance: finding + fix with test; idle run logs CPU under target.
 
