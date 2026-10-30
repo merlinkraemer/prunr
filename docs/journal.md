@@ -114,3 +114,4 @@
 2026-10-30 orchestrator - decided: L1 growthJournalDetail schema per audit rec (loose run, Merlin: land what you want; reversible migration, on branch until Mac-green)
 2026-10-30 orchestrator Q8a spawn: L1 detail + row-scoped place page + fallback (opus medium, seat worktree)
 2026-10-30 orchestrator Q8b spawn: row captions + names (sonnet medium, seat worktree)
+2026-10-30 orchestrator Q8b on branch: drain/Q8b-2026-10-30 b924a3f scan captions + generic-parent names, uncompiled, job queued; wording in Waiting on Merlin [accepted per rec]
