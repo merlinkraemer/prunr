@@ -107,3 +107,5 @@
 2026-10-30 orchestrator - decided: Mac jobs batched, drained only after Grok relays "Mac open" (Merlin: laptop travels); workers told; AGENTS rule added
 2026-10-30 orchestrator Q9 on branch: drain/Q9-2026-10-30 aea951c; #35 loop fixed since Aug (backoff), cap 30min→6h + tests + soak script; mac-queue job pending (Mac batch); doc docs/issue-35-status-2026-10-30.md
 2026-10-30 orchestrator Q11 spawn: old issue triage #23-#34, report only (sonnet medium, seat worktree)
+2026-10-30 orchestrator Q6 on branch: drain/Q6-2026-10-30 5937574 replay harness + fixtures + PNG snapshots, uncompiled; slim DB snapshot on dev; review page :4181 (lab-infra ports.tsv a1076d6, local); Mac job pending
+2026-10-30 orchestrator Q7 spawn: real-data audit straight from the snapshot DB with sqlite (Mac replay pending) (sonnet high, seat worktree)

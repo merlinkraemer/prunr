@@ -21,10 +21,10 @@ status: running · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Me
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending: Q6, Q9 validation jobs (ids in their reports)
+mac batch pending (on Mac open, in order): drain mac-queue (Q6 20261030-105825-...-593757471-test, Q9 20261030-101017-...-9a2d41dff-test; drop superseded Q6 da18026 job) → fix compile errors → make snapshots-fetch (PNGs + real replay dump) → Q9 idle soak 2h
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
-review: none yet. Q6 adds a phone review page for snapshot PNGs/GIFs (own ports.tsv row, https://dev.tail87069a.ts.net:<port>); URL goes here
+review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
 
 ## Queue
 
@@ -43,11 +43,11 @@ do not touch: delete nothing on the Mac.
 
 ### Q4 Core-screen design prep [landed] - PRD docs/core-screen-episodes-prd-2026-10-11.md
 ### Q5 Build core screen per PRD [landed] [mac] - v1 + s10-s31 on main, alpha.23/24
-### Q6 Real-data test infra [running] [mac]
+### Q6 Real-data test infra [on branch, Mac check pending] - drain/Q6-2026-10-30 5937574: replay harness, synthetic fixtures, PNG snapshot tests, make replay/snapshots-fetch; snapshot ~/dev/projects/prunr-data/prunr-2026-10-30.db (slim, 444); job 20261030-105825-...-593757471-test pending; uncompiled [mac]
 goal: DB snapshot from the Mac to dev, replay harness that rebuilds feed + drilldowns from a snapshot, headless SwiftUI snapshot tests (panel, drilldown) rendered to PNG via mac-queue, published on a static phone review page (ports.tsv row, Tailscale URL in ## Run review:).
 acceptance: harness + snapshot tests in `make test`; synthetic fixtures modelled on the real snapshot.
 
-### Q7 Real-data usefulness audit [queued] [box]
+### Q7 Real-data usefulness audit [running] [box]
 goal: run the harness on Merlin's data, list rows/drilldowns that don't explain growth (e.g. folder +x, drilldown shows only children), with root causes.
 acceptance: docs/real-data-audit-<date>.md with cases (anonymised) + fix proposals.
 
