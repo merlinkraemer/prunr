@@ -14,12 +14,13 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 ## Waiting on Merlin
 1. Watch tester feedback on alpha.24 (shipped 2026-10-28) — rec: check-feedback in a few days — branch: none
 4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
+5. Close obsolete GitHub issues #29 #32 #34 #18 #11 (+ #26 by design) — rec: yes, I close them with a short note — branch: none
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 
 ## Run
 status: running · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
-plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11, then Q3 if the Mac is idle; skip L6, L3, website, pricing
+plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
 mac batch pending (on Mac open, in order): drain mac-queue (Q6 20261030-105825-...-593757471-test, Q9 20261030-101017-...-9a2d41dff-test; drop superseded Q6 da18026 job) → fix compile errors → make snapshots-fetch (PNGs + real replay dump) → Q9 idle soak 2h
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
@@ -63,9 +64,10 @@ acceptance: finding + fix with test; idle run logs CPU under target.
 goal: re-measure feed rebuild, scan, drilldown on the real snapshot; fix the worst.
 acceptance: before/after numbers in the journal.
 
-### Q11 Old issue triage [running] [box]
-goal: #23–#34 against current code: close obsolete, fix small ones, list the rest.
-acceptance: list in STATE; closures wait for a gh-capable step (no outward action without Merlin).
+### Q11 Old issue triage [landed] [box] - docs/issue-triage-2026-10-30.md: 5 obsolete, 6 real (all UI, small), #26 unclear
+### Q12 Navigation bug bundle #27 #28 #30 #24 [queued] [mac]
+goal: the four small real issues from Q11's triage on one branch; after Q8 (same views).
+acceptance: per issue in docs/issue-triage-2026-10-30.md; make test green via mac-queue.
 
 ## Rundown
 - 2026-10-30: thread moved lab2 → dev. alpha.24 shipped 10-28 (since-install vs estimated history, first-day preview, allocated-bytes fix); main = origin.
