@@ -19,6 +19,7 @@ Notes, reviews, and plans. Product entrypoint: [../README.md](../README.md).
 | [core-screen-row-analysis-2026-10-11.md](core-screen-row-analysis-2026-10-11.md) | Why icon/time row layouts failed; chosen direction |
 | [STATE.md](STATE.md) / [journal.md](journal.md) | Orchestrator live state and history |
 | [real-data-harness.md](real-data-harness.md) | Real-data replay and headless snapshots |
+| [perf-real-data-2026-10-31.md](perf-real-data-2026-10-31.md) | Hot paths, EXPLAIN findings and the PERF baseline test for real data |
 | [prd-signed-growth-2026-08-21.md](prd-signed-growth-2026-08-21.md) | PRD — Signed growth over a fixed window |
 | [pre-alpha-sync-ux-review-2026-08-19.md](pre-alpha-sync-ux-review-2026-08-19.md) | Pre-alpha sync and UX review — 2026-08-19 |
 | [product-definition-notes-2026-09-06.md](product-definition-notes-2026-09-06.md) | Prunr — Product Definition: Working Notes |
