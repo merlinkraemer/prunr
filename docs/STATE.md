@@ -20,7 +20,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 
 ## Run
-status: running (holding: all box work done; 5 branches wait for Mac open before more code is stacked) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
+status: running · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
@@ -68,7 +68,7 @@ acceptance: before/after numbers in the journal.
 ### Q11 Old issue triage [landed] [box] - docs/issue-triage-2026-10-30.md: 5 obsolete, 6 real (all UI, small), #26 unclear
 ### Q13 Watchdog ignores backpressure waits [on branch, Mac check pending] [mac] - drain/Q13-2026-10-31 fcd6c02; consumer waits excluded, separate 900 s consumer guard, 4 tests; job 20261031-023033-...-fcd6c0255-test
 goal: Reddit tester 10-31: slow DB writer blocks producer in waitToProduce, 30 s traversal watchdog then aborts a healthy scan as stalled (FileScanner.swift); likely the uncaptured #35 failure. Exclude backpressure waits + delayed-consumer test.
-### Q12 Navigation bug bundle #27 #28 #30 #24 [queued] [mac]
+### Q12 Navigation bug bundle #27 #28 #30 #24 [running] [mac]
 goal: the four small real issues from Q11's triage on one branch; after Q8 (same views).
 acceptance: per issue in docs/issue-triage-2026-10-30.md; make test green via mac-queue.
 

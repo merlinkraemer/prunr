@@ -120,3 +120,4 @@
 2026-10-31 orchestrator Q13 on branch: drain/Q13-2026-10-31 fcd6c02 watchdog skips backpressure waits + 900 s consumer guard, uncompiled, job queued
 2026-10-31 orchestrator Q8a on branch: drain/Q8a-2026-10-30 2125c47 L1 detail table + span page + fallback, uncompiled, job queued
 2026-10-31 orchestrator - decided: hold new code until Mac open (Q6/Q8a/Q8b/Q9/Q13 all uncompiled; Q10/Q12 need the Mac or overlap Q8a)
+2026-10-31 orchestrator - resumed: PM nudge (don't idle on Mac nights); spawn integration branch drain/integration-2026-10-31 merging Q9/Q13/Q8b/Q8a/Q6 for one Mac job (sonnet medium) + Q12 nav bugs on top of Q8a (sonnet medium)
