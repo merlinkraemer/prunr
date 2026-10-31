@@ -24,7 +24,7 @@ status: running (Q6-Q13 coded on drain/integration-2026-10-31, uncompiled; PM 10
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (on Mac open, in order): run the integration job on d3f2a98 (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6+Q12+Q10; older integration jobs superseded) on an idle Mac (perf tests) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → make snapshots-fetch → Q9 idle soak 2h
+mac batch pending (on Mac open, in order): run the integration job 20261031-161437-...-ce9885791-test on ce98857 (d3f2a98 job superseded) (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6+Q12+Q10; older integration jobs superseded) on an idle Mac (perf tests) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → make snapshots-fetch → Q9 idle soak 2h
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
@@ -32,7 +32,7 @@ review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the
 ## Queue
 Done: Q1 baseline · Q2 #35 status (absorbed by Q9, docs/issue-35-status-2026-10-30.md on main) · Q4 PRD · Q5 core screen · Q7 audit (docs/real-data-audit-2026-10-30.md) · Q11 triage (docs/issue-triage-2026-10-30.md)
 
-On branch, Mac check pending (all merged into drain/integration-2026-10-31 d3f2a98, uncompiled):
+On branch, Mac check pending (all merged into drain/integration-2026-10-31 ce98857, uncompiled):
 - Q6 real-data test infra - drain/Q6-2026-10-30 5937574: replay harness, fixtures, PNG snapshots, make replay/snapshots-fetch
 - Q8a drilldown explains growth - drain/Q8a-2026-10-30 2125c47: v26 growthJournalDetail, span-scoped place page, fallback
 - Q8b captions + names - drain/Q8b-2026-10-30 b924a3f
@@ -44,7 +44,7 @@ On branch, Mac check pending (all merged into drain/integration-2026-10-31 d3f2a
 ### Q3 Mac copy recon [queued] [mac]
 goal: CODE-LIVES-ON-DEV.md in the Mac checkout; list bulky Mac-only files (tmp/stress-tree 11 GB, .build 2 GB, Releases/dist 250 MB). Delete nothing.
 
-### Q14 Static compile review of integration [running] [box]
+### Q14 Static compile review of integration [done] [box] - 1 compile error fixed (ce98857); doubts: Q12 Task captures in withAnimation completion, String(format:%@), PanelSnapshot drawing closure (warnings at worst in Swift 5 mode), exact-string test expectations
 goal: read the integration diff vs main for likely compile errors (Swift 6 / Xcode 16.4 Sendable, missing pbxproj entries, signature drift between merged branches) and fix them on drain/integration-2026-10-31, so the first Mac window spends less time on compile fixes.
 acceptance: fixes committed, list of remaining doubts in the report. validation: Mac job on Mac open.
 
