@@ -1505,6 +1505,7 @@ struct MenuBarView: View {
 
     private func headerPage(for screen: HeaderScreen, width: CGFloat) -> some View {
         headerView(for: screen)
+            .id(screen.id)
             .frame(width: width, height: HeaderRowMetrics.height, alignment: .center)
     }
 

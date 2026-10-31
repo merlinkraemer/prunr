@@ -208,6 +208,7 @@ struct CategoryGrowthListView: View {
 
     private func screenPage(for screen: DrilldownListPane, width: CGFloat) -> some View {
         screenView(for: screen)
+            .id(screen.id)
             .frame(width: width)
     }
 
