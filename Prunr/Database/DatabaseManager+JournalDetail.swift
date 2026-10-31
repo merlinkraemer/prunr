@@ -35,10 +35,6 @@ extension DatabaseManager {
     }
 
     static func registerJournalCheckpointMigration(in migrator: inout DatabaseMigrator) {
-        // Migration v27: each place's running count at the journal prune
-        // cutoff, so the change list's rows do not move as the window slides.
-        // No back-fill: until the next prune the list counts from the oldest
-        // bucket it has, as before.
         migrator.registerMigration(journalCheckpointMigrationIdentifier) { db in
             try db.execute(sql: """
                 CREATE TABLE growthJournalCheckpoint (
