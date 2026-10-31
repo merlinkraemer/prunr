@@ -374,7 +374,6 @@ struct MenuBarView: View {
         }
         .onChange(of: manager.isPopoverShown) { _, isShown in
             guard isShown else { return }
-            synchronizeVisibleHeaderToCurrent()
             synchronizeVisibleOnboardingToCurrent()
             Task { await manager.refreshChangeFeed() }
         }
