@@ -959,6 +959,115 @@ extension DatabaseManager {
         return PlaceContentsPage(children: Array(children), hasMore: rows.count > limit)
     }
 
+    /// Children of a place a row's page lists at most; smaller changes fold
+    /// into the remainder row.
+    static let placeChangeLimit = 50
+
+    /// What each direct child of a place changed in `[from, to)`, from the
+    /// journal detail, with its size now. `children` is nil when the detail
+    /// does not cover the span: it started recording after `from`, or holds
+    /// nothing for this place in it.
+    func fetchPlaceChanges(
+        unitRoot: String,
+        trackedPathIds: [UUID],
+        from: Date,
+        to: Date
+    ) async throws -> PlaceChanges {
+        guard let dbPool else { throw DatabaseError.notInitialized }
+        guard !trackedPathIds.isEmpty else { return PlaceChanges(children: nil, currentBytes: 0) }
+        let root = Self.normalizePath(unitRoot)
+        let ids = trackedPathIds.map(\.uuidString)
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+
+        let read: (current: [PlaceChildRow], deltas: [PlaceDeltaRow]?) = try await dbPool.read { db in
+            let building = try Self.buildingTrackedPathIds(ids, db: db)
+            let current = try Self.mergedPlaceChildren(root: root, trackedPathIds: ids, building: building, db: db)
+
+            let recordingSince = try Date.fetchOne(
+                db,
+                sql: "SELECT MIN(bucketStart) FROM growthJournalDetail WHERE trackedPathId IN (\(placeholders))",
+                arguments: StatementArguments(ids)
+            )
+            guard let recordingSince, recordingSince <= from else { return (current: current, deltas: nil) }
+
+            var arguments = StatementArguments(ids)
+            arguments += [root, from, to]
+            let deltas = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT name, MAX(isFolder) AS isFolder, SUM(deltaBytes) AS deltaBytes
+                    FROM growthJournalDetail
+                    WHERE trackedPathId IN (\(placeholders)) AND unitRoot = ? AND bucketStart >= ? AND bucketStart < ?
+                    GROUP BY name
+                    HAVING SUM(deltaBytes) != 0
+                    """,
+                arguments: arguments
+            ).map { row in
+                PlaceDeltaRow(name: row["name"] ?? "", isFolder: row["isFolder"] ?? false, deltaBytes: row["deltaBytes"] ?? 0)
+            }
+            return (current: current, deltas: deltas)
+        }
+
+        let currentBytes = read.current.reduce(Int64(0)) { $0 + $1.totalBytes }
+        guard let deltas = read.deltas, !deltas.isEmpty else {
+            return PlaceChanges(children: nil, currentBytes: currentBytes)
+        }
+        return PlaceChanges(
+            children: Self.placeChanges(root: root, deltas: deltas, current: read.current),
+            currentBytes: currentBytes
+        )
+    }
+
+    private struct PlaceDeltaRow: Sendable {
+        let name: String
+        let isFolder: Bool
+        let deltaBytes: Int64
+    }
+
+    private static func placeChanges(root: String, deltas: [PlaceDeltaRow], current: [PlaceChildRow]) -> [PlaceChildChange] {
+        let currentByName = Dictionary(current.map { ($0.name.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+        let rootName = (root as NSString).lastPathComponent
+        var remainder: Int64 = 0
+        var named: [PlaceDeltaRow] = []
+        for row in deltas {
+            if row.name == GrowthJournalDetail.otherName {
+                remainder += row.deltaBytes
+            } else {
+                named.append(row)
+            }
+        }
+        named.sort {
+            abs($0.deltaBytes) != abs($1.deltaBytes)
+                ? abs($0.deltaBytes) > abs($1.deltaBytes)
+                : $0.name.caseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        var children: [PlaceChildChange] = []
+        for (index, row) in named.enumerated() {
+            guard index < placeChangeLimit, abs(row.deltaBytes) >= GrowthJournalService.presentationFloorBytes else {
+                remainder += row.deltaBytes
+                continue
+            }
+            let now = currentByName[row.name.lowercased()]
+            children.append(PlaceChildChange(
+                name: row.name.isEmpty ? rootName : (now?.name ?? row.name),
+                path: row.name.isEmpty ? root : (root == "/" ? "/" + row.name : root + "/" + row.name),
+                isFolder: now?.isFolder ?? row.isFolder,
+                deltaBytes: row.deltaBytes,
+                currentBytes: now.map(\.totalBytes)
+            ))
+        }
+        if remainder != 0 {
+            children.append(PlaceChildChange(
+                name: PlacePageNotes.otherChangesTitle,
+                path: nil,
+                isFolder: false,
+                deltaBytes: remainder,
+                currentBytes: nil
+            ))
+        }
+        return children
+    }
+
     private struct PlaceChildRow: Sendable {
         var name: String
         var isFolder: Bool

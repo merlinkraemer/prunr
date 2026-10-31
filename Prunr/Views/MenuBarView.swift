@@ -1368,13 +1368,16 @@ struct MenuBarView: View {
     @ViewBuilder
     private func feedPageView(for page: FeedPage) -> some View {
         if let place = shownPlace(for: page), let unitRoot = place.rootPath {
+            let span = PlaceChangeSpan(episode: place, calendar: .current)
             PlaceContentsView(
                 category: place.category,
                 caption: shownGroup(for: page).flatMap {
                     EpisodeBuilder.contentsCaption(for: place, headerTitle: $0.headerTitle(for: place))
                 },
                 onReveal: revealPlace,
-                loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) }
+                loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) },
+                changesLoader: { try await manager.loadPlaceChanges(unitRoot: unitRoot, span: span) },
+                notes: { PlacePageNotes.lines(span: span, changes: $0, calendar: .current) }
             )
         } else if let group = shownGroup(for: page) {
             ChangeGroupView(group: group, onOpenPlace: openPlace, onReveal: revealPlace)

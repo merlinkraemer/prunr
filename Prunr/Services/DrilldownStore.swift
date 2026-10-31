@@ -199,6 +199,10 @@ final class DrilldownStore {
         try await db.fetchPlaceContents(unitRoot: unitRoot, trackedPathIds: trackedPathIds, offset: offset)
     }
 
+    func placeChanges(unitRoot: String, trackedPathIds: [UUID], span: PlaceChangeSpan) async throws -> PlaceChanges {
+        try await db.fetchPlaceChanges(unitRoot: unitRoot, trackedPathIds: trackedPathIds, from: span.start, to: span.end)
+    }
+
     /// Owner groups the categories view shows at most before the rest fold
     /// into "Other apps (N)".
     nonisolated static let shownOwnerLimit = 7
