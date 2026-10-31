@@ -51,9 +51,9 @@ acceptance: fixes committed, list of remaining doubts in the report. validation:
 ### Q15 Category groups mockups [done, review] [box] - https://dev.tail87069a.ts.net:4181/mockups/category-groups.html, 3 variants, rec A (up/down split line under group header)
 goal: Waiting item 6 rec: per-place rows inside groups with up/down split + "smaller changes" row, header reconciles with rows. HTML mockups from real snapshot numbers on the review page :4181. Nothing lands in the app.
 
-### Q16 Category groups variant A [running] [mac]
+### Q16 Category groups variant A [on branch, Mac check pending] [mac] - drain/Q16-2026-10-31 d814a88, job 20261031-172802-...-d814a88dc-test; split line on group row, size-sorted rows with arrows on group page (no inline expansion), smaller-changes row; review: split line hyphen vs U+2212 in amounts
 goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller changes" row reconciling with header), tested grouping logic; branch drain/Q16-2026-10-31 off integration ce98857; unlanded (UI, holiday).
-### Q17 Checkpoint table (Waiting item 3 rec) [queued, after Q16] [mac]
+### Q17 Checkpoint table design (Waiting item 3) [running] [box] - design doc first on drain/Q17-2026-10-31, code after Mac compile
 
 ## Rundown
 - 2026-10-30: moved lab2 → dev; alpha.24 live since 10-28.

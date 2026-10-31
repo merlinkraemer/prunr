@@ -134,3 +134,5 @@
 2026-10-31 orchestrator Q14 done: static review of integration, 1 compile error fixed (FileDateHistoryTests path:), head ce98857, job 20261031-161437-...-ce9885791-test queued; d3f2a98 job superseded
 2026-10-31 orchestrator - decided: Waiting item 6 accepted per rec (variant A) on PM holiday-mode relay; reversible branch, unlanded
 2026-10-31 orchestrator Q16 spawn: category groups variant A off integration ce98857 (sonnet high, seat worktree); Q17 checkpoint table queued after (shares feed code)
+2026-10-31 orchestrator Q16 on branch: drain/Q16-2026-10-31 d814a88 variant A (EpisodeBuilder split/smaller-changes + 7 tests, 3 views), uncompiled, job queued
+2026-10-31 orchestrator Q17 spawn: checkpoint table design doc only, code waits for Mac compile (schema on top of uncompiled v26) (opus medium, seat)
