@@ -123,6 +123,7 @@
 		6ACFE0C90AF7864FD499C293 /* IdleCPUTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BE35AF9D9223B1FE7B08AC /* IdleCPUTests.swift */; };
 		98E1335C7B222B67D50C9D5E /* PanelSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA6652F5134E502390A5AA7A /* PanelSnapshotTests.swift */; };
 		5CDA8474E73D43CBFE1085E3 /* ReplayHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03261B800BF2C9EF2224B939 /* ReplayHarnessTests.swift */; };
+		7E57A0F1B2C3D4E5F607182A /* PerfBaselineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E57A0F1B2C3D4E5F6071829 /* PerfBaselineTests.swift */; };
 		804FFE7E0DB41DC93B455414 /* FixtureLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0CFA8F2DF9BD8B40E175DB /* FixtureLibrary.swift */; };
 		C258A0C1B9D424189F20ECAB /* PanelSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43EA9CD05DA89B7D7282BB2F /* PanelSnapshot.swift */; };
 		1462213939B83E453258491C /* ReplayHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA55EF71AB5915A979989897 /* ReplayHarness.swift */; };
@@ -256,6 +257,7 @@
 		44BE35AF9D9223B1FE7B08AC /* IdleCPUTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdleCPUTests.swift; sourceTree = "<group>"; };
 		CA6652F5134E502390A5AA7A /* PanelSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelSnapshotTests.swift; sourceTree = "<group>"; };
 		03261B800BF2C9EF2224B939 /* ReplayHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplayHarnessTests.swift; sourceTree = "<group>"; };
+		7E57A0F1B2C3D4E5F6071829 /* PerfBaselineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfBaselineTests.swift; sourceTree = "<group>"; };
 		5A0CFA8F2DF9BD8B40E175DB /* FixtureLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureLibrary.swift; sourceTree = "<group>"; };
 		43EA9CD05DA89B7D7282BB2F /* PanelSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelSnapshot.swift; sourceTree = "<group>"; };
 		BA55EF71AB5915A979989897 /* ReplayHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplayHarness.swift; sourceTree = "<group>"; };
@@ -353,6 +355,7 @@
 				44BE35AF9D9223B1FE7B08AC /* IdleCPUTests.swift */,
 				CA6652F5134E502390A5AA7A /* PanelSnapshotTests.swift */,
 				03261B800BF2C9EF2224B939 /* ReplayHarnessTests.swift */,
+				7E57A0F1B2C3D4E5F6071829 /* PerfBaselineTests.swift */,
 				421B9F53780179534531673D /* TestSupport */,
 			);
 			path = PrunrTests;
@@ -642,6 +645,7 @@
 				6ACFE0C90AF7864FD499C293 /* IdleCPUTests.swift in Sources */,
 				98E1335C7B222B67D50C9D5E /* PanelSnapshotTests.swift in Sources */,
 				5CDA8474E73D43CBFE1085E3 /* ReplayHarnessTests.swift in Sources */,
+				7E57A0F1B2C3D4E5F607182A /* PerfBaselineTests.swift in Sources */,
 				804FFE7E0DB41DC93B455414 /* FixtureLibrary.swift in Sources */,
 				C258A0C1B9D424189F20ECAB /* PanelSnapshot.swift in Sources */,
 				1462213939B83E453258491C /* ReplayHarness.swift in Sources */,
