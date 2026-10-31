@@ -51,6 +51,9 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// Set when the amount built up over several days: the day it started.
     /// The caption then reads "a little each day since Fri 2 Oct".
     var buildingSince: Date?
+    /// Set for a row only a scan found: when the window the scan reconciled
+    /// began. The caption then reads "found by scan · since Sun 18 Oct".
+    var scanWindowStart: Date?
 
     /// Where the place's own icon comes from.
     var iconSource: UnitIconSource = .category
@@ -330,6 +333,8 @@ enum EpisodeBuilder {
     /// A scan residual whose window started more than this before the scan
     /// cannot say when the change happened.
     static let approximateAfter: TimeInterval = 60 * 60
+    /// A scan window longer than this is named in the caption.
+    static let longScanWindow: TimeInterval = 36 * 60 * 60
     /// The source counts as moved to the Trash when the Trash grew by at least
     /// this share (percent) of the shrink in the same slots.
     static let trashMovePercent: Int64 = 90
@@ -456,10 +461,19 @@ enum EpisodeBuilder {
         return "~" + path.dropFirst(home.count)
     }
 
-    /// "14:20" when the clock time of the change is known; nil when a daily
-    /// scan found it or it built up over several days.
+    /// "14:20" when the clock time of the change is known; "found by scan"
+    /// when a scan found it, plus "since Sun 18 Oct" when its window was long;
+    /// nil when it built up over several days.
     static func timeCaption(for episode: ChangeEpisode, calendar: Calendar) -> String? {
-        guard !episode.isApproximateTime, episode.buildingSince == nil else { return nil }
+        if episode.isApproximateTime {
+            var caption = "found by scan"
+            if let start = episode.scanWindowStart,
+               episode.time.timeIntervalSince(start) > longScanWindow {
+                caption += " \u{00B7} since \(dayLabel(for: start, calendar: calendar))"
+            }
+            return caption
+        }
+        guard episode.buildingSince == nil else { return nil }
         return formatter("HH:mm", calendar: calendar).string(from: episode.time)
     }
 
@@ -577,6 +591,7 @@ enum EpisodeBuilder {
             isMovedToTrash: movedToTrash,
             isEstimated: isEstimated,
             buildingSince: isOneGo ? nil : countStart,
+            scanWindowStart: approximate ? peakSlots.compactMap(\.observedSince).min() : nil,
             iconSource: icon,
             shortTitle: name.shortTitle,
             unitOwner: name.owner

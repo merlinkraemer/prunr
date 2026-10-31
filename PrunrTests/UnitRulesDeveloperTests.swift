@@ -135,4 +135,11 @@ final class UnitRulesDeveloperTests: XCTestCase {
         XCTAssertEqual(key("/Users/tester/Documents/Archive/x.pdf").kind, .place)
         XCTAssertEqual(key("/Users/tester/.Trash/node_modules/x").kind, .trash)
     }
+
+    func testBuildFolderDirectlyInADeveloperRootHasNoProjectName() {
+        XCTAssertEqual(name("/Users/tester/dev/build/acme-1234/out.o").title, "Build files")
+        XCTAssertEqual(name("/Users/tester/Developer/build/x/out.o").title, "Build files")
+        XCTAssertEqual(name("/Users/tester/dev/venv/bin/python").title, "Python environments")
+        XCTAssertEqual(name("/Users/tester/dev/acme/build/out.o").title, "Build files \u{00B7} acme")
+    }
 }

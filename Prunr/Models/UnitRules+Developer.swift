@@ -277,12 +277,14 @@ extension UnitRules {
         return nil
     }
 
-    /// The folder holding the marker; nil when the marker sits directly in home
-    /// or at the top of the disk.
+    /// The folder holding the marker; nil when the marker sits directly in home,
+    /// at the top of the disk or in a generic folder such as `~/dev`.
     private static func projectName(of root: UnitPath) -> String? {
         let parts = root.relative ?? root.components
         guard parts.count >= 2 else { return nil }
-        return UnitNamer.displayComponent(parts[parts.count - 2])
+        guard let parent = UnitNamer.displayComponent(parts[parts.count - 2]),
+              !UnitRules.isGenericFolder(parent) else { return nil }
+        return parent
     }
 
     private static func markerRule(_ kind: UnitKind, title: String, orphanTitle: String) -> UnitRule {

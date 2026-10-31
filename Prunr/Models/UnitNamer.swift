@@ -296,13 +296,24 @@ extension UnitRules {
         path.homeDepth != nil ? path.homeRoot(depth: 2) : path.root(depth: 2)
     }
 
-    /// Names any root by its last two parts, "<inner> · <outer>". Also used for
-    /// keys whose kind no rule knows.
+    /// Folders that group work without naming it: they never stand as a
+    /// project or place name.
+    static let genericFolderNames: Set<String> = GrowthCategory.developerFolderNames.union(["local"])
+
+    static func isGenericFolder(_ name: String) -> Bool {
+        genericFolderNames.contains(name.lowercased())
+    }
+
+    /// Names any root by its last two parts, "<inner> · <outer>"; the outer
+    /// part is left out when it is a generic folder ("dev", "local"). Also
+    /// used for keys whose kind no rule knows.
     static func placeName(for root: UnitPath) -> UnitName {
         let parts = root.relative ?? root.components
         let category = root.category
         let readable = parts.suffix(2).compactMap(UnitNamer.displayComponent)
         switch readable.count {
+        case 2 where isGenericFolder(readable[0]):
+            return UnitName(title: readable[1], category: category)
         case 2:
             return UnitName(title: "\(readable[1]) · \(readable[0])", shortTitle: readable[1], category: category)
         case 1:
