@@ -24,7 +24,7 @@ status: running (Q6-Q13 coded on drain/integration-2026-10-31, uncompiled; PM 10
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (on Mac open, in order): run the integration job 20261031-161437-...-ce9885791-test on ce98857 (d3f2a98 job superseded) (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6+Q12+Q10; older integration jobs superseded) on an idle Mac (perf tests) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → make snapshots-fetch → Q9 idle soak 2h
+mac batch pending (on Mac open, in order): run the integration job 20261031-161437-...-ce9885791-test on ce98857 (d3f2a98 job superseded) (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6+Q12+Q10; older integration jobs superseded) on an idle Mac (perf tests) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → then Q16 job d814a88 and Q18 job 8f77404 (stacked on integration) → make snapshots-fetch → Q9 idle soak 2h
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
@@ -54,7 +54,7 @@ goal: Waiting item 6 rec: per-place rows inside groups with up/down split + "sma
 ### Q16 Category groups variant A [on branch, Mac check pending] [mac] - drain/Q16-2026-10-31 d814a88, job 20261031-172802-...-d814a88dc-test; split line on group row, size-sorted rows with arrows on group page (no inline expansion), smaller-changes row; review: split line hyphen vs U+2212 in amounts
 goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller changes" row reconciling with header), tested grouping logic; branch drain/Q16-2026-10-31 off integration ce98857; unlanded (UI, holiday).
 ### Q17 Checkpoint table design [landed] [box] - docs/checkpoint-table-design-2026-10-31.md on main; drift visible from ~14 Nov on real data
-### Q18 Checkpoint table build, 4 slices per design [running] [mac] - drain/Q18-2026-10-31 off Q16 d814a88; replay.py verifies on box
+### Q18 Checkpoint table build [on branch, Mac check pending] [mac] - drain/Q18-2026-10-31 8f77404 (on Q16), job 20261031-193012-...-8f77404fb-test; replay.py on real data: 81 row shifts in 16 places -> 0; doubts: first prune after upgrade folds whole journal (unmeasured), midnight-spanning run splits
 
 ## Rundown
 - 2026-10-30: moved lab2 → dev; alpha.24 live since 10-28.

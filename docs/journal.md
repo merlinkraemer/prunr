@@ -138,3 +138,4 @@
 2026-10-31 orchestrator Q17 spawn: checkpoint table design doc only, code waits for Mac compile (schema on top of uncompiled v26) (opus medium, seat)
 2026-10-31 orchestrator Q17 landed on main: checkpoint table design (f86244b, docs only); recs accepted (v27, real start date, 90-day expiry); Q18 build queued after integration compiles
 2026-10-31 orchestrator Q18 spawn: checkpoint table 4 slices off Q16 d814a88, own branch so integration stays clean; replay.py check on box (sonnet high, seat worktree)
+2026-10-31 orchestrator Q18 on branch: drain/Q18-2026-10-31 8f77404 v27 checkpoints, 4 slices + tests, uncompiled; replay.py 81 shifts/16 places -> 0, matches full history; job queued
