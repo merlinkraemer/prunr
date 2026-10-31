@@ -113,6 +113,7 @@
 		F004E8B5801BCDE0531D2800 /* DrilldownIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBD112CA80E3349B7638E740 /* DrilldownIndex.swift */; };
 		F106F7F5C105C8CD3A15021D /* MenuBarManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08EB343218571F3B97D51611 /* MenuBarManager.swift */; };
 		F1516F105D412B399A09CFFE /* PrunrSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD8D4EB6F8A0B9C7511BF043 /* PrunrSmokeTests.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* DrilldownNavigationGuardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* DrilldownNavigationGuardTests.swift */; };
 		F3ED05960EF85A2BBE4D45EB /* GrowthJournalService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B0E8371562FF170C5B1E542 /* GrowthJournalService.swift */; };
 		F4C350CADF72B37F75417E70 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 225146949C55B77C0509C557 /* SettingsWindowController.swift */; };
 		F7E29A6815DD78AEDA1362B4 /* OwnerGroupsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C23D9981F283628262314B8 /* OwnerGroupsTests.swift */; };
@@ -218,6 +219,7 @@
 		AAC89EB552188712FB917B53 /* CategoryGrowthListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryGrowthListView.swift; sourceTree = "<group>"; };
 		AACAC197648831F1BAD4882C /* DrilldownOnDemandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrilldownOnDemandTests.swift; sourceTree = "<group>"; };
 		AD8D4EB6F8A0B9C7511BF043 /* PrunrSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrunrSmokeTests.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5D /* DrilldownNavigationGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrilldownNavigationGuardTests.swift; sourceTree = "<group>"; };
 		AD954C51649B6F28B67E7CB1 /* UnitIconTile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnitIconTile.swift; sourceTree = "<group>"; };
 		ADFA692654D900931A96C796 /* FSEventsWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSEventsWatcher.swift; sourceTree = "<group>"; };
 		AF0B553533A012BE2ECF5D8B /* PrunrMenuBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrunrMenuBar.swift; sourceTree = "<group>"; };
@@ -336,6 +338,7 @@
 				1393130BB45D84D6B2D5C48F /* OwnerFeedTests.swift */,
 				3C23D9981F283628262314B8 /* OwnerGroupsTests.swift */,
 				822E267E49AAE675A6A01AB8 /* OwnerUnitsTests.swift */,
+				A1B2C3D4E5F60718293A4B5D /* DrilldownNavigationGuardTests.swift */,
 				AD8D4EB6F8A0B9C7511BF043 /* PrunrSmokeTests.swift */,
 				572DDF4EDC18E57A6ABB3961 /* SettingsDevModeTests.swift */,
 				2233DA30041FBD4C66E14075 /* StartupMaintenancePlanTests.swift */,
@@ -624,6 +627,7 @@
 				2B6EA141F971F9DE1665147D /* OwnerFeedTests.swift in Sources */,
 				F7E29A6815DD78AEDA1362B4 /* OwnerGroupsTests.swift in Sources */,
 				CCA0436E96235516B063ABA9 /* OwnerUnitsTests.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* DrilldownNavigationGuardTests.swift in Sources */,
 				F1516F105D412B399A09CFFE /* PrunrSmokeTests.swift in Sources */,
 				732F15CC74B3FA55867B9AC0 /* PrunrTestCase.swift in Sources */,
 				2CE358B9016355ABD58B3D8E /* SettingsDevModeTests.swift in Sources */,

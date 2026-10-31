@@ -7,6 +7,7 @@ final class DrilldownTransitionCoordinator {
     private(set) var slideOffset: CGFloat = 0
 
     private var navigationTask: Task<Void, Never>?
+    private var slideGeneration = 0
 
     static let slideMilliseconds: UInt64 = 280
 
@@ -15,6 +16,7 @@ final class DrilldownTransitionCoordinator {
     }
 
     func cancelAndReset() {
+        slideGeneration += 1
         navigationTask?.cancel()
         navigationTask = nil
         var transaction = Transaction()
@@ -33,6 +35,8 @@ final class DrilldownTransitionCoordinator {
         phase3: @escaping () -> Void,
         afterTeardown: @escaping () -> Void
     ) {
+        slideGeneration += 1
+        let generation = slideGeneration
         navigationTask?.cancel()
         navigationTask = nil
         var resetTransaction = Transaction()
@@ -69,21 +73,22 @@ final class DrilldownTransitionCoordinator {
             }
             guard !Task.isCancelled else { return }
 
-            withAnimation(Self.slideAnimation) {
+            withAnimation(Self.slideAnimation, completionCriteria: .logicallyComplete) {
                 self.slideOffset = targetOffset
+            } completion: {
+                Task { @MainActor in
+                    guard generation == self.slideGeneration else { return }
+
+                    var cleanupTransaction = Transaction()
+                    cleanupTransaction.disablesAnimations = true
+                    withTransaction(cleanupTransaction) {
+                        phase3()
+                        self.slideOffset = 0
+                    }
+
+                    afterTeardown()
+                }
             }
-
-            try? await Task.sleep(for: .milliseconds(Int(Self.slideMilliseconds)))
-            guard !Task.isCancelled else { return }
-
-            var cleanupTransaction = Transaction()
-            cleanupTransaction.disablesAnimations = true
-            withTransaction(cleanupTransaction) {
-                phase3()
-                self.slideOffset = 0
-            }
-
-            afterTeardown()
         }
     }
 }
