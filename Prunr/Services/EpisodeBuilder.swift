@@ -111,6 +111,20 @@ struct ChangeFeedDay: Identifiable, Equatable, Sendable {
     }
 }
 
+struct SmallerChanges: Equatable, Sendable {
+    let count: Int
+    let netBytes: Int64
+
+    init?(weekNetBytes: Int64, rowsNetBytes: Int64, count: Int) {
+        let remainder = weekNetBytes - rowsNetBytes
+        guard count > 0, remainder != 0 else { return nil }
+        self.count = count
+        netBytes = remainder
+    }
+
+    var label: String { "in \(count) smaller \(count == 1 ? "change" : "changes")" }
+}
+
 /// One owner's rows on one day: a main-list row that opens them.
 struct ChangeGroup: Identifiable, Equatable, Sendable {
     let day: Date
@@ -147,6 +161,28 @@ struct ChangeGroup: Identifiable, Equatable, Sendable {
 
     /// Orange in the list: growth of at least `largeGrowthBytes`.
     var isLargeGrowth: Bool { EpisodeBuilder.isLargeGrowth(netBytes) }
+
+    var growthBytes: Int64 { episodes.filter { $0.netBytes > 0 }.reduce(Int64(0)) { $0 + $1.netBytes } }
+
+    var shrinkBytes: Int64 { episodes.filter { $0.netBytes < 0 }.reduce(Int64(0)) { $0 + $1.netBytes } }
+
+    var episodesBySize: [ChangeEpisode] {
+        episodes.sorted { lhs, rhs in
+            let lhsSize = abs(lhs.netBytes)
+            let rhsSize = abs(rhs.netBytes)
+            return lhsSize == rhsSize ? lhs.id < rhs.id : lhsSize > rhsSize
+        }
+    }
+
+    var splitText: String? {
+        guard growthBytes > 0, shrinkBytes < 0 else { return nil }
+        let up = formattedBytes(growthBytes)
+        let down = formattedBytes(-shrinkBytes)
+        let upUnit = up.split(separator: " ").last.map(String.init) ?? ""
+        let downUnit = down.split(separator: " ").last.map(String.init) ?? ""
+        let upText = upUnit == downUnit ? String(up.dropLast(upUnit.count + 1)) : up
+        return "up +\(upText) \u{B7} down -\(down)"
+    }
 }
 
 /// The change list: every row back to `GrowthJournalService.historyWindowDays`,
@@ -164,6 +200,7 @@ struct ChangeFeed: Equatable, Sendable {
     var hasFileHistory = false
     /// The newest change the watcher recorded; nil when it has seen none.
     var lastLiveChangeAt: Date?
+    var smallerChangeCount = 0
 
     static let empty = ChangeFeed(days: [], weekNetBytes: 0, watchingSince: nil)
 
@@ -188,6 +225,12 @@ struct ChangeFeed: Equatable, Sendable {
     }
 
     var hasRows: Bool { !days.isEmpty }
+
+    func smallerChanges(now: Date, calendar: Calendar) -> SmallerChanges? {
+        let weekStart = GrowthJournalService.weekStart(now: now, calendar: calendar)
+        let rowsNet = episodes.filter { $0.day >= weekStart }.reduce(Int64(0)) { $0 + $1.netBytes }
+        return SmallerChanges(weekNetBytes: weekNetBytes, rowsNetBytes: rowsNet, count: smallerChangeCount)
+    }
 
     /// True when the list shows rows rebuilt from file dates, so it splits
     /// into "Since install" and "Found on disk · estimated".
@@ -360,6 +403,7 @@ enum EpisodeBuilder {
         let trashGrowth = trashGrowthBySlot(slots)
 
         var weekNet: Int64 = 0
+        var smallerChangeCount = 0
         var rowsByDay: [Date: [ChangeEpisode]] = [:]
 
         for (identity, placeSlots) in Dictionary(grouping: slots, by: \.unitKey) {
@@ -367,6 +411,7 @@ enum EpisodeBuilder {
             var count: Int64 = 0
             var gross: Int64 = 0
             var countStart: Date?
+            var pendingSmallChanges = 0
 
             let days = groupByRunStartDay(placeSlots, calendar: calendar)
                 .filter { $0.key >= oldestDay }
@@ -386,6 +431,9 @@ enum EpisodeBuilder {
                 }
                 count += counted
                 gross += daySlots.reduce(Int64(0)) { $0 + $1.grossBytes }
+                if day >= weekStart {
+                    pendingSmallChanges += 1
+                }
                 if count == 0 {
                     countStart = nil
                     gross = 0
@@ -405,10 +453,12 @@ enum EpisodeBuilder {
                     home: home
                 )
                 rowsByDay[day, default: []].append(episode)
+                pendingSmallChanges = 0
                 count = 0
                 gross = 0
                 countStart = nil
             }
+            smallerChangeCount += pendingSmallChanges
         }
 
         let days = rowsByDay
@@ -420,7 +470,8 @@ enum EpisodeBuilder {
             weekNetBytes: weekNet,
             watchingSince: watchingSince,
             hasFileHistory: shownSlots.contains { $0.source == .files },
-            lastLiveChangeAt: shownSlots.filter { $0.source == .watch }.map(\.firstAt).max()
+            lastLiveChangeAt: shownSlots.filter { $0.source == .watch }.map(\.firstAt).max(),
+            smallerChangeCount: smallerChangeCount
         ).resolvingOwners(with: catalog)
     }
 

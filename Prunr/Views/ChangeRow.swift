@@ -5,6 +5,7 @@ struct ChangeRow: View {
     let onOpen: (ChangeEpisode) -> Void
     let onReveal: (String) -> Void
     var calendar: Calendar = .current
+    var showsDirection = false
 
     @State private var isHovering = false
 
@@ -29,8 +30,16 @@ struct ChangeRow: View {
 
     private func content(opens: Bool) -> some View {
         HStack(spacing: 10) {
-            UnitIconTile(category: episode.category, source: episode.rowIconSource, size: 18)
-                .estimatedLook(episode.isEstimated)
+            if showsDirection {
+                Image(systemName: episode.netBytes < 0 ? "arrowtriangle.down.fill" : "arrowtriangle.up.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(episode.netBytes < 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
+                    .frame(width: 18)
+                    .accessibilityHidden(true)
+            } else {
+                UnitIconTile(category: episode.category, source: episode.rowIconSource, size: 18)
+                    .estimatedLook(episode.isEstimated)
+            }
 
             VStack(alignment: .leading, spacing: 1) {
                 FittingTitle(title: title, shortTitle: episode.shortTitle, font: .system(size: 13, weight: .medium), isDimmed: episode.isEstimated)

@@ -1200,4 +1200,127 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertFalse(feed.hasFileHistory)
         XCTAssertFalse(feed.hasEstimatedRows)
     }
+
+    // MARK: - Category groups: split, size order, smaller changes
+
+    private func developerEpisodes(day: Date, calendar: Calendar) -> [ChangeEpisode] {
+        let nets: [(String, Double)] = [
+            ("Game build files", 32.1), ("Python package cache", -11.1), ("Tool cache", -7.3),
+            ("Device support", -7.0), ("Build files", 6.3), ("Assistant data", 3.1),
+            ("a", 1.5), ("b", 1.3), ("c", -3.0), ("d", -2.5), ("e", -2.0), ("f", -1.6)
+        ]
+        return nets.map { name, gigabytes in
+            episode(name, .developer, Int64((gigabytes * 1_000).rounded()) * Self.mb, at: day, calendar: calendar)
+        }
+    }
+
+    func testGroupSplitMatchesTheMockupExample() {
+        let utc = calendar()
+        let day = date(2026, 10, 26, 10, 0, in: utc)
+        let group = ChangeGroup(day: utc.startOfDay(for: day), category: .developer, episodes: developerEpisodes(day: day, calendar: utc))
+
+        XCTAssertEqual(group.growthBytes, 44_300 * Self.mb)
+        XCTAssertEqual(group.shrinkBytes, -34_500 * Self.mb)
+        XCTAssertEqual(group.growthBytes + group.shrinkBytes, group.netBytes)
+        XCTAssertEqual(group.splitText, "up +44.3 \u{B7} down -34.5 GB")
+    }
+
+    func testGroupSplitIsNilWhenEveryPlaceWentOneWay() {
+        let utc = calendar()
+        let day = date(2026, 10, 26, 10, 0, in: utc)
+        let grew = ChangeGroup(day: day, category: .developer, episodes: [
+            episode("a", .developer, 2 * Self.gb, at: day, calendar: utc),
+            episode("b", .developer, 3 * Self.gb, at: day, calendar: utc)
+        ])
+        let shrank = ChangeGroup(day: day, category: .developer, episodes: [
+            episode("a", .developer, -2 * Self.gb, at: day, calendar: utc)
+        ])
+
+        XCTAssertNil(grew.splitText)
+        XCTAssertNil(shrank.splitText)
+    }
+
+    func testGroupSplitKeepsBothUnitsWhenTheyDiffer() {
+        let utc = calendar()
+        let day = date(2026, 10, 26, 10, 0, in: utc)
+        let group = ChangeGroup(day: day, category: .developer, episodes: [
+            episode("a", .developer, 2 * Self.gb, at: day, calendar: utc),
+            episode("b", .developer, -500 * Self.mb, at: day, calendar: utc)
+        ])
+
+        XCTAssertEqual(group.splitText, "up +2.0 GB \u{B7} down -500 MB")
+    }
+
+    func testGroupPlacesAreMixedBySize() {
+        let utc = calendar()
+        let day = date(2026, 10, 26, 10, 0, in: utc)
+        let group = ChangeGroup(day: day, category: .developer, episodes: developerEpisodes(day: day, calendar: utc))
+
+        let sizes = group.episodesBySize.map { abs($0.netBytes) }
+        XCTAssertEqual(sizes, sizes.sorted(by: >))
+        XCTAssertEqual(group.episodesBySize.prefix(4).map(\.id), ["Game build files", "Python package cache", "Tool cache", "Device support"])
+        XCTAssertEqual(group.episodesBySize.count, group.episodes.count)
+    }
+
+    func testSmallerChangesFixtureShapedLikeTheMockup() throws {
+        let utc = calendar()
+        let now = date(2026, 10, 27, 12, 0, in: utc)
+        let day = date(2026, 10, 26, 10, 0, in: utc)
+        let developer = developerEpisodes(day: day, calendar: utc)
+        let others = [
+            episode("Browser cache", .cachesAndSystem, -4_600 * Self.mb, at: day, calendar: utc),
+            episode("Projects", .mediaAndDocuments, 2_100 * Self.mb, at: day, calendar: utc),
+            episode("Music app cache", .cachesAndSystem, -3_400 * Self.mb, at: day, calendar: utc)
+        ]
+        let rowsNet = (developer + others).reduce(Int64(0)) { $0 + $1.netBytes }
+        let feed = ChangeFeed(
+            days: [ChangeFeedDay(day: utc.startOfDay(for: day), episodes: developer + others)],
+            weekNetBytes: rowsNet - 2_600 * Self.mb,
+            watchingSince: nil,
+            smallerChangeCount: 689
+        )
+
+        let smaller = try XCTUnwrap(feed.smallerChanges(now: now, calendar: utc))
+        XCTAssertEqual(smaller.count, 689)
+        XCTAssertEqual(smaller.netBytes, -2_600 * Self.mb)
+        XCTAssertEqual(smaller.label, "in 689 smaller changes")
+        XCTAssertEqual(signedBytes(smaller.netBytes), "\u{2212}2.6 GB")
+    }
+
+    func testSmallerChangesIsNilWhenRowsCoverTheHeader() {
+        let utc = calendar()
+        let now = date(2026, 10, 27, 12, 0, in: utc)
+        let day = date(2026, 10, 26, 10, 0, in: utc)
+        let rows = [episode("a", .developer, 2 * Self.gb, at: day, calendar: utc)]
+        let feed = ChangeFeed(
+            days: [ChangeFeedDay(day: utc.startOfDay(for: day), episodes: rows)],
+            weekNetBytes: 2 * Self.gb,
+            watchingSince: nil,
+            smallerChangeCount: 3
+        )
+
+        XCTAssertNil(feed.smallerChanges(now: now, calendar: utc))
+        XCTAssertNil(SmallerChanges(weekNetBytes: Self.gb, rowsNetBytes: 0, count: 0))
+    }
+
+    func testRowsPlusSmallerChangesEqualTheHeaderTotal() throws {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 15, 0, in: utc)
+        let feed = build([
+            slot(Self.iso, at: date(2026, 10, 11, 14, 20, in: utc), net: 50 * Self.gb),
+            slot(Self.project, at: date(2026, 10, 7, 10, 0, in: utc), net: -2 * Self.gb, category: "developer"),
+            slot("place|/Users/tester/b", at: date(2026, 10, 5, 0, 10, in: utc), net: 300 * Self.mb, category: "developer"),
+            slot("place|/Users/tester/c", at: date(2026, 10, 8, 9, 0, in: utc), net: -200 * Self.mb, category: "developer"),
+            slot("place|/Users/tester/c", at: date(2026, 10, 9, 9, 0, in: utc), net: 50 * Self.mb, category: "developer")
+        ], now: now, calendar: utc)
+
+        let weekStart = GrowthJournalService.weekStart(now: now, calendar: utc)
+        let rowsNet = feed.episodes.filter { $0.day >= weekStart }.reduce(Int64(0)) { $0 + $1.netBytes }
+        let smaller = try XCTUnwrap(feed.smallerChanges(now: now, calendar: utc))
+
+        XCTAssertEqual(smaller.count, 3)
+        XCTAssertEqual(smaller.netBytes, 150 * Self.mb)
+        XCTAssertEqual(rowsNet + smaller.netBytes, feed.weekNetBytes)
+        XCTAssertEqual(WeeklyChange(.loaded(feed), now: now), .bytes(rowsNet + smaller.netBytes))
+    }
 }
