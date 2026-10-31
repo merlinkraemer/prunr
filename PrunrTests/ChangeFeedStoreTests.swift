@@ -417,7 +417,7 @@ final class ChangeFeedStoreTests: PrunrTestCase {
             let base = self.augustFirst()
             let now = self.at(60, 20, from: base)
             for day in [5, 6, 7, 45] {
-                try await self.record(path, self.at(day, 10, from: base), 400 * Self.mbDecimal)
+                try await self.record(path, self.at(day, 10, from: base), 300 * Self.mbDecimal)
             }
 
             await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
@@ -433,7 +433,7 @@ final class ChangeFeedStoreTests: PrunrTestCase {
 
             XCTAssertEqual(once, twice)
             XCTAssertEqual(feedOnce, feedTwice)
-            XCTAssertEqual(feedOnce.episodes.first?.netBytes, 1_600 * Self.mbDecimal)
+            XCTAssertEqual(feedOnce.episodes.first?.netBytes, 1_200 * Self.mbDecimal)
         }
     }
 
@@ -468,7 +468,15 @@ final class ChangeFeedStoreTests: PrunrTestCase {
             let recent = "place|/Users/tester/recent"
             try await self.record(path, self.at(cutoffDay - 91, 10, from: base), 300 * Self.mbDecimal, unit: stale)
             try await self.record(path, self.at(cutoffDay - 89, 10, from: base), 300 * Self.mbDecimal, unit: recent)
-            try await DatabaseManager.shared.replaceJournalCheckpoints([self.checkpoint("place|/Users/tester/seeded")])
+            let seeded = JournalCheckpoint(
+                unitKey: "place|/Users/tester/seeded",
+                asOf: base,
+                countBytes: 100 * Self.mbDecimal,
+                grossBytes: 100 * Self.mbDecimal,
+                countStartDay: base,
+                lastActiveDay: base
+            )
+            try await DatabaseManager.shared.replaceJournalCheckpoints([seeded])
 
             await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
 
@@ -488,7 +496,7 @@ final class ChangeFeedStoreTests: PrunrTestCase {
 
             for day in 0..<75 {
                 let when = self.at(day, 10, from: base)
-                let otherNet = (day.isMultiple(of: 3) ? 40 : -10) * Self.mbDecimal
+                let otherNet = (day.isMultiple(of: 3) ? 400 : -150) * Self.mbDecimal
                 try await self.record(path, when, 250 * Self.mbDecimal)
                 try await self.record(path, when, otherNet, unit: other)
                 history.append(self.memorySlot(when, 250 * Self.mbDecimal))

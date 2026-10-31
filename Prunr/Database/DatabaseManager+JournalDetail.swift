@@ -1,6 +1,11 @@
 import Foundation
 import GRDB
 
+struct ChangeFeedInput: Sendable {
+    let slots: [JournalSlot]
+    let carries: [String: PlaceCount]
+}
+
 extension DatabaseManager {
     static let journalDetailMigrationIdentifier = "v26_journal_detail"
     static let journalCheckpointMigrationIdentifier = "v27_journal_checkpoint"
@@ -55,6 +60,27 @@ extension DatabaseManager {
 
         return try await dbPool.read { db in
             try Self.fetchJournalCheckpoints(db: db)
+        }
+    }
+
+    /// Every slot of these paths and the checkpoints, read in one transaction
+    /// so a prune in between cannot count a day twice.
+    func fetchChangeFeedInput(trackedPathIds: [UUID]) async throws -> ChangeFeedInput {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            let slots = try Self.fetchJournalSlots(
+                db: db,
+                trackedPathIds: trackedPathIds,
+                since: Date(timeIntervalSince1970: 0)
+            )
+            let checkpoints = try Self.fetchJournalCheckpoints(db: db)
+            return ChangeFeedInput(
+                slots: slots,
+                carries: Dictionary(uniqueKeysWithValues: checkpoints.map { ($0.unitKey, $0.state) })
+            )
         }
     }
 

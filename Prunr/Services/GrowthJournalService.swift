@@ -86,15 +86,21 @@ actor GrowthJournalService {
         watchingSince: Date? = nil
     ) async throws -> ChangeFeed {
         let ids = trackedPaths.map(\.id)
-        let since = EpisodeBuilder.windowStart(now: now, calendar: calendar)
-        let slots = try await db.fetchJournalSlots(trackedPathIds: ids, since: since)
+        let input = try await db.fetchChangeFeedInput(trackedPathIds: ids)
         let start: Date?
         if let watchingSince {
             start = watchingSince
         } else {
             start = try await db.fetchOldestCompleteSnapshotDate(trackedPathIds: ids)
         }
-        return EpisodeBuilder.build(slots: slots, now: now, calendar: calendar, home: home, watchingSince: start)
+        return EpisodeBuilder.build(
+            slots: input.slots,
+            now: now,
+            calendar: calendar,
+            home: home,
+            watchingSince: start,
+            carries: input.carries
+        )
     }
 
     /// The free space every kept snapshot of this path recorded, for the
