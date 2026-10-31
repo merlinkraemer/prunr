@@ -979,43 +979,101 @@ extension DatabaseManager {
         let ids = trackedPathIds.map(\.uuidString)
         let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
 
-        let read: (current: [PlaceChildRow], deltas: [PlaceDeltaRow]?) = try await dbPool.read { db in
+        let read: (current: [PlaceChildRow], currentBytes: Int64, deltas: [PlaceDeltaRow]?) = try await dbPool.read { db in
             let building = try Self.buildingTrackedPathIds(ids, db: db)
-            let current = try Self.mergedPlaceChildren(root: root, trackedPathIds: ids, building: building, db: db)
 
             let recordingSince = try Date.fetchOne(
                 db,
                 sql: "SELECT MIN(bucketStart) FROM growthJournalDetail WHERE trackedPathId IN (\(placeholders))",
                 arguments: StatementArguments(ids)
             )
-            guard let recordingSince, recordingSince <= from else { return (current: current, deltas: nil) }
+            var deltas: [PlaceDeltaRow]?
+            if let recordingSince, recordingSince <= from {
+                var arguments = StatementArguments(ids)
+                arguments += [root, from, to]
+                deltas = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT name, MAX(isFolder) AS isFolder, SUM(deltaBytes) AS deltaBytes
+                        FROM growthJournalDetail
+                        WHERE trackedPathId IN (\(placeholders)) AND unitRoot = ? AND bucketStart >= ? AND bucketStart < ?
+                        GROUP BY name
+                        HAVING SUM(deltaBytes) != 0
+                        """,
+                    arguments: arguments
+                ).map { row in
+                    PlaceDeltaRow(name: row["name"] ?? "", isFolder: row["isFolder"] ?? false, deltaBytes: row["deltaBytes"] ?? 0)
+                }
+            }
 
-            var arguments = StatementArguments(ids)
-            arguments += [root, from, to]
-            let deltas = try Row.fetchAll(
+            guard building.isEmpty else {
+                let all = try Self.mergedPlaceChildren(root: root, trackedPathIds: ids, building: building, db: db)
+                return (current: all, currentBytes: all.reduce(Int64(0)) { $0 + $1.totalBytes }, deltas: deltas)
+            }
+            var sumArguments = StatementArguments(ids)
+            sumArguments += [root]
+            let currentBytes = try Int64.fetchOne(
                 db,
                 sql: """
-                    SELECT name, MAX(isFolder) AS isFolder, SUM(deltaBytes) AS deltaBytes
-                    FROM growthJournalDetail
-                    WHERE trackedPathId IN (\(placeholders)) AND unitRoot = ? AND bucketStart >= ? AND bucketStart < ?
-                    GROUP BY name
-                    HAVING SUM(deltaBytes) != 0
+                    SELECT COALESCE(SUM(totalBytes), 0) FROM workingSetPlaceChild
+                    WHERE trackedPathId IN (\(placeholders)) AND unitRoot = ?
                     """,
-                arguments: arguments
-            ).map { row in
-                PlaceDeltaRow(name: row["name"] ?? "", isFolder: row["isFolder"] ?? false, deltaBytes: row["deltaBytes"] ?? 0)
-            }
-            return (current: current, deltas: deltas)
+                arguments: sumArguments
+            ) ?? 0
+            let changed = (deltas ?? []).map(\.name).filter { $0 != GrowthJournalDetail.otherName }
+            let current = try Self.placeChildren(named: changed, root: root, trackedPathIds: ids, db: db)
+            return (current: current, currentBytes: currentBytes, deltas: deltas)
         }
 
-        let currentBytes = read.current.reduce(Int64(0)) { $0 + $1.totalBytes }
         guard let deltas = read.deltas, !deltas.isEmpty else {
-            return PlaceChanges(children: nil, currentBytes: currentBytes)
+            return PlaceChanges(children: nil, currentBytes: read.currentBytes)
         }
         return PlaceChanges(
             children: Self.placeChanges(root: root, deltas: deltas, current: read.current),
-            currentBytes: currentBytes
+            currentBytes: read.currentBytes
         )
+    }
+
+    /// The listed children of a place with their size now, merged across
+    /// tracked paths. A place can hold tens of thousands of children, so the
+    /// rows are looked up by name instead of read whole.
+    private static func placeChildren(
+        named names: [String],
+        root: String,
+        trackedPathIds: [String],
+        db: Database
+    ) throws -> [PlaceChildRow] {
+        guard !names.isEmpty, !trackedPathIds.isEmpty else { return [] }
+        var merged: [String: PlaceChildRow] = [:]
+        let idPlaceholders = Array(repeating: "?", count: trackedPathIds.count).joined(separator: ",")
+        let chunkSize = 400
+        for start in stride(from: 0, to: names.count, by: chunkSize) {
+            let chunk = Array(names[start..<min(start + chunkSize, names.count)])
+            let namePlaceholders = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            var arguments = StatementArguments(trackedPathIds)
+            arguments += [root]
+            arguments += StatementArguments(chunk)
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT name, isFolder, totalBytes, fileCount FROM workingSetPlaceChild
+                    WHERE trackedPathId IN (\(idPlaceholders)) AND unitRoot = ? AND name IN (\(namePlaceholders))
+                    """,
+                arguments: arguments
+            )
+            for row in rows.map({ PlaceChildRow($0) }) {
+                let key = row.name.lowercased()
+                if var existing = merged[key] {
+                    existing.isFolder = existing.isFolder || row.isFolder
+                    existing.totalBytes += row.totalBytes
+                    existing.fileCount += row.fileCount
+                    merged[key] = existing
+                } else {
+                    merged[key] = row
+                }
+            }
+        }
+        return Array(merged.values)
     }
 
     private struct PlaceDeltaRow: Sendable {
