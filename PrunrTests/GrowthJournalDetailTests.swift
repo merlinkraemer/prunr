@@ -33,8 +33,12 @@ final class GrowthJournalDetailTests: PrunrTestCase {
             try Row.fetchAll(
                 db,
                 sql: "SELECT name, source, bucketStart, deltaBytes FROM growthJournalDetail ORDER BY bucketStart, name"
-            ).map { row in
-                (name: row["name"] ?? "", source: row["source"] ?? "", bucketStart: row["bucketStart"], deltaBytes: row["deltaBytes"] ?? 0)
+            ).map { row -> (name: String, source: String, bucketStart: Date, deltaBytes: Int64) in
+                let name: String = row["name"] ?? ""
+                let source: String = row["source"] ?? ""
+                let bucketStart: Date = row["bucketStart"]
+                let deltaBytes: Int64 = row["deltaBytes"] ?? 0
+                return (name: name, source: source, bucketStart: bucketStart, deltaBytes: deltaBytes)
             }
         }
     }
