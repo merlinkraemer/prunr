@@ -117,3 +117,4 @@
 2026-10-30 orchestrator Q8b on branch: drain/Q8b-2026-10-30 b924a3f scan captions + generic-parent names, uncompiled, job queued; wording in Waiting on Merlin [accepted per rec]
 2026-10-31 orchestrator Q8a resumed after usage limit (reset 12:10 UTC)
 2026-10-31 orchestrator Q13 spawn: watchdog counts backpressure waits as stall (Reddit tester report, confirmed in FileScanner.swift:148/303) (sonnet medium, seat worktree)
+2026-10-31 orchestrator Q13 on branch: drain/Q13-2026-10-31 fcd6c02 watchdog skips backpressure waits + 900 s consumer guard, uncompiled, job queued
