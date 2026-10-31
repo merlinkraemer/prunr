@@ -17,7 +17,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 5. Close obsolete GitHub issues #29 #32 #34 #18 #11 (+ #26 by design) — rec: yes, I close them with a short note — branch: none
 6. [accepted 2026-10-31 per rec: variant A, building as Q16 on drain/Q16-2026-10-31] Category groups net unrelated places ("Developer +9.9 GB" = +44 up, -34 down) and header vs rows don't reconcile — rec: per-place rows inside groups with up/down split + a "smaller changes" row; mockups first — branch: none
 7. [accepted 2026-10-30 per rec] Row captions "found by scan" / "found by scan · since Sun 18 Oct"; names drop generic parents ("game · dev" → "game") — review wording — branch: drain/Q8b-2026-10-30
-3. [accepted 2026-10-31 per rec] Rows drift as the 30-day window slides (root cause + design: docs/checkpoint-table-design-2026-10-31.md): v27 growthJournalCheckpoint, show real "building since" date, expire quiet counts after 90 days — code after integration compiles
+3. [accepted 2026-10-31 per rec] Rows drift as the 30-day window slides (root cause + design: docs/checkpoint-table-design-2026-10-31.md): v27 growthJournalCheckpoint, show real "building since" date, expire quiet counts after 90 days — building as Q18
 
 ## Run
 status: running (Q6-Q13 coded on drain/integration-2026-10-31, uncompiled; PM 10-31: keep going headless, take recs on reversible branch work) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
@@ -54,7 +54,7 @@ goal: Waiting item 6 rec: per-place rows inside groups with up/down split + "sma
 ### Q16 Category groups variant A [on branch, Mac check pending] [mac] - drain/Q16-2026-10-31 d814a88, job 20261031-172802-...-d814a88dc-test; split line on group row, size-sorted rows with arrows on group page (no inline expansion), smaller-changes row; review: split line hyphen vs U+2212 in amounts
 goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller changes" row reconciling with header), tested grouping logic; branch drain/Q16-2026-10-31 off integration ce98857; unlanded (UI, holiday).
 ### Q17 Checkpoint table design [landed] [box] - docs/checkpoint-table-design-2026-10-31.md on main; drift visible from ~14 Nov on real data
-### Q18 Checkpoint table build, 4 slices per design [queued, after integration compiles] [mac]
+### Q18 Checkpoint table build, 4 slices per design [running] [mac] - drain/Q18-2026-10-31 off Q16 d814a88; replay.py verifies on box
 
 ## Rundown
 - 2026-10-30: moved lab2 → dev; alpha.24 live since 10-28.
