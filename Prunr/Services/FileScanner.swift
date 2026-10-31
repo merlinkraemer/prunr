@@ -42,17 +42,19 @@ final class ScanSkipLog: @unchecked Sendable {
     }
 }
 
-private final class ScanTraversalState: @unchecked Sendable {
+final class ScanTraversalState: @unchecked Sendable {
     struct Snapshot {
         let lastProgressAt: Date
         let currentPath: String
         let isFinished: Bool
+        let consumerWaitStartedAt: Date?
     }
 
     private struct State {
         var lastProgressAt: Date
         var currentPath: String
         var isFinished = false
+        var consumerWaitStartedAt: Date?
     }
 
     private let state: OSAllocatedUnfairLock<State>
@@ -68,13 +70,29 @@ private final class ScanTraversalState: @unchecked Sendable {
         }
     }
 
+    func beginConsumerWait() {
+        state.withLock { $0.consumerWaitStartedAt = Date() }
+    }
+
+    func endConsumerWait() {
+        state.withLock {
+            $0.consumerWaitStartedAt = nil
+            $0.lastProgressAt = Date()
+        }
+    }
+
     func markFinished() {
         state.withLock { $0.isFinished = true }
     }
 
     func snapshot() -> Snapshot {
         state.withLock {
-            Snapshot(lastProgressAt: $0.lastProgressAt, currentPath: $0.currentPath, isFinished: $0.isFinished)
+            Snapshot(
+                lastProgressAt: $0.lastProgressAt,
+                currentPath: $0.currentPath,
+                isFinished: $0.isFinished,
+                consumerWaitStartedAt: $0.consumerWaitStartedAt
+            )
         }
     }
 }
@@ -145,8 +163,40 @@ final class FileScanner {
     // MARK: - Properties
 
     private static let logger = Logger(subsystem: "com.prunr.FileScanner", category: "Scanning")
-    private static let traversalStallTimeout: TimeInterval = 30
-    private static let watchdogInterval: TimeInterval = 5
+    static let defaultTraversalStallTimeout: TimeInterval = 30
+    static let defaultConsumerStallTimeout: TimeInterval = 900
+    static let defaultWatchdogInterval: TimeInterval = 5
+
+    private let traversalStallTimeout: TimeInterval
+    private let consumerStallTimeout: TimeInterval
+    private let watchdogInterval: TimeInterval
+
+    init(
+        traversalStallTimeout: TimeInterval = FileScanner.defaultTraversalStallTimeout,
+        consumerStallTimeout: TimeInterval = FileScanner.defaultConsumerStallTimeout,
+        watchdogInterval: TimeInterval = FileScanner.defaultWatchdogInterval
+    ) {
+        self.traversalStallTimeout = traversalStallTimeout
+        self.consumerStallTimeout = consumerStallTimeout
+        self.watchdogInterval = watchdogInterval
+    }
+
+    /// Seconds the scan has been stalled, or nil while healthy. Time spent
+    /// waiting for the consumer is not a traversal stall; it only counts
+    /// against the much longer consumer timeout.
+    static func stalledDuration(
+        _ snapshot: ScanTraversalState.Snapshot,
+        now: Date,
+        traversalStallTimeout: TimeInterval,
+        consumerStallTimeout: TimeInterval
+    ) -> TimeInterval? {
+        if let waitStartedAt = snapshot.consumerWaitStartedAt {
+            let waited = now.timeIntervalSince(waitStartedAt)
+            return waited >= consumerStallTimeout ? waited : nil
+        }
+        let stalledFor = now.timeIntervalSince(snapshot.lastProgressAt)
+        return stalledFor >= traversalStallTimeout ? stalledFor : nil
+    }
 
     /// Dev-only build-output fragments excluded as a defense in depth. Prunr's
     /// real operational state is sourced from `PrunrInternalPaths`.
@@ -185,16 +235,23 @@ final class FileScanner {
     ) -> AsyncThrowingStream<ScanResult, Error> {
         return AsyncThrowingStream<ScanResult, Error> { continuation in
             let traversalState = ScanTraversalState(rootPath: rootURL.path)
+            let traversalStallTimeout = self.traversalStallTimeout
+            let consumerStallTimeout = self.consumerStallTimeout
+            let watchdogInterval = self.watchdogInterval
             let watchdogTask = Task {
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(Self.watchdogInterval))
+                    try? await Task.sleep(for: .seconds(watchdogInterval))
                     guard !Task.isCancelled else { return }
 
                     let snapshot = traversalState.snapshot()
                     guard !snapshot.isFinished else { return }
 
-                    let stalledFor = Date().timeIntervalSince(snapshot.lastProgressAt)
-                    guard stalledFor >= Self.traversalStallTimeout else { continue }
+                    guard let stalledFor = Self.stalledDuration(
+                        snapshot,
+                        now: Date(),
+                        traversalStallTimeout: traversalStallTimeout,
+                        consumerStallTimeout: consumerStallTimeout
+                    ) else { continue }
 
                     Self.logger.error("Traversal watchdog aborting scan after \(stalledFor)s without progress at \(snapshot.currentPath, privacy: .public)")
                     cancellationToken?.cancel()
@@ -300,7 +357,10 @@ final class FileScanner {
                             fileDates: FileDates(stat)
                         )
                         if let backpressure {
-                            guard await backpressure.waitToProduce() else {
+                            traversalState.beginConsumerWait()
+                            let granted = await backpressure.waitToProduce()
+                            traversalState.endConsumerWait()
+                            guard granted else {
                                 break scanLoop
                             }
                             if Task.isCancelled || cancellationToken?.isCancelled == true {
