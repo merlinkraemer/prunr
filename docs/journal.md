@@ -126,3 +126,7 @@
 2026-10-31 orchestrator Q12 on branch: drain/Q12-2026-10-31 1dd6672 four nav fixes; merged into integration (6e8c1b8, clean), job queued
 2026-10-31 orchestrator Q10 on branch: drain/Q10-2026-10-31 655d108 place-page read fix + perf baseline tests; merged into integration d3f2a98, job queued
 2026-10-31 orchestrator - all run items coded; holding for Mac open (stacking more uncompiled Swift raises compile-fix risk)
+2026-10-31 orchestrator - resumed: PM relayed holiday mode (keep going headless, take recs on reversible branch work)
+2026-10-31 orchestrator Q2 landed on main: #35 status doc from Q9 branch (docs only); Q2 closed, absorbed by Q9
+2026-10-31 orchestrator Q14 spawn: static compile review of integration d3f2a98 (sonnet medium, seat, integration worktree)
+2026-10-31 orchestrator Q15 spawn: category-group HTML mockups, 3 variants, review page only (sonnet medium, seat)
