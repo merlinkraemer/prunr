@@ -3,6 +3,7 @@ import GRDB
 
 extension DatabaseManager {
     static let journalDetailMigrationIdentifier = "v26_journal_detail"
+    static let journalCheckpointMigrationIdentifier = "v27_journal_checkpoint"
 
     static func registerJournalDetailMigration(in migrator: inout DatabaseMigrator) {
         // Migration v26: per-child detail of the growth journal (PRD L1). No
@@ -26,6 +27,83 @@ extension DatabaseManager {
                 ON growthJournalDetail(trackedPathId, bucketStart)
                 """)
         }
+    }
+
+    static func registerJournalCheckpointMigration(in migrator: inout DatabaseMigrator) {
+        // Migration v27: each place's running count at the journal prune
+        // cutoff, so the change list's rows do not move as the window slides.
+        // No back-fill: until the next prune the list counts from the oldest
+        // bucket it has, as before.
+        migrator.registerMigration(journalCheckpointMigrationIdentifier) { db in
+            try db.execute(sql: """
+                CREATE TABLE growthJournalCheckpoint (
+                    unitKey TEXT PRIMARY KEY,
+                    asOf DATETIME NOT NULL,
+                    countBytes INTEGER NOT NULL,
+                    grossBytes INTEGER NOT NULL,
+                    countStartDay DATETIME NOT NULL,
+                    lastActiveDay DATETIME NOT NULL
+                ) WITHOUT ROWID
+                """)
+        }
+    }
+
+    func fetchJournalCheckpoints() async throws -> [JournalCheckpoint] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try Self.fetchJournalCheckpoints(db: db)
+        }
+    }
+
+    func replaceJournalCheckpoints(_ checkpoints: [JournalCheckpoint]) async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.write { db in
+            try Self.replaceJournalCheckpoints(checkpoints, db: db)
+        }
+    }
+
+    static func fetchJournalCheckpoints(db: Database) throws -> [JournalCheckpoint] {
+        try Row.fetchAll(db, sql: "SELECT * FROM growthJournalCheckpoint").map { row in
+            JournalCheckpoint(
+                unitKey: row["unitKey"],
+                asOf: row["asOf"],
+                countBytes: row["countBytes"],
+                grossBytes: row["grossBytes"],
+                countStartDay: row["countStartDay"],
+                lastActiveDay: row["lastActiveDay"]
+            )
+        }
+    }
+
+    static func replaceJournalCheckpoints(_ checkpoints: [JournalCheckpoint], db: Database) throws {
+        try deleteJournalCheckpoints(db: db)
+        let statement = try db.makeStatement(
+            sql: """
+                INSERT INTO growthJournalCheckpoint
+                    (unitKey, asOf, countBytes, grossBytes, countStartDay, lastActiveDay)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """
+        )
+        for checkpoint in checkpoints {
+            try statement.execute(arguments: [
+                checkpoint.unitKey,
+                checkpoint.asOf,
+                checkpoint.countBytes,
+                checkpoint.grossBytes,
+                checkpoint.countStartDay,
+                checkpoint.lastActiveDay
+            ])
+        }
+    }
+
+    static func deleteJournalCheckpoints(db: Database) throws {
+        try db.execute(sql: "DELETE FROM growthJournalCheckpoint")
     }
 
     /// Adds per-child deltas to one bucket inside the caller's write

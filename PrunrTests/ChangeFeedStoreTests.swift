@@ -227,6 +227,96 @@ final class ChangeFeedStoreTests: PrunrTestCase {
 
     // MARK: - Upgrade day
 
+    // MARK: - Checkpoints
+
+    private static let place = "place|/Users/tester/dev/acme"
+
+    private func utc() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    private func checkpoint(_ unitKey: String = ChangeFeedStoreTests.place) -> JournalCheckpoint {
+        let day = utc().date(from: DateComponents(year: 2026, month: 10, day: 1))!
+        return JournalCheckpoint(
+            unitKey: unitKey,
+            asOf: day,
+            countBytes: 600 * 1_000_000,
+            grossBytes: 700 * 1_000_000,
+            countStartDay: day,
+            lastActiveDay: day
+        )
+    }
+
+    private func checkpointCount() async throws -> Int {
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        return try await dbPool.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM growthJournalCheckpoint") ?? -1
+        }
+    }
+
+    func testCheckpointsRoundTripAndReplaceTheOldRows() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let first = self.checkpoint("place|/a")
+            let second = self.checkpoint("place|/b")
+            try await DatabaseManager.shared.replaceJournalCheckpoints([first, second])
+            let stored = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            XCTAssertEqual(Set(stored.map(\.unitKey)), ["place|/a", "place|/b"])
+            XCTAssertEqual(stored.first { $0.unitKey == "place|/a" }, first)
+
+            try await DatabaseManager.shared.replaceJournalCheckpoints([second])
+            let replaced = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            XCTAssertEqual(replaced, [second])
+        }
+    }
+
+    func testEveryJournalClearPathEmptiesTheCheckpoints() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let db = DatabaseManager.shared
+            let clears: [(String, () async throws -> Void)] = [
+                ("per-path clear", { try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPathId) }),
+                ("clear all", { try await db.deleteAllGrowthJournalBuckets() }),
+                ("realtime clear", { try await db.clearRealtimeData() }),
+                ("realtime clear of one path", { try await db.clearRealtimeData(trackedPathId: trackedPathId) })
+            ]
+            for (name, clear) in clears {
+                try await db.replaceJournalCheckpoints([self.checkpoint()])
+                let before = try await self.checkpointCount()
+                XCTAssertEqual(before, 1, name)
+                try await clear()
+                let after = try await self.checkpointCount()
+                XCTAssertEqual(after, 0, name)
+            }
+        }
+    }
+
+    func testCheckpointMigrationAddsTheEmptyTableAndKeepsHistory() throws {
+        let directory = try createTrackedPathDirectory(named: "PrunrCheckpointMigration")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let queue = try DatabaseQueue(path: directory.appendingPathComponent("prunr.sqlite").path)
+        let migrator = DatabaseManager.makeMigrator()
+        try migrator.migrate(queue, upTo: DatabaseManager.journalDetailMigrationIdentifier)
+        try queue.write { db in
+            XCTAssertFalse(try db.tableExists("growthJournalCheckpoint"))
+            try db.execute(
+                sql: """
+                    INSERT INTO growthJournalBucket (trackedPathId, bucketStart, category, subcategory, deltaBytes, unitKey)
+                    VALUES ('t', ?, 'other', '', 1000, 'place|/x')
+                    """,
+                arguments: [Date()]
+            )
+        }
+
+        try migrator.migrate(queue)
+
+        try queue.read { db in
+            XCTAssertTrue(try db.tableExists("growthJournalCheckpoint"))
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM growthJournalCheckpoint"), 0)
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM growthJournalBucket"), 1)
+        }
+    }
+
     // MARK: - Cost
 
     /// SQL read plus build over 200k buckets in the window. The number is

@@ -552,6 +552,7 @@ final class DatabaseManager {
         registerOwnerUnitsMigration(in: &migrator)
         registerOwnerGroupsMigration(in: &migrator)
         registerJournalDetailMigration(in: &migrator)
+        registerJournalCheckpointMigration(in: &migrator)
 
         return migrator
     }
@@ -661,6 +662,7 @@ extension DatabaseManager {
                 arguments: [trackedPathId.uuidString]
             )
             try Self.deleteJournalDetail(trackedPathId: trackedPathId.uuidString, db: db)
+            try Self.deleteJournalCheckpoints(db: db)
         }
     }
 
@@ -672,6 +674,7 @@ extension DatabaseManager {
         try await dbPool.write { db in
             try db.execute(sql: "DELETE FROM growthJournalBucket")
             try Self.deleteJournalDetail(trackedPathId: nil, db: db)
+            try Self.deleteJournalCheckpoints(db: db)
         }
     }
 
@@ -2120,6 +2123,7 @@ extension DatabaseManager {
                 try db.execute(sql: "DELETE FROM growthJournalBucket")
             }
             try Self.deleteJournalDetail(trackedPathId: trackedPathIdString, db: db)
+            try Self.deleteJournalCheckpoints(db: db)
             try Self.clearDrilldownIndex(trackedPathId: trackedPathIdString, db: db)
         }
     }
