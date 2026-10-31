@@ -223,6 +223,10 @@ final class MenuBarManager: NSObject {
 
     /// While true, `reconcileDrillDownSelection()` is skipped so inventory refreshes do not collapse drill-down mid-slide.
     var isDrillDownTransitionAnimating: Bool = false
+    var hasQueuedDrilldownTransition: Bool = false
+    var canStartDrilldownTransition: Bool {
+        !isDrillDownTransitionAnimating && !hasQueuedDrilldownTransition
+    }
     /// Gate for full traversals that touch protected folders.
     var isPermissionConfirmedForProtectedTraversal = false
     /// Most recent paths that failed with permission errors during runtime operations.
@@ -1782,6 +1786,7 @@ final class MenuBarManager: NSObject {
     }
 
     func drillIntoCategory(_ item: CategoryInventoryItem, reveal: @escaping (String) -> Void) {
+        guard canStartDrilldownTransition else { return }
         guard drilldownStore.isGroupsPending(for: item.category) else {
             drillIntoLoadedCategory(item, reveal: reveal)
             return
@@ -1800,6 +1805,7 @@ final class MenuBarManager: NSObject {
     }
 
     func drillIntoSubcategory(_ group: SubcategoryGroup, reveal: @escaping (String) -> Void) {
+        guard canStartDrilldownTransition else { return }
         guard let category = selectedInventoryCategory?.category else { return }
         revealSoleFile(of: group, in: category, reveal: reveal) { [weak self] in
             self?.openSubcategory(group)

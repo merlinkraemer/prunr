@@ -168,9 +168,13 @@ struct CategoryGrowthListView: View {
             guard isShown else { return }
             synchronizeVisibleScreenToCurrent()
         }
+        .onChange(of: pendingTransition != nil) { _, isQueued in
+            manager.hasQueuedDrilldownTransition = isQueued
+        }
         .onDisappear {
             activeTransition = nil
             pendingTransition = nil
+            manager.hasQueuedDrilldownTransition = false
             drillTransitionCoordinator.cancelAndReset()
             manager.isDrillDownTransitionAnimating = false
             displayedScreen = currentScreen
@@ -404,7 +408,7 @@ struct CategoryGrowthListView: View {
     // MARK: - Actions
 
     private var canNavigate: Bool {
-        !manager.isDrillDownTransitionAnimating && activeTransition == nil && pendingTransition == nil
+        manager.canStartDrilldownTransition && activeTransition == nil && pendingTransition == nil
     }
 
     private func selectCategory(_ item: CategoryInventoryItem) {

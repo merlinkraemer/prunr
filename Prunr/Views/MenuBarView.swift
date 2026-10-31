@@ -2071,7 +2071,7 @@ struct MenuBarView: View {
     }
 
     private func navigateFromDriveBar(segmentID: String) {
-        guard !manager.isDrillDownTransitionAnimating else { return }
+        guard manager.canStartDrilldownTransition else { return }
         guard segmentID != outsideScopeSegmentID, segmentID != "other-used" else { return }
         guard let category = GrowthCategory(rawValue: segmentID) else { return }
         guard let item = manager.sortedCategories
