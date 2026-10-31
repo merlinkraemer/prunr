@@ -61,7 +61,7 @@ acceptance: unit tests; make test green via mac-queue (Mac batch).
 goal: confirm/fix #35 (absorbs Q2); headless 24h idle CPU run (#31) via mac-queue.
 acceptance: finding + fix with test; idle run logs CPU under target.
 
-### Q10 Perf on real data [queued] [mac]
+### Q10 Perf on real data [running, box prep] [mac]
 goal: re-measure feed rebuild, scan, drilldown on the real snapshot; fix the worst.
 acceptance: before/after numbers in the journal.
 
