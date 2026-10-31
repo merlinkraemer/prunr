@@ -1915,6 +1915,15 @@ final class MenuBarManager: NSObject {
         )
     }
 
+    /// What each child of a place changed in a row's span, with its size now.
+    func loadPlaceChanges(unitRoot: String, span: PlaceChangeSpan) async throws -> PlaceChanges {
+        try await drilldownStore.placeChanges(
+            unitRoot: unitRoot,
+            trackedPathIds: enabledTrackedPathIDs(),
+            span: span
+        )
+    }
+
     private func enabledTrackedPathIDs() -> [UUID] {
         effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths).map(\.id)
     }

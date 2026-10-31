@@ -46,7 +46,7 @@ actor GrowthJournalService {
         source: GrowthJournalBucket.Source = .watch,
         observedSince: Date? = nil
     ) async throws {
-        let bucketStart = floorToMinute(date)
+        let bucketStart = Self.bucketStart(for: date)
         try await db.upsertGrowthJournalBuckets(
             trackedPathId: trackedPath.id,
             bucketStart: bucketStart,
@@ -178,7 +178,8 @@ actor GrowthJournalService {
         return result
     }
 
-    private func floorToMinute(_ date: Date) -> Date {
+    /// The journal bucket a change at `date` lands in: its minute.
+    static func bucketStart(for date: Date) -> Date {
         let timeInterval = date.timeIntervalSinceReferenceDate
         let floored = floor(timeInterval / 60.0) * 60.0
         return Date(timeIntervalSinceReferenceDate: floored)

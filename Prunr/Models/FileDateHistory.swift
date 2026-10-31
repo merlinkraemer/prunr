@@ -45,6 +45,7 @@ struct FileDateHistory: Sendable {
     let windowEnd: Date
 
     private var bytesBySlot: [Int64: [DatabaseManager.JournalDeltaKey: Int64]] = [:]
+    private var childBytesBySlot: [Int64: [PlaceChildKey: Int64]] = [:]
     private(set) var fileCount = 0
     private(set) var totalBytes: Int64 = 0
 
@@ -61,6 +62,7 @@ struct FileDateHistory: Sendable {
     /// it for the drilldown index. Trash is left out: Trash growth is a move,
     /// never a row, so it must not reach the header either.
     mutating func add(
+        path: String,
         unitKey: String,
         sizeBytes: Int64,
         category: GrowthCategory,
@@ -77,6 +79,9 @@ struct FileDateHistory: Sendable {
         let slot = Int64(floor(dates.birth / TimeInterval(JournalSlot.slotSeconds)))
         let key = DatabaseManager.JournalDeltaKey(category: category, subcategory: subcategory, unitKey: unitKey)
         bytesBySlot[slot, default: [:]][key, default: 0] += sizeBytes
+        if let child = PlaceChildKey(path: path, unitKey: unitKey) {
+            childBytesBySlot[slot, default: [:]][child, default: 0] += sizeBytes
+        }
         fileCount += 1
         totalBytes += sizeBytes
     }
@@ -86,6 +91,16 @@ struct FileDateHistory: Sendable {
     var deltasByBucketStart: [Date: [DatabaseManager.JournalDeltaKey: Int64]] {
         var result: [Date: [DatabaseManager.JournalDeltaKey: Int64]] = [:]
         for (slot, deltas) in bytesBySlot {
+            let slotStart = Date(timeIntervalSince1970: TimeInterval(slot * JournalSlot.slotSeconds))
+            result[max(slotStart, windowStart), default: [:]].merge(deltas, uniquingKeysWith: +)
+        }
+        return result
+    }
+
+    /// Per-child journal detail, on the same bucket starts as `deltasByBucketStart`.
+    var childDeltasByBucketStart: [Date: [PlaceChildKey: Int64]] {
+        var result: [Date: [PlaceChildKey: Int64]] = [:]
+        for (slot, deltas) in childBytesBySlot {
             let slotStart = Date(timeIntervalSince1970: TimeInterval(slot * JournalSlot.slotSeconds))
             result[max(slotStart, windowStart), default: [:]].merge(deltas, uniquingKeysWith: +)
         }

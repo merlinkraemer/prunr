@@ -160,15 +160,20 @@ actor BaselineService {
             // wait while a full scan runs, so later changes belong to the next window.
             let deltas = try await db.calculateDeltas(beforeId: previousSnapshotId, afterId: snapshotId)
             var authoritativeByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+            var authoritativeByChild: [PlaceChildKey: Int64] = [:]
             for delta in deltas {
                 let category = GrowthCategory.categorize(path: delta.path)
                 let subcategory = GrowthCategory.subcategorize(path: delta.path)
+                let unitKey = UnitResolver.resolve(path: delta.path)
                 let key = DatabaseManager.JournalDeltaKey(
                     category: category,
                     subcategory: subcategory,
-                    unitKey: UnitResolver.resolve(path: delta.path)
+                    unitKey: unitKey
                 )
                 authoritativeByKey[key, default: 0] += delta.changeBytes
+                if let child = PlaceChildKey(path: delta.path, unitKey: unitKey) {
+                    authoritativeByChild[child, default: 0] += delta.changeBytes
+                }
             }
 
             let recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
@@ -194,6 +199,22 @@ actor BaselineService {
                     observedSince: previous.createdAt
                 )
             }
+
+            let recordedByChild = try await db.fetchJournalDetailTotals(
+                trackedPathId: trackedPath.id,
+                from: previous.createdAt,
+                to: snapshot.createdAt
+            )
+            try await db.upsertJournalDetail(
+                trackedPathId: trackedPath.id,
+                deltasByBucketStart: [
+                    GrowthJournalService.bucketStart(for: snapshot.createdAt): GrowthJournalDetail.residual(
+                        authoritative: authoritativeByChild,
+                        recorded: recordedByChild
+                    )
+                ],
+                source: .scan
+            )
         }
 
         return snapshot
@@ -206,6 +227,11 @@ actor BaselineService {
         try await db.upsertGrowthJournalBuckets(
             trackedPathId: trackedPath.id,
             deltasByBucketStart: history.deltasByBucketStart,
+            source: .files
+        )
+        try await db.upsertJournalDetail(
+            trackedPathId: trackedPath.id,
+            deltasByBucketStart: history.childDeltasByBucketStart,
             source: .files
         )
         let milliseconds = Int(Date().timeIntervalSince(start) * 1000)

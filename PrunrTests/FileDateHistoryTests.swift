@@ -40,6 +40,7 @@ final class FileDateHistoryTests: PrunrTestCase {
         let path = homePath(relative)
         let (category, subcategory) = GrowthCategory.classify(path: path)
         history.add(
+            path: path,
             unitKey: UnitResolver.resolve(path: path),
             sizeBytes: bytes,
             category: category,
