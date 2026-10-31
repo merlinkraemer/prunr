@@ -124,3 +124,4 @@
 2026-10-31 orchestrator - integration branch drain/integration-2026-10-31 c3a202f: 5 branches merged clean, 8 test files added to pbxproj, job queued; Mac open runs this first
 2026-10-31 orchestrator Q10 spawn: perf prep on box (EXPLAIN on snapshot, perf tests for Mac open, low-risk fixes) on top of integration (sonnet high)
 2026-10-31 orchestrator Q12 on branch: drain/Q12-2026-10-31 1dd6672 four nav fixes; merged into integration (6e8c1b8, clean), job queued
+2026-10-31 orchestrator Q10 on branch: drain/Q10-2026-10-31 655d108 place-page read fix + perf baseline tests; merged into integration d3f2a98, job queued

@@ -24,7 +24,7 @@ status: running · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Me
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (on Mac open, in order): run the integration job on 6e8c1b8 (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6+Q12, pbxproj reconciled; older c3a202f job superseded) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → make snapshots-fetch → Q9 idle soak 2h
+mac batch pending (on Mac open, in order): run the integration job on d3f2a98 (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6+Q12+Q10; older integration jobs superseded) on an idle Mac (perf tests) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → make snapshots-fetch → Q9 idle soak 2h
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
@@ -61,7 +61,7 @@ acceptance: unit tests; make test green via mac-queue (Mac batch).
 goal: confirm/fix #35 (absorbs Q2); headless 24h idle CPU run (#31) via mac-queue.
 acceptance: finding + fix with test; idle run logs CPU under target.
 
-### Q10 Perf on real data [running, box prep] [mac]
+### Q10 Perf on real data [on branch, Mac check pending] - drain/Q10-2026-10-31 655d108: place-page read fix (344→~12 ms on a 21k-child place), PerfBaselineTests PERF lines, docs/perf-real-data-2026-10-31.md; merged into integration d3f2a98 [mac]
 goal: re-measure feed rebuild, scan, drilldown on the real snapshot; fix the worst.
 acceptance: before/after numbers in the journal.
 
