@@ -24,7 +24,7 @@ status: running · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Me
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (on Mac open, in order): drain mac-queue (Q6 20261030-105825-...-593757471-test, Q9 20261030-101017-...-9a2d41dff-test; Q8b 20261030-111313-...-b924a3ff2-test, Q13 20261031-023033-...-fcd6c0255-test, Q8a 20261031-023301-...-2125c4726-test; drop superseded Q6 da18026 job) → fix compile errors → make snapshots-fetch (PNGs + real replay dump) → Q9 idle soak 2h
+mac batch pending (on Mac open, in order): run integration job 20261031-032538-...-c3a202fcc-test (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6, pbxproj reconciled) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → make snapshots-fetch → Q9 idle soak 2h
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
