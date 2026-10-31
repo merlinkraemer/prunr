@@ -41,6 +41,7 @@ struct MenuBarView: View {
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
     @State private var headerWidth: CGFloat = 0
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
+    @State private var onboardingTransitionGeneration = 0
     @State private var scanAccessRefreshTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
     @State private var selectedOnboardingPage = OnboardingPage.folder
@@ -348,7 +349,7 @@ struct MenuBarView: View {
         .onDisappear {
             scanAccessRefreshTask?.cancel()
             folderValidationTask?.cancel()
-            onboardingTransitionTask?.cancel()
+            cancelOnboardingTransition()
             drillTransitionCoordinator.cancelAndReset()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -604,7 +605,7 @@ struct MenuBarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDisappear {
-            onboardingTransitionTask?.cancel()
+            cancelOnboardingTransition()
             synchronizeVisibleOnboardingToCurrent()
         }
     }
@@ -1045,8 +1046,14 @@ struct MenuBarView: View {
         }
     }
 
-    private func startOnboardingTransition(from previousPage: OnboardingPage, to newPage: OnboardingPage, width: CGFloat) {
+    private func cancelOnboardingTransition() {
         onboardingTransitionTask?.cancel()
+        onboardingTransitionGeneration += 1
+    }
+
+    private func startOnboardingTransition(from previousPage: OnboardingPage, to newPage: OnboardingPage, width: CGFloat) {
+        cancelOnboardingTransition()
+        let generation = onboardingTransitionGeneration
         stabilizeInFlightOnboardingTransitionIfNeeded()
 
         guard width > 0 else {
@@ -1077,35 +1084,36 @@ struct MenuBarView: View {
             }
             guard !Task.isCancelled else { return }
 
-            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
+            withAnimation(.snappy(duration: 0.28, extraBounce: 0), completionCriteria: .logicallyComplete) {
                 onboardingOffset = targetOffset
+            } completion: {
+                Task { @MainActor in
+                    guard generation == onboardingTransitionGeneration else { return }
+
+                    var cleanupTransaction = Transaction()
+                    cleanupTransaction.disablesAnimations = true
+                    withTransaction(cleanupTransaction) {
+                        displayedOnboardingPage = newPage
+                        outgoingOnboardingPage = nil
+                        onboardingOffset = 0
+                    }
+
+                    guard let pendingOnboardingTransition else { return }
+                    self.pendingOnboardingTransition = nil
+                    guard pendingOnboardingTransition.to != displayedOnboardingPage else { return }
+                    onboardingTransitionDirection = pendingOnboardingTransition.direction
+                    startOnboardingTransition(
+                        from: displayedOnboardingPage,
+                        to: pendingOnboardingTransition.to,
+                        width: max(onboardingWidth, width)
+                    )
+                }
             }
-
-            try? await Task.sleep(for: .milliseconds(280))
-            guard !Task.isCancelled else { return }
-
-            var cleanupTransaction = Transaction()
-            cleanupTransaction.disablesAnimations = true
-            withTransaction(cleanupTransaction) {
-                displayedOnboardingPage = newPage
-                outgoingOnboardingPage = nil
-                onboardingOffset = 0
-            }
-
-            guard let pendingOnboardingTransition else { return }
-            self.pendingOnboardingTransition = nil
-            guard pendingOnboardingTransition.to != displayedOnboardingPage else { return }
-            onboardingTransitionDirection = pendingOnboardingTransition.direction
-            startOnboardingTransition(
-                from: displayedOnboardingPage,
-                to: pendingOnboardingTransition.to,
-                width: max(onboardingWidth, width)
-            )
         }
     }
 
     private func synchronizeVisibleOnboardingToCurrent() {
-        onboardingTransitionTask?.cancel()
+        cancelOnboardingTransition()
 
         var transaction = Transaction()
         transaction.disablesAnimations = true
