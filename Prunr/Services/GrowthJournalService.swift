@@ -135,7 +135,7 @@ actor GrowthJournalService {
         let cutoff = calendar.date(byAdding: .day, value: -(clampedDays - 1), to: today) ?? today
 
         do {
-            try await db.pruneGrowthJournalBuckets(olderThan: cutoff)
+            try await db.pruneGrowthJournalBuckets(olderThan: cutoff, calendar: calendar)
         } catch {
             logger.error("Failed to prune growth journal: \(error.localizedDescription, privacy: .public)")
         }

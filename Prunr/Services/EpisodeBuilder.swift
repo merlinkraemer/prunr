@@ -458,6 +458,10 @@ enum EpisodeBuilder {
     /// 30-minute gap, which is not "over 30 minutes").
     private static let maxRunSlotStep: Int64 = 2
 
+    /// A place with no counted change for this many days at a prune loses its
+    /// checkpoint and starts from zero.
+    static let checkpointExpiryDays = 90
+
     /// Start of the oldest day the list shows, for the SQL read.
     static func windowStart(now: Date, calendar: Calendar) -> Date {
         GrowthJournalService.historyStart(now: now, calendar: calendar)

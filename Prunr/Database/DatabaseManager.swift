@@ -1959,7 +1959,24 @@ extension DatabaseManager {
         let placeholders = Array(repeating: "?", count: trackedPathIds.count).joined(separator: ",")
         var arguments: [DatabaseValueConvertible?] = trackedPathIds.map { $0.uuidString }
         arguments.append(since)
+        return try journalSlots(
+            db: db,
+            condition: "trackedPathId IN (\(placeholders)) AND bucketStart >= ?",
+            arguments: StatementArguments(arguments)
+        )
+    }
 
+    /// Slots of every tracked path before `cutoff`: what a prune folds into the
+    /// checkpoints before it deletes them.
+    static func fetchJournalSlots(db: Database, before cutoff: Date) throws -> [JournalSlot] {
+        try journalSlots(db: db, condition: "bucketStart < ?", arguments: [cutoff])
+    }
+
+    private static func journalSlots(
+        db: Database,
+        condition: String,
+        arguments: StatementArguments
+    ) throws -> [JournalSlot] {
         let rows = try Row.fetchAll(
             db,
             sql: """
@@ -1974,10 +1991,10 @@ extension DatabaseManager {
                     MIN(bucketStart) AS firstAt,
                     MIN(observedSince) AS observedSince
                 FROM growthJournalBucket
-                WHERE trackedPathId IN (\(placeholders)) AND bucketStart >= ?
+                WHERE \(condition)
                 GROUP BY unitKey, category, subcategory, source, slot
                 """,
-            arguments: StatementArguments(arguments)
+            arguments: arguments
         )
 
         return rows.compactMap { row -> JournalSlot? in
@@ -2079,12 +2096,26 @@ extension DatabaseManager {
         }
     }
 
-    func pruneGrowthJournalBuckets(olderThan cutoff: Date) async throws {
+    /// Deletes the journal before `cutoff`. In the same transaction every
+    /// place's count is folded over those buckets and saved as its checkpoint,
+    /// so the change list counts on from where the deleted history left off.
+    func pruneGrowthJournalBuckets(olderThan cutoff: Date, calendar: Calendar = .current) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
         try await dbPool.write { db in
+            let saved = try Self.fetchJournalCheckpoints(db: db)
+            let carries = Dictionary(uniqueKeysWithValues: saved.map { ($0.unitKey, $0.state) })
+            let slots = try Self.fetchJournalSlots(db: db, before: cutoff)
+            let counts = EpisodeBuilder.foldedCounts(slots: slots, carries: carries, calendar: calendar)
+            let expiry = calendar.date(byAdding: .day, value: -EpisodeBuilder.checkpointExpiryDays, to: cutoff) ?? cutoff
+            let checkpoints = counts.compactMap { unitKey, state -> JournalCheckpoint? in
+                guard let checkpoint = JournalCheckpoint(unitKey: unitKey, asOf: cutoff, state: state),
+                      checkpoint.lastActiveDay >= expiry else { return nil }
+                return checkpoint
+            }
+            try Self.replaceJournalCheckpoints(checkpoints, db: db)
             try db.execute(
                 sql: "DELETE FROM growthJournalBucket WHERE bucketStart < ?",
                 arguments: [cutoff]

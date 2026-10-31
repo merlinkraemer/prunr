@@ -317,6 +317,205 @@ final class ChangeFeedStoreTests: PrunrTestCase {
         }
     }
 
+    // MARK: - Prune keeps the count
+
+    private static let mbDecimal: Int64 = 1_000_000
+
+    private func at(_ day: Int, _ hour: Int, _ minute: Int = 0, from base: Date) -> Date {
+        let midnight = utc().date(byAdding: .day, value: day, to: base)!
+        return midnight.addingTimeInterval(TimeInterval(hour * 3_600 + minute * 60))
+    }
+
+    private func record(
+        _ trackedPath: TrackedPath,
+        _ date: Date,
+        _ net: Int64,
+        unit: String = ChangeFeedStoreTests.place
+    ) async throws {
+        let key = DatabaseManager.JournalDeltaKey(category: .developer, subcategory: nil, unitKey: unit)
+        try await GrowthJournalService.shared.recordDeltas(trackedPath: trackedPath, deltas: [key: net], at: date)
+    }
+
+    private func memorySlot(_ date: Date, _ net: Int64, unit: String = ChangeFeedStoreTests.place) -> JournalSlot {
+        JournalSlot(
+            unitKey: unit,
+            category: "developer",
+            subcategory: "",
+            source: .watch,
+            slot: Int64(floor(date.timeIntervalSince1970 / Double(JournalSlot.slotSeconds))),
+            netBytes: net,
+            grossBytes: abs(net),
+            firstAt: date,
+            observedSince: nil
+        )
+    }
+
+    private func rowKeys(_ feed: ChangeFeed) -> [String] {
+        feed.episodes.map {
+            "\($0.id) \($0.netBytes) \($0.grossBytes) \($0.buildingSince.map { String($0.timeIntervalSince1970) } ?? "-")"
+        }.sorted()
+    }
+
+    private func trackedPath(_ id: UUID) -> TrackedPath {
+        TrackedPath(id: id, url: URL(fileURLWithPath: "/Volumes/A"), displayName: "A")
+    }
+
+    private func augustFirst() -> Date {
+        utc().date(from: DateComponents(year: 2026, month: 8, day: 1))!
+    }
+
+    func testPruneSavesTheCountOfTheDeletedDaysAndDeletesThem() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let base = self.augustFirst()
+            let now = self.at(60, 20, from: base)
+            for day in [5, 6, 7] {
+                try await self.record(path, self.at(day, 10, from: base), 300 * Self.mbDecimal)
+            }
+            try await self.record(path, self.at(50, 10, from: base), 100 * Self.mbDecimal)
+
+            await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
+
+            let saved = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            let checkpoint = try XCTUnwrap(saved.first)
+            XCTAssertEqual(saved.count, 1)
+            XCTAssertEqual(checkpoint.unitKey, Self.place)
+            XCTAssertEqual(checkpoint.countBytes, 900 * Self.mbDecimal)
+            XCTAssertEqual(checkpoint.grossBytes, 900 * Self.mbDecimal)
+            XCTAssertEqual(checkpoint.countStartDay, self.at(5, 0, from: base))
+            XCTAssertEqual(checkpoint.lastActiveDay, self.at(7, 0, from: base))
+            XCTAssertEqual(checkpoint.asOf, self.at(60 - 29, 0, from: base))
+            let kept = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertEqual(kept.count, 1)
+        }
+    }
+
+    func testPrunePastTheLineStartsTheCountOverAndDropsZeroCounts() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let base = self.augustFirst()
+            let now = self.at(60, 20, from: base)
+            let zero = "place|/Users/tester/zero"
+            try await self.record(path, self.at(5, 10, from: base), 700 * Self.mbDecimal)
+            try await self.record(path, self.at(6, 10, from: base), 700 * Self.mbDecimal)
+            try await self.record(path, self.at(7, 10, from: base), 100 * Self.mbDecimal)
+            try await self.record(path, self.at(5, 10, from: base), 300 * Self.mbDecimal, unit: zero)
+            try await self.record(path, self.at(6, 10, from: base), -300 * Self.mbDecimal, unit: zero)
+
+            await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
+
+            let saved = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            XCTAssertEqual(saved.map(\.unitKey), [Self.place])
+            XCTAssertEqual(saved.first?.countBytes, 100 * Self.mbDecimal)
+            XCTAssertEqual(saved.first?.countStartDay, self.at(7, 0, from: base))
+        }
+    }
+
+    func testPruningTwiceOnOneDayChangesNothing() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let base = self.augustFirst()
+            let now = self.at(60, 20, from: base)
+            for day in [5, 6, 7, 45] {
+                try await self.record(path, self.at(day, 10, from: base), 400 * Self.mbDecimal)
+            }
+
+            await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
+            let once = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            let feedOnce = try await GrowthJournalService.shared.changeFeed(
+                trackedPaths: [path], now: now, calendar: self.utc()
+            )
+            await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
+            let twice = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            let feedTwice = try await GrowthJournalService.shared.changeFeed(
+                trackedPaths: [path], now: now, calendar: self.utc()
+            )
+
+            XCTAssertEqual(once, twice)
+            XCTAssertEqual(feedOnce, feedTwice)
+            XCTAssertEqual(feedOnce.episodes.first?.netBytes, 1_600 * Self.mbDecimal)
+        }
+    }
+
+    func testRunAcrossTheCutoffCountsOnce() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let base = self.augustFirst()
+            let now = self.at(60, 20, from: base)
+            let cutoffDay = 60 - 29
+            try await self.record(path, self.at(cutoffDay - 1, 23, 45, from: base), 200 * Self.mbDecimal)
+            try await self.record(path, self.at(cutoffDay, 0, 15, from: base), 300 * Self.mbDecimal)
+            try await self.record(path, self.at(cutoffDay + 3, 10, from: base), 600 * Self.mbDecimal)
+
+            await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
+
+            let saved = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            XCTAssertEqual(saved.first?.countBytes, 200 * Self.mbDecimal)
+            let feed = try await GrowthJournalService.shared.changeFeed(
+                trackedPaths: [path], now: now, calendar: self.utc()
+            )
+            XCTAssertEqual(feed.episodes.map(\.netBytes), [1_100 * Self.mbDecimal])
+        }
+    }
+
+    func testCheckpointsOfPlacesQuietForNinetyDaysExpire() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let base = self.utc().date(from: DateComponents(year: 2026, month: 3, day: 1))!
+            let now = self.at(200, 20, from: base)
+            let cutoffDay = 200 - 29
+            let stale = "place|/Users/tester/stale"
+            let recent = "place|/Users/tester/recent"
+            try await self.record(path, self.at(cutoffDay - 91, 10, from: base), 300 * Self.mbDecimal, unit: stale)
+            try await self.record(path, self.at(cutoffDay - 89, 10, from: base), 300 * Self.mbDecimal, unit: recent)
+            try await DatabaseManager.shared.replaceJournalCheckpoints([self.checkpoint("place|/Users/tester/seeded")])
+
+            await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
+
+            let saved = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            XCTAssertEqual(saved.map(\.unitKey), [recent])
+        }
+    }
+
+    func testFeedAfterEachDaysPruneEqualsTheFullHistoryAndNeverDrifts() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let calendar = self.utc()
+            let base = self.augustFirst()
+            let other = "place|/Users/tester/other"
+            var history: [JournalSlot] = []
+            var previous: [ChangeEpisode] = []
+
+            for day in 0..<75 {
+                let when = self.at(day, 10, from: base)
+                let otherNet = (day.isMultiple(of: 3) ? 40 : -10) * Self.mbDecimal
+                try await self.record(path, when, 250 * Self.mbDecimal)
+                try await self.record(path, when, otherNet, unit: other)
+                history.append(self.memorySlot(when, 250 * Self.mbDecimal))
+                history.append(self.memorySlot(when, otherNet, unit: other))
+                let now = self.at(day, 20, from: base)
+
+                await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: calendar)
+                let feed = try await GrowthJournalService.shared.changeFeed(
+                    trackedPaths: [path], now: now, calendar: calendar
+                )
+                let expected = EpisodeBuilder.build(slots: history, now: now, calendar: calendar)
+
+                XCTAssertEqual(self.rowKeys(feed), self.rowKeys(expected), "day \(day)")
+                XCTAssertEqual(feed.weekNetBytes, expected.weekNetBytes, "day \(day)")
+                XCTAssertEqual(feed.smallerChangeCount, expected.smallerChangeCount, "day \(day)")
+
+                let windowStart = EpisodeBuilder.windowStart(now: now, calendar: calendar)
+                for episode in previous where episode.day >= windowStart {
+                    let same = feed.episodes.first { $0.id == episode.id }
+                    XCTAssertEqual(same?.netBytes, episode.netBytes, "day \(day) \(episode.id)")
+                    XCTAssertEqual(same?.buildingSince, episode.buildingSince, "day \(day) \(episode.id)")
+                }
+                previous = feed.episodes
+            }
+        }
+    }
+
     // MARK: - Cost
 
     /// SQL read plus build over 200k buckets in the window. The number is
