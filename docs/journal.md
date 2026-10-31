@@ -123,3 +123,4 @@
 2026-10-31 orchestrator - resumed: PM nudge (don't idle on Mac nights); spawn integration branch drain/integration-2026-10-31 merging Q9/Q13/Q8b/Q8a/Q6 for one Mac job (sonnet medium) + Q12 nav bugs on top of Q8a (sonnet medium)
 2026-10-31 orchestrator - integration branch drain/integration-2026-10-31 c3a202f: 5 branches merged clean, 8 test files added to pbxproj, job queued; Mac open runs this first
 2026-10-31 orchestrator Q10 spawn: perf prep on box (EXPLAIN on snapshot, perf tests for Mac open, low-risk fixes) on top of integration (sonnet high)
+2026-10-31 orchestrator Q12 on branch: drain/Q12-2026-10-31 1dd6672 four nav fixes; merged into integration (6e8c1b8, clean), job queued

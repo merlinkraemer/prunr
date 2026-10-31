@@ -24,7 +24,7 @@ status: running · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Me
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (on Mac open, in order): run integration job 20261031-032538-...-c3a202fcc-test (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6, pbxproj reconciled) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → make snapshots-fetch → Q9 idle soak 2h
+mac batch pending (on Mac open, in order): run the integration job on 6e8c1b8 (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6+Q12, pbxproj reconciled; older c3a202f job superseded) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → make snapshots-fetch → Q9 idle soak 2h
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
@@ -68,9 +68,7 @@ acceptance: before/after numbers in the journal.
 ### Q11 Old issue triage [landed] [box] - docs/issue-triage-2026-10-30.md: 5 obsolete, 6 real (all UI, small), #26 unclear
 ### Q13 Watchdog ignores backpressure waits [on branch, Mac check pending] [mac] - drain/Q13-2026-10-31 fcd6c02; consumer waits excluded, separate 900 s consumer guard, 4 tests; job 20261031-023033-...-fcd6c0255-test
 goal: Reddit tester 10-31: slow DB writer blocks producer in waitToProduce, 30 s traversal watchdog then aborts a healthy scan as stalled (FileScanner.swift); likely the uncaptured #35 failure. Exclude backpressure waits + delayed-consumer test.
-### Q12 Navigation bug bundle #27 #28 #30 #24 [running] [mac]
-goal: the four small real issues from Q11's triage on one branch; after Q8 (same views).
-acceptance: per issue in docs/issue-triage-2026-10-30.md; make test green via mac-queue.
+### Q12 Navigation bug bundle #27 #28 #30 #24 [on branch, Mac check pending] [mac] - drain/Q12-2026-10-31 1dd6672 (on Q8a), merged into integration 6e8c1b8
 
 ## Rundown
 - 2026-10-30: thread moved lab2 → dev. alpha.24 shipped 10-28 (since-install vs estimated history, first-day preview, allocated-bytes fix); main = origin.
