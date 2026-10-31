@@ -334,7 +334,7 @@ final class FileDateHistoryTests: PrunrTestCase {
         let scanStart = Date()
         var history = FileDateHistory(scanStart: scanStart, calendar: calendar)
         let fileCount = 2_000_000
-        let places = (0..<400).map { index -> (unitKey: String, category: GrowthCategory, subcategory: GrowthSubcategory?) in
+        let places = (0..<400).map { index -> (path: String, unitKey: String, category: GrowthCategory, subcategory: GrowthSubcategory?) in
             let relative: String
             switch index % 4 {
             case 0: relative = "dev/project\(index)/node_modules/pkg/index.js"
@@ -344,7 +344,7 @@ final class FileDateHistoryTests: PrunrTestCase {
             }
             let path = homePath(relative)
             let (category, subcategory) = GrowthCategory.classify(path: path)
-            return (UnitResolver.resolve(path: path), category, subcategory)
+            return (path, UnitResolver.resolve(path: path), category, subcategory)
         }
         let span = scanStart.timeIntervalSince(history.windowStart) * 1.5
 
@@ -354,6 +354,7 @@ final class FileDateHistoryTests: PrunrTestCase {
             let birth = scanStart.timeIntervalSince1970 - span * Double((index &* 7_919) % 10_000) / 10_000
             let modified = index % 5 == 0 ? birth + 3 * Self.day : birth + 30
             history.add(
+                path: place.path,
                 unitKey: place.unitKey,
                 sizeBytes: 4_096 + Int64(index % 1_000),
                 category: place.category,
