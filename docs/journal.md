@@ -115,3 +115,5 @@
 2026-10-30 orchestrator Q8a spawn: L1 detail + row-scoped place page + fallback (opus medium, seat worktree)
 2026-10-30 orchestrator Q8b spawn: row captions + names (sonnet medium, seat worktree)
 2026-10-30 orchestrator Q8b on branch: drain/Q8b-2026-10-30 b924a3f scan captions + generic-parent names, uncompiled, job queued; wording in Waiting on Merlin [accepted per rec]
+2026-10-31 orchestrator Q8a resumed after usage limit (reset 12:10 UTC)
+2026-10-31 orchestrator Q13 spawn: watchdog counts backpressure waits as stall (Reddit tester report, confirmed in FileScanner.swift:148/303) (sonnet medium, seat worktree)

@@ -66,6 +66,8 @@ goal: re-measure feed rebuild, scan, drilldown on the real snapshot; fix the wor
 acceptance: before/after numbers in the journal.
 
 ### Q11 Old issue triage [landed] [box] - docs/issue-triage-2026-10-30.md: 5 obsolete, 6 real (all UI, small), #26 unclear
+### Q13 Watchdog ignores backpressure waits [running] [mac]
+goal: Reddit tester 10-31: slow DB writer blocks producer in waitToProduce, 30 s traversal watchdog then aborts a healthy scan as stalled (FileScanner.swift); likely the uncaptured #35 failure. Exclude backpressure waits + delayed-consumer test.
 ### Q12 Navigation bug bundle #27 #28 #30 #24 [queued] [mac]
 goal: the four small real issues from Q11's triage on one branch; after Q8 (same views).
 acceptance: per issue in docs/issue-triage-2026-10-30.md; make test green via mac-queue.
