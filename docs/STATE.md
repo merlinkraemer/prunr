@@ -20,11 +20,11 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 3. Rows of slowly growing places shift by a day as the 30-day window slides — rec: checkpoint table (schema) — branch: none
 
 ## Run
-status: running · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
+status: running (holding: all box work done; 5 branches wait for Mac open before more code is stacked) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (on Mac open, in order): drain mac-queue (Q6 20261030-105825-...-593757471-test, Q9 20261030-101017-...-9a2d41dff-test; Q8b 20261030-111313-...-b924a3ff2-test, Q13 20261031-023033-...-fcd6c0255-test; drop superseded Q6 da18026 job) → fix compile errors → make snapshots-fetch (PNGs + real replay dump) → Q9 idle soak 2h
+mac batch pending (on Mac open, in order): drain mac-queue (Q6 20261030-105825-...-593757471-test, Q9 20261030-101017-...-9a2d41dff-test; Q8b 20261030-111313-...-b924a3ff2-test, Q13 20261031-023033-...-fcd6c0255-test, Q8a 20261031-023301-...-2125c4726-test; drop superseded Q6 da18026 job) → fix compile errors → make snapshots-fetch (PNGs + real replay dump) → Q9 idle soak 2h
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
@@ -51,7 +51,7 @@ goal: DB snapshot from the Mac to dev, replay harness that rebuilds feed + drill
 acceptance: harness + snapshot tests in `make test`; synthetic fixtures modelled on the real snapshot.
 
 ### Q7 Real-data usefulness audit [landed] [box] - docs/real-data-audit-2026-10-30.md: only 6/46 rows explained; place page shows sizes not growth (no per-child deltas stored), 43/46 rows lack time/caption, category groups net unrelated places
-### Q8a Drilldown explains growth: L1 detail + row-scoped page [running] [mac]
+### Q8a Drilldown explains growth: L1 detail + row-scoped page [on branch, Mac check pending] [mac] - drain/Q8a-2026-10-30 2125c47; v26 growthJournalDetail (top 20/bucket/place), watcher/scan/file-date writes, span-scoped place page, fallback; job 20261031-023301-...-2125c4726-test
 goal: audit fixes 1, 2, 4: record per-child deltas (growthJournalDetail, schema migration) at scan/watcher/file-date write points; place page scoped to the row's time span, children sorted by change, removed children shown; honest fallback for rows without detail.
 acceptance: unit tests on fixtures; make test green via mac-queue (Mac batch).
 ### Q8b Row captions + names [on branch, Mac check pending] [mac] - drain/Q8b-2026-10-30 b924a3f; job 20261030-111313-...-b924a3ff2-test

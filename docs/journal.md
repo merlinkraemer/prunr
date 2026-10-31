@@ -118,3 +118,5 @@
 2026-10-31 orchestrator Q8a resumed after usage limit (reset 12:10 UTC)
 2026-10-31 orchestrator Q13 spawn: watchdog counts backpressure waits as stall (Reddit tester report, confirmed in FileScanner.swift:148/303) (sonnet medium, seat worktree)
 2026-10-31 orchestrator Q13 on branch: drain/Q13-2026-10-31 fcd6c02 watchdog skips backpressure waits + 900 s consumer guard, uncompiled, job queued
+2026-10-31 orchestrator Q8a on branch: drain/Q8a-2026-10-30 2125c47 L1 detail table + span page + fallback, uncompiled, job queued
+2026-10-31 orchestrator - decided: hold new code until Mac open (Q6/Q8a/Q8b/Q9/Q13 all uncompiled; Q10/Q12 need the Mac or overlap Q8a)
