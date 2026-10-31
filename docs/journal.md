@@ -136,3 +136,4 @@
 2026-10-31 orchestrator Q16 spawn: category groups variant A off integration ce98857 (sonnet high, seat worktree); Q17 checkpoint table queued after (shares feed code)
 2026-10-31 orchestrator Q16 on branch: drain/Q16-2026-10-31 d814a88 variant A (EpisodeBuilder split/smaller-changes + 7 tests, 3 views), uncompiled, job queued
 2026-10-31 orchestrator Q17 spawn: checkpoint table design doc only, code waits for Mac compile (schema on top of uncompiled v26) (opus medium, seat)
+2026-10-31 orchestrator Q17 landed on main: checkpoint table design (f86244b, docs only); recs accepted (v27, real start date, 90-day expiry); Q18 build queued after integration compiles
