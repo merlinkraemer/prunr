@@ -510,17 +510,164 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertFalse(EpisodeBuilder.isLargeGrowth(4_900 * Self.mb))
     }
 
-    /// Each place's count starts on the oldest shown day: growth before the
-    /// 30 days does not count toward a row inside them.
-    func testCountStartsOnTheOldestShownDay() {
+    private func dailySlots(
+        _ unitKey: String,
+        from first: Date,
+        days: Int,
+        net: Int64,
+        in calendar: Calendar
+    ) -> [JournalSlot] {
+        (0..<days).map { offset in
+            let day = calendar.date(byAdding: .day, value: offset, to: first)!
+            return slot(unitKey, at: day.addingTimeInterval(10 * 3_600), net: net)
+        }
+    }
+
+    private func rowKeys(_ feed: ChangeFeed, from start: Date) -> [String] {
+        feed.episodes.filter { $0.day >= start }.map {
+            "\($0.id) \($0.netBytes) \($0.grossBytes) \($0.buildingSince.map { String(Int($0.timeIntervalSince1970)) } ?? "-")"
+        }.sorted()
+    }
+
+    /// Growth before the window counts toward the first row inside it, but
+    /// the row it crosses on before the window is not listed.
+    func testDaysBeforeTheWindowCountSilently() {
         let utc = calendar()
         let now = date(2026, 10, 11, 20, 0, in: utc)
         let feed = build([
+            slot(Self.project, at: date(2026, 9, 10, 10, 0, in: utc), net: 800 * Self.mb),
             slot(Self.project, at: date(2026, 9, 11, 10, 0, in: utc), net: 800 * Self.mb),
-            slot(Self.project, at: date(2026, 9, 12, 10, 0, in: utc), net: 800 * Self.mb)
+            slot(Self.project, at: date(2026, 9, 12, 10, 0, in: utc), net: 600 * Self.mb),
+            slot(Self.project, at: date(2026, 9, 13, 10, 0, in: utc), net: 600 * Self.mb)
         ], now: now, calendar: utc)
 
+        XCTAssertEqual(feed.episodes.map(\.netBytes), [1_200 * Self.mb])
+        XCTAssertEqual(feed.episodes.first?.day, date(2026, 9, 13, 0, 0, in: utc))
+        XCTAssertEqual(feed.episodes.first?.buildingSince, date(2026, 9, 12, 0, 0, in: utc))
+    }
+
+    /// The caption date is the real start, even when it predates the window.
+    func testBuildingSinceCanPredateTheWindow() throws {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 20, 0, in: utc)
+        let feed = build([
+            slot(Self.project, at: date(2026, 9, 5, 10, 0, in: utc), net: 400 * Self.mb),
+            slot(Self.project, at: date(2026, 9, 20, 10, 0, in: utc), net: 300 * Self.mb),
+            slot(Self.project, at: date(2026, 10, 3, 10, 0, in: utc), net: 400 * Self.mb)
+        ], now: now, calendar: utc)
+
+        let row = try XCTUnwrap(feed.episodes.first)
+        XCTAssertEqual(row.day, date(2026, 10, 3, 0, 0, in: utc))
+        XCTAssertEqual(row.buildingSince, date(2026, 9, 5, 0, 0, in: utc))
+        XCTAssertEqual(row.netBytes, 1_100 * Self.mb)
+    }
+
+    func testCarrySeedsTheCountAndTheRowStart() throws {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 20, 0, in: utc)
+        let carry = PlaceCount(
+            count: 700 * Self.mb,
+            gross: 700 * Self.mb,
+            countStart: date(2026, 9, 1, 0, 0, in: utc),
+            lastActiveDay: date(2026, 9, 10, 0, 0, in: utc)
+        )
+        let slots = [slot(Self.project, at: date(2026, 10, 5, 10, 0, in: utc), net: 400 * Self.mb)]
+
+        let without = EpisodeBuilder.build(slots: slots, now: now, calendar: utc, home: Self.home)
+        let with = EpisodeBuilder.build(
+            slots: slots, now: now, calendar: utc, home: Self.home, carries: [Self.project: carry]
+        )
+
+        XCTAssertTrue(without.episodes.isEmpty)
+        let row = try XCTUnwrap(with.episodes.first)
+        XCTAssertEqual(row.netBytes, 1_100 * Self.mb)
+        XCTAssertEqual(row.grossBytes, 1_100 * Self.mb)
+        XCTAssertEqual(row.buildingSince, date(2026, 9, 1, 0, 0, in: utc))
+        XCTAssertEqual(with.weekNetBytes, without.weekNetBytes)
+    }
+
+    func testCarryOfAPlaceWithoutSlotsAddsNothing() {
+        let utc = calendar()
+        let now = date(2026, 10, 11, 20, 0, in: utc)
+        let carry = PlaceCount(
+            count: 900 * Self.mb, gross: 900 * Self.mb,
+            countStart: date(2026, 9, 1, 0, 0, in: utc), lastActiveDay: date(2026, 9, 1, 0, 0, in: utc)
+        )
+        let feed = EpisodeBuilder.build(
+            slots: [], now: now, calendar: utc, home: Self.home, carries: [Self.project: carry]
+        )
         XCTAssertTrue(feed.episodes.isEmpty)
+        XCTAssertEqual(feed.smallerChangeCount, 0)
+    }
+
+    func testFoldResetsTheStartWhenTheCountReturnsToZero() throws {
+        let utc = calendar()
+        let days: [Date: [JournalSlot]] = [
+            date(2026, 10, 1, 0, 0, in: utc): [slot(Self.project, at: date(2026, 10, 1, 10, 0, in: utc), net: 300 * Self.mb)],
+            date(2026, 10, 2, 0, 0, in: utc): [slot(Self.project, at: date(2026, 10, 2, 10, 0, in: utc), net: -300 * Self.mb)]
+        ]
+        let reset = EpisodeBuilder.fold(carry: nil, days: days, isTrashPlace: false)
+        XCTAssertEqual(reset.state.count, 0)
+        XCTAssertNil(reset.state.countStart)
+        XCTAssertEqual(reset.state.gross, 0)
+        XCTAssertEqual(reset.state.lastActiveDay, date(2026, 10, 2, 0, 0, in: utc))
+        XCTAssertNil(JournalCheckpoint(unitKey: Self.project, asOf: Date(), state: reset.state))
+
+        var more = days
+        more[date(2026, 10, 3, 0, 0, in: utc)] = [slot(Self.project, at: date(2026, 10, 3, 10, 0, in: utc), net: 200 * Self.mb)]
+        let restarted = EpisodeBuilder.fold(carry: nil, days: more, isTrashPlace: false)
+        XCTAssertEqual(restarted.state.countStart, date(2026, 10, 3, 0, 0, in: utc))
+        XCTAssertEqual(restarted.state.count, 200 * Self.mb)
+    }
+
+    func testFoldCountsOnlyShrinksForTheTrash() {
+        let utc = calendar()
+        let days: [Date: [JournalSlot]] = [
+            date(2026, 10, 1, 0, 0, in: utc): [slot(Self.trash, at: date(2026, 10, 1, 10, 0, in: utc), net: 5 * Self.gb)],
+            date(2026, 10, 2, 0, 0, in: utc): [slot(Self.trash, at: date(2026, 10, 2, 10, 0, in: utc), net: -400 * Self.mb)]
+        ]
+        let folded = EpisodeBuilder.fold(carry: nil, days: days, isTrashPlace: true)
+        XCTAssertEqual(folded.state.count, -400 * Self.mb)
+        XCTAssertEqual(folded.state.countStart, date(2026, 10, 2, 0, 0, in: utc))
+        XCTAssertTrue(folded.crossings.isEmpty)
+    }
+
+    func testFoldedCountsStackOnTheCarry() {
+        let utc = calendar()
+        let carry = PlaceCount(
+            count: 600 * Self.mb, gross: 600 * Self.mb,
+            countStart: date(2026, 9, 1, 0, 0, in: utc), lastActiveDay: date(2026, 9, 1, 0, 0, in: utc)
+        )
+        let counts = EpisodeBuilder.foldedCounts(
+            slots: [slot(Self.project, at: date(2026, 9, 5, 10, 0, in: utc), net: 300 * Self.mb)],
+            carries: [Self.project: carry, "place|/Users/tester/other": carry],
+            calendar: utc
+        )
+        XCTAssertEqual(counts[Self.project]?.count, 900 * Self.mb)
+        XCTAssertEqual(counts[Self.project]?.lastActiveDay, date(2026, 9, 5, 0, 0, in: utc))
+        XCTAssertEqual(counts["place|/Users/tester/other"], carry)
+    }
+
+    /// A place growing 250 MB a day: rows of one day stay the same on every
+    /// later day while the window slides over them.
+    func testRowsDoNotMoveWhenTheWindowSlides() {
+        let utc = calendar()
+        let first = date(2026, 9, 1, 0, 0, in: utc)
+        let slots = dailySlots(Self.project, from: first, days: 70, net: 250 * Self.mb, in: utc)
+
+        for offset in 45..<65 {
+            let today = utc.date(byAdding: .day, value: offset, to: first)!
+            let tomorrow = utc.date(byAdding: .day, value: 1, to: today)!
+            let feed = build(slots.filter { $0.firstAt < tomorrow }, now: today.addingTimeInterval(20 * 3_600), calendar: utc)
+            let next = build(slots.filter { $0.firstAt < tomorrow.addingTimeInterval(86_400) }, now: tomorrow.addingTimeInterval(20 * 3_600), calendar: utc)
+            let start = EpisodeBuilder.windowStart(now: tomorrow, calendar: utc)
+
+            XCTAssertEqual(
+                rowKeys(next, from: start).filter { !$0.contains("@\(Int64(tomorrow.timeIntervalSince1970)) ") },
+                rowKeys(feed, from: start),
+                "day \(offset)"
+            )
+        }
     }
 
     // MARK: - Trash

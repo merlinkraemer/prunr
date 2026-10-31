@@ -342,6 +342,77 @@ enum WeeklyChange: Equatable, Sendable {
     }
 }
 
+/// A place's running count toward its next row.
+struct PlaceCount: Equatable, Sendable {
+    var count: Int64 = 0
+    var gross: Int64 = 0
+    /// Local day the count started; set whenever `count` is not zero.
+    var countStart: Date?
+    /// Newest day with a counted change folded in.
+    var lastActiveDay: Date?
+}
+
+/// A place's count saved at a journal prune cutoff (`growthJournalCheckpoint`).
+struct JournalCheckpoint: Equatable, Sendable {
+    let unitKey: String
+    let asOf: Date
+    let countBytes: Int64
+    let grossBytes: Int64
+    let countStartDay: Date
+    let lastActiveDay: Date
+
+    init(
+        unitKey: String,
+        asOf: Date,
+        countBytes: Int64,
+        grossBytes: Int64,
+        countStartDay: Date,
+        lastActiveDay: Date
+    ) {
+        self.unitKey = unitKey
+        self.asOf = asOf
+        self.countBytes = countBytes
+        self.grossBytes = grossBytes
+        self.countStartDay = countStartDay
+        self.lastActiveDay = lastActiveDay
+    }
+
+    /// Nil for a place with nothing counted: no checkpoint row is kept.
+    init?(unitKey: String, asOf: Date, state: PlaceCount) {
+        guard state.count != 0, let countStart = state.countStart, let lastActiveDay = state.lastActiveDay else {
+            return nil
+        }
+        self.init(
+            unitKey: unitKey,
+            asOf: asOf,
+            countBytes: state.count,
+            grossBytes: state.gross,
+            countStartDay: countStart,
+            lastActiveDay: lastActiveDay
+        )
+    }
+
+    var state: PlaceCount {
+        PlaceCount(count: countBytes, gross: grossBytes, countStart: countStartDay, lastActiveDay: lastActiveDay)
+    }
+}
+
+/// A day on which a place's count crossed the line.
+struct RowCrossing: Sendable {
+    let day: Date
+    let slots: [JournalSlot]
+    let netBytes: Int64
+    let grossBytes: Int64
+    let countStart: Date
+}
+
+struct PlaceFold: Sendable {
+    let state: PlaceCount
+    let crossings: [RowCrossing]
+    /// Days with a counted change since the last crossing.
+    let pendingDays: [Date]
+}
+
 /// Turns journal slots into rows. Pure: no I/O, no database, no actor.
 ///
 /// One rule (docs/core-screen-simple-list-model-2026-10-11.md): a place gets
@@ -360,8 +431,10 @@ enum WeeklyChange: Equatable, Sendable {
 /// - Trash growth is a move and never counts; the Trash only counts shrinks,
 ///   which read "Trash emptied".
 ///
-/// The count is not stored: every build recomputes it from the shown history,
-/// so each place's count starts on the oldest shown day.
+/// A count is folded from the whole journal on top of the checkpoint the prune
+/// saved at its cutoff (`carries`), so a place's rows do not move when the
+/// window slides. Days before the window count silently; rows show from the
+/// oldest shown day.
 enum EpisodeBuilder {
     /// The one row line: 1 GB, decimal like every amount in the app.
     static let rowThresholdBytes: Int64 = 1_000_000_000
@@ -396,7 +469,8 @@ enum EpisodeBuilder {
         calendar: Calendar,
         home: String = UnitResolver.defaultHome,
         watchingSince: Date? = nil,
-        catalog: AppCatalog = .empty
+        catalog: AppCatalog = .empty,
+        carries: [String: PlaceCount] = [:]
     ) -> ChangeFeed {
         let oldestDay = windowStart(now: now, calendar: calendar)
         let weekStart = GrowthJournalService.weekStart(now: now, calendar: calendar)
@@ -408,57 +482,27 @@ enum EpisodeBuilder {
 
         for (identity, placeSlots) in Dictionary(grouping: slots, by: \.unitKey) {
             let isTrashPlace = placeSlots.contains { isTrash($0) }
-            var count: Int64 = 0
-            var gross: Int64 = 0
-            var countStart: Date?
-            var pendingSmallChanges = 0
-
             let days = groupByRunStartDay(placeSlots, calendar: calendar)
-                .filter { $0.key >= oldestDay }
-                .sorted { $0.key < $1.key }
-            for (day, daySlots) in days {
-                let dayNet = daySlots.reduce(Int64(0)) { $0 + $1.netBytes }
-                if day >= weekStart {
-                    weekNet += dayNet
-                }
-                let counted = isTrashPlace
-                    ? daySlots.reduce(Int64(0)) { $0 + min($1.netBytes, 0) }
-                    : dayNet
-                guard counted != 0 else { continue }
+            for (day, daySlots) in days where day >= weekStart {
+                weekNet += daySlots.reduce(Int64(0)) { $0 + $1.netBytes }
+            }
 
-                if countStart == nil {
-                    countStart = day
-                }
-                count += counted
-                gross += daySlots.reduce(Int64(0)) { $0 + $1.grossBytes }
-                if day >= weekStart {
-                    pendingSmallChanges += 1
-                }
-                if count == 0 {
-                    countStart = nil
-                    gross = 0
-                    continue
-                }
-                guard abs(count) >= rowThresholdBytes, let start = countStart else { continue }
-
+            let folded = fold(carry: carries[identity], days: days, isTrashPlace: isTrashPlace)
+            for crossing in folded.crossings where crossing.day >= oldestDay {
                 let episode = makeEpisode(
                     identity: identity,
-                    day: day,
-                    daySlots: daySlots,
-                    netBytes: count,
-                    grossBytes: gross,
-                    countStart: start,
+                    day: crossing.day,
+                    daySlots: crossing.slots,
+                    netBytes: crossing.netBytes,
+                    grossBytes: crossing.grossBytes,
+                    countStart: crossing.countStart,
                     isTrashPlace: isTrashPlace,
                     trashGrowth: trashGrowth,
                     home: home
                 )
-                rowsByDay[day, default: []].append(episode)
-                pendingSmallChanges = 0
-                count = 0
-                gross = 0
-                countStart = nil
+                rowsByDay[crossing.day, default: []].append(episode)
             }
-            smallerChangeCount += pendingSmallChanges
+            smallerChangeCount += folded.pendingDays.filter { $0 >= weekStart }.count
         }
 
         let days = rowsByDay
@@ -473,6 +517,71 @@ enum EpisodeBuilder {
             lastLiveChangeAt: shownSlots.filter { $0.source == .watch }.map(\.firstAt).max(),
             smallerChangeCount: smallerChangeCount
         ).resolvingOwners(with: catalog)
+    }
+
+    /// Adds each day's net to a place's running count, oldest day first, and
+    /// starts the count over at every crossing of the line. Pure: `build` and
+    /// the journal prune fold with this one function, so a count saved at the
+    /// prune cutoff is the count a full-history build would hold there.
+    static func fold(
+        carry: PlaceCount?,
+        days: [Date: [JournalSlot]],
+        isTrashPlace: Bool
+    ) -> PlaceFold {
+        var state = carry ?? PlaceCount()
+        var crossings: [RowCrossing] = []
+        var pendingDays: [Date] = []
+
+        for (day, daySlots) in days.sorted(by: { $0.key < $1.key }) {
+            let dayNet = daySlots.reduce(Int64(0)) { $0 + $1.netBytes }
+            let counted = isTrashPlace
+                ? daySlots.reduce(Int64(0)) { $0 + min($1.netBytes, 0) }
+                : dayNet
+            guard counted != 0 else { continue }
+
+            if state.countStart == nil {
+                state.countStart = day
+            }
+            state.count += counted
+            state.gross += daySlots.reduce(Int64(0)) { $0 + $1.grossBytes }
+            state.lastActiveDay = day
+            pendingDays.append(day)
+            if state.count == 0 {
+                state.countStart = nil
+                state.gross = 0
+                continue
+            }
+            guard abs(state.count) >= rowThresholdBytes, let start = state.countStart else { continue }
+
+            crossings.append(RowCrossing(
+                day: day,
+                slots: daySlots,
+                netBytes: state.count,
+                grossBytes: state.gross,
+                countStart: start
+            ))
+            pendingDays = []
+            state.count = 0
+            state.gross = 0
+            state.countStart = nil
+        }
+        return PlaceFold(state: state, crossings: crossings, pendingDays: pendingDays)
+    }
+
+    /// The count of every place after folding `slots` on top of `carries`: what
+    /// the prune saves as the checkpoint before it deletes those slots.
+    static func foldedCounts(
+        slots: [JournalSlot],
+        carries: [String: PlaceCount],
+        calendar: Calendar
+    ) -> [String: PlaceCount] {
+        var counts = carries
+        for (identity, placeSlots) in Dictionary(grouping: slots, by: \.unitKey) {
+            let days = groupByRunStartDay(placeSlots, calendar: calendar)
+            let isTrashPlace = placeSlots.contains { isTrash($0) }
+            counts[identity] = fold(carry: carries[identity], days: days, isTrashPlace: isTrashPlace).state
+        }
+        return counts
     }
 
     // MARK: - Labels
