@@ -178,3 +178,4 @@
 2026-11-01 orchestrator O17 done: no test expectations affected by the 24h run cap; dev-side own priorities exhausted until the stack Mac job reports
 2026-11-01 orchestrator answered: Mac go for the night (Merlin 19:53 WITA via PM, visible allowed); stack job 20th in shared queue, soak after it passes
 2026-11-01 orchestrator answered: Mac go 21:42 WITA (everything incl. visible/overnight); queue draining, prunr stack job 17th
+2026-11-01 orchestrator blocked: mac-queue starvation (demos exclusive jobs block parallel claims, lab-infra dispatch_round); told Grok with fix rec, not editing lab-infra
