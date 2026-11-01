@@ -12,12 +12,16 @@ final class FileScannerWatchdogTests: XCTestCase {
         return directory
     }
 
+    private var scannerKeptAliveForTheStream: FileScanner?
+
     private func makeScanner(consumerStallTimeout: TimeInterval) -> FileScanner {
-        FileScanner(
+        let scanner = FileScanner(
             traversalStallTimeout: 1,
             consumerStallTimeout: consumerStallTimeout,
             watchdogInterval: 0.2
         )
+        scannerKeptAliveForTheStream = scanner
+        return scanner
     }
 
     func testSlowConsumerLongerThanTraversalTimeoutDoesNotStallScan() async throws {
