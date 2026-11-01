@@ -75,8 +75,8 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O12 One stacked test branch [on branch] drain/stack-2026-11-01 062ef4c (Q18+O7b+O9+O10+main, no conflicts, O7b disk test now expects nil); now 5320785 (O13 merged + O14 compile fix), job 20261101-083201-...-5320785b9-test replaces ALL prunr jobs incl. integration; keep worktree agent-a8bb3f4b6954f049e until the job ran
 - O13 Always-active place never prunes [on branch, real bug] drain/O13-2026-11-01 d2c0d68: runs cut at 24h so held runs stay small (replay: 2868 rows -> <=768 after 120 days); Swift + py tests (18 pass); merged into stack f6c8a3c
 - O14 Static compile review of stack [done] 2 certain errors fixed (implicit self in escaping test closures, one from Q10 so the integration job would have failed; superseded); doubts: 4-month hourly test may be slow
-- O15 Sweep all files for the same implicit-self error [running]
-- O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fix per-path delete (bucket unitKeys + path root prefix) on stack after O15
+- O15 implicit-self sweep [done] no more cases found (heuristic scan)
+- O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fixing on stack [running]
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
