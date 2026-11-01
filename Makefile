@@ -39,7 +39,7 @@ E2E_FILE_COUNT ?= 5000
 SCREENSHOT_OUTPUT_DIR ?= $(PWD)/website/screenshots/marketing
 SCREENSHOT_SCALE ?= 2
 
-.PHONY: all build install-app run dev launch clean clean-build reset-dev-state help doctor test open logs release stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean e2e e2e-runtime screenshot replay snapshots-fetch
+.PHONY: all build install-app run dev launch clean clean-build reset-dev-state help doctor test open logs release stress-create stress-stats stress-scan stress-repeat stress-report stress-mutate stress-clean e2e e2e-runtime screenshot replay snapshots-fetch audit-test
 
 all: help
 
