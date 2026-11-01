@@ -168,3 +168,5 @@
 2026-11-01 orchestrator O13 on branch: d2c0d68 real bug, nonstop-active place never pruned; fix cuts runs at 24h (user-visible episode split, Waiting item 8); job queued
 2026-11-01 orchestrator decided item 8 per rec (PM holiday relay): O13 merged into stack f6c8a3c, job requeued; untracked pycache
 2026-11-01 orchestrator O14 spawn: static compile review of stack vs integration (opus medium, seat)
+2026-11-01 orchestrator O14 done: stack 5320785, 2 implicit-self compile errors fixed (one from Q10); integration + f6c8a3c jobs superseded by 5320785 job
+2026-11-01 orchestrator O15 O16 spawn: implicit-self sweep (sonnet), checkpoint clear check read-only (sonnet)
