@@ -2,7 +2,7 @@ import Foundation
 @testable import Prunr
 
 enum FixtureLibrary {
-    static let home = "/Users/tester"
+    static let home = UnitResolver.defaultHome
 
     static let catalog = AppCatalog(entries: [
         AppCatalogEntry(
