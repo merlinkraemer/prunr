@@ -165,3 +165,4 @@
 2026-11-01 orchestrator O12 spawn: stacked test branch Q18+O7b+O9+O10 (sonnet medium, seat worktree)
 2026-11-01 orchestrator O13 spawn: always-active place never prunes check (sonnet medium, seat worktree)
 2026-11-01 orchestrator O12 on branch: drain/stack-2026-11-01 062ef4c, one Mac job replaces 7 per-branch jobs (marked superseded)
+2026-11-01 orchestrator O13 on branch: d2c0d68 real bug, nonstop-active place never pruned; fix cuts runs at 24h (user-visible episode split, Waiting item 8); job queued
