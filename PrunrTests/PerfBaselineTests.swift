@@ -84,6 +84,8 @@ final class PerfBaselineTests: PrunrTestCase {
 
     @MainActor
     func testPerfFeedRebuildOnFixture() async throws {
+        FixtureLibrary.useSyntheticHome()
+        defer { FixtureLibrary.restoreProductionHome() }
         try await withEmptyTemporaryDatabase { id in
             try await FixtureLibrary.seed(trackedPathId: id)
             let paths = [self.trackedPath(id, home: FixtureLibrary.home)]

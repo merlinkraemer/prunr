@@ -22,6 +22,8 @@ final class ReplayHarnessTests: PrunrTestCase {
 
     @MainActor
     func testFixtureReplayRebuildsRowsAndDrilldowns() async throws {
+        FixtureLibrary.useSyntheticHome()
+        defer { FixtureLibrary.restoreProductionHome() }
         try await withEmptyTemporaryDatabase { trackedPathId in
             try await FixtureLibrary.seed(trackedPathId: trackedPathId)
             let result = try await ReplayHarness.run(

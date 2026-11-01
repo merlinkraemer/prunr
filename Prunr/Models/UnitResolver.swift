@@ -174,7 +174,7 @@ enum UnitRules {
 
 /// Turns any path into a stable unit key. Pure: no I/O, no database, no actor.
 enum UnitResolver {
-    static let defaultHome: String = FileManager.default.homeDirectoryForCurrentUser.path
+    nonisolated(unsafe) static var defaultHome: String = FileManager.default.homeDirectoryForCurrentUser.path
 
     /// The persisted key `"<kind>|<rootPath>"` for a path.
     nonisolated static func resolve(path: String) -> String {
