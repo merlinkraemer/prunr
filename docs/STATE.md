@@ -22,7 +22,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 
 
 ## Run
-status: running, waiting on Mac (headless own priorities O4-O17 done; next work needs the stack job d0064bd result, queue position ~22 behind other projects) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
+status: running (stack d0064bd compiled on Mac: 487 tests, 12 failures; O1 fix worker running) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
@@ -63,7 +63,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 ### Q18 Checkpoint table build [on branch, Mac check pending] [mac] - drain/Q18-2026-10-31 8f77404 (on Q16), job 20261031-193012-...-8f77404fb-test; replay.py on real data: 81 row shifts in 16 places -> 0; doubts: first prune after upgrade folds whole journal (unmeasured), midnight-spanning run splits
 
 ### Own priorities (holiday queue, Merlin 11-01: no reviews, keep working until he says stop; work top down, refill when empty)
-- O1 Mac results: fix compile/test failures on integration, then Q16, Q18; land green non-UI work on local main [mac, now]
+- O1 Mac results [running] stack d0064bd: compiles, 12/487 fail (prune cutoff, failed-scan rollback, watchdog x2, journal detail fold, workingSetRefreshStaging missing x2, compact appBusy x2, replay fixture, O16 test seed); fixing on stack, then land green non-UI parts on local main
 - O3 Tester feedback check [done 11-01: 1 positive item, no bugs; Vercel CLI now logged in on dev; recheck weekly]
 - O4 Q18 follow-ups [done] Q18 branch ea0304b: harness uses carries, run across cutoff held whole (no day split), first-prune perf test; 17 py tests pass; job 20261101-050228-...-ea0304bf7-test; doubt: always-active place never prunes
 - O5 replay drift tests [done] drain/Q18-2026-10-31 8a32284: make audit-test, 14 pass on dev; real data 81 shifts -> 0
