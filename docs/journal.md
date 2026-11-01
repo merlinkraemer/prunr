@@ -164,3 +164,4 @@
 2026-11-01 orchestrator O11 dropped: MainViewModel only used by 2 tests; cleanup not worth churn
 2026-11-01 orchestrator O12 spawn: stacked test branch Q18+O7b+O9+O10 (sonnet medium, seat worktree)
 2026-11-01 orchestrator O13 spawn: always-active place never prunes check (sonnet medium, seat worktree)
+2026-11-01 orchestrator O12 on branch: drain/stack-2026-11-01 062ef4c, one Mac job replaces 7 per-branch jobs (marked superseded)

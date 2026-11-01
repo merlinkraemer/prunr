@@ -25,7 +25,7 @@ status: running (Mac open 11-01 headless only; working own priorities O1-O8) · 
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (on Mac open, in order): run the integration job 20261031-161437-...-ce9885791-test on ce98857 (d3f2a98 job superseded) (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6+Q12+Q10; older integration jobs superseded) on an idle Mac (perf tests) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → then Q16 job d814a88 and Q18 job 8f77404 (stacked on integration) → make snapshots-fetch → Q9 idle soak 2h (runs a real Prunr instance with a menu bar icon: hold until Merlin's visible go tonight, PM 11-01 12:21)
+mac batch pending (on Mac open, in order): run the integration job 20261031-161437-...-ce9885791-test on ce98857 (d3f2a98 job superseded) (drain/integration-2026-10-31 = Q9+Q13+Q8b+Q8a+Q6+Q12+Q10; older integration jobs superseded) on an idle Mac (perf tests) → compile fixes on that branch → per-branch jobs only if needed (single-branch jobs miss new test files in pbxproj) → then stack job 062ef4c (Q16+Q18+O7b+O9+O10, replaces per-branch jobs) → make snapshots-fetch → Q9 idle soak 2h (runs a real Prunr instance with a menu bar icon: hold until Merlin's visible go tonight, PM 11-01 12:21)
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
@@ -68,10 +68,10 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O5 replay drift tests [done] drain/Q18-2026-10-31 8a32284: make audit-test, 14 pass on dev; real data 81 shifts -> 0
 - O6 #23 outgoing pane live reads, then #25 onboarding onto PushPager (after integration compiles) [mac]
 - O7 Test gap audit [landed: docs/test-gap-audit-2026-11-01.md]; O7b 8 tests for top 5 gaps [on branch] drain/O7b-2026-11-01 66171c8, job 20261101-050252-...-66171c8c7-test; O7c 12 tests gaps 6-10 [on branch] 24eba7c, job 20261101-050622-...-24eba7cab-test
-- O9 DiskSpaceService unknown instead of 0 [on branch] drain/O9-2026-11-01 596ce37, 4 tests, job 20261101-050801-...-596ce3735-test; at merge update O7b test testDiskSpaceForMissingFolderTodayReportsZeroBytes to expect nil
+- O9 DiskSpaceService unknown instead of 0 [on branch] drain/O9-2026-11-01 596ce37, 4 tests, job 20261101-050801-...-596ce3735-test; reconciled on stack branch
 - O10 abandoned-snapshot cleanup [done, not a bug] only a crash between markSnapshotComplete and rebuildWorkingSet triggers it (clean rollback); 2 pinning tests on drain/O10-2026-11-01 e48ceb2, job 20261101-051000-...-e48ceb2a9-test
 - O11 Remove MainViewModel [dropped] only two tests use it; low value, not worth the churn
-- O12 One stacked test branch [running] drain/stack-2026-11-01 = Q18 ea0304b + O7b 24eba7c + O9 596ce37 + O10 e48ceb2, O7b test reconciled with O9 nil; one Mac job replaces the 7 per-branch jobs (integration ce98857 job stays first)
+- O12 One stacked test branch [on branch] drain/stack-2026-11-01 062ef4c (Q18+O7b+O9+O10+main, no conflicts, O7b disk test now expects nil); job 20261101-063230-...-062ef4ce7-test replaces the 7 per-branch jobs (superseded); keep worktree agent-a8bb3f4b6954f049e until the job ran
 - O13 Always-active place never prunes (O4 doubt) [running] check on Q18 head, fix + test on drain/O13-2026-11-01 if real
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
