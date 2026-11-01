@@ -26,7 +26,7 @@ status: running, waiting on Mac (headless own priorities O4-O17 done; next work 
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (in order): stack job d0064bd on drain/stack-2026-11-01 (integration + Q16 + Q18 + O7b/c + O9 + O10 + O13; replaces every earlier prunr job) -> compile/test fixes -> make snapshots-fetch -> Q9 idle soak 2h (real Prunr with menu bar icon: hold until Merlin's visible go, PM 11-01 12:21)
+mac batch pending (in order): stack job d0064bd on drain/stack-2026-11-01 (integration + Q16 + Q18 + O7b/c + O9 + O10 + O13; replaces every earlier prunr job) -> compile/test fixes -> make snapshots-fetch -> Q9 idle soak 2h (visible go given: Merlin 11-01 19:53 WITA via PM, "all mac queue tasks can run now", for the night)
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
