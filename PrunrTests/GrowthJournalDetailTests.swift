@@ -205,7 +205,7 @@ final class GrowthJournalDetailTests: PrunrTestCase {
                 file("tiny2.txt", 2_000)
             ], updatedAt: date(29, 8))
 
-            let page = try await db.fetchPlaceChanges(unitRoot: Self.place, trackedPathIds: [id], from: date(29, 0), to: date(30, 0))
+            let page = try await db.fetchPlaceChanges(unitRoot: Self.place, trackedPathIds: [id], from: date(29, 8), to: date(30, 0))
             let children = try XCTUnwrap(page.children)
             XCTAssertEqual(children.map(\.name), ["Big", PlacePageNotes.otherChangesTitle])
             XCTAssertEqual(children.last?.deltaBytes, 3_000)
