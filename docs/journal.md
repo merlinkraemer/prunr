@@ -145,3 +145,5 @@
 2026-11-01 orchestrator - Merlin: holiday queue, no reviews, keep working; own priorities O1-O8 added to STATE; review-page service dropped (not wanted)
 2026-11-01 orchestrator Q3 done: note in Mac checkout, bulky list in STATE (13 GB regenerable); nothing deleted
 2026-11-01 orchestrator O3 blocked: no FEEDBACK_AGENT_TOKEN on dev (with-secrets map) and Vercel CLI logged out; Waiting item 8
+2026-11-01 orchestrator O5 spawn: replay.py drift tests on Q18 branch (sonnet medium, seat)
+2026-11-01 orchestrator O7 spawn: test gap audit doc (sonnet medium, seat)

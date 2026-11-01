@@ -66,9 +66,9 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O1 Mac results: fix compile/test failures on integration, then Q16, Q18; land green non-UI work on local main [mac, now]
 - O3 Tester feedback check [blocked: no FEEDBACK_AGENT_TOKEN in dev secrets, Vercel CLI logged out]
 - O4 Q18 follow-ups: ReplayHarness uses carries; first-prune-after-upgrade perf on real snapshot; midnight-spanning run split [mac]
-- O5 replay.py drift check as a script test runnable on dev (no Mac) [box]
+- O5 replay.py drift check as a script test runnable on dev (no Mac) [running] [box]
 - O6 #23 outgoing pane live reads, then #25 onboarding onto PushPager (after integration compiles) [mac]
-- O7 Test coverage gap audit of Prunr/Services, add tests for the riskiest gaps [box+mac]
+- O7 Test coverage gap audit of Prunr/Services, add tests for the riskiest gaps [audit running] [box+mac]
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
