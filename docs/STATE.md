@@ -63,7 +63,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 ### Q18 Checkpoint table build [on branch, Mac check pending] [mac] - drain/Q18-2026-10-31 8f77404 (on Q16), job 20261031-193012-...-8f77404fb-test; replay.py on real data: 81 row shifts in 16 places -> 0; doubts: first prune after upgrade folds whole journal (unmeasured), midnight-spanning run splits
 
 ### Own priorities (holiday queue, Merlin 11-01: no reviews, keep working until he says stop; work top down, refill when empty)
-- O1 Mac results [running] stack d0064bd: compiles, 12/487 fail (prune cutoff, failed-scan rollback, watchdog x2, journal detail fold, workingSetRefreshStaging missing x2, compact appBusy x2, replay fixture, O16 test seed); fixing on stack, then land green non-UI parts on local main
+- O1 Mac results [fix on branch] stack 8b830ce: 12 failures fixed (10 test bugs; 1 real bug: a scan cancelled via its Task left its scanning snapshot + partial working set, cleanup now runs in its own Task); job 20261101-213939-...-8b830ce38-test; doubt: fixture home now = host home (snapshots show real home path)
 - O3 Tester feedback check [done 11-01: 1 positive item, no bugs; Vercel CLI now logged in on dev; recheck weekly]
 - O4 Q18 follow-ups [done] Q18 branch ea0304b: harness uses carries, run across cutoff held whole (no day split), first-prune perf test; 17 py tests pass; job 20261101-050228-...-ea0304bf7-test; doubt: always-active place never prunes
 - O5 replay drift tests [done] drain/Q18-2026-10-31 8a32284: make audit-test, 14 pass on dev; real data 81 shifts -> 0
@@ -78,6 +78,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O15 implicit-self sweep [done] no more cases found (heuristic scan)
 - O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fixed on stack d0064bd (deletes only checkpoints whose keys the path's buckets use; folded-away keys stay until the 90-day expiry)
 - O17 Test expectations vs 24h run cap [done] 107+ tests screened, none affected (fixtures use short runs; the hourly test compares against the same builder)
+- O18 Test host isolation: leftover MenuBarManagers read real settings and scan the real home during tests; give SettingsStore a throwaway defaults suite under TestHost, and make fixture home synthetic again [queued, after the 8b830ce result]
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
