@@ -78,7 +78,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O15 implicit-self sweep [done] no more cases found (heuristic scan)
 - O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fixed on stack d0064bd (deletes only checkpoints whose keys the path's buckets use; folded-away keys stay until the 90-day expiry)
 - O17 Test expectations vs 24h run cap [done] 107+ tests screened, none affected (fixtures use short runs; the hourly test compares against the same builder)
-- O18 Test host isolation: leftover MenuBarManagers read real settings and scan the real home during tests; give SettingsStore a throwaway defaults suite under TestHost, and make fixture home synthetic again [queued, after the 8b830ce result]
+- O18 Test host isolation [on branch] stack 14be69a: SettingsStore uses a throwaway defaults suite + empty temp base path under TestHost; fixture home synthetic again (UnitResolver.defaultHome settable for tests); compact-test workaround removed; job 20261101-214156-...-14be69ab3-test
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
