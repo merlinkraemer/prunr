@@ -29,6 +29,11 @@ data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis;
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
 
+## Run review
+Checked 2026-11-01 12:30 WITA over Tailscale (valid TLS, 200, real content):
+- https://dev.tail87069a.ts.net:4181/mockups/category-groups.html - category groups mockups A/B/C (Q15; A is built on branch Q16)
+- https://dev.tail87069a.ts.net:4181/ - index; app snapshot PNGs appear here after the Mac test run + make snapshots-fetch (not yet)
+
 ## Queue
 Done: Q1 baseline · Q2 #35 status (absorbed by Q9, docs/issue-35-status-2026-10-30.md on main) · Q4 PRD · Q5 core screen · Q7 audit (docs/real-data-audit-2026-10-30.md) · Q11 triage (docs/issue-triage-2026-10-30.md)
 
