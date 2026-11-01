@@ -149,6 +149,61 @@ final class PerfBaselineTests: PrunrTestCase {
         XCTAssertGreaterThan(rows, 0)
     }
 
+    func testPerfFirstPruneAfterUpgrade() async throws {
+        try await withEmptyTemporaryDatabase { id in
+            let now = Date()
+            let calendar = Calendar.current
+            let cutoff = EpisodeBuilder.windowStart(now: now, calendar: calendar)
+            let days = 59
+            let places = 900
+            let bucketsPerDay = 2
+            let dbPool = try XCTUnwrap(self.db.dbPool)
+            try await self.once("prune.first.seed60dx900places") {
+                try await dbPool.write { db in
+                    let statement = try db.makeStatement(sql: """
+                        INSERT INTO growthJournalBucket
+                            (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, unitKey)
+                        VALUES (?, ?, 'developer', '', ?, 'watch', ?)
+                        """)
+                    let firstDay = now.addingTimeInterval(-60 * 24 * 3_600)
+                    for place in 0..<places {
+                        let unitKey = "place|/Users/tester/projects/p\(place)"
+                        for day in 0..<days {
+                            for index in 0..<bucketsPerDay {
+                                let seconds = day * 24 * 3_600 + (place % 40) * 1_800 + index * 6 * 3_600
+                                let delta = Int64((index + day + place) % 5 + 1) * 40_000_000
+                                try statement.execute(arguments: [
+                                    id.uuidString,
+                                    firstDay.addingTimeInterval(TimeInterval(seconds)),
+                                    delta,
+                                    unitKey
+                                ])
+                            }
+                        }
+                    }
+                }
+            }
+            let paths = [self.trackedPath(id, home: "/Users/tester")]
+            var rows = 0
+            try await self.time("prune.first.changeFeedFullJournal", runs: 3) {
+                rows = try await GrowthJournalService.shared.changeFeed(
+                    trackedPaths: paths, now: now, calendar: calendar, home: "/Users/tester"
+                ).episodes.count
+            }
+            XCTAssertGreaterThan(rows, 0)
+            try await self.once("prune.first.pruneGrowthJournalBuckets") {
+                try await self.db.pruneGrowthJournalBuckets(olderThan: cutoff, calendar: calendar)
+            }
+            let checkpoints = try await self.db.fetchJournalCheckpoints()
+            emit("prune.first.checkpoints", Double(checkpoints.count))
+            try await self.time("prune.first.changeFeedAfterPrune", runs: 3) {
+                _ = try await GrowthJournalService.shared.changeFeed(
+                    trackedPaths: paths, now: now, calendar: calendar, home: "/Users/tester"
+                )
+            }
+        }
+    }
+
     // MARK: - Place page
 
     func testPerfPlacePageQueries() async throws {
