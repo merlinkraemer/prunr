@@ -151,3 +151,5 @@
 2026-11-01 orchestrator O7b spawn: tests for top 5 gaps off main (sonnet medium, seat worktree)
 2026-11-01 orchestrator O5 done: scripts/audit/test_replay.py + make audit-test on Q18 branch (8a32284), 14 pass on dev
 2026-11-01 orchestrator O4 spawn: Q18 follow-ups on Q18 branch (sonnet medium, seat)
+2026-11-01 orchestrator O3 done: feedback API read (Vercel login on dev), 1 item since alpha.24, positive, no bugs
+2026-11-01 orchestrator O4 done: Q18 branch ea0304b harness carries + cutoff-run hold + first-prune perf test; 17 py tests pass; job queued
