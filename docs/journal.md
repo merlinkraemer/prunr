@@ -157,3 +157,5 @@
 2026-11-01 orchestrator O7c spawn: tests for gaps 6-10 on O7b branch (sonnet medium, seat)
 2026-11-01 orchestrator O7c on branch: 12 tests for gaps 6-10 (24eba7c), job queued; resetBaseline/scanning snapshot is by design (15 min abandoned cleanup); new bug O9 DiskSpaceService 0-free on error
 2026-11-01 orchestrator O9 spawn: DiskSpaceService nil on failure + call sites (sonnet medium, seat worktree)
+2026-11-01 orchestrator O9 on branch: 596ce37 DiskSpaceService nil on failure, manager keeps last values, 4 tests, job queued
+2026-11-01 orchestrator O10 spawn: abandoned-snapshot cleanup fragility check (sonnet medium, seat)
