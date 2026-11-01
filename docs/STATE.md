@@ -20,7 +20,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 3. [accepted 2026-10-31 per rec] Rows drift as the 30-day window slides (root cause + design: docs/checkpoint-table-design-2026-10-31.md): v27 growthJournalCheckpoint, show real "building since" date, expire quiet counts after 90 days — building as Q18
 
 ## Run
-status: running, holding for Mac open (all headless work done 10-31: Q6-Q18 on branches; left: #23 #25 UI refactors on uncompiled views, not worth stacking) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
+status: running (Mac open 11-01 headless only; working own priorities O1-O8) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
@@ -60,6 +60,16 @@ goal: Waiting item 6 rec: per-place rows inside groups with up/down split + "sma
 goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller changes" row reconciling with header), tested grouping logic; branch drain/Q16-2026-10-31 off integration ce98857; unlanded (UI, holiday).
 ### Q17 Checkpoint table design [landed] [box] - docs/checkpoint-table-design-2026-10-31.md on main; drift visible from ~14 Nov on real data
 ### Q18 Checkpoint table build [on branch, Mac check pending] [mac] - drain/Q18-2026-10-31 8f77404 (on Q16), job 20261031-193012-...-8f77404fb-test; replay.py on real data: 81 row shifts in 16 places -> 0; doubts: first prune after upgrade folds whole journal (unmeasured), midnight-spanning run splits
+
+### Own priorities (holiday queue, Merlin 11-01: no reviews, keep working until he says stop; work top down, refill when empty)
+- O1 Mac results: fix compile/test failures on integration, then Q16, Q18; land green non-UI work on local main [mac, now]
+- O2 Q3 Mac copy recon (headless ssh, no UI) [mac, now]
+- O3 Tester feedback check (check-feedback, read-only) and triage into queue [box, now]
+- O4 Q18 follow-ups: ReplayHarness uses carries; first-prune-after-upgrade perf on real snapshot; midnight-spanning run split [mac]
+- O5 replay.py drift check as a script test runnable on dev (no Mac) [box]
+- O6 #23 outgoing pane live reads, then #25 onboarding onto PushPager (after integration compiles) [mac]
+- O7 Test coverage gap audit of Prunr/Services, add tests for the riskiest gaps [box+mac]
+- O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
 - 2026-10-30: moved lab2 → dev; alpha.24 live since 10-28.
