@@ -997,12 +997,16 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
-    private func seedJournalBuckets(trackedPathId: UUID, at dates: [Date]) async throws {
+    private func seedJournalBuckets(
+        trackedPathId: UUID,
+        at dates: [Date],
+        unitKey: String = "place|/Users/tester/dev"
+    ) async throws {
         for date in dates {
             try await DatabaseManager.shared.upsertGrowthJournalBuckets(
                 trackedPathId: trackedPathId,
                 bucketStart: date,
-                deltas: [.init(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev"): 1_000]
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: unitKey): 1_000]
             )
         }
     }
@@ -1027,7 +1031,12 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             try await self.seedJournalBuckets(
                 trackedPathId: trackedPathId,
-                at: [justBefore, fixture.cutoff, fixture.now]
+                at: [justBefore],
+                unitKey: "place|/Users/tester/other"
+            )
+            try await self.seedJournalBuckets(
+                trackedPathId: trackedPathId,
+                at: [fixture.cutoff, fixture.now]
             )
 
             await GrowthJournalService.shared.prune(
