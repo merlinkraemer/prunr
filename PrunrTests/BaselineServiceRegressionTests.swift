@@ -875,13 +875,12 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             try await self.insertStrayWorkingSetEntry(trackedPathId: trackedPathId, path: "/Users/tester/dev/stray.bin")
 
             let scanTask = Task {
-                withUnsafeCurrentTask { $0?.cancel() }
                 _ = try await ScanService.shared.scan(
                     path: tempDirectory.path,
                     trackedPathId: trackedPathId,
                     ignoredNames: [],
                     alsoWriteWorkingSet: true,
-                    progress: nil
+                    progress: { _ in withUnsafeCurrentTask { $0?.cancel() } }
                 )
             }
             do {
@@ -912,13 +911,12 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             try await self.insertStrayWorkingSetEntry(trackedPathId: trackedPathId, path: "/Users/tester/dev/stray.bin")
 
             let scanTask = Task {
-                withUnsafeCurrentTask { $0?.cancel() }
                 _ = try await ScanService.shared.scan(
                     path: tempDirectory.path,
                     trackedPathId: trackedPathId,
                     ignoredNames: [],
                     alsoWriteWorkingSet: true,
-                    progress: nil
+                    progress: { _ in withUnsafeCurrentTask { $0?.cancel() } }
                 )
             }
             do {

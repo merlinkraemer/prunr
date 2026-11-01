@@ -476,13 +476,15 @@ actor ScanService {
             // parked on a full buffer is released before the scan unwinds.
             await backpressure.close()
 
-            // Clean up orphaned snapshot before rethrowing
-            do {
-                try await db.deleteSnapshot(id: snapshotId)
-                logger.info("Deleted incomplete snapshot ID: \(snapshotId)")
+            let cleanupOutlivesTaskCancellation = Task {
+                try await self.db.deleteSnapshot(id: snapshotId)
+                self.logger.info("Deleted incomplete snapshot ID: \(snapshotId)")
                 if alsoWriteWorkingSet {
-                    try await restoreWorkingSetAfterFailedInlineScan(trackedPathId: trackedPathId)
+                    try await self.restoreWorkingSetAfterFailedInlineScan(trackedPathId: trackedPathId)
                 }
+            }
+            do {
+                try await cleanupOutlivesTaskCancellation.value
             } catch {
                 logger.error("Failed to clean up incomplete scan state for snapshot ID \(snapshotId): \(error.localizedDescription)")
             }
