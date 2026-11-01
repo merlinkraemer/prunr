@@ -12,14 +12,13 @@ A stranger downloads the alpha from the website and gets a one-glance answer to 
 AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, nothing user-visible lands.
 
 ## Waiting on Merlin
-1. Watch tester feedback on alpha.24 (shipped 2026-10-28) — rec: check-feedback in a few days — branch: none
+1. Tester feedback on alpha.24: 1 item since 10-28, positive (found a 25 GB app install via the change list); no bugs reported — rec: recheck weekly — branch: none
 4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
 5. Close obsolete GitHub issues #29 #32 #34 #18 #11 (+ #26 by design) — rec: yes, I close them with a short note — branch: none
 6. [accepted 2026-10-31 per rec: variant A, building as Q16 on drain/Q16-2026-10-31] Category groups net unrelated places ("Developer +9.9 GB" = +44 up, -34 down) and header vs rows don't reconcile — rec: per-place rows inside groups with up/down split + a "smaller changes" row; mockups first — branch: none
 7. [accepted 2026-10-30 per rec] Row captions "found by scan" / "found by scan · since Sun 18 Oct"; names drop generic parents ("game · dev" → "game") — review wording — branch: drain/Q8b-2026-10-30
 3. [accepted 2026-10-31 per rec] Rows drift as the 30-day window slides (root cause + design: docs/checkpoint-table-design-2026-10-31.md): v27 growthJournalCheckpoint, show real "building since" date, expire quiet counts after 90 days — building as Q18
 
-8. Feedback API token on dev: add FEEDBACK_AGENT_TOKEN to with-secrets so the thread can read tester feedback — rec: yes — branch: none
 
 ## Run
 status: running (Mac open 11-01 headless only; working own priorities O1-O8) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
@@ -64,11 +63,12 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 
 ### Own priorities (holiday queue, Merlin 11-01: no reviews, keep working until he says stop; work top down, refill when empty)
 - O1 Mac results: fix compile/test failures on integration, then Q16, Q18; land green non-UI work on local main [mac, now]
-- O3 Tester feedback check [blocked: no FEEDBACK_AGENT_TOKEN in dev secrets, Vercel CLI logged out]
-- O4 Q18 follow-ups: ReplayHarness uses carries; first-prune-after-upgrade perf on real snapshot; midnight-spanning run split [mac]
-- O5 replay.py drift check as a script test runnable on dev (no Mac) [running] [box]
+- O3 Tester feedback check [done 11-01: 1 positive item, no bugs; Vercel CLI now logged in on dev; recheck weekly]
+- O4 Q18 follow-ups [done] Q18 branch ea0304b: harness uses carries, run across cutoff held whole (no day split), first-prune perf test; 17 py tests pass; job 20261101-050228-...-ea0304bf7-test; doubt: always-active place never prunes
+- O5 replay drift tests [done] drain/Q18-2026-10-31 8a32284: make audit-test, 14 pass on dev; real data 81 shifts -> 0
 - O6 #23 outgoing pane live reads, then #25 onboarding onto PushPager (after integration compiles) [mac]
-- O7 Test gap audit [landed: docs/test-gap-audit-2026-11-01.md]; O7b tests for top 5 gaps [running] on drain/O7b-2026-11-01 [mac]
+- O7 Test gap audit [landed: docs/test-gap-audit-2026-11-01.md]; O7b 8 tests for top 5 gaps [on branch] drain/O7b-2026-11-01 66171c8, job 20261101-050252-...-66171c8c7-test; O7c 12 tests gaps 6-10 [on branch] 24eba7c, job 20261101-050622-...-24eba7cab-test
+- O9 [running, drain/O9-2026-11-01] DiskSpaceService returns 0 free/0 total on missing folder or read error, panel can show "Zero KB free"; make it optional/throw and handle at call sites [box -> mac]
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown

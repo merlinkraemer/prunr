@@ -2500,8 +2500,16 @@ final class MenuBarManager: NSObject {
 
     func updateFreeSpace() {
         let targetURL = primaryTrackedPath()?.url ?? FileManager.default.homeDirectoryForCurrentUser
-        let free = DiskSpaceService.shared.getFreeSpace(for: targetURL)
-        let total = DiskSpaceService.shared.getTotalSpace(for: targetURL)
+        guard let space = DiskSpaceService.shared.getSpace(for: targetURL) else {
+            updateFreeSpaceDisplay("Prunr")
+            lastFreeSpaceUpdate = Date()
+            if let result = reconciliationResult {
+                reconciliationResult = result.withUpdatedFreeSpace(nil)
+            }
+            return
+        }
+        let free = space.freeBytes
+        let total = space.totalBytes
 
         self.freeBytes = free
         self.totalBytes = total

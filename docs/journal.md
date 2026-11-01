@@ -149,3 +149,11 @@
 2026-11-01 orchestrator O7 spawn: test gap audit doc (sonnet medium, seat)
 2026-11-01 orchestrator O7 landed on main: test gap audit (c8a5951, docs only); top gaps cleanup retention, orphan paths, disk accounting, baseline reset, failed-scan rollback
 2026-11-01 orchestrator O7b spawn: tests for top 5 gaps off main (sonnet medium, seat worktree)
+2026-11-01 orchestrator O5 done: scripts/audit/test_replay.py + make audit-test on Q18 branch (8a32284), 14 pass on dev
+2026-11-01 orchestrator O4 spawn: Q18 follow-ups on Q18 branch (sonnet medium, seat)
+2026-11-01 orchestrator O3 done: feedback API read (Vercel login on dev), 1 item since alpha.24, positive, no bugs
+2026-11-01 orchestrator O4 done: Q18 branch ea0304b harness carries + cutoff-run hold + first-prune perf test; 17 py tests pass; job queued
+2026-11-01 orchestrator O7b on branch: 8 tests for top 5 gaps (66171c8), tests only, job queued; possible bug noted: resetBaseline leaves scanning snapshots
+2026-11-01 orchestrator O7c spawn: tests for gaps 6-10 on O7b branch (sonnet medium, seat)
+2026-11-01 orchestrator O7c on branch: 12 tests for gaps 6-10 (24eba7c), job queued; resetBaseline/scanning snapshot is by design (15 min abandoned cleanup); new bug O9 DiskSpaceService 0-free on error
+2026-11-01 orchestrator O9 spawn: DiskSpaceService nil on failure + call sites (sonnet medium, seat worktree)
