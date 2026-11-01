@@ -26,7 +26,7 @@ status: running (Mac open 11-01 headless only; working own priorities O1-O8) · 
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (in order): stack job 5320785 on drain/stack-2026-11-01 (integration + Q16 + Q18 + O7b/c + O9 + O10 + O13; replaces every earlier prunr job) -> compile/test fixes -> make snapshots-fetch -> Q9 idle soak 2h (real Prunr with menu bar icon: hold until Merlin's visible go, PM 11-01 12:21)
+mac batch pending (in order): stack job d0064bd on drain/stack-2026-11-01 (integration + Q16 + Q18 + O7b/c + O9 + O10 + O13; replaces every earlier prunr job) -> compile/test fixes -> make snapshots-fetch -> Q9 idle soak 2h (real Prunr with menu bar icon: hold until Merlin's visible go, PM 11-01 12:21)
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
@@ -72,11 +72,11 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O9 DiskSpaceService unknown instead of 0 [on branch] drain/O9-2026-11-01 596ce37, 4 tests, job 20261101-050801-...-596ce3735-test; reconciled on stack branch
 - O10 abandoned-snapshot cleanup [done, not a bug] only a crash between markSnapshotComplete and rebuildWorkingSet triggers it (clean rollback); 2 pinning tests on drain/O10-2026-11-01 e48ceb2, job 20261101-051000-...-e48ceb2a9-test
 - O11 Remove MainViewModel [dropped] only two tests use it; low value, not worth the churn
-- O12 One stacked test branch [on branch] drain/stack-2026-11-01 062ef4c (Q18+O7b+O9+O10+main, no conflicts, O7b disk test now expects nil); now 5320785 (O13 merged + O14 compile fix), job 20261101-083201-...-5320785b9-test replaces ALL prunr jobs incl. integration; keep worktree agent-a8bb3f4b6954f049e until the job ran
+- O12 One stacked test branch [on branch] drain/stack-2026-11-01 062ef4c (Q18+O7b+O9+O10+main, no conflicts, O7b disk test now expects nil); now d0064bd (O13 + O14 + O16), job 20261101-083527-...-d0064bd93-test replaces ALL prunr jobs incl. integration; keep worktree agent-a8bb3f4b6954f049e until the job ran
 - O13 Always-active place never prunes [on branch, real bug] drain/O13-2026-11-01 d2c0d68: runs cut at 24h so held runs stay small (replay: 2868 rows -> <=768 after 120 days); Swift + py tests (18 pass); merged into stack f6c8a3c
 - O14 Static compile review of stack [done] 2 certain errors fixed (implicit self in escaping test closures, one from Q10 so the integration job would have failed; superseded); doubts: 4-month hourly test may be slow
 - O15 implicit-self sweep [done] no more cases found (heuristic scan)
-- O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fixing on stack [running]
+- O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fixed on stack d0064bd (deletes only checkpoints whose keys the path's buckets use; folded-away keys stay until the 90-day expiry)
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown

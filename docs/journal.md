@@ -173,3 +173,4 @@
 2026-11-01 orchestrator O16 checked: per-path clear deletes all checkpoints, real (other paths lose folded history); fix queued on stack after O15, per rec (holiday relay)
 2026-11-01 orchestrator O15 done: no further implicit-self cases
 2026-11-01 orchestrator O16 spawn: per-path checkpoint delete fix on stack (sonnet medium)
+2026-11-01 orchestrator O16 fixed on stack d0064bd: per-path clear keeps other paths' checkpoints, 1 new test; job requeued (5320785 superseded)
