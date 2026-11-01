@@ -19,6 +19,8 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 7. [accepted 2026-10-30 per rec] Row captions "found by scan" / "found by scan · since Sun 18 Oct"; names drop generic parents ("game · dev" → "game") — review wording — branch: drain/Q8b-2026-10-30
 3. [accepted 2026-10-31 per rec] Rows drift as the 30-day window slides (root cause + design: docs/checkpoint-table-design-2026-10-31.md): v27 growthJournalCheckpoint, show real "building since" date, expire quiet counts after 90 days — building as Q18
 
+8. Feedback API token on dev: add FEEDBACK_AGENT_TOKEN to with-secrets so the thread can read tester feedback — rec: yes — branch: none
+
 ## Run
 status: running (Mac open 11-01 headless only; working own priorities O1-O8) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
@@ -62,7 +64,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 
 ### Own priorities (holiday queue, Merlin 11-01: no reviews, keep working until he says stop; work top down, refill when empty)
 - O1 Mac results: fix compile/test failures on integration, then Q16, Q18; land green non-UI work on local main [mac, now]
-- O3 Tester feedback check (check-feedback, read-only) and triage into queue [box, now]
+- O3 Tester feedback check [blocked: no FEEDBACK_AGENT_TOKEN in dev secrets, Vercel CLI logged out]
 - O4 Q18 follow-ups: ReplayHarness uses carries; first-prune-after-upgrade perf on real snapshot; midnight-spanning run split [mac]
 - O5 replay.py drift check as a script test runnable on dev (no Mac) [box]
 - O6 #23 outgoing pane live reads, then #25 onboarding onto PushPager (after integration compiles) [mac]
