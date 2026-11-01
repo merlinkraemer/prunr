@@ -76,7 +76,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O13 Always-active place never prunes [on branch, real bug] drain/O13-2026-11-01 d2c0d68: runs cut at 24h so held runs stay small (replay: 2868 rows -> <=768 after 120 days); Swift + py tests (18 pass); merged into stack f6c8a3c
 - O14 Static compile review of stack [done] 2 certain errors fixed (implicit self in escaping test closures, one from Q10 so the integration job would have failed; superseded); doubts: 4-month hourly test may be slow
 - O15 Sweep all files for the same implicit-self error [running]
-- O16 Per-path journal clear also deletes every path's checkpoints: bug or design? [running, read-only]
+- O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fix per-path delete (bucket unitKeys + path root prefix) on stack after O15
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown

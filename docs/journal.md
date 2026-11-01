@@ -170,3 +170,4 @@
 2026-11-01 orchestrator O14 spawn: static compile review of stack vs integration (opus medium, seat)
 2026-11-01 orchestrator O14 done: stack 5320785, 2 implicit-self compile errors fixed (one from Q10); integration + f6c8a3c jobs superseded by 5320785 job
 2026-11-01 orchestrator O15 O16 spawn: implicit-self sweep (sonnet), checkpoint clear check read-only (sonnet)
+2026-11-01 orchestrator O16 checked: per-path clear deletes all checkpoints, real (other paths lose folded history); fix queued on stack after O15, per rec (holiday relay)
