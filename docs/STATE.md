@@ -68,7 +68,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O4 Q18 follow-ups: ReplayHarness uses carries; first-prune-after-upgrade perf on real snapshot; midnight-spanning run split [mac]
 - O5 replay.py drift check as a script test runnable on dev (no Mac) [running] [box]
 - O6 #23 outgoing pane live reads, then #25 onboarding onto PushPager (after integration compiles) [mac]
-- O7 Test coverage gap audit of Prunr/Services, add tests for the riskiest gaps [audit running] [box+mac]
+- O7 Test gap audit [landed: docs/test-gap-audit-2026-11-01.md]; O7b tests for top 5 gaps [running] on drain/O7b-2026-11-01 [mac]
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
