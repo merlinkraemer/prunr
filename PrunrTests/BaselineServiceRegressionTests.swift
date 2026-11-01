@@ -972,4 +972,310 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             XCTAssertEqual(developer.recentGrowthStory?.deltaBytes, 2 * 1_024 * 1_024)
         }
     }
+
+    // MARK: - Journal prune, snapshot dates, reset leftovers, cancel, disk space
+
+    private var utcCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    private func insertSnapshotRow(
+        trackedPathId: UUID,
+        createdAt: Date,
+        lifecycle: Snapshot.Lifecycle
+    ) async throws -> Int64 {
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        let trackedPathIdText = trackedPathId.uuidString
+        return try await dbPool.write { db -> Int64 in
+            try db.execute(
+                sql: "INSERT INTO snapshot (trackedPathId, createdAt, lifecycle) VALUES (?, ?, ?)",
+                arguments: [trackedPathIdText, createdAt, lifecycle.rawValue]
+            )
+            return db.lastInsertedRowID
+        }
+    }
+
+    private func seedJournalBuckets(trackedPathId: UUID, at dates: [Date]) async throws {
+        for date in dates {
+            try await DatabaseManager.shared.upsertGrowthJournalBuckets(
+                trackedPathId: trackedPathId,
+                bucketStart: date,
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev"): 1_000]
+            )
+        }
+    }
+
+    private func journalBucketStarts(trackedPathId: UUID) async throws -> [Date] {
+        try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            .map(\.bucketStart)
+            .sorted()
+    }
+
+    private func pruneFixture() -> (now: Date, cutoff: Date, calendar: Calendar) {
+        let calendar = utcCalendar
+        let now = calendar.date(from: DateComponents(year: 2026, month: 6, day: 15, hour: 12))!
+        let cutoff = calendar.date(from: DateComponents(year: 2026, month: 5, day: 17))!
+        return (now, cutoff, calendar)
+    }
+
+    func testPruneKeepsBucketOnExactCutoffAndDropsOlder() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let fixture = self.pruneFixture()
+            let justBefore = fixture.cutoff.addingTimeInterval(-1)
+
+            try await self.seedJournalBuckets(
+                trackedPathId: trackedPathId,
+                at: [justBefore, fixture.cutoff, fixture.now]
+            )
+
+            await GrowthJournalService.shared.prune(
+                retentionDays: GrowthJournalService.historyWindowDays,
+                now: fixture.now,
+                calendar: fixture.calendar
+            )
+
+            let remaining = try await self.journalBucketStarts(trackedPathId: trackedPathId)
+            XCTAssertEqual(remaining, [fixture.cutoff, fixture.now])
+        }
+    }
+
+    func testPruneClampsShortRetentionToHistoryWindow() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let fixture = self.pruneFixture()
+            let insideWindow = fixture.now.addingTimeInterval(-10 * 24 * 60 * 60)
+            let outsideWindow = fixture.cutoff.addingTimeInterval(-24 * 60 * 60)
+
+            try await self.seedJournalBuckets(
+                trackedPathId: trackedPathId,
+                at: [outsideWindow, insideWindow]
+            )
+
+            await GrowthJournalService.shared.prune(
+                retentionDays: 1,
+                now: fixture.now,
+                calendar: fixture.calendar
+            )
+
+            let remaining = try await self.journalBucketStarts(trackedPathId: trackedPathId)
+            XCTAssertEqual(remaining, [insideWindow])
+        }
+    }
+
+    func testPruneWithLongRetentionKeepsBucketsBeyondHistoryWindow() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let fixture = self.pruneFixture()
+            let sixtyDaysAgo = fixture.now.addingTimeInterval(-60 * 24 * 60 * 60)
+            let ninetyOneDaysAgo = fixture.now.addingTimeInterval(-91 * 24 * 60 * 60)
+
+            try await self.seedJournalBuckets(
+                trackedPathId: trackedPathId,
+                at: [ninetyOneDaysAgo, sixtyDaysAgo]
+            )
+
+            await GrowthJournalService.shared.prune(
+                retentionDays: 90,
+                now: fixture.now,
+                calendar: fixture.calendar
+            )
+
+            let remaining = try await self.journalBucketStarts(trackedPathId: trackedPathId)
+            XCTAssertEqual(remaining, [sixtyDaysAgo])
+        }
+    }
+
+    func testOldestCompleteSnapshotDateIgnoresScanningSnapshotsAndOtherPaths() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let otherPathId = UUID()
+            let trackedPath = self.makeTrackedPath(trackedPathId)
+            let otherPath = self.makeTrackedPath(otherPathId)
+            let base = Date(timeIntervalSince1970: 1_800_000_000)
+
+            let noSnapshots = try await GrowthJournalService.shared.oldestCompleteSnapshotDate(
+                trackedPaths: [trackedPath]
+            )
+            XCTAssertNil(noSnapshots)
+
+            _ = try await self.insertSnapshotRow(
+                trackedPathId: trackedPathId,
+                createdAt: base.addingTimeInterval(-5 * 3_600),
+                lifecycle: .scanning
+            )
+            let onlyScanning = try await GrowthJournalService.shared.oldestCompleteSnapshotDate(
+                trackedPaths: [trackedPath]
+            )
+            XCTAssertNil(onlyScanning)
+
+            _ = try await self.insertSnapshotRow(
+                trackedPathId: trackedPathId,
+                createdAt: base.addingTimeInterval(-3 * 3_600),
+                lifecycle: .complete
+            )
+            _ = try await self.insertSnapshotRow(
+                trackedPathId: trackedPathId,
+                createdAt: base.addingTimeInterval(-3_600),
+                lifecycle: .complete
+            )
+            _ = try await self.insertSnapshotRow(
+                trackedPathId: otherPathId,
+                createdAt: base.addingTimeInterval(-9 * 3_600),
+                lifecycle: .complete
+            )
+
+            let oldestForPath = try await GrowthJournalService.shared.oldestCompleteSnapshotDate(
+                trackedPaths: [trackedPath]
+            )
+            XCTAssertEqual(
+                try XCTUnwrap(oldestForPath).timeIntervalSince1970,
+                base.addingTimeInterval(-3 * 3_600).timeIntervalSince1970,
+                accuracy: 0.001
+            )
+
+            let oldestForBoth = try await GrowthJournalService.shared.oldestCompleteSnapshotDate(
+                trackedPaths: [trackedPath, otherPath]
+            )
+            XCTAssertEqual(
+                try XCTUnwrap(oldestForBoth).timeIntervalSince1970,
+                base.addingTimeInterval(-9 * 3_600).timeIntervalSince1970,
+                accuracy: 0.001
+            )
+
+            let noPaths = try await GrowthJournalService.shared.oldestCompleteSnapshotDate(trackedPaths: [])
+            XCTAssertNil(noPaths)
+        }
+    }
+
+    func testDeltasSinceLastSnapshotSumsSignedPerCategoryFromSnapshotDateOnward() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let trackedPath = self.makeTrackedPath(trackedPathId)
+            let otherPath = self.makeTrackedPath(UUID())
+            let since = Date(timeIntervalSince1970: 1_800_000_000)
+            let unitKey = "place|/Users/tester/dev"
+
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [
+                    .init(category: .developer, subcategory: nil, unitKey: unitKey): 400,
+                    .init(category: .downloads, subcategory: nil, unitKey: unitKey): 5
+                ],
+                at: since.addingTimeInterval(-120)
+            )
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: unitKey): 100],
+                at: since
+            )
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: trackedPath,
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: unitKey): -30],
+                at: since.addingTimeInterval(60)
+            )
+            try await GrowthJournalService.shared.recordDeltas(
+                trackedPath: otherPath,
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: unitKey): 999],
+                at: since.addingTimeInterval(60)
+            )
+
+            let deltas = await GrowthJournalService.shared.deltasSinceLastSnapshot(
+                trackedPath: trackedPath,
+                since: since
+            )
+
+            XCTAssertEqual(deltas, [.developer: 70])
+        }
+    }
+
+    func testResetBaselineLeavesFreshScanningSnapshotAndCleanupRemovesItOnceStale() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let entries = [ScanResult(path: "/Users/tester/dev/app/a.bin", sizeBytes: 1_000)]
+
+            let complete = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let completeId = try XCTUnwrap(complete.id)
+            try await DatabaseManager.shared.addEntries(to: completeId, entries: entries)
+
+            let scanningId = try await self.insertSnapshotRow(
+                trackedPathId: trackedPathId,
+                createdAt: Date(),
+                lifecycle: .scanning
+            )
+            try await DatabaseManager.shared.addEntries(to: scanningId, entries: entries)
+
+            try await BaselineService.shared.resetBaseline()
+
+            let completeSnapshots = try await DatabaseManager.shared.fetchAllSnapshots()
+            XCTAssertTrue(completeSnapshots.isEmpty)
+            let hasBaseline = await BaselineService.shared.hasBaseline()
+            XCTAssertFalse(hasBaseline)
+            let scanningAfterReset = try await self.rowCountWhere("snapshot", condition: "lifecycle = 'scanning'")
+            XCTAssertEqual(scanningAfterReset, 1)
+
+            let deletedWhileFresh = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
+            XCTAssertEqual(deletedWhileFresh, 0)
+
+            let staleCreatedAt = Date().addingTimeInterval(-(DatabaseCleanupService.abandonedScanGracePeriod + 60))
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            try await dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE snapshot SET createdAt = ? WHERE id = ?",
+                    arguments: [staleCreatedAt, scanningId]
+                )
+            }
+
+            let deletedWhenStale = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
+            XCTAssertEqual(deletedWhenStale, 1)
+            let snapshotRows = try await self.rowCount("snapshot")
+            XCTAssertEqual(snapshotRows, 0)
+            let leftoverEntries = try await DatabaseManager.shared.fetchEntryCount(for: scanningId)
+            XCTAssertEqual(leftoverEntries, 0)
+        }
+    }
+
+    func testCancelScanWithNoActiveScanDoesNotAffectNextScan() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrCancelIdleScan")
+            defer { try? FileManager.default.removeItem(at: tempDirectory) }
+            try Data(repeating: 0xAB, count: 4_096).write(to: tempDirectory.appendingPathComponent("blob.bin"))
+
+            await ScanService.shared.cancelScan()
+
+            let snapshot = try await ScanService.shared.scan(
+                path: tempDirectory.path,
+                trackedPathId: trackedPathId,
+                ignoredNames: [],
+                progress: nil
+            )
+
+            let snapshotId = try XCTUnwrap(snapshot.id)
+            let completeSnapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
+            XCTAssertEqual(completeSnapshots.compactMap(\.id), [snapshotId])
+            let entryCount = try await DatabaseManager.shared.fetchEntryCount(for: snapshotId)
+            XCTAssertGreaterThan(entryCount, 0)
+        }
+    }
+
+    func testDiskSpaceForExistingFolderReportsFreeWithinTotal() throws {
+        let directory = try createTrackedPathDirectory(named: "PrunrDiskSpace")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let free = DiskSpaceService.shared.getFreeSpace(for: directory)
+        let total = DiskSpaceService.shared.getTotalSpace(for: directory)
+
+        XCTAssertGreaterThan(free, 0)
+        XCTAssertGreaterThan(total, 0)
+        XCTAssertLessThanOrEqual(free, total)
+        XCTAssertFalse(DiskSpaceService.shared.getFreeSpaceFormatted(for: directory).isEmpty)
+    }
+
+    func testDiskSpaceForMissingFolderTodayReportsZeroBytes() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PrunrMissing-\(UUID().uuidString)", isDirectory: true)
+
+        XCTAssertEqual(DiskSpaceService.shared.getFreeSpace(for: missing), 0)
+        XCTAssertEqual(DiskSpaceService.shared.getTotalSpace(for: missing), 0)
+        XCTAssertEqual(
+            DiskSpaceService.shared.getFreeSpaceFormatted(for: missing),
+            ByteCountFormatter.string(fromByteCount: 0, countStyle: .file)
+        )
+    }
 }

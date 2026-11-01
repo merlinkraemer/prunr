@@ -1039,7 +1039,8 @@ final class PrunrSmokeTests: XCTestCase {
     private func seedCompleteSnapshot(
         trackedPathIdText: String,
         createdAt: Date,
-        entries: [ScanResult]
+        entries: [ScanResult],
+        withCategoryTotals: Bool = true
     ) async throws -> Int64 {
         let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
         let snapshotId = try await dbPool.write { db -> Int64 in
@@ -1050,6 +1051,7 @@ final class PrunrSmokeTests: XCTestCase {
             return db.lastInsertedRowID
         }
         try await DatabaseManager.shared.addEntries(to: snapshotId, entries: entries)
+        guard withCategoryTotals else { return snapshotId }
         let totalBytes = entries.reduce(Int64(0)) { $0 + $1.sizeBytes }
         try await DatabaseManager.shared.replaceCategorySnapshots(
             snapshotId: snapshotId,
@@ -2554,6 +2556,89 @@ final class PrunrSmokeTests: XCTestCase {
                 )
             }
             XCTAssertEqual(rowCount, 0)
+        }
+    }
+
+    private func categoryTotalsByCategory(snapshotId: Int64) async throws -> [GrowthCategory: Int64] {
+        let items = try await DatabaseManager.shared.fetchCategoryTotals(for: snapshotId)
+        return Dictionary(uniqueKeysWithValues: items.map { ($0.category, $0.currentSizeBytes) })
+    }
+
+    private func expectedCategoryTotals(_ entries: [ScanResult]) -> [GrowthCategory: Int64] {
+        var totals: [GrowthCategory: Int64] = [:]
+        for entry in entries {
+            totals[GrowthCategory.categorize(path: entry.path), default: 0] += entry.sizeBytes
+        }
+        return totals
+    }
+
+    func testCompactDatabaseNowBackfillsCategoryTotalsTrimsOldEntriesAndKeepsHistory() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let otherPathId = UUID()
+            let base = Date().addingTimeInterval(-3_600)
+
+            func entries(_ prefix: String) -> [ScanResult] {
+                [
+                    ScanResult(path: "/Users/tester/dev/\(prefix)/a.bin", sizeBytes: 1_000),
+                    ScanResult(path: "/Users/tester/Downloads/\(prefix)/b.zip", sizeBytes: 2_000)
+                ]
+            }
+
+            var seeded: [(id: Int64, entries: [ScanResult])] = []
+            for index in 0..<3 {
+                let snapshotEntries = entries("main-\(index)")
+                let id = try await self.seedCompleteSnapshot(
+                    trackedPathIdText: trackedPathId.uuidString,
+                    createdAt: base.addingTimeInterval(TimeInterval(index * 60)),
+                    entries: snapshotEntries,
+                    withCategoryTotals: false
+                )
+                seeded.append((id, snapshotEntries))
+            }
+
+            let presetId = try await self.seedCompleteSnapshot(
+                trackedPathIdText: otherPathId.uuidString,
+                createdAt: base,
+                entries: entries("preset")
+            )
+            try await DatabaseManager.shared.replaceCategorySnapshots(
+                snapshotId: presetId,
+                totals: [.applications: 777]
+            )
+
+            let report = try await DatabaseCleanupService.shared.compactDatabaseNow()
+
+            XCTAssertEqual(report.backfilledSnapshots, 2)
+            XCTAssertEqual(report.snapshotEntrySnapshotsTrimmed, 1)
+            XCTAssertEqual(report.orphanedPathsDeleted, 2)
+            XCTAssertEqual(report.snapshotsDeleted, 0)
+            XCTAssertGreaterThan(report.dbBytesAfter, 0)
+
+            for item in seeded {
+                let stored = try await self.categoryTotalsByCategory(snapshotId: item.id)
+                XCTAssertEqual(stored, self.expectedCategoryTotals(item.entries))
+            }
+            let presetTotals = try await self.categoryTotalsByCategory(snapshotId: presetId)
+            XCTAssertEqual(presetTotals, [.applications: 777])
+
+            let oldestEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: seeded[0].id)
+            let middleEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: seeded[1].id)
+            let newestEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: seeded[2].id)
+            XCTAssertEqual([oldestEntryCount, middleEntryCount, newestEntryCount], [0, 2, 2])
+
+            let remaining = try await DatabaseManager.shared.fetchAllSnapshots()
+            XCTAssertEqual(remaining.count, 4)
+        }
+    }
+
+    func testCompactDatabaseNowOnEmptyDatabaseReportsNothingDeleted() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let report = try await DatabaseCleanupService.shared.compactDatabaseNow()
+
+            XCTAssertEqual(report.backfilledSnapshots, 0)
+            XCTAssertEqual(report.snapshotEntrySnapshotsTrimmed, 0)
+            XCTAssertEqual(report.orphanedPathsDeleted, 0)
+            XCTAssertEqual(report.snapshotsDeleted, 0)
         }
     }
 }
