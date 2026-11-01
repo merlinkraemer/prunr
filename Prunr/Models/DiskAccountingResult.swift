@@ -64,11 +64,11 @@ struct DiskAccountingResult: Sendable, Equatable {
     }
 
     /// Creates an updated copy with new current free space (for real-time updates)
-    func withUpdatedFreeSpace(_ newFreeSpace: Int64) -> DiskAccountingResult {
+    func withUpdatedFreeSpace(_ newFreeSpace: Int64?) -> DiskAccountingResult {
         let newDelta: Int64?
         let newUnexplained: Int64?
 
-        if let prev = previousFreeSpace {
+        if let prev = previousFreeSpace, let newFreeSpace {
             let delta = newFreeSpace - prev
             newDelta = delta
 
