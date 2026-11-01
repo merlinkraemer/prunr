@@ -77,6 +77,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O14 Static compile review of stack [done] 2 certain errors fixed (implicit self in escaping test closures, one from Q10 so the integration job would have failed; superseded); doubts: 4-month hourly test may be slow
 - O15 implicit-self sweep [done] no more cases found (heuristic scan)
 - O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fixed on stack d0064bd (deletes only checkpoints whose keys the path's buckets use; folded-away keys stay until the 90-day expiry)
+- O17 Test expectations vs the 24h run cap (O13 changed episode splitting after Q16/Q18 tests were written) [running] on stack
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown

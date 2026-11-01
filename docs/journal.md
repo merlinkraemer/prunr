@@ -174,3 +174,4 @@
 2026-11-01 orchestrator O15 done: no further implicit-self cases
 2026-11-01 orchestrator O16 spawn: per-path checkpoint delete fix on stack (sonnet medium)
 2026-11-01 orchestrator O16 fixed on stack d0064bd: per-path clear keeps other paths' checkpoints, 1 new test; job requeued (5320785 superseded)
+2026-11-01 orchestrator O17 spawn: align test expectations with 24h run cap on stack (sonnet medium)
