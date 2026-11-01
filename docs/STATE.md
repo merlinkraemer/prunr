@@ -71,6 +71,8 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O9 DiskSpaceService unknown instead of 0 [on branch] drain/O9-2026-11-01 596ce37, 4 tests, job 20261101-050801-...-596ce3735-test; at merge update O7b test testDiskSpaceForMissingFolderTodayReportsZeroBytes to expect nil
 - O10 abandoned-snapshot cleanup [done, not a bug] only a crash between markSnapshotComplete and rebuildWorkingSet triggers it (clean rollback); 2 pinning tests on drain/O10-2026-11-01 e48ceb2, job 20261101-051000-...-e48ceb2a9-test
 - O11 Remove MainViewModel [dropped] only two tests use it; low value, not worth the churn
+- O12 One stacked test branch [running] drain/stack-2026-11-01 = Q18 ea0304b + O7b 24eba7c + O9 596ce37 + O10 e48ceb2, O7b test reconciled with O9 nil; one Mac job replaces the 7 per-branch jobs (integration ce98857 job stays first)
+- O13 Always-active place never prunes (O4 doubt) [running] check on Q18 head, fix + test on drain/O13-2026-11-01 if real
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
