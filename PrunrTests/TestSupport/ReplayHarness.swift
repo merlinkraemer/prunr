@@ -188,6 +188,22 @@ enum ReplayHarness {
         try text(result.report).write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
     }
 
+    static func copySlimSnapshotRestoringDroppedStagingTable(from source: String, to copy: String) throws {
+        try FileManager.default.copyItem(atPath: source, toPath: copy)
+        try DatabaseQueue(path: copy).write { db in
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS workingSetRefreshStaging (
+                    sessionId TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    sizeBytes INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    subcategory TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (sessionId, path)
+                )
+                """)
+        }
+    }
+
     static func trackedPathIds(inDatabaseAt path: String) throws -> [UUID] {
         try readOnlyQueue(path).read { db in
             try String.fetchAll(db, sql: "SELECT DISTINCT trackedPathId FROM growthJournalBucket")

@@ -368,7 +368,7 @@ final class PerfBaselineTests: PrunrTestCase {
             try? FileManager.default.removeItem(at: tempDirectory)
         }
         let copy = tempDirectory.appendingPathComponent("prunr.sqlite").path
-        try FileManager.default.copyItem(atPath: source, toPath: copy)
+        try ReplayHarness.copySlimSnapshotRestoringDroppedStagingTable(from: source, to: copy)
 
         let ids = try ReplayHarness.trackedPathIds(inDatabaseAt: copy)
         let newest = try XCTUnwrap(ReplayHarness.newestBucketTime(inDatabaseAt: copy))

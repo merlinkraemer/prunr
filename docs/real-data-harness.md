@@ -21,7 +21,7 @@ Snapshots live on dev, outside git: `~/dev/projects/prunr-data/` (read-only file
 Take a new one (does not lock the running app; reads through WAL):
 
 ```
-ssh mbp 'cd ~/dev/build/prunr-snap && rm -f snap.db slim.db && sqlite3 -readonly "$HOME/Library/Application Support/Prunr/prunr.db" "VACUUM INTO \"$HOME/dev/build/prunr-snap/snap.db\"" && cp snap.db slim.db && sqlite3 slim.db "PRAGMA foreign_keys=OFF; DROP TABLE snapshotEntry; DROP TABLE workingSetEntry; DROP TABLE workingSetRefreshStaging; DROP TABLE pathClassification; DELETE FROM paths WHERE id NOT IN (SELECT pathId FROM workingSetTopEntry); VACUUM;"'
+ssh mbp 'cd ~/dev/build/prunr-snap && rm -f snap.db slim.db && sqlite3 -readonly "$HOME/Library/Application Support/Prunr/prunr.db" "VACUUM INTO \"$HOME/dev/build/prunr-snap/snap.db\"" && cp snap.db slim.db && sqlite3 slim.db "PRAGMA foreign_keys=OFF; DROP TABLE snapshotEntry; DROP TABLE workingSetEntry; DELETE FROM workingSetRefreshStaging; DROP TABLE pathClassification; DELETE FROM paths WHERE id NOT IN (SELECT pathId FROM workingSetTopEntry); VACUUM;"'
 scp mbp:dev/build/prunr-snap/slim.db ~/dev/projects/prunr-data/prunr-$(date +%F).db
 ```
 
