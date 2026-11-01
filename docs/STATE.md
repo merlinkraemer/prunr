@@ -22,7 +22,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 
 
 ## Run
-status: running (Mac open 11-01 headless only; working own priorities O1-O8) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
+status: running, waiting on Mac (headless own priorities O4-O17 done; next work needs the stack job d0064bd result, queue position ~22 behind other projects) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
@@ -77,7 +77,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O14 Static compile review of stack [done] 2 certain errors fixed (implicit self in escaping test closures, one from Q10 so the integration job would have failed; superseded); doubts: 4-month hourly test may be slow
 - O15 implicit-self sweep [done] no more cases found (heuristic scan)
 - O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fixed on stack d0064bd (deletes only checkpoints whose keys the path's buckets use; folded-away keys stay until the 90-day expiry)
-- O17 Test expectations vs the 24h run cap (O13 changed episode splitting after Q16/Q18 tests were written) [running] on stack
+- O17 Test expectations vs 24h run cap [done] 107+ tests screened, none affected (fixtures use short runs; the hourly test compares against the same builder)
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
