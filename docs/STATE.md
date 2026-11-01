@@ -69,7 +69,8 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O6 #23 outgoing pane live reads, then #25 onboarding onto PushPager (after integration compiles) [mac]
 - O7 Test gap audit [landed: docs/test-gap-audit-2026-11-01.md]; O7b 8 tests for top 5 gaps [on branch] drain/O7b-2026-11-01 66171c8, job 20261101-050252-...-66171c8c7-test; O7c 12 tests gaps 6-10 [on branch] 24eba7c, job 20261101-050622-...-24eba7cab-test
 - O9 DiskSpaceService unknown instead of 0 [on branch] drain/O9-2026-11-01 596ce37, 4 tests, job 20261101-050801-...-596ce3735-test; at merge update O7b test testDiskSpaceForMissingFolderTodayReportsZeroBytes to expect nil
-- O10 Cleanup treats a complete snapshot newer than its path's working-set update as abandoned; check if a real scan path can hit it [running] [box]
+- O10 abandoned-snapshot cleanup [done, not a bug] only a crash between markSnapshotComplete and rebuildWorkingSet triggers it (clean rollback); 2 pinning tests on drain/O10-2026-11-01 e48ceb2, job 20261101-051000-...-e48ceb2a9-test
+- O11 Remove dead legacy MainViewModel (no callers; its scan writes no working set) [running] [box]
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
