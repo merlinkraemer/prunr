@@ -149,3 +149,4 @@
 2026-11-01 orchestrator O7 spawn: test gap audit doc (sonnet medium, seat)
 2026-11-01 orchestrator O7 landed on main: test gap audit (c8a5951, docs only); top gaps cleanup retention, orphan paths, disk accounting, baseline reset, failed-scan rollback
 2026-11-01 orchestrator O7b spawn: tests for top 5 gaps off main (sonnet medium, seat worktree)
+2026-11-01 orchestrator O5 done: scripts/audit/test_replay.py + make audit-test on Q18 branch (8a32284), 14 pass on dev
