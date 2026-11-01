@@ -5,6 +5,8 @@ import XCTest
 @MainActor
 final class PanelSnapshotTests: PrunrTestCase {
     func testRendersFixturePanelsToPNG() async throws {
+        FixtureLibrary.useSyntheticHome()
+        defer { FixtureLibrary.restoreProductionHome() }
         let directory = ReplayHarnessTests.outputRoot.appendingPathComponent("fixture")
         try? FileManager.default.removeItem(at: directory)
 

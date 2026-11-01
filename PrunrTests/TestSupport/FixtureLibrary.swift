@@ -2,7 +2,20 @@ import Foundation
 @testable import Prunr
 
 enum FixtureLibrary {
-    static let home = UnitResolver.defaultHome
+    static let home = "/Users/tester"
+
+    private static var productionHome: String?
+
+    static func useSyntheticHome() {
+        productionHome = productionHome ?? UnitResolver.defaultHome
+        UnitResolver.defaultHome = home
+    }
+
+    static func restoreProductionHome() {
+        if let productionHome {
+            UnitResolver.defaultHome = productionHome
+        }
+    }
 
     static let catalog = AppCatalog(entries: [
         AppCatalogEntry(

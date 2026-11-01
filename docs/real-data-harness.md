@@ -38,4 +38,4 @@ The full copy is about 2.7 GB (slow over the tailnet); the slim copy (about 33 M
 
 ## Fixtures
 
-`FixtureLibrary` seeds a temp DB under the test host's own home (`UnitResolver.defaultHome`, the home the database resolves units against; a synthetic home would put the working set under other units than the journal): a game project whose 32 GB of new build output sits next to a bigger, older asset folder, a multi-day build folder, a photo library, a shrinking package cache, a Chrome cache owned by an app, a Steam game and a download. Add a case there when real data shows a new pattern; keep names and paths synthetic.
+`FixtureLibrary` seeds a temp DB for the user `/Users/tester`: a game project whose 32 GB of new build output sits next to a bigger, older asset folder, a multi-day build folder, a photo library, a shrinking package cache, a Chrome cache owned by an app, a Steam game and a download. Add a case there when real data shows a new pattern; keep names and paths synthetic.

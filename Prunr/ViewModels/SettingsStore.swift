@@ -10,6 +10,22 @@ final class SettingsStore {
     static let shared = SettingsStore()
     private static let logger = Logger(subsystem: "com.prunr.app", category: "Settings")
 
+    static let testSuiteName = "com.prunr.tests.settings"
+
+    /// Under XCTest the app process is the test host: a throwaway suite, emptied
+    /// at launch, keeps tests away from the owner's real tracked paths.
+    private static let defaults: UserDefaults = {
+        guard TestHost.isActive, let suite = UserDefaults(suiteName: testSuiteName) else { return .standard }
+        suite.removePersistentDomain(forName: testSuiteName)
+        return suite
+    }()
+
+    private static let testBasePath: String = {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("PrunrTestsHome", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url.path
+    }()
+
     static let defaultScanIgnoreNames: Set<String> = [
         ".DS_Store",
         ".localized",
@@ -53,12 +69,12 @@ final class SettingsStore {
 
     /// Main base directory for scanning
     var mainBasePath: String {
-        didSet { UserDefaults.standard.set(mainBasePath, forKey: Keys.mainBasePath) }
+        didSet { Self.defaults.set(mainBasePath, forKey: Keys.mainBasePath) }
     }
 
     /// Selected common paths to include in scanning
     private var selectedCommonPathIDs: Set<String> {
-        didSet { UserDefaults.standard.set(Array(selectedCommonPathIDs), forKey: Keys.selectedCommonPathIDs) }
+        didSet { Self.defaults.set(Array(selectedCommonPathIDs), forKey: Keys.selectedCommonPathIDs) }
     }
 
     /// User-added boundary folder names
@@ -73,25 +89,25 @@ final class SettingsStore {
 
     /// Disabled path IDs (for checkboxes)
     private var disabledPathIDs: Set<String> {
-        didSet { UserDefaults.standard.set(Array(disabledPathIDs), forKey: Keys.disabledPaths) }
+        didSet { Self.defaults.set(Array(disabledPathIDs), forKey: Keys.disabledPaths) }
     }
 
     /// Disabled boundary names
     private var disabledBoundaryNames: Set<String> {
-        didSet { UserDefaults.standard.set(Array(disabledBoundaryNames), forKey: Keys.disabledBoundaries) }
+        didSet { Self.defaults.set(Array(disabledBoundaryNames), forKey: Keys.disabledBoundaries) }
     }
 
     /// Launch app at system login
     var launchAtLogin: Bool {
         didSet {
-            UserDefaults.standard.set(launchAtLogin, forKey: Keys.launchAtLogin)
+            Self.defaults.set(launchAtLogin, forKey: Keys.launchAtLogin)
             updateLaunchAtLogin()
         }
     }
 
     /// Scope changes pending apply/reset
     var hasPendingScopeChanges: Bool {
-        didSet { UserDefaults.standard.set(hasPendingScopeChanges, forKey: Keys.hasPendingScopeChanges) }
+        didSet { Self.defaults.set(hasPendingScopeChanges, forKey: Keys.hasPendingScopeChanges) }
     }
 
     /// Category history retention period in days (default 30).
@@ -106,26 +122,26 @@ final class SettingsStore {
             if clamped != categoryHistoryRetentionDays {
                 categoryHistoryRetentionDays = clamped
             }
-            UserDefaults.standard.set(clamped, forKey: Keys.categoryHistoryRetentionDays)
+            Self.defaults.set(clamped, forKey: Keys.categoryHistoryRetentionDays)
         }
     }
 
     /// Maximum time between periodic full rescans.
     var automaticFullScanIntervalHours: Int {
-        didSet { UserDefaults.standard.set(automaticFullScanIntervalHours, forKey: Keys.automaticFullScanIntervalHours) }
+        didSet { Self.defaults.set(automaticFullScanIntervalHours, forKey: Keys.automaticFullScanIntervalHours) }
     }
 
     /// User changed the periodic rescan picker (stops one-shot adaptive updates).
     var automaticFullScanIntervalUserTouched: Bool {
         didSet {
-            UserDefaults.standard.set(automaticFullScanIntervalUserTouched, forKey: Keys.automaticFullScanIntervalUserTouched)
+            Self.defaults.set(automaticFullScanIntervalUserTouched, forKey: Keys.automaticFullScanIntervalUserTouched)
         }
     }
 
     /// After the first successful full scan, we may set `automaticFullScanIntervalHours` once from duration.
     var adaptiveFullScanIntervalApplied: Bool {
         didSet {
-            UserDefaults.standard.set(adaptiveFullScanIntervalApplied, forKey: Keys.adaptiveFullScanIntervalApplied)
+            Self.defaults.set(adaptiveFullScanIntervalApplied, forKey: Keys.adaptiveFullScanIntervalApplied)
         }
     }
 
@@ -193,60 +209,60 @@ final class SettingsStore {
 
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let defaultBasePath = home.path
+        let defaultBasePath = TestHost.isActive ? Self.testBasePath : home.path
 
         // Load tracked paths
-        if let data = UserDefaults.standard.data(forKey: Keys.trackedPaths),
+        if let data = Self.defaults.data(forKey: Keys.trackedPaths),
            let paths = try? JSONDecoder().decode([TrackedPath].self, from: data) {
             self.customTrackedPaths = paths
         } else {
             self.customTrackedPaths = []
         }
 
-        let initialMainBasePath = UserDefaults.standard.string(forKey: Keys.mainBasePath) ?? defaultBasePath
+        let initialMainBasePath = Self.defaults.string(forKey: Keys.mainBasePath) ?? defaultBasePath
         self.mainBasePath = initialMainBasePath
 
-        self.selectedCommonPathIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.selectedCommonPathIDs) ?? [])
+        self.selectedCommonPathIDs = Set(Self.defaults.stringArray(forKey: Keys.selectedCommonPathIDs) ?? [])
 
         // Load custom boundaries
-        self.customBoundaries = UserDefaults.standard.stringArray(forKey: Keys.customBoundaries) ?? []
+        self.customBoundaries = Self.defaults.stringArray(forKey: Keys.customBoundaries) ?? []
 
         // Load custom scan ignores
-        self.customScanIgnores = UserDefaults.standard.stringArray(forKey: Keys.customScanIgnores) ?? []
+        self.customScanIgnores = Self.defaults.stringArray(forKey: Keys.customScanIgnores) ?? []
 
         // Load disabled paths
-        self.disabledPathIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.disabledPaths) ?? [])
+        self.disabledPathIDs = Set(Self.defaults.stringArray(forKey: Keys.disabledPaths) ?? [])
 
         // Load disabled boundaries
-        self.disabledBoundaryNames = Set(UserDefaults.standard.stringArray(forKey: Keys.disabledBoundaries) ?? [])
+        self.disabledBoundaryNames = Set(Self.defaults.stringArray(forKey: Keys.disabledBoundaries) ?? [])
 
         // Load launch at login
-        self.launchAtLogin = UserDefaults.standard.bool(forKey: Keys.launchAtLogin)
+        self.launchAtLogin = Self.defaults.bool(forKey: Keys.launchAtLogin)
 
-        self.hasPendingScopeChanges = UserDefaults.standard.bool(forKey: Keys.hasPendingScopeChanges)
+        self.hasPendingScopeChanges = Self.defaults.bool(forKey: Keys.hasPendingScopeChanges)
 
         // Load category history retention days (default 30)
-        let savedRetentionDays = UserDefaults.standard.integer(forKey: Keys.categoryHistoryRetentionDays)
+        let savedRetentionDays = Self.defaults.integer(forKey: Keys.categoryHistoryRetentionDays)
         self.categoryHistoryRetentionDays = max(
             savedRetentionDays > 0 ? savedRetentionDays : Self.defaultCategoryHistoryRetentionDays,
             GrowthJournalService.historyWindowDays
         )
 
-        let savedAutomaticFullScanHours = UserDefaults.standard.integer(forKey: Keys.automaticFullScanIntervalHours)
+        let savedAutomaticFullScanHours = Self.defaults.integer(forKey: Keys.automaticFullScanIntervalHours)
         if Self.automaticFullScanIntervalPresetHours.contains(savedAutomaticFullScanHours) {
             self.automaticFullScanIntervalHours = savedAutomaticFullScanHours
         } else {
             self.automaticFullScanIntervalHours = Self.defaultAutomaticFullScanIntervalHours
         }
 
-        self.automaticFullScanIntervalUserTouched = UserDefaults.standard.bool(forKey: Keys.automaticFullScanIntervalUserTouched)
-        self.adaptiveFullScanIntervalApplied = UserDefaults.standard.bool(forKey: Keys.adaptiveFullScanIntervalApplied)
+        self.automaticFullScanIntervalUserTouched = Self.defaults.bool(forKey: Keys.automaticFullScanIntervalUserTouched)
+        self.adaptiveFullScanIntervalApplied = Self.defaults.bool(forKey: Keys.adaptiveFullScanIntervalApplied)
         self.availableCommonPaths = Self.loadAvailableCommonPaths(
             for: URL(fileURLWithPath: initialMainBasePath, isDirectory: true)
         )
         self.selectedCommonPathIDs.formIntersection(Set(self.availableCommonPaths.map { $0.id.uuidString }))
 
-        UserDefaults.standard.removeObject(forKey: Keys.legacyTrackingStartedAt)
+        Self.defaults.removeObject(forKey: Keys.legacyTrackingStartedAt)
     }
 
     /// Call when the user picks a preset in Settings (not for adaptive updates).
@@ -422,16 +438,16 @@ final class SettingsStore {
 
     private func saveTrackedPaths() {
         if let data = try? JSONEncoder().encode(customTrackedPaths) {
-            UserDefaults.standard.set(data, forKey: Keys.trackedPaths)
+            Self.defaults.set(data, forKey: Keys.trackedPaths)
         }
     }
 
     private func saveCustomBoundaries() {
-        UserDefaults.standard.set(customBoundaries, forKey: Keys.customBoundaries)
+        Self.defaults.set(customBoundaries, forKey: Keys.customBoundaries)
     }
 
     private func saveCustomScanIgnores() {
-        UserDefaults.standard.set(customScanIgnores, forKey: Keys.customScanIgnores)
+        Self.defaults.set(customScanIgnores, forKey: Keys.customScanIgnores)
     }
 
     private func refreshAvailableCommonPaths(for baseURL: URL) {
