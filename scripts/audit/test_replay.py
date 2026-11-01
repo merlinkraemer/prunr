@@ -143,6 +143,26 @@ class RunAcrossTheCutoffTests(ReplayTestCase):
         self.assertEqual(carries[GROWER]["count"], 400 * MB)
 
 
+class AlwaysActivePlaceTests(ReplayTestCase):
+    def test_journal_stays_bounded_and_feed_matches_full_history(self):
+        hours = 120 * 24
+        rows = [(GROWER, "developer", "watch", DAY0 + timedelta(hours=h), 30 * MB) for h in range(hours)]
+        slots, categories = self.load(rows)
+        journal, carries = [], {}
+        peak = 0
+        for day in range(120):
+            now = self.now(day) + timedelta(hours=11)
+            cutoff = replay.local_day(now, TZ) - timedelta(days=replay.HISTORY_DAYS - 1)
+            known = [s for s in slots if s["first"] <= now]
+            journal += [s for s in known if s["first"] > now - timedelta(days=1)]
+            journal, carries = replay.prune_journal(journal, carries, cutoff, TZ)
+            peak = max(peak, len(journal))
+            episodes, _ = replay.build_feed(journal, now, HOME, TZ, categories, carries)
+            full = replay.full_history_rows(known, now, HOME, TZ, categories)
+            self.assertEqual({replay.row_key(e) for e in episodes}, full, f"day {day}")
+        self.assertLessEqual(peak, (replay.HISTORY_DAYS + 2) * 24)
+
+
 class CrossingAndExpiryTests(ReplayTestCase):
     def slots_for(self, deltas, unit=GROWER):
         rows = [(unit, "developer", "files", DAY0 + timedelta(days=i), d) for i, d in enumerate(deltas)]

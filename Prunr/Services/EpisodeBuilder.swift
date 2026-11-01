@@ -457,6 +457,10 @@ enum EpisodeBuilder {
     /// Slot-index difference that still continues a run (one empty slot = a
     /// 30-minute gap, which is not "over 30 minutes").
     private static let maxRunSlotStep: Int64 = 2
+    /// A run longer than this many slots is cut and the rest starts a new run,
+    /// so a place that changes all day, every day, still has runs a prune can
+    /// fold and delete.
+    private static let maxRunSlots: Int64 = 48
 
     /// A place with no counted change for this many days at a prune loses its
     /// checkpoint and starts from zero.
@@ -596,18 +600,12 @@ enum EpisodeBuilder {
         let nextSlot = Dictionary(grouping: following, by: \.unitKey).mapValues { $0.map(\.slot).min() ?? Int64.max }
         var held: [String: Date] = [:]
         for (unitKey, unitSlots) in Dictionary(grouping: before, by: \.unitKey) {
-            let sorted = unitSlots.sorted { $0.slot < $1.slot }
-            guard let last = sorted.last,
+            guard let run = runs(of: unitSlots).last,
+                  let first = run.first, let last = run.last,
                   let next = nextSlot[unitKey],
-                  next - last.slot <= maxRunSlotStep else { continue }
-            var start = last.firstAt
-            var previousSlot = last.slot
-            for slot in sorted.dropLast().reversed() {
-                if previousSlot - slot.slot > maxRunSlotStep { break }
-                start = min(start, slot.firstAt)
-                previousSlot = slot.slot
-            }
-            held[unitKey] = start
+                  next - last.slot <= maxRunSlotStep,
+                  next - first.slot < maxRunSlots else { continue }
+            held[unitKey] = run.map(\.firstAt).min() ?? first.firstAt
         }
         return held
     }
@@ -696,26 +694,27 @@ enum EpisodeBuilder {
         _ slots: [JournalSlot],
         calendar: Calendar
     ) -> [Date: [JournalSlot]] {
+        var result: [Date: [JournalSlot]] = [:]
+        for run in runs(of: slots) {
+            let start = run.map(\.firstAt).min() ?? run[0].firstAt
+            result[calendar.startOfDay(for: start), default: []].append(contentsOf: run)
+        }
+        return result
+    }
+
+    private static func runs(of slots: [JournalSlot]) -> [[JournalSlot]] {
         let sorted = slots.sorted {
             $0.slot == $1.slot ? $0.firstAt < $1.firstAt : $0.slot < $1.slot
         }
-        var result: [Date: [JournalSlot]] = [:]
-        var run: [JournalSlot] = []
-
-        func closeRun() {
-            guard let first = run.first else { return }
-            let start = run.map(\.firstAt).min() ?? first.firstAt
-            result[calendar.startOfDay(for: start), default: []].append(contentsOf: run)
-            run.removeAll()
-        }
-
+        var result: [[JournalSlot]] = []
         for slot in sorted {
-            if let last = run.last, slot.slot - last.slot > maxRunSlotStep {
-                closeRun()
+            if let current = result.last, let first = current.first, let last = current.last,
+               slot.slot - last.slot <= maxRunSlotStep, slot.slot - first.slot < maxRunSlots {
+                result[result.count - 1].append(slot)
+            } else {
+                result.append([slot])
             }
-            run.append(slot)
         }
-        closeRun()
         return result
     }
 
