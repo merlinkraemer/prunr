@@ -295,9 +295,9 @@ final class ChangeFeedStoreTests: PrunrTestCase {
                 ("per-path clear", { try await db.deleteGrowthJournalBuckets(trackedPathId: pathA) }),
                 ("realtime clear of one path", { try await db.clearRealtimeData(trackedPathId: pathA) })
             ]
+            try await self.seedBucket(trackedPathId: pathB, unitKey: keyB)
             for (name, clear) in clears {
                 try await self.seedBucket(trackedPathId: pathA, unitKey: keyA)
-                try await self.seedBucket(trackedPathId: pathB, unitKey: keyB)
                 try await db.replaceJournalCheckpoints([self.checkpoint(keyA), self.checkpoint(keyB)])
                 try await clear()
                 let remaining = try await db.fetchJournalCheckpoints()
