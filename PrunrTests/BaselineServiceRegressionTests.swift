@@ -1258,24 +1258,22 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         let directory = try createTrackedPathDirectory(named: "PrunrDiskSpace")
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let free = DiskSpaceService.shared.getFreeSpace(for: directory)
-        let total = DiskSpaceService.shared.getTotalSpace(for: directory)
+        let free = try XCTUnwrap(DiskSpaceService.shared.getFreeSpace(for: directory))
+        let total = try XCTUnwrap(DiskSpaceService.shared.getTotalSpace(for: directory))
 
         XCTAssertGreaterThan(free, 0)
         XCTAssertGreaterThan(total, 0)
         XCTAssertLessThanOrEqual(free, total)
-        XCTAssertFalse(DiskSpaceService.shared.getFreeSpaceFormatted(for: directory).isEmpty)
+        XCTAssertFalse(try XCTUnwrap(DiskSpaceService.shared.getFreeSpaceFormatted(for: directory)).isEmpty)
     }
 
-    func testDiskSpaceForMissingFolderTodayReportsZeroBytes() {
+    func testDiskSpaceForMissingFolderReportsUnknown() {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("PrunrMissing-\(UUID().uuidString)", isDirectory: true)
 
-        XCTAssertEqual(DiskSpaceService.shared.getFreeSpace(for: missing), 0)
-        XCTAssertEqual(DiskSpaceService.shared.getTotalSpace(for: missing), 0)
-        XCTAssertEqual(
-            DiskSpaceService.shared.getFreeSpaceFormatted(for: missing),
-            ByteCountFormatter.string(fromByteCount: 0, countStyle: .file)
-        )
+        XCTAssertNil(DiskSpaceService.shared.getFreeSpace(for: missing))
+        XCTAssertNil(DiskSpaceService.shared.getTotalSpace(for: missing))
+        XCTAssertNil(DiskSpaceService.shared.getFreeSpaceFormatted(for: missing))
+        XCTAssertNil(DiskSpaceService.shared.getSpace(for: missing))
     }
 }
