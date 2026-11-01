@@ -657,12 +657,12 @@ extension DatabaseManager {
         }
 
         try await dbPool.write { db in
+            try Self.deleteJournalCheckpoints(trackedPathId: trackedPathId.uuidString, db: db)
             try db.execute(
                 sql: "DELETE FROM growthJournalBucket WHERE trackedPathId = ?",
                 arguments: [trackedPathId.uuidString]
             )
             try Self.deleteJournalDetail(trackedPathId: trackedPathId.uuidString, db: db)
-            try Self.deleteJournalCheckpoints(db: db)
         }
     }
 
@@ -2172,6 +2172,7 @@ extension DatabaseManager {
 
         try await dbPool.write { db in
             if let trackedPathIdString {
+                try Self.deleteJournalCheckpoints(trackedPathId: trackedPathIdString, db: db)
                 try db.execute(
                     sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
                     arguments: [trackedPathIdString]
@@ -2188,9 +2189,9 @@ extension DatabaseManager {
                 try db.execute(sql: "DELETE FROM workingSetEntry")
                 try db.execute(sql: "DELETE FROM workingSetCategoryTotal")
                 try db.execute(sql: "DELETE FROM growthJournalBucket")
+                try Self.deleteJournalCheckpoints(db: db)
             }
             try Self.deleteJournalDetail(trackedPathId: trackedPathIdString, db: db)
-            try Self.deleteJournalCheckpoints(db: db)
             try Self.clearDrilldownIndex(trackedPathId: trackedPathIdString, db: db)
         }
     }

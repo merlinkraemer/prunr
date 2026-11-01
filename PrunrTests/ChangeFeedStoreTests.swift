@@ -271,6 +271,41 @@ final class ChangeFeedStoreTests: PrunrTestCase {
         }
     }
 
+    private func seedBucket(trackedPathId: UUID, unitKey: String) async throws {
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        try await dbPool.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO growthJournalBucket
+                        (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, unitKey)
+                    VALUES (?, ?, 'developer', '', 1000, 'watch', ?)
+                    """,
+                arguments: [trackedPathId.uuidString, Date(), unitKey]
+            )
+        }
+    }
+
+    func testPerPathClearKeepsOtherPathsCheckpoints() async throws {
+        try await withEmptyTemporaryDatabase { pathA in
+            let db = DatabaseManager.shared
+            let pathB = UUID()
+            let keyA = "place|/Volumes/A/dev"
+            let keyB = "place|/Volumes/B/dev"
+            let clears: [(String, () async throws -> Void)] = [
+                ("per-path clear", { try await db.deleteGrowthJournalBuckets(trackedPathId: pathA) }),
+                ("realtime clear of one path", { try await db.clearRealtimeData(trackedPathId: pathA) })
+            ]
+            for (name, clear) in clears {
+                try await self.seedBucket(trackedPathId: pathA, unitKey: keyA)
+                try await self.seedBucket(trackedPathId: pathB, unitKey: keyB)
+                try await db.replaceJournalCheckpoints([self.checkpoint(keyA), self.checkpoint(keyB)])
+                try await clear()
+                let remaining = try await db.fetchJournalCheckpoints()
+                XCTAssertEqual(remaining.map(\.unitKey), [keyB], name)
+            }
+        }
+    }
+
     func testEveryJournalClearPathEmptiesTheCheckpoints() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let db = DatabaseManager.shared
@@ -281,6 +316,7 @@ final class ChangeFeedStoreTests: PrunrTestCase {
                 ("realtime clear of one path", { try await db.clearRealtimeData(trackedPathId: trackedPathId) })
             ]
             for (name, clear) in clears {
+                try await self.seedBucket(trackedPathId: trackedPathId, unitKey: Self.place)
                 try await db.replaceJournalCheckpoints([self.checkpoint()])
                 let before = try await self.checkpointCount()
                 XCTAssertEqual(before, 1, name)

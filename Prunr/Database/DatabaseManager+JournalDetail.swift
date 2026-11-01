@@ -128,6 +128,18 @@ extension DatabaseManager {
         try db.execute(sql: "DELETE FROM growthJournalCheckpoint")
     }
 
+    static func deleteJournalCheckpoints(trackedPathId: String, db: Database) throws {
+        try db.execute(
+            sql: """
+                DELETE FROM growthJournalCheckpoint
+                WHERE unitKey IN (
+                    SELECT DISTINCT unitKey FROM growthJournalBucket WHERE trackedPathId = ?
+                )
+                """,
+            arguments: [trackedPathId]
+        )
+    }
+
     /// Adds per-child deltas to one bucket inside the caller's write
     /// transaction, bounded to the top children per place.
     static func writeJournalDetail(
