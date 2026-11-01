@@ -161,3 +161,4 @@
 2026-11-01 orchestrator O10 spawn: abandoned-snapshot cleanup fragility check (sonnet medium, seat)
 2026-11-01 orchestrator O10 done: cleanup fragility is not data loss (crash-window rollback only); 2 tests e48ceb2
 2026-11-01 orchestrator O11 spawn: remove dead MainViewModel (haiku low, seat worktree)
+2026-11-01 orchestrator O11 dropped: MainViewModel only used by 2 tests; cleanup not worth churn
