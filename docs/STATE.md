@@ -67,7 +67,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O4 Q18 follow-ups [done] Q18 branch ea0304b: harness uses carries, run across cutoff held whole (no day split), first-prune perf test; 17 py tests pass; job 20261101-050228-...-ea0304bf7-test; doubt: always-active place never prunes
 - O5 replay drift tests [done] drain/Q18-2026-10-31 8a32284: make audit-test, 14 pass on dev; real data 81 shifts -> 0
 - O6 #23 outgoing pane live reads, then #25 onboarding onto PushPager (after integration compiles) [mac]
-- O7 Test gap audit [landed: docs/test-gap-audit-2026-11-01.md]; O7b tests for top 5 gaps [running] on drain/O7b-2026-11-01 [mac]
+- O7 Test gap audit [landed: docs/test-gap-audit-2026-11-01.md]; O7b 8 tests for top 5 gaps [on branch] drain/O7b-2026-11-01 66171c8, job 20261101-050252-...-66171c8c7-test; O7c gaps 6-10 [running]
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown

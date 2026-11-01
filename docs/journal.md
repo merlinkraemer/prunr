@@ -153,3 +153,5 @@
 2026-11-01 orchestrator O4 spawn: Q18 follow-ups on Q18 branch (sonnet medium, seat)
 2026-11-01 orchestrator O3 done: feedback API read (Vercel login on dev), 1 item since alpha.24, positive, no bugs
 2026-11-01 orchestrator O4 done: Q18 branch ea0304b harness carries + cutoff-run hold + first-prune perf test; 17 py tests pass; job queued
+2026-11-01 orchestrator O7b on branch: 8 tests for top 5 gaps (66171c8), tests only, job queued; possible bug noted: resetBaseline leaves scanning snapshots
+2026-11-01 orchestrator O7c spawn: tests for gaps 6-10 on O7b branch (sonnet medium, seat)
