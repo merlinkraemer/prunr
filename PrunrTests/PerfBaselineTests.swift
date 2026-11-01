@@ -195,7 +195,7 @@ final class PerfBaselineTests: PrunrTestCase {
                 try await self.db.pruneGrowthJournalBuckets(olderThan: cutoff, calendar: calendar)
             }
             let checkpoints = try await self.db.fetchJournalCheckpoints()
-            emit("prune.first.checkpoints", Double(checkpoints.count))
+            self.emit("prune.first.checkpoints", Double(checkpoints.count))
             try await self.time("prune.first.changeFeedAfterPrune", runs: 3) {
                 _ = try await GrowthJournalService.shared.changeFeed(
                     trackedPaths: paths, now: now, calendar: calendar, home: "/Users/tester"
@@ -290,7 +290,7 @@ final class PerfBaselineTests: PrunrTestCase {
                     )
                 }
             }
-            emit("watcher.burst200.perEvent", total / Double(events))
+            self.emit("watcher.burst200.perEvent", total / Double(events))
 
             var batch = 0
             try await self.time("watcher.subtree1k", runs: 3) {
