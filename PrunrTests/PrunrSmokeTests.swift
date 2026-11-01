@@ -2613,7 +2613,14 @@ final class PrunrSmokeTests: XCTestCase {
         return totals
     }
 
+    @MainActor
+    private func retireLeftoverMenuBarManager() async {
+        await MenuBarManager.shared?.stopScan()
+        MenuBarManager.shared = nil
+    }
+
     func testCompactDatabaseNowBackfillsCategoryTotalsTrimsOldEntriesAndKeepsHistory() async throws {
+        await retireLeftoverMenuBarManager()
         try await withEmptyTemporaryDatabase { trackedPathId in
             let otherPathId = UUID()
             let base = Date().addingTimeInterval(-3_600)
@@ -2673,6 +2680,7 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     func testCompactDatabaseNowOnEmptyDatabaseReportsNothingDeleted() async throws {
+        await retireLeftoverMenuBarManager()
         try await withEmptyTemporaryDatabase { _ in
             let report = try await DatabaseCleanupService.shared.compactDatabaseNow()
 
