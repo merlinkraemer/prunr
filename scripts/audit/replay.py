@@ -14,6 +14,7 @@ LARGE_GROWTH = 5_000_000_000
 HISTORY_DAYS = 30
 WEEK_DAYS = 7
 MAX_RUN_SLOT_STEP = 2
+MAX_RUN_SLOTS = 48
 TRASH_MOVE_PERCENT = 90
 APPROX_AFTER = 3600
 
@@ -325,22 +326,26 @@ def local_day(moment, tz):
     return moment.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def group_by_run_start_day(slots, tz):
+def split_runs(slots):
     ordered = sorted(slots, key=lambda s: (s["slot"], s["first"]))
-    result, run = defaultdict(list), []
+    runs = []
+    for s in ordered:
+        if (
+            runs
+            and s["slot"] - runs[-1][-1]["slot"] <= MAX_RUN_SLOT_STEP
+            and s["slot"] - runs[-1][0]["slot"] < MAX_RUN_SLOTS
+        ):
+            runs[-1].append(s)
+        else:
+            runs.append([s])
+    return runs
 
-    def close():
-        if not run:
-            return
+
+def group_by_run_start_day(slots, tz):
+    result = defaultdict(list)
+    for run in split_runs(slots):
         start = min(s["first"] for s in run)
         result[local_day(start, tz)].extend(run)
-        run.clear()
-
-    for s in ordered:
-        if run and s["slot"] - run[-1]["slot"] > MAX_RUN_SLOT_STEP:
-            close()
-        run.append(s)
-    close()
     return result
 
 
@@ -405,16 +410,13 @@ def held_run_starts(before, following):
     for unit, uslots in by_unit.items():
         if unit not in next_slot:
             continue
-        ordered = sorted(uslots, key=lambda s: s["slot"])
-        last = ordered[-1]
-        if next_slot[unit] - last["slot"] > MAX_RUN_SLOT_STEP:
+        run = split_runs(uslots)[-1]
+        if (
+            next_slot[unit] - run[-1]["slot"] > MAX_RUN_SLOT_STEP
+            or next_slot[unit] - run[0]["slot"] >= MAX_RUN_SLOTS
+        ):
             continue
-        start, previous = last["first"], last["slot"]
-        for s in reversed(ordered[:-1]):
-            if previous - s["slot"] > MAX_RUN_SLOT_STEP:
-                break
-            start = min(start, s["first"])
-            previous = s["slot"]
+        start = min(s["first"] for s in run)
         held[unit] = start
     return held
 

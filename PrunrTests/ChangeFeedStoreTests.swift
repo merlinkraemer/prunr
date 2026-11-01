@@ -578,6 +578,39 @@ final class ChangeFeedStoreTests: PrunrTestCase {
         }
     }
 
+    func testPlaceActiveEveryHourForFourMonthsKeepsAFewDaysOfJournalAndTheSameFeed() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let calendar = self.utc()
+            let base = self.augustFirst()
+            var history: [JournalSlot] = []
+            var peakRows = 0
+
+            for day in 0..<120 {
+                for hour in 0..<24 {
+                    let when = self.at(day, hour, from: base)
+                    try await self.record(path, when, 30 * Self.mbDecimal)
+                    history.append(self.memorySlot(when, 30 * Self.mbDecimal))
+                }
+                let now = self.at(day, 23, 30, from: base)
+                await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: calendar)
+                let input = try await DatabaseManager.shared.fetchChangeFeedInput(trackedPathIds: [trackedPathId])
+                peakRows = max(peakRows, input.slots.count)
+
+                if day % 10 == 9 {
+                    let feed = try await GrowthJournalService.shared.changeFeed(
+                        trackedPaths: [path], now: now, calendar: calendar
+                    )
+                    let expected = EpisodeBuilder.build(slots: history, now: now, calendar: calendar)
+                    XCTAssertEqual(self.rowKeys(feed), self.rowKeys(expected), "day \(day)")
+                    XCTAssertEqual(feed.weekNetBytes, expected.weekNetBytes, "day \(day)")
+                }
+            }
+
+            XCTAssertLessThanOrEqual(peakRows, 32 * 24)
+        }
+    }
+
     // MARK: - Cost
 
     /// SQL read plus build over 200k buckets in the window. The number is
