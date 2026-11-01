@@ -132,12 +132,12 @@ final class PerfBaselineTests: PrunrTestCase {
             }
         }
 
-        var slotList: [JournalSlot] = []
+        var input = ChangeFeedInput(slots: [], carries: [:])
         try await time("feed.200k.sqlSlots", runs: 3) {
-            slotList = try await self.db.fetchJournalSlots(trackedPathIds: ids, since: since)
+            input = try await self.db.fetchChangeFeedInput(trackedPathIds: ids)
         }
         try await time("feed.200k.episodeBuild", runs: 3) {
-            _ = EpisodeBuilder.build(slots: slotList, now: now, calendar: calendar)
+            _ = EpisodeBuilder.build(slots: input.slots, now: now, calendar: calendar, carries: input.carries)
         }
         let paths = ids.map { self.trackedPath($0, home: "/Users/tester") }
         var rows = 0
@@ -334,9 +334,8 @@ final class PerfBaselineTests: PrunrTestCase {
         emit("real.feed.rows", Double(feed?.episodes.count ?? 0))
         emit("real.feed.places", Double(roots.count))
 
-        let since = EpisodeBuilder.windowStart(now: now, calendar: .current)
         try await time("real.feed.sqlSlots", runs: 5) {
-            _ = try await self.db.fetchJournalSlots(trackedPathIds: ids, since: since)
+            _ = try await self.db.fetchChangeFeedInput(trackedPathIds: ids)
         }
 
         var slowestContents = 0.0

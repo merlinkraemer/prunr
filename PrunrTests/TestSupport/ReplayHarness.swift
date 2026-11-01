@@ -66,8 +66,7 @@ enum ReplayHarness {
         var feed = try await GrowthJournalService.shared.changeFeed(trackedPaths: trackedPaths, now: now, home: home)
         feed = feed.resolvingOwners(with: catalog ?? AppCatalogProvider.shared.catalog(resolving: feed.ownerAppIdentifiers))
 
-        let since = EpisodeBuilder.windowStart(now: now, calendar: .current)
-        let slots = try await DatabaseManager.shared.fetchJournalSlots(trackedPathIds: trackedPathIds, since: since)
+        let slots = try await DatabaseManager.shared.fetchChangeFeedInput(trackedPathIds: trackedPathIds).slots
 
         var rows: [ReplayRow] = []
         var contents: [String: PlaceContentsPage] = [:]
