@@ -1036,6 +1036,172 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    private func seedCompleteSnapshot(
+        trackedPathIdText: String,
+        createdAt: Date,
+        entries: [ScanResult]
+    ) async throws -> Int64 {
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        let snapshotId = try await dbPool.write { db -> Int64 in
+            try db.execute(
+                sql: "INSERT INTO snapshot (trackedPathId, createdAt, lifecycle) VALUES (?, ?, 'complete')",
+                arguments: [trackedPathIdText, createdAt]
+            )
+            return db.lastInsertedRowID
+        }
+        try await DatabaseManager.shared.addEntries(to: snapshotId, entries: entries)
+        let totalBytes = entries.reduce(Int64(0)) { $0 + $1.sizeBytes }
+        try await DatabaseManager.shared.replaceCategorySnapshots(
+            snapshotId: snapshotId,
+            totals: [.developer: totalBytes]
+        )
+        return snapshotId
+    }
+
+    private func storedPaths() async throws -> [String] {
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        return try await dbPool.read { db in
+            try String.fetchAll(db, sql: "SELECT path FROM paths ORDER BY path")
+        }
+    }
+
+    private func categorySnapshotCount(snapshotId: Int64) async throws -> Int {
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        return try await dbPool.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM categorySnapshot WHERE snapshotId = ?",
+                arguments: [snapshotId]
+            ) ?? 0
+        }
+    }
+
+    func testSnapshotEntryCleanupKeepsTwoNewestPerPathAndSnapshotRows() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let otherPathId = UUID()
+            let base = Date().addingTimeInterval(-3_600)
+
+            func entries(_ prefix: String) -> [ScanResult] {
+                (0..<3).map { ScanResult(path: "/Users/tester/\(prefix)/file-\($0).bin", sizeBytes: 1_000) }
+            }
+
+            var mainIds: [Int64] = []
+            for index in 0..<4 {
+                mainIds.append(try await self.seedCompleteSnapshot(
+                    trackedPathIdText: trackedPathId.uuidString,
+                    createdAt: base.addingTimeInterval(TimeInterval(index * 60)),
+                    entries: entries("main-\(index)")
+                ))
+            }
+
+            var otherIds: [Int64] = []
+            for index in 0..<2 {
+                otherIds.append(try await self.seedCompleteSnapshot(
+                    trackedPathIdText: otherPathId.uuidString,
+                    createdAt: base.addingTimeInterval(TimeInterval(index * 60)),
+                    entries: entries("other-\(index)")
+                ))
+            }
+
+            var unassignedIds: [Int64] = []
+            for index in 0..<3 {
+                unassignedIds.append(try await self.seedCompleteSnapshot(
+                    trackedPathIdText: "",
+                    createdAt: base.addingTimeInterval(TimeInterval(index * 60)),
+                    entries: entries("unassigned-\(index)")
+                ))
+            }
+
+            await DatabaseCleanupService.shared.performAutoCleanup()
+
+            var mainCounts: [Int] = []
+            for snapshotId in mainIds {
+                mainCounts.append(try await DatabaseManager.shared.fetchEntryCount(for: snapshotId))
+            }
+            XCTAssertEqual(mainCounts, [0, 0, 3, 3])
+
+            var otherCounts: [Int] = []
+            for snapshotId in otherIds {
+                otherCounts.append(try await DatabaseManager.shared.fetchEntryCount(for: snapshotId))
+            }
+            XCTAssertEqual(otherCounts, [3, 3])
+
+            var unassignedCounts: [Int] = []
+            for snapshotId in unassignedIds {
+                unassignedCounts.append(try await DatabaseManager.shared.fetchEntryCount(for: snapshotId))
+            }
+            XCTAssertEqual(unassignedCounts, [0, 3, 3])
+
+            let remainingSnapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
+            XCTAssertEqual(Set(remainingSnapshots.compactMap(\.id)), Set(mainIds))
+
+            for snapshotId in mainIds + otherIds + unassignedIds {
+                let categoryRows = try await self.categorySnapshotCount(snapshotId: snapshotId)
+                XCTAssertEqual(categoryRows, 1, "snapshot \(snapshotId) keeps its category summary")
+            }
+        }
+    }
+
+    func testOrphanedPathsDeletedOnlyWhenUnreferencedByEntriesOrWorkingSet() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let base = Date().addingTimeInterval(-3_600)
+            let trimmedOnly = "/Users/tester/orphans/trimmed-only.bin"
+            let keptOld = "/Users/tester/orphans/kept-old.bin"
+            let keptNew = "/Users/tester/orphans/kept-new.bin"
+            let workingSetOnly = "/Users/tester/orphans/working-set-only.bin"
+            let unreferenced = "/Users/tester/orphans/unreferenced.bin"
+
+            _ = try await self.seedCompleteSnapshot(
+                trackedPathIdText: trackedPathId.uuidString,
+                createdAt: base,
+                entries: [ScanResult(path: trimmedOnly, sizeBytes: 100)]
+            )
+            _ = try await self.seedCompleteSnapshot(
+                trackedPathIdText: trackedPathId.uuidString,
+                createdAt: base.addingTimeInterval(60),
+                entries: [ScanResult(path: keptOld, sizeBytes: 100)]
+            )
+            let newestId = try await self.seedCompleteSnapshot(
+                trackedPathIdText: trackedPathId.uuidString,
+                createdAt: base.addingTimeInterval(120),
+                entries: [
+                    ScanResult(path: keptNew, sizeBytes: 100),
+                    ScanResult(path: workingSetOnly, sizeBytes: 100),
+                    ScanResult(path: unreferenced, sizeBytes: 100)
+                ]
+            )
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let trackedPathIdText = trackedPathId.uuidString
+            try await dbPool.write { db in
+                for path in [workingSetOnly, unreferenced] {
+                    let pathId = try XCTUnwrap(
+                        Int64.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [path])
+                    )
+                    try db.execute(
+                        sql: "DELETE FROM snapshotEntry WHERE snapshotId = ? AND pathId = ?",
+                        arguments: [newestId, pathId]
+                    )
+                    if path == workingSetOnly {
+                        try db.execute(
+                            sql: "INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt) VALUES (?, ?, 100, ?)",
+                            arguments: [trackedPathIdText, pathId, Date()]
+                        )
+                    }
+                }
+            }
+
+            await DatabaseCleanupService.shared.performAutoCleanup()
+
+            let remaining = Set(try await self.storedPaths())
+            XCTAssertTrue(remaining.contains(keptOld))
+            XCTAssertTrue(remaining.contains(keptNew))
+            XCTAssertTrue(remaining.contains(workingSetOnly))
+            XCTAssertFalse(remaining.contains(unreferenced))
+            XCTAssertFalse(remaining.contains(trimmedOnly))
+        }
+    }
+
     func testMainViewModelFallsBackToCurrentOnlyWhenOnlyIncompleteBaselineExists() async throws {
         try await withTemporaryDatabase { trackedPathId, _ in
             let currentSnapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
