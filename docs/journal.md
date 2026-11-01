@@ -141,3 +141,4 @@
 2026-10-31 orchestrator Q18 on branch: drain/Q18-2026-10-31 8f77404 v27 checkpoints, 4 slices + tests, uncompiled; replay.py 81 shifts/16 places -> 0, matches full history; job queued
 2026-10-31 orchestrator - holding: headless queue empty; remaining triage items #23 #25 are UI refactors on the same uncompiled views, deferred to after Mac compile; Q7/Q11 worktrees removed
 2026-11-01 orchestrator - Mac open (Grok relay, Merlin 12:18 WITA); 7 superseded prunr jobs moved to done; drain started (ce98857 integration, d814a88 Q16, 8f77404 Q18); Q8b b924a3f job had already PASSED
+2026-11-01 orchestrator - Merlin using the Mac (PM relay 12:21 WITA): headless test jobs continue; idle soak (real app instance) held for tonight's visible go
