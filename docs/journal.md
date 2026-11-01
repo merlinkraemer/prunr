@@ -159,3 +159,8 @@
 2026-11-01 orchestrator O9 spawn: DiskSpaceService nil on failure + call sites (sonnet medium, seat worktree)
 2026-11-01 orchestrator O9 on branch: 596ce37 DiskSpaceService nil on failure, manager keeps last values, 4 tests, job queued
 2026-11-01 orchestrator O10 spawn: abandoned-snapshot cleanup fragility check (sonnet medium, seat)
+2026-11-01 orchestrator O10 done: cleanup fragility is not data loss (crash-window rollback only); 2 tests e48ceb2
+2026-11-01 orchestrator O11 spawn: remove dead MainViewModel (haiku low, seat worktree)
+2026-11-01 orchestrator O11 dropped: MainViewModel only used by 2 tests; cleanup not worth churn
+2026-11-01 orchestrator O12 spawn: stacked test branch Q18+O7b+O9+O10 (sonnet medium, seat worktree)
+2026-11-01 orchestrator O13 spawn: always-active place never prunes check (sonnet medium, seat worktree)
