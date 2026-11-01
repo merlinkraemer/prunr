@@ -272,3 +272,6 @@ logs:
 	@echo "$(BLUE)Recent logs for $(SCHEME):$(NC)"
 	@log show --predicate 'subsystem == "com.apple.SwiftUI" OR process == "$(SCHEME)"' \
 		--last 5m --style compact 2>/dev/null || echo "No recent logs found"
+
+audit-test:
+	python3 -I -m unittest discover -s scripts/audit -v
