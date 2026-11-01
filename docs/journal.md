@@ -121,3 +121,31 @@
 2026-10-31 orchestrator Q8a on branch: drain/Q8a-2026-10-30 2125c47 L1 detail table + span page + fallback, uncompiled, job queued
 2026-10-31 orchestrator - decided: hold new code until Mac open (Q6/Q8a/Q8b/Q9/Q13 all uncompiled; Q10/Q12 need the Mac or overlap Q8a)
 2026-10-31 orchestrator - resumed: PM nudge (don't idle on Mac nights); spawn integration branch drain/integration-2026-10-31 merging Q9/Q13/Q8b/Q8a/Q6 for one Mac job (sonnet medium) + Q12 nav bugs on top of Q8a (sonnet medium)
+2026-10-31 orchestrator - integration branch drain/integration-2026-10-31 c3a202f: 5 branches merged clean, 8 test files added to pbxproj, job queued; Mac open runs this first
+2026-10-31 orchestrator Q10 spawn: perf prep on box (EXPLAIN on snapshot, perf tests for Mac open, low-risk fixes) on top of integration (sonnet high)
+2026-10-31 orchestrator Q12 on branch: drain/Q12-2026-10-31 1dd6672 four nav fixes; merged into integration (6e8c1b8, clean), job queued
+2026-10-31 orchestrator Q10 on branch: drain/Q10-2026-10-31 655d108 place-page read fix + perf baseline tests; merged into integration d3f2a98, job queued
+2026-10-31 orchestrator - all run items coded; holding for Mac open (stacking more uncompiled Swift raises compile-fix risk)
+2026-10-31 orchestrator - resumed: PM relayed holiday mode (keep going headless, take recs on reversible branch work)
+2026-10-31 orchestrator Q2 landed on main: #35 status doc from Q9 branch (docs only); Q2 closed, absorbed by Q9
+2026-10-31 orchestrator Q14 spawn: static compile review of integration d3f2a98 (sonnet medium, seat, integration worktree)
+2026-10-31 orchestrator Q15 spawn: category-group HTML mockups, 3 variants, review page only (sonnet medium, seat)
+2026-10-31 orchestrator Q15 done: 3 category-group mockups on review page :4181 (rec A: up/down split line); preview restarted (was down); no app code
+2026-10-31 orchestrator Q14 done: static review of integration, 1 compile error fixed (FileDateHistoryTests path:), head ce98857, job 20261031-161437-...-ce9885791-test queued; d3f2a98 job superseded
+2026-10-31 orchestrator - decided: Waiting item 6 accepted per rec (variant A) on PM holiday-mode relay; reversible branch, unlanded
+2026-10-31 orchestrator Q16 spawn: category groups variant A off integration ce98857 (sonnet high, seat worktree); Q17 checkpoint table queued after (shares feed code)
+2026-10-31 orchestrator Q16 on branch: drain/Q16-2026-10-31 d814a88 variant A (EpisodeBuilder split/smaller-changes + 7 tests, 3 views), uncompiled, job queued
+2026-10-31 orchestrator Q17 spawn: checkpoint table design doc only, code waits for Mac compile (schema on top of uncompiled v26) (opus medium, seat)
+2026-10-31 orchestrator Q17 landed on main: checkpoint table design (f86244b, docs only); recs accepted (v27, real start date, 90-day expiry); Q18 build queued after integration compiles
+2026-10-31 orchestrator Q18 spawn: checkpoint table 4 slices off Q16 d814a88, own branch so integration stays clean; replay.py check on box (sonnet high, seat worktree)
+2026-10-31 orchestrator Q18 on branch: drain/Q18-2026-10-31 8f77404 v27 checkpoints, 4 slices + tests, uncompiled; replay.py 81 shifts/16 places -> 0, matches full history; job queued
+2026-10-31 orchestrator - holding: headless queue empty; remaining triage items #23 #25 are UI refactors on the same uncompiled views, deferred to after Mac compile; Q7/Q11 worktrees removed
+2026-11-01 orchestrator - Mac open (Grok relay, Merlin 12:18 WITA); 7 superseded prunr jobs moved to done; drain started (ce98857 integration, d814a88 Q16, 8f77404 Q18); Q8b b924a3f job had already PASSED
+2026-11-01 orchestrator - Merlin using the Mac (PM relay 12:21 WITA): headless test jobs continue; idle soak (real app instance) held for tonight's visible go
+2026-11-01 orchestrator - Merlin: holiday queue, no reviews, keep working; own priorities O1-O8 added to STATE; review-page service dropped (not wanted)
+2026-11-01 orchestrator Q3 done: note in Mac checkout, bulky list in STATE (13 GB regenerable); nothing deleted
+2026-11-01 orchestrator O3 blocked: no FEEDBACK_AGENT_TOKEN on dev (with-secrets map) and Vercel CLI logged out; Waiting item 8
+2026-11-01 orchestrator O5 spawn: replay.py drift tests on Q18 branch (sonnet medium, seat)
+2026-11-01 orchestrator O7 spawn: test gap audit doc (sonnet medium, seat)
+2026-11-01 orchestrator O7 landed on main: test gap audit (c8a5951, docs only); top gaps cleanup retention, orphan paths, disk accounting, baseline reset, failed-scan rollback
+2026-11-01 orchestrator O7b spawn: tests for top 5 gaps off main (sonnet medium, seat worktree)
