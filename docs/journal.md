@@ -155,3 +155,4 @@
 2026-11-01 orchestrator O4 done: Q18 branch ea0304b harness carries + cutoff-run hold + first-prune perf test; 17 py tests pass; job queued
 2026-11-01 orchestrator O7b on branch: 8 tests for top 5 gaps (66171c8), tests only, job queued; possible bug noted: resetBaseline leaves scanning snapshots
 2026-11-01 orchestrator O7c spawn: tests for gaps 6-10 on O7b branch (sonnet medium, seat)
+2026-11-01 orchestrator O7c on branch: 12 tests for gaps 6-10 (24eba7c), job queued; resetBaseline/scanning snapshot is by design (15 min abandoned cleanup); new bug O9 DiskSpaceService 0-free on error
