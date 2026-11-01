@@ -390,10 +390,54 @@ def folded_counts(slots, carries, tz):
     return counts
 
 
-def prune_carries(carries, slots_before_cutoff, cutoff, tz):
-    counts = folded_counts(slots_before_cutoff, carries, tz)
+FOLLOWING_WINDOW = timedelta(hours=2)
+
+
+# EpisodeBuilder.heldRunStarts
+def held_run_starts(before, following):
+    next_slot = {}
+    for s in following:
+        next_slot[s["unit"]] = min(next_slot.get(s["unit"], s["slot"]), s["slot"])
+    by_unit = defaultdict(list)
+    for s in before:
+        by_unit[s["unit"]].append(s)
+    held = {}
+    for unit, uslots in by_unit.items():
+        if unit not in next_slot:
+            continue
+        ordered = sorted(uslots, key=lambda s: s["slot"])
+        last = ordered[-1]
+        if next_slot[unit] - last["slot"] > MAX_RUN_SLOT_STEP:
+            continue
+        start, previous = last["first"], last["slot"]
+        for s in reversed(ordered[:-1]):
+            if previous - s["slot"] > MAX_RUN_SLOT_STEP:
+                break
+            start = min(start, s["first"])
+            previous = s["slot"]
+        held[unit] = start
+    return held
+
+
+def prune_step(carries, before, following, cutoff, tz):
+    held = held_run_starts(before, following)
+    foldable = [s for s in before if s["unit"] not in held or s["first"] < held[s["unit"]]]
+    counts = folded_counts(foldable, carries, tz)
     expiry = cutoff - timedelta(days=EXPIRY_DAYS)
-    return {u: st for u, st in counts.items() if st["count"] != 0 and st["last"] >= expiry}
+    return {u: st for u, st in counts.items() if st["count"] != 0 and st["last"] >= expiry}, held
+
+
+def prune_carries(carries, slots_before_cutoff, cutoff, tz, following=()):
+    return prune_step(carries, slots_before_cutoff, list(following), cutoff, tz)[0]
+
+
+# DatabaseManager.pruneGrowthJournalBuckets on a list of slots
+def prune_journal(journal, carries, cutoff, tz):
+    before = [s for s in journal if s["first"] < cutoff]
+    following = [s for s in journal if cutoff <= s["first"] < cutoff + FOLLOWING_WINDOW]
+    carries, held = prune_step(carries, before, following, cutoff, tz)
+    remaining = [s for s in journal if s["first"] >= held.get(s["unit"], cutoff)]
+    return remaining, carries
 
 
 def build_feed(slots, now, home, tz, categories, carries=None):
@@ -433,7 +477,7 @@ def row_key(e):
 
 # docs/checkpoint-table-design-2026-10-31.md: replay the window sliding day by day
 def slide_check(slots, first_now, last_now, home, tz, categories, with_checkpoints):
-    carries, folded_until = {}, None
+    carries, journal = {}, list(slots)
     previous = None
     changed_units, changes = set(), 0
     now = first_now
@@ -441,12 +485,10 @@ def slide_check(slots, first_now, last_now, home, tz, categories, with_checkpoin
         today = local_day(now, tz)
         oldest = today - timedelta(days=HISTORY_DAYS - 1)
         if with_checkpoints:
-            todo = [s for s in slots if s["first"] < oldest and (folded_until is None or s["first"] >= folded_until)]
-            carries = prune_carries(carries, todo, oldest, tz)
-            folded_until = oldest
-            visible = [s for s in slots if s["first"] >= oldest]
+            journal, carries = prune_journal(journal, carries, oldest, tz)
+            visible = [s for s in journal if s["first"] < now + timedelta(days=1)]
         else:
-            visible = [s for s in slots if s["first"] >= oldest]
+            visible = [s for s in slots if oldest <= s["first"] < now + timedelta(days=1)]
         episodes, _ = build_feed(visible, now, home, tz, categories, carries if with_checkpoints else None)
         rows = {row_key(e) for e in episodes}
         if previous is not None:
@@ -561,13 +603,11 @@ if __name__ == "__main__":
         print(f"{label}: {changes} in-window row changes across {len(units)} places")
     now = first_now
     mismatches = 0
-    carries, folded_until = {}, None
+    carries, journal = {}, list(slots)
     while now <= last_now:
         oldest = local_day(now, tz) - timedelta(days=HISTORY_DAYS - 1)
-        todo = [s for s in slots if s["first"] < oldest and (folded_until is None or s["first"] >= folded_until)]
-        carries = prune_carries(carries, todo, oldest, tz)
-        folded_until = oldest
-        visible = [s for s in slots if s["first"] >= oldest]
+        journal, carries = prune_journal(journal, carries, oldest, tz)
+        visible = [s for s in journal if s["first"] < now + timedelta(days=1)]
         episodes, _ = build_feed(visible, now, home, tz, categories, carries)
         mine = {row_key(e) for e in episodes}
         mismatches += len(mine ^ full_history_rows(slots, now, home, tz, categories))

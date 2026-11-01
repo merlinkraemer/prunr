@@ -1972,6 +1972,11 @@ extension DatabaseManager {
         try journalSlots(db: db, condition: "bucketStart < ?", arguments: [cutoff])
     }
 
+    /// Slots of every tracked path in `[start, end)`.
+    static func fetchJournalSlots(db: Database, from start: Date, before end: Date) throws -> [JournalSlot] {
+        try journalSlots(db: db, condition: "bucketStart >= ? AND bucketStart < ?", arguments: [start, end])
+    }
+
     private static func journalSlots(
         db: Database,
         condition: String,
@@ -2099,6 +2104,8 @@ extension DatabaseManager {
     /// Deletes the journal before `cutoff`. In the same transaction every
     /// place's count is folded over those buckets and saved as its checkpoint,
     /// so the change list counts on from where the deleted history left off.
+    /// A run that crosses the cutoff stays whole in the journal until a later
+    /// prune, so it counts on the day it started like in the full history.
     func pruneGrowthJournalBuckets(olderThan cutoff: Date, calendar: Calendar = .current) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
@@ -2107,8 +2114,15 @@ extension DatabaseManager {
         try await dbPool.write { db in
             let saved = try Self.fetchJournalCheckpoints(db: db)
             let carries = Dictionary(uniqueKeysWithValues: saved.map { ($0.unitKey, $0.state) })
-            let slots = try Self.fetchJournalSlots(db: db, before: cutoff)
-            let counts = EpisodeBuilder.foldedCounts(slots: slots, carries: carries, calendar: calendar)
+            let before = try Self.fetchJournalSlots(db: db, before: cutoff)
+            let following = try Self.fetchJournalSlots(
+                db: db,
+                from: cutoff,
+                before: cutoff.addingTimeInterval(Self.pruneRunLookahead)
+            )
+            let held = EpisodeBuilder.heldRunStarts(before: before, following: following)
+            let foldable = before.filter { slot in held[slot.unitKey].map { slot.firstAt < $0 } ?? true }
+            let counts = EpisodeBuilder.foldedCounts(slots: foldable, carries: carries, calendar: calendar)
             let expiry = calendar.date(byAdding: .day, value: -EpisodeBuilder.checkpointExpiryDays, to: cutoff) ?? cutoff
             let checkpoints = counts.compactMap { unitKey, state -> JournalCheckpoint? in
                 guard let checkpoint = JournalCheckpoint(unitKey: unitKey, asOf: cutoff, state: state),
@@ -2116,16 +2130,38 @@ extension DatabaseManager {
                 return checkpoint
             }
             try Self.replaceJournalCheckpoints(checkpoints, db: db)
+            try db.execute(sql: """
+                CREATE TEMP TABLE IF NOT EXISTS pruneHold (
+                    unitKey TEXT PRIMARY KEY,
+                    holdFrom DATETIME NOT NULL
+                ) WITHOUT ROWID
+                """)
+            try db.execute(sql: "DELETE FROM pruneHold")
+            for (unitKey, start) in held {
+                try db.execute(
+                    sql: "INSERT INTO pruneHold (unitKey, holdFrom) VALUES (?, ?)",
+                    arguments: [unitKey, start]
+                )
+            }
             try db.execute(
-                sql: "DELETE FROM growthJournalBucket WHERE bucketStart < ?",
+                sql: """
+                    DELETE FROM growthJournalBucket
+                    WHERE bucketStart < COALESCE(
+                        (SELECT holdFrom FROM pruneHold WHERE pruneHold.unitKey = growthJournalBucket.unitKey),
+                        ?
+                    )
+                    """,
                 arguments: [cutoff]
             )
+            try db.execute(sql: "DELETE FROM pruneHold")
             try db.execute(
                 sql: "DELETE FROM growthJournalDetail WHERE bucketStart < ?",
                 arguments: [cutoff]
             )
         }
     }
+
+    private static let pruneRunLookahead: TimeInterval = 2 * 60 * 60
 
     func clearRealtimeData(trackedPathId: UUID? = nil) async throws {
         guard let dbPool = dbPool else {

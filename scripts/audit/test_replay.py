@@ -88,16 +88,14 @@ class CheckpointedEqualsFullHistoryTests(ReplayTestCase):
             + daily(TRASH, "trash", "files", 0, 100, lambda i: (900 * MB if i % 9 == 0 else -350 * MB))
         )
         slots, categories = self.load(rows)
-        carries, folded_until = {}, None
+        carries, journal = {}, list(slots)
         mismatches = 0
         compared = 0
         for offset in range(40, 100):
             now = self.now(offset)
             oldest = replay.local_day(now, TZ) - timedelta(days=replay.HISTORY_DAYS - 1)
-            todo = [s for s in slots if s["first"] < oldest and (folded_until is None or s["first"] >= folded_until)]
-            carries = replay.prune_carries(carries, todo, oldest, TZ)
-            folded_until = oldest
-            visible = [s for s in slots if oldest <= s["first"] < now + timedelta(days=1)]
+            journal, carries = replay.prune_journal(journal, carries, oldest, TZ)
+            visible = [s for s in journal if s["first"] < now + timedelta(days=1)]
             episodes, _ = replay.build_feed(visible, now, HOME, TZ, categories, carries)
             checkpointed = {replay.row_key(e) for e in episodes}
             full = replay.full_history_rows(slots, now, HOME, TZ, categories)
@@ -105,6 +103,44 @@ class CheckpointedEqualsFullHistoryTests(ReplayTestCase):
             compared += len(full)
         self.assertGreater(compared, 0)
         self.assertEqual(mismatches, 0)
+
+
+class RunAcrossTheCutoffTests(ReplayTestCase):
+    def feed_after_prune(self, head, tail, later):
+        cutoff_day = 31
+        now = self.now(cutoff_day + 29)
+        cutoff = replay.local_day(now, TZ) - timedelta(days=replay.HISTORY_DAYS - 1)
+        midnight = cutoff
+        rows = [
+            (GROWER, "developer", "watch", midnight - timedelta(minutes=15), head),
+            (GROWER, "developer", "watch", midnight + timedelta(minutes=15), tail),
+            (GROWER, "developer", "watch", midnight + timedelta(days=3, hours=10), later),
+        ]
+        slots, categories = self.load(rows)
+        journal, carries = replay.prune_journal(list(slots), {}, cutoff, TZ)
+        episodes, _ = replay.build_feed(journal, now, HOME, TZ, categories, carries)
+        full = replay.full_history_rows(slots, now, HOME, TZ, categories)
+        return {replay.row_key(e) for e in episodes}, full, journal
+
+    def test_run_across_the_cutoff_matches_full_history(self):
+        checkpointed, full, journal = self.feed_after_prune(200 * MB, 300 * MB, 600 * MB)
+        self.assertEqual(checkpointed, full)
+        self.assertEqual([k[2] for k in full], [1_100 * MB])
+        self.assertEqual(len(journal), 3)
+
+    def test_crossing_inside_a_split_run_stays_on_the_run_start_day(self):
+        checkpointed, full, _ = self.feed_after_prune(600 * MB, 500 * MB, 0)
+        self.assertEqual(full, set())
+        self.assertEqual(checkpointed, full)
+
+    def test_run_that_ended_before_the_cutoff_is_folded_and_deleted(self):
+        cutoff = replay.local_day(self.now(60), TZ)
+        rows = [(GROWER, "developer", "watch", cutoff - timedelta(hours=3), 400 * MB),
+                (GROWER, "developer", "watch", cutoff + timedelta(hours=3), 100 * MB)]
+        slots, _ = self.load(rows)
+        journal, carries = replay.prune_journal(slots, {}, cutoff, TZ)
+        self.assertEqual(len(journal), 1)
+        self.assertEqual(carries[GROWER]["count"], 400 * MB)
 
 
 class CrossingAndExpiryTests(ReplayTestCase):

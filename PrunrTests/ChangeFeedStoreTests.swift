@@ -443,18 +443,72 @@ final class ChangeFeedStoreTests: PrunrTestCase {
             let base = self.augustFirst()
             let now = self.at(60, 20, from: base)
             let cutoffDay = 60 - 29
-            try await self.record(path, self.at(cutoffDay - 1, 23, 45, from: base), 200 * Self.mbDecimal)
-            try await self.record(path, self.at(cutoffDay, 0, 15, from: base), 300 * Self.mbDecimal)
-            try await self.record(path, self.at(cutoffDay + 3, 10, from: base), 600 * Self.mbDecimal)
+            let events = [
+                (self.at(cutoffDay - 1, 23, 45, from: base), 200 * Self.mbDecimal),
+                (self.at(cutoffDay, 0, 15, from: base), 300 * Self.mbDecimal),
+                (self.at(cutoffDay + 3, 10, from: base), 600 * Self.mbDecimal)
+            ]
+            for (date, net) in events {
+                try await self.record(path, date, net)
+            }
 
             await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
 
             let saved = try await DatabaseManager.shared.fetchJournalCheckpoints()
-            XCTAssertEqual(saved.first?.countBytes, 200 * Self.mbDecimal)
+            XCTAssertTrue(saved.isEmpty)
             let feed = try await GrowthJournalService.shared.changeFeed(
                 trackedPaths: [path], now: now, calendar: self.utc()
             )
+            let full = EpisodeBuilder.build(
+                slots: events.map { self.memorySlot($0.0, $0.1) }, now: now, calendar: self.utc()
+            )
             XCTAssertEqual(feed.episodes.map(\.netBytes), [1_100 * Self.mbDecimal])
+            XCTAssertEqual(self.rowKeys(feed), self.rowKeys(full))
+        }
+    }
+
+    func testCrossingInsideARunAcrossTheCutoffStaysOnTheRunStartDay() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let base = self.augustFirst()
+            let now = self.at(60, 20, from: base)
+            let cutoffDay = 60 - 29
+            let events = [
+                (self.at(cutoffDay - 1, 23, 45, from: base), 600 * Self.mbDecimal),
+                (self.at(cutoffDay, 0, 15, from: base), 500 * Self.mbDecimal)
+            ]
+            for (date, net) in events {
+                try await self.record(path, date, net)
+            }
+
+            await GrowthJournalService.shared.prune(retentionDays: 30, now: now, calendar: self.utc())
+
+            let feed = try await GrowthJournalService.shared.changeFeed(
+                trackedPaths: [path], now: now, calendar: self.utc()
+            )
+            XCTAssertTrue(feed.episodes.isEmpty)
+        }
+    }
+
+    func testRunHeldAtTheCutoffIsFoldedByTheNextPrune() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let base = self.augustFirst()
+            let cutoffDay = 60 - 29
+            try await self.record(path, self.at(cutoffDay - 1, 23, 45, from: base), 200 * Self.mbDecimal)
+            try await self.record(path, self.at(cutoffDay, 0, 15, from: base), 300 * Self.mbDecimal)
+
+            await GrowthJournalService.shared.prune(
+                retentionDays: 30, now: self.at(60, 20, from: base), calendar: self.utc()
+            )
+            await GrowthJournalService.shared.prune(
+                retentionDays: 30, now: self.at(61, 20, from: base), calendar: self.utc()
+            )
+
+            let saved = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            XCTAssertEqual(saved.first?.countBytes, 500 * Self.mbDecimal)
+            let input = try await DatabaseManager.shared.fetchChangeFeedInput(trackedPathIds: [trackedPathId])
+            XCTAssertTrue(input.slots.isEmpty)
         }
     }
 

@@ -588,6 +588,30 @@ enum EpisodeBuilder {
         return counts
     }
 
+    /// Per place, the start of a run that crosses a prune cutoff: the last run
+    /// of `before` when `following` has its next slot within the run gap. A
+    /// run belongs to the day it started, so a prune keeps it whole instead of
+    /// folding its head and leaving its tail to count on the cutoff day.
+    static func heldRunStarts(before: [JournalSlot], following: [JournalSlot]) -> [String: Date] {
+        let nextSlot = Dictionary(grouping: following, by: \.unitKey).mapValues { $0.map(\.slot).min() ?? Int64.max }
+        var held: [String: Date] = [:]
+        for (unitKey, unitSlots) in Dictionary(grouping: before, by: \.unitKey) {
+            let sorted = unitSlots.sorted { $0.slot < $1.slot }
+            guard let last = sorted.last,
+                  let next = nextSlot[unitKey],
+                  next - last.slot <= maxRunSlotStep else { continue }
+            var start = last.firstAt
+            var previousSlot = last.slot
+            for slot in sorted.dropLast().reversed() {
+                if previousSlot - slot.slot > maxRunSlotStep { break }
+                start = min(start, slot.firstAt)
+                previousSlot = slot.slot
+            }
+            held[unitKey] = start
+        }
+        return held
+    }
+
     // MARK: - Labels
 
     /// The real date, also for today and yesterday: "Wed 7 Oct".
