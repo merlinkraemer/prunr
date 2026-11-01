@@ -46,8 +46,7 @@ On branch, Mac check pending (all merged into drain/integration-2026-10-31 ce988
 - Q12 nav bugs #27 #28 #30 #24 - drain/Q12-2026-10-31 1dd6672
 - Q13 watchdog ignores backpressure waits - drain/Q13-2026-10-31 fcd6c02 (Reddit tester 10-31)
 
-### Q3 Mac copy recon [queued] [mac]
-goal: CODE-LIVES-ON-DEV.md in the Mac checkout; list bulky Mac-only files (tmp/stress-tree 11 GB, .build 2 GB, Releases/dist 250 MB). Delete nothing.
+### Q3 Mac copy recon [done 11-01] [mac] - CODE-LIVES-ON-DEV.md in the Mac checkout (stale at f616b88); bulky: tmp/stress-tree 11 GB, .build 2.1 GB, tmp/stress-results 176 MB (regenerable, delete is Merlin's call); Releases/dist already gone
 
 ### Q14 Static compile review of integration [done] [box] - 1 compile error fixed (ce98857); doubts: Q12 Task captures in withAnimation completion, String(format:%@), PanelSnapshot drawing closure (warnings at worst in Swift 5 mode), exact-string test expectations
 goal: read the integration diff vs main for likely compile errors (Swift 6 / Xcode 16.4 Sendable, missing pbxproj entries, signature drift between merged branches) and fix them on drain/integration-2026-10-31, so the first Mac window spends less time on compile fixes.
@@ -63,7 +62,6 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 
 ### Own priorities (holiday queue, Merlin 11-01: no reviews, keep working until he says stop; work top down, refill when empty)
 - O1 Mac results: fix compile/test failures on integration, then Q16, Q18; land green non-UI work on local main [mac, now]
-- O2 Q3 Mac copy recon (headless ssh, no UI) [mac, now]
 - O3 Tester feedback check (check-feedback, read-only) and triage into queue [box, now]
 - O4 Q18 follow-ups: ReplayHarness uses carries; first-prune-after-upgrade perf on real snapshot; midnight-spanning run split [mac]
 - O5 replay.py drift check as a script test runnable on dev (no Mac) [box]

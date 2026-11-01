@@ -143,3 +143,4 @@
 2026-11-01 orchestrator - Mac open (Grok relay, Merlin 12:18 WITA); 7 superseded prunr jobs moved to done; drain started (ce98857 integration, d814a88 Q16, 8f77404 Q18); Q8b b924a3f job had already PASSED
 2026-11-01 orchestrator - Merlin using the Mac (PM relay 12:21 WITA): headless test jobs continue; idle soak (real app instance) held for tonight's visible go
 2026-11-01 orchestrator - Merlin: holiday queue, no reviews, keep working; own priorities O1-O8 added to STATE; review-page service dropped (not wanted)
+2026-11-01 orchestrator Q3 done: note in Mac checkout, bulky list in STATE (13 GB regenerable); nothing deleted
