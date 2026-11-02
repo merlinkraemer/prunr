@@ -248,3 +248,4 @@
 2026-11-02 orchestrator O29 O28b merged into hands-on-2: fa13b78
 2026-11-02 orchestrator O30a spawn: O26 quiesce wait timeout (sonnet medium, seat worktree, base fa13b78)
 2026-11-02 orchestrator O30b spawn: interaction review of combined hands-on-2 fa13b78 (opus medium, read-only)
+2026-11-02 orchestrator O30a on branch: 0ee8a84, 10 s quiesce timeout aborts reset/scope change; new user-facing error copy 'Running scans did not stop in time. Try again in a moment.' (copy, Merlin's call); job queued
