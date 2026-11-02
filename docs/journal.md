@@ -192,3 +192,4 @@
 2026-11-02 orchestrator O20 on branch: stack 1e7755e chunked prune, job queued
 2026-11-02 orchestrator O20 Mac: writer wait 87 ms, total prune 2.4 s (3.5x), 1 test failure; sent back to worker
 2026-11-02 orchestrator O20 done: stack 153f4e7 green; writer wait 89 ms, first prune total 2.5 s accepted (one-time, background)
+2026-11-02 orchestrator O6a spawn: #23 snapshot outgoing pane on stack (sonnet medium); #25 deferred per triage

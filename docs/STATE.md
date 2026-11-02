@@ -68,7 +68,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O3 Tester feedback check [done 11-01: 1 positive item, no bugs; Vercel CLI now logged in on dev; recheck weekly]
 - O4 Q18 follow-ups [done] Q18 branch ea0304b: harness uses carries, run across cutoff held whole (no day split), first-prune perf test; 17 py tests pass; job 20261101-050228-...-ea0304bf7-test; doubt: always-active place never prunes
 - O5 replay drift tests [done] drain/Q18-2026-10-31 8a32284: make audit-test, 14 pass on dev; real data 81 shifts -> 0
-- O6 #23 outgoing pane live reads, then #25 onboarding onto PushPager (after integration compiles) [mac]
+- O6 #23 outgoing Categories pane renders from a snapshot (no visual change) [running, on stack]; #25 onboarding onto PushPager dropped for now (refactor, no user value, triage rec)
 - O7 Test gap audit [landed: docs/test-gap-audit-2026-11-01.md]; O7b 8 tests for top 5 gaps [on branch] drain/O7b-2026-11-01 66171c8, job 20261101-050252-...-66171c8c7-test; O7c 12 tests gaps 6-10 [on branch] 24eba7c, job 20261101-050622-...-24eba7cab-test
 - O9 DiskSpaceService unknown instead of 0 [on branch] drain/O9-2026-11-01 596ce37, 4 tests, job 20261101-050801-...-596ce3735-test; reconciled on stack branch
 - O10 abandoned-snapshot cleanup [done, not a bug] only a crash between markSnapshotComplete and rebuildWorkingSet triggers it (clean rollback); 2 pinning tests on drain/O10-2026-11-01 e48ceb2, job 20261101-051000-...-e48ceb2a9-test
