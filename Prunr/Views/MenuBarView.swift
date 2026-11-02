@@ -382,7 +382,7 @@ struct MenuBarView: View {
         .onChange(of: manager.isPopoverShown) { _, isShown in
             guard isShown else { return }
             synchronizeVisibleOnboardingToCurrent()
-            Task { await manager.refreshChangeFeed() }
+            Task { await manager.refreshPresentationOnOpen() }
         }
         .task {
             if manager.hasDisplayableInventory {
@@ -407,7 +407,6 @@ struct MenuBarView: View {
             // Phase 2: Background — enrich with growth stories, trends, disk accounting
             await manager.checkBaseline()
             manager.updateFreeSpaceIfNeeded()
-            await manager.updatePathSize()
 
             if !manager.noBaseline {
                 await manager.loadInventoryFromLatestSnapshotIfStale()

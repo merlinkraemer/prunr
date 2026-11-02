@@ -2221,6 +2221,7 @@ final class PrunrSmokeTests: XCTestCase {
             try await self.withIsolatedTrackedPathSettings(mainBaseURL: trackedRoot) {
                 let trackedPath = SettingsStore.shared.mainTrackedPath
                 let manager = MenuBarManager()
+                manager.isPopoverShown = true
 
                 let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPath.id)
                 let snapshotId = try XCTUnwrap(snapshot.id)
