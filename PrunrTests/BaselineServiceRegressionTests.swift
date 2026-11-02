@@ -636,6 +636,54 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
+    /// A failure after the working set is rebuilt must leave the new snapshot
+    /// unpublished, so the retry still diffs against the previous baseline.
+    func testFailureBeforePublishKeepsPreviousBaselineAndJournalsWindowOnRetry() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrPublishLast")
+            defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+            let file = tempDirectory.appendingPathComponent("blob.bin")
+            try Data(repeating: 0xAB, count: 4_096).write(to: file)
+            try self.dateBeforeHistory(file)
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+
+            let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+            try await self.backdateSnapshot(s0, to: Self.wholeSecondNow().addingTimeInterval(-7_200))
+            try Data(repeating: 0xAB, count: 4_096 + Int(3 * Self.mb)).write(to: file)
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            try await dbPool.write { db in
+                try db.execute(sql: """
+                    CREATE TRIGGER failJournalInsert BEFORE INSERT ON growthJournalBucket
+                    BEGIN SELECT RAISE(ABORT, 'injected failure'); END
+                    """)
+            }
+            do {
+                _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+                XCTFail("the injected journal failure must surface")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("injected failure"))
+            }
+
+            try await dbPool.write { db in
+                try db.execute(sql: "DROP TRIGGER failJournalInsert")
+            }
+
+            let snapshots = try await dbPool.read { db in
+                try Row.fetchAll(db, sql: "SELECT id, lifecycle FROM snapshot WHERE trackedPathId = ?", arguments: [trackedPathId.uuidString])
+                    .map { (id: $0["id"] as Int64, lifecycle: $0["lifecycle"] as String) }
+            }
+            XCTAssertEqual(snapshots.map(\.id), [try XCTUnwrap(s0.id)])
+            XCTAssertEqual(snapshots.map(\.lifecycle), [Snapshot.Lifecycle.complete.rawValue])
+
+            _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+
+            let buckets = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertEqual(buckets.filter { $0.source == .scan }.reduce(Int64(0)) { $0 + $1.deltaBytes }, 3 * Self.mb)
+        }
+    }
+
     func testDiskUsageOfSparseFileIsAllocatedBytesNotLogicalSize() throws {
         let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrSparse")
         defer { try? FileManager.default.removeItem(at: tempDirectory) }

@@ -142,6 +142,7 @@ actor ScanService {
         ignoredNames: Set<String>? = nil,
         alsoWriteWorkingSet: Bool = false,
         reconstructsFileHistory: Bool = false,
+        completesSnapshot: Bool = true,
         skipLog: ScanSkipLog? = nil,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> ScanOutcome {
@@ -190,6 +191,7 @@ actor ScanService {
                 ignoredNames: ignoredNames,
                 alsoWriteWorkingSet: alsoWriteWorkingSet,
                 reconstructsFileHistory: reconstructsFileHistory,
+                completesSnapshot: completesSnapshot,
                 cancellationToken: cancellationToken,
                 skipLog: skipLog,
                 progress: progress
@@ -207,6 +209,7 @@ actor ScanService {
         ignoredNames: Set<String>?,
         alsoWriteWorkingSet: Bool = false,
         reconstructsFileHistory: Bool = false,
+        completesSnapshot: Bool = true,
         cancellationToken: ScanCancellationToken,
         skipLog: ScanSkipLog?,
         progress: ((ScanProgress) -> Void)?
@@ -486,12 +489,16 @@ actor ScanService {
                 logger.debug("Final progress update sent: \(count) files")
             }
 
-            try await db.markSnapshotComplete(id: snapshotId)
+            if completesSnapshot {
+                try await db.markSnapshotComplete(id: snapshotId)
+            }
             let skippedCount = deniedLog.count
             logger.info("Scan completed successfully: \(count) files scanned, \(skippedCount) unreadable entries skipped")
 
             var completedSnapshot = snapshot
-            completedSnapshot.lifecycle = .complete
+            if completesSnapshot {
+                completedSnapshot.lifecycle = .complete
+            }
             return ScanOutcome(snapshot: completedSnapshot, drilldownIndex: drilldownIndex, fileHistory: fileHistory)
 
         } catch {
