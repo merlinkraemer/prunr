@@ -3,7 +3,7 @@
 Goal: Merlin decides item 9 (land the UI/schema rest) by using the build, not mockups. About 40 minutes at the Mac, real data.
 
 ## What gets tested
-One combined test build: `drain/stack-2026-11-01` (category groups, drilldown that explains growth, captions, nav fixes, checkpoints) plus the O23/O24 fixes (watcher, denied folders, sleep-safe scans, hard links, missing drives). Branch `drain/hands-on-2026-11-02`, green on the Mac before the session.
+One combined test build: `drain/stack-2026-11-01` (category groups, drilldown that explains growth, captions, nav fixes, checkpoints) plus the O23-O28 fixes (watcher, denied folders, sleep-safe scans, hard links, missing drives, scope-change safety, faster scans and startup). Branch `drain/hands-on-2-2026-11-02`, green on the Mac before the session.
 
 ## Setup (orchestrator, on Merlin's go)
 1. Back up `~/Library/Application Support/Prunr` to `~/prunr-backup-2026-11-02` (the build migrates the DB to v27, no way back without the backup).
