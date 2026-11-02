@@ -269,6 +269,52 @@ actor ScanService {
         }
 
         let backpressure = ScanBackpressureGate(maxOutstanding: batchSize * 2)
+        let deniedLog = ScanSkipLog()
+
+        func accumulate(_ result: ScanResult) {
+            batch.append(result)
+            count += 1
+            let category = result.category
+            let normalizedPath = DatabaseManager.normalizePath(result.path)
+            let unitKey = UnitResolver.resolve(path: normalizedPath)
+            categoryTotals[category, default: 0] += result.sizeBytes
+            drilldownIndex.add(
+                path: normalizedPath,
+                sizeBytes: result.sizeBytes,
+                category: category,
+                subcategory: result.subcategory,
+                unitKey: unitKey
+            )
+            if let dates = result.fileDates {
+                fileHistory?.add(
+                    path: normalizedPath,
+                    unitKey: unitKey,
+                    sizeBytes: result.sizeBytes,
+                    category: category,
+                    subcategory: result.subcategory,
+                    dates: dates
+                )
+            }
+        }
+
+        func insertBatch(_ stage: String) async throws {
+            try throwIfCancelled("\(stage) preflight", token: cancellationToken)
+            let batchCount = batch.count
+            if alsoWriteWorkingSet {
+                try await db.addEntriesWithWorkingSet(
+                    to: snapshotId,
+                    entries: batch,
+                    trackedPathId: trackedPathId,
+                    updatedAt: snapshot.createdAt,
+                    cancellationToken: cancellationToken
+                )
+            } else {
+                try await db.addEntries(to: snapshotId, entries: batch, cancellationToken: cancellationToken)
+            }
+            batch.removeAll()
+            await backpressure.release(batchCount)
+            try throwIfCancelled("\(stage) completion", token: cancellationToken)
+        }
 
         do {
             // Stream scan results and accumulate into batches
@@ -283,7 +329,7 @@ actor ScanService {
                 ignoredNames: resolvedIgnoredNames,
                 cancellationToken: cancellationToken,
                 backpressure: backpressure,
-                skipLog: skipLog
+                skipLog: deniedLog
             )
 
             for try await result in stream {
@@ -293,51 +339,11 @@ actor ScanService {
                     throw ScanError.cancelled
                 }
 
-                batch.append(result)
-                count += 1
-                let category = result.category
-                let normalizedPath = DatabaseManager.normalizePath(result.path)
-                let unitKey = UnitResolver.resolve(path: normalizedPath)
-                categoryTotals[category, default: 0] += result.sizeBytes
-                drilldownIndex.add(
-                    path: normalizedPath,
-                    sizeBytes: result.sizeBytes,
-                    category: category,
-                    subcategory: result.subcategory,
-                    unitKey: unitKey
-                )
-                if let dates = result.fileDates {
-                    fileHistory?.add(
-                        path: normalizedPath,
-                        unitKey: unitKey,
-                        sizeBytes: result.sizeBytes,
-                        category: category,
-                        subcategory: result.subcategory,
-                        dates: dates
-                    )
-                }
+                accumulate(result)
 
-                // Insert batch when full
                 if batch.count >= batchSize {
                     logger.debug("Inserting batch of \(batch.count) entries (total: \(count))")
-                    try throwIfCancelled("batch insert preflight", token: cancellationToken)
-                    let batchCount = batch.count
-                    if alsoWriteWorkingSet {
-                        try await db.addEntriesWithWorkingSet(
-                            to: snapshotId,
-                            entries: batch,
-                            trackedPathId: trackedPathId,
-                            updatedAt: snapshot.createdAt,
-                            cancellationToken: cancellationToken
-                        )
-                    } else {
-                        try await db.addEntries(to: snapshotId, entries: batch, cancellationToken: cancellationToken)
-                    }
-                    batch.removeAll()
-                    await backpressure.release(batchCount)
-
-                    // Check cancellation after database write
-                    try throwIfCancelled("batch insert completion", token: cancellationToken)
+                    try await insertBatch("batch insert")
                 }
 
                 // Report progress (throttled to every 250ms)
@@ -411,23 +417,40 @@ actor ScanService {
                 }
             }
 
-            // Insert any remaining entries in partial batch
+            let deniedRoots = Self.outermostPaths(deniedLog.skippedPaths)
+            for deniedPath in deniedLog.skippedPaths {
+                skipLog?.record(deniedPath)
+            }
+            if !deniedRoots.isEmpty,
+               let previousSnapshotId = try await db.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 1).first?.id {
+                var carriedCount = 0
+                for deniedRoot in deniedRoots {
+                    var afterPath: String?
+                    while true {
+                        try throwIfCancelled("denied subtree carry-forward", token: cancellationToken)
+                        let page = try await db.fetchEntries(
+                            for: previousSnapshotId,
+                            atOrBelow: deniedRoot,
+                            afterPath: afterPath,
+                            limit: batchSize
+                        )
+                        for entry in page {
+                            accumulate(ScanResult(path: entry.path, sizeBytes: entry.sizeBytes))
+                            if batch.count >= batchSize {
+                                try await insertBatch("carried batch insert")
+                            }
+                        }
+                        carriedCount += page.count
+                        guard page.count == batchSize, let last = page.last else { break }
+                        afterPath = last.path
+                    }
+                }
+                logger.info("Carried \(carriedCount) entries forward from snapshot \(previousSnapshotId) for \(deniedRoots.count) denied subtrees")
+            }
+
             if !batch.isEmpty {
                 logger.debug("Inserting final batch of \(batch.count) entries")
-                try throwIfCancelled("final batch insert preflight", token: cancellationToken)
-                let batchCount = batch.count
-                if alsoWriteWorkingSet {
-                    try await db.addEntriesWithWorkingSet(
-                        to: snapshotId,
-                        entries: batch,
-                        trackedPathId: trackedPathId,
-                        updatedAt: snapshot.createdAt,
-                        cancellationToken: cancellationToken
-                    )
-                } else {
-                    try await db.addEntries(to: snapshotId, entries: batch, cancellationToken: cancellationToken)
-                }
-                await backpressure.release(batchCount)
+                try await insertBatch("final batch insert")
             }
 
             // If we co-wrote the working set inline, write its category totals from the
@@ -464,7 +487,7 @@ actor ScanService {
             }
 
             try await db.markSnapshotComplete(id: snapshotId)
-            let skippedCount = skipLog?.count ?? 0
+            let skippedCount = deniedLog.count
             logger.info("Scan completed successfully: \(count) files scanned, \(skippedCount) unreadable entries skipped")
 
             var completedSnapshot = snapshot
@@ -522,6 +545,18 @@ actor ScanService {
 
             throw ScanError.unknown(error)
         }
+    }
+
+    static func outermostPaths(_ paths: [String]) -> [String] {
+        let sorted = Set(paths.map(DatabaseManager.normalizePath)).sorted()
+        var roots: [String] = []
+        for path in sorted {
+            if let last = roots.last, last == "/" || path.hasPrefix(last + "/") {
+                continue
+            }
+            roots.append(path)
+        }
+        return roots
     }
 
     private func historicalEntryEstimate(for trackedPathId: UUID) async -> Int? {

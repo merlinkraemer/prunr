@@ -920,6 +920,47 @@ extension DatabaseManager {
         }
     }
 
+    func fetchEntries(
+        for snapshotId: Int64,
+        atOrBelow rootPath: String,
+        afterPath: String?,
+        limit: Int
+    ) async throws -> [(path: String, sizeBytes: Int64)] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let normalizedRoot = Self.normalizePath(rootPath)
+        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
+        let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
+
+        return try await dbPool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT p.path AS path, se.sizeBytes AS sizeBytes
+                    FROM paths p
+                    CROSS JOIN snapshotEntry se INDEXED BY idx_snapshotEntry_snapshotId_pathId
+                        ON se.pathId = p.id AND se.snapshotId = ?
+                    WHERE p.path = ? AND ?
+                    UNION ALL
+                    SELECT p.path AS path, se.sizeBytes AS sizeBytes
+                    FROM paths p
+                    CROSS JOIN snapshotEntry se INDEXED BY idx_snapshotEntry_snapshotId_pathId
+                        ON se.pathId = p.id AND se.snapshotId = ?
+                    WHERE p.path > ? AND p.path < ?
+                    ORDER BY path
+                    LIMIT ?
+                    """,
+                arguments: [
+                    snapshotId, normalizedRoot, afterPath == nil,
+                    snapshotId, afterPath ?? rootPrefix, rootPrefixUpperBound,
+                    limit
+                ]
+            ).map { (path: $0["path"] as String? ?? "", sizeBytes: $0["sizeBytes"] as Int64? ?? 0) }
+        }
+    }
+
     /// Deletes a snapshot and all its entries (cascade handled by schema)
     /// - Parameter id: The snapshot ID to delete
     func deleteSnapshot(id: Int64) async throws {
