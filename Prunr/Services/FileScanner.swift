@@ -44,40 +44,51 @@ final class ScanSkipLog: @unchecked Sendable {
 
 final class ScanTraversalState: @unchecked Sendable {
     struct Snapshot {
-        let lastProgressAt: Date
+        let lastProgressAt: TimeInterval
         let currentPath: String
         let isFinished: Bool
-        let consumerWaitStartedAt: Date?
+        let consumerWaitStartedAt: TimeInterval?
     }
 
     private struct State {
-        var lastProgressAt: Date
+        var lastProgressAt: TimeInterval
         var currentPath: String
         var isFinished = false
-        var consumerWaitStartedAt: Date?
+        var consumerWaitStartedAt: TimeInterval?
     }
 
-    private let state: OSAllocatedUnfairLock<State>
+    static let sleepExcludingUptime: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
-    init(rootPath: String) {
-        state = OSAllocatedUnfairLock(initialState: State(lastProgressAt: Date(), currentPath: rootPath))
+    private let state: OSAllocatedUnfairLock<State>
+    private let uptime: @Sendable () -> TimeInterval
+
+    init(rootPath: String, uptime: @escaping @Sendable () -> TimeInterval = ScanTraversalState.sleepExcludingUptime) {
+        self.uptime = uptime
+        state = OSAllocatedUnfairLock(initialState: State(lastProgressAt: uptime(), currentPath: rootPath))
+    }
+
+    func now() -> TimeInterval {
+        uptime()
     }
 
     func markProgress(path: String) {
+        let current = uptime()
         state.withLock {
-            $0.lastProgressAt = Date()
+            $0.lastProgressAt = current
             $0.currentPath = path
         }
     }
 
     func beginConsumerWait() {
-        state.withLock { $0.consumerWaitStartedAt = Date() }
+        let current = uptime()
+        state.withLock { $0.consumerWaitStartedAt = current }
     }
 
     func endConsumerWait() {
+        let current = uptime()
         state.withLock {
             $0.consumerWaitStartedAt = nil
-            $0.lastProgressAt = Date()
+            $0.lastProgressAt = current
         }
     }
 
@@ -186,15 +197,15 @@ final class FileScanner {
     /// against the much longer consumer timeout.
     static func stalledDuration(
         _ snapshot: ScanTraversalState.Snapshot,
-        now: Date,
+        now: TimeInterval,
         traversalStallTimeout: TimeInterval,
         consumerStallTimeout: TimeInterval
     ) -> TimeInterval? {
         if let waitStartedAt = snapshot.consumerWaitStartedAt {
-            let waited = now.timeIntervalSince(waitStartedAt)
+            let waited = now - waitStartedAt
             return waited >= consumerStallTimeout ? waited : nil
         }
-        let stalledFor = now.timeIntervalSince(snapshot.lastProgressAt)
+        let stalledFor = now - snapshot.lastProgressAt
         return stalledFor >= traversalStallTimeout ? stalledFor : nil
     }
 
@@ -248,7 +259,7 @@ final class FileScanner {
 
                     guard let stalledFor = Self.stalledDuration(
                         snapshot,
-                        now: Date(),
+                        now: traversalState.now(),
                         traversalStallTimeout: traversalStallTimeout,
                         consumerStallTimeout: consumerStallTimeout
                     ) else { continue }
@@ -290,6 +301,14 @@ final class FileScanner {
                     continuation.finish(throwing: ScanError.invalidPath)
                     return
                 }
+
+                var rootStat = stat()
+                guard stat(rootURL.path, &rootStat) == 0 else {
+                    await backpressure?.close()
+                    continuation.finish(throwing: ScanError.invalidPath)
+                    return
+                }
+                let rootDevice = rootStat.st_dev
 
                 var count = 0
                 var lastLogCount = 0
@@ -389,7 +408,7 @@ final class FileScanner {
                             continue
                         }
 
-                        if let abortError = Self.abortError(forFTSErrno: entryErrno, path: path) {
+                        if let abortError = Self.abortError(forFTSErrno: entryErrno, path: path, level: level) {
                             await backpressure?.close()
                             continuation.finish(throwing: abortError)
                             return
@@ -402,6 +421,14 @@ final class FileScanner {
                     default:
                         continue
                     }
+                }
+
+                if !Task.isCancelled, cancellationToken?.isCancelled != true,
+                   !Self.rootIsUnchanged(path: rootPath, device: rootDevice) {
+                    Self.logger.error("Scan root vanished or changed device during scan: \(rootPath, privacy: .public)")
+                    await backpressure?.close()
+                    continuation.finish(throwing: ScanError.invalidPath)
+                    return
                 }
 
                 Self.logger.debug("Scan complete: \(count) files total")
@@ -428,17 +455,22 @@ final class FileScanner {
         level > 0 && (entryErrno == EACCES || entryErrno == EPERM)
     }
 
-    /// Transient per-entry failures (vanished/stale nodes) continue the scan.
-    /// An unreadable scan root and other systematic errors abort so inventories stay trustworthy.
-    static func abortError(forFTSErrno entryErrno: Int32, path: String) -> ScanError? {
+    /// Transient failures (vanished/stale nodes) below the root continue the scan.
+    /// A failing scan root and other systematic errors abort so inventories stay trustworthy.
+    static func abortError(forFTSErrno entryErrno: Int32, path: String, level: Int) -> ScanError? {
         switch entryErrno {
         case ENOENT, ESTALE:
-            return nil
+            return level == 0 ? .invalidPath : nil
         case EACCES, EPERM:
             return .permissionDenied(path)
         default:
             return .traversalFailed(path)
         }
+    }
+
+    static func rootIsUnchanged(path: String, device: dev_t) -> Bool {
+        var current = stat()
+        return stat(path, &current) == 0 && current.st_dev == device
     }
 
     // MARK: - Private Helpers
