@@ -226,3 +226,4 @@
 2026-11-02 orchestrator O25 spawn: combined test branch drain/hands-on-2026-11-02 (sonnet medium, seat worktree)
 2026-11-02 orchestrator O24a-e Mac green: 2f698d9 1b7a139 c0b3b4a 8d957dc 3ef5f56
 2026-11-02 orchestrator O25 on branch: drain/hands-on-2026-11-02 f5078cb, 9 merges, conflicts FileScanner/ScanService/tests resolved, job queued
+2026-11-02 orchestrator O26 spawn: review #7 rest + #12 reset race, on hands-on branch (sonnet medium, seat worktree)
