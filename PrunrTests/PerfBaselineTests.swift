@@ -2,18 +2,11 @@ import XCTest
 import GRDB
 @testable import Prunr
 
-/// Timings of the hot paths, printed as `PERF <name> <ms>` (best of several
-/// runs; `median` lines next to it). Reported, not asserted, apart from a
-/// sanity ceiling: read the numbers in the test log and compare them with
-/// docs/perf-real-data-2026-10-31.md. The `real.*` lines need the real snapshot
-/// (`PRUNR_REPLAY_DB`, else `~/dev/build/prunr-snap/slim.db`) and are skipped
-/// without one.
 final class PerfBaselineTests: PrunrTestCase {
     private let db = DatabaseManager.shared
     private static let bigPlace = "/Data/Big"
     private static let bigPlaceChildCount = 20_000
 
-    // MARK: - Helpers
 
     private func emit(_ name: String, _ milliseconds: Double) {
         let line = String(format: "PERF %@ %.2f", name, milliseconds)
@@ -66,24 +59,11 @@ final class PerfBaselineTests: PrunrTestCase {
         )
     }
 
-    private func seedDetail(trackedPathId: UUID, now: Date, days: Int) async throws {
-        var buckets: [Date: [PlaceChildKey: Int64]] = [:]
-        for slot in 0..<(days * 48) {
-            let at = GrowthJournalService.bucketStart(for: now.addingTimeInterval(-TimeInterval(slot * 30 * 60)))
-            var deltas: [PlaceChildKey: Int64] = [:]
-            for child in 0..<GrowthJournalDetail.topChildren {
-                deltas[PlaceChildKey(unitRoot: Self.bigPlace, name: "f\(child).bin", isFolder: false)] =
-                    Int64((slot + child) % 7 + 1) * 1_000_000
-            }
-            buckets[at] = deltas
-        }
-        try await db.upsertJournalDetail(trackedPathId: trackedPathId, deltasByBucketStart: buckets, source: .watch)
-    }
-
-    // MARK: - Feed
 
     @MainActor
     func testPerfFeedRebuildOnFixture() async throws {
+        FixtureLibrary.useSyntheticHome()
+        defer { FixtureLibrary.restoreProductionHome() }
         try await withEmptyTemporaryDatabase { id in
             try await FixtureLibrary.seed(trackedPathId: id)
             let paths = [self.trackedPath(id, home: FixtureLibrary.home)]
@@ -149,13 +129,11 @@ final class PerfBaselineTests: PrunrTestCase {
         XCTAssertGreaterThan(rows, 0)
     }
 
-    // MARK: - Place page
 
     func testPerfPlacePageQueries() async throws {
         try await withEmptyTemporaryDatabase { id in
             let now = Date()
             try await self.once("place.seed.workingSet20k") { try await self.seedBigPlace(trackedPathId: id, now: now) }
-            try await self.once("place.seed.detail30d") { try await self.seedDetail(trackedPathId: id, now: now, days: 30) }
             try await self.db.optimizeQueryPlanner()
 
             var children = 0
@@ -170,49 +148,14 @@ final class PerfBaselineTests: PrunrTestCase {
                 _ = try await self.db.fetchPlaceContents(unitRoot: Self.bigPlace, trackedPathIds: [id, UUID()])
             }
 
-            var listed = 0
-            try await self.time("place.fetchPlaceChanges.1day") {
-                let page = try await self.db.fetchPlaceChanges(
-                    unitRoot: Self.bigPlace,
-                    trackedPathIds: [id],
-                    from: now.addingTimeInterval(-24 * 3_600),
-                    to: now
-                )
-                listed = page.children?.count ?? 0
-            }
-            XCTAssertGreaterThan(listed, 0)
-            try await self.time("place.fetchPlaceChanges.7days") {
-                _ = try await self.db.fetchPlaceChanges(
-                    unitRoot: Self.bigPlace,
-                    trackedPathIds: [id],
-                    from: now.addingTimeInterval(-7 * 24 * 3_600),
-                    to: now
-                )
-            }
-            try await self.time("place.fetchPlaceChanges.beforeDetail") {
-                _ = try await self.db.fetchPlaceChanges(
-                    unitRoot: Self.bigPlace,
-                    trackedPathIds: [id],
-                    from: now.addingTimeInterval(-60 * 24 * 3_600),
-                    to: now
-                )
-            }
-            try await self.time("place.fetchJournalDetailTotals.7days") {
-                _ = try await self.db.fetchJournalDetailTotals(
-                    trackedPathId: id,
-                    from: now.addingTimeInterval(-7 * 24 * 3_600),
-                    to: now
-                )
-            }
             try await self.time("place.pruneJournal.30d", runs: 1) {
                 await GrowthJournalService.shared.prune(retentionDays: 30, now: now.addingTimeInterval(24 * 3_600))
             }
         }
     }
 
-    // MARK: - Watcher
 
-    func testPerfWatcherBurstWithDetail() async throws {
+    func testPerfWatcherBurst() async throws {
         try await withEmptyTemporaryDatabase { id in
             let now = Date()
             try await self.seedBigPlace(trackedPathId: id, now: now)
@@ -235,7 +178,7 @@ final class PerfBaselineTests: PrunrTestCase {
                     )
                 }
             }
-            emit("watcher.burst200.perEvent", total / Double(events))
+            self.emit("watcher.burst200.perEvent", total / Double(events))
 
             var batch = 0
             try await self.time("watcher.subtree1k", runs: 3) {
@@ -255,7 +198,6 @@ final class PerfBaselineTests: PrunrTestCase {
         }
     }
 
-    // MARK: - Scan persistence
 
     func testPerfScanPersistenceBatch() async throws {
         try await withEmptyTemporaryDatabase { id in
@@ -285,7 +227,6 @@ final class PerfBaselineTests: PrunrTestCase {
         }
     }
 
-    // MARK: - Startup
 
     func testPerfStartupOnEmptyDatabase() throws {
         let directory = try createTrackedPathDirectory(named: "PrunrPerfStartup")
@@ -298,7 +239,6 @@ final class PerfBaselineTests: PrunrTestCase {
         emit("startup.initialize.emptyDatabase", nowMs() - started)
     }
 
-    // MARK: - Real snapshot
 
     @MainActor
     func testPerfRealSnapshot() async throws {
@@ -313,7 +253,7 @@ final class PerfBaselineTests: PrunrTestCase {
             try? FileManager.default.removeItem(at: tempDirectory)
         }
         let copy = tempDirectory.appendingPathComponent("prunr.sqlite").path
-        try FileManager.default.copyItem(atPath: source, toPath: copy)
+        try ReplayHarness.copySlimSnapshotRestoringDroppedStagingTable(from: source, to: copy)
 
         let ids = try ReplayHarness.trackedPathIds(inDatabaseAt: copy)
         let newest = try XCTUnwrap(ReplayHarness.newestBucketTime(inDatabaseAt: copy))
@@ -340,7 +280,6 @@ final class PerfBaselineTests: PrunrTestCase {
         }
 
         var slowestContents = 0.0
-        var slowestChanges = 0.0
         try await once("real.places.contentsAllRows") {
             for root in roots {
                 let began = self.nowMs()
@@ -348,17 +287,7 @@ final class PerfBaselineTests: PrunrTestCase {
                 slowestContents = max(slowestContents, self.nowMs() - began)
             }
         }
-        try await once("real.places.changesAllRows") {
-            for root in roots {
-                let began = self.nowMs()
-                _ = try await self.db.fetchPlaceChanges(
-                    unitRoot: root, trackedPathIds: ids, from: now.addingTimeInterval(-7 * 24 * 3_600), to: now
-                )
-                slowestChanges = max(slowestChanges, self.nowMs() - began)
-            }
-        }
         emit("real.places.contents.slowestRow", slowestContents)
-        emit("real.places.changes.slowestRow", slowestChanges)
 
         let dbPool = try XCTUnwrap(db.dbPool)
         let biggest: (root: String, children: Int)? = try await dbPool.read { db in
@@ -376,11 +305,6 @@ final class PerfBaselineTests: PrunrTestCase {
             emit("real.biggestPlace.children", Double(children))
             try await time("real.biggestPlace.fetchPlaceContents") {
                 _ = try await self.db.fetchPlaceContents(unitRoot: root, trackedPathIds: ids)
-            }
-            try await time("real.biggestPlace.fetchPlaceChanges") {
-                _ = try await self.db.fetchPlaceChanges(
-                    unitRoot: root, trackedPathIds: ids, from: now.addingTimeInterval(-7 * 24 * 3_600), to: now
-                )
             }
         }
     }
