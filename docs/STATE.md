@@ -36,7 +36,7 @@ Done Q1-Q18 (history: docs/journal.md). Landed on local main 7cbb6c8 (not pushed
 ### Own priorities (Merlin 11-02: perf, app performance, detailed bug/code review, then own prios; no reviews needed)
 Done: O1-O22 (journal); reviews docs/perf-app-review-2026-11-02.md, docs/code-review-2026-11-02.md, docs/code-review-combined-2026-11-02.md
 - O23-O28 review fixes [all Mac green, merged into drain/hands-on-2-2026-11-02 fa13b78, Mac green]
-- O30a quiesce wait 10 s timeout, aborts reset/scope change [drain/O30a-2026-11-02 0ee8a84, Mac pending; new error copy needs Merlin]
+- O30a quiesce wait 10 s timeout, aborts reset/scope change [drain/O30a-2026-11-02 0ee8a84, Mac green; new error copy needs Merlin]
 - O31a watcher: denied is not deleted + hard links one rule [drain/O31a-2026-11-02 c23d919, Mac pending; new multi-link file counts 0 until next full scan]
 - O31b partial multi-path success re-arms full refresh [drain/O31b-2026-11-02 4042c28, Mac pending; persistent failure = full refresh up to every 30 min]
 - next: merge O30a/O31a/O31b into hands-on-2 when green; perf #6 indexes (schema, ask); combined review #4 (same-size rename stale drilldown, low)
