@@ -18,7 +18,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 6. [accepted 2026-10-31 per rec: variant A, building as Q16 on drain/Q16-2026-10-31] Category groups net unrelated places ("Developer +9.9 GB" = +44 up, -34 down) and header vs rows don't reconcile — rec: per-place rows inside groups with up/down split + a "smaller changes" row; mockups first — branch: none
 7. [accepted 2026-10-30 per rec] Row captions "found by scan" / "found by scan · since Sun 18 Oct"; names drop generic parents ("game · dev" → "game") — review wording — branch: drain/Q8b-2026-10-30
 8. [accepted 2026-11-01 per rec, merged into stack] Places changing nonstop for >24h now show one change per day instead of one long change (O13 fix so their history still trims) - rec: accept, the feed math stays identical - branch: drain/O13-2026-11-01
-9. Land the UI/schema rest (Q8a v26 drilldown, Q8b captions, Q12 nav, Q16 category groups, Q18 v27 checkpoints, O13, O16), all green on the Mac on drain/stack-2026-11-01 14be69a; snapshots at https://dev.tail87069a.ts.net:4181/app/ - rec: review the snapshots after the holiday, then land in one merge - branch: drain/stack-2026-11-01
+9. Land the UI/schema rest (Q8a v26 drilldown, Q8b captions, Q12 nav, Q16 category groups, Q18 v27 checkpoints, O13, O16), all green on the Mac on drain/stack-2026-11-01 153f4e7 (incl. O20); snapshots at https://dev.tail87069a.ts.net:4181/app/ - rec: review the snapshots after the holiday, then land in one merge - branch: drain/stack-2026-11-01
 3. [accepted 2026-10-31 per rec] Rows drift as the 30-day window slides (root cause + design: docs/checkpoint-table-design-2026-10-31.md): v27 growthJournalCheckpoint, show real "building since" date, expire quiet counts after 90 days — building as Q18
 
 
@@ -82,7 +82,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O18 Test host isolation [on branch] stack 14be69a: SettingsStore uses a throwaway defaults suite + empty temp base path under TestHost; fixture home synthetic again (UnitResolver.defaultHome settable for tests); compact-test workaround removed; job 20261101-214156-...-14be69ab3-test
 - O19 Land branch [landed on local main 7cbb6c8, Mac green, not pushed]
 - O8 Perf [done] docs/perf-baseline-2026-11-02.md (dbfba72): real data fast (feed 30 ms); worst: first prune after upgrade blocks writers ~700 ms; 200k-bucket feed rebuild 2.2 s; scan persistence
-- O20 Chunked prune [on branch] stack 1e7755e: midnight chunks, each fold+delete atomic, whole-day hold at edges; Mac: longest writer wait 87 ms (was ~700) but total 2.4 s (was 0.7) and 1 test failure; fixing
+- O20 Chunked prune [done, on stack 153f4e7, Mac green] longest writer wait 89 ms (was ~700); one-time first prune total 2.5 s (was 0.7, background, Debug); daily prune is one chunk, unchanged
 
 ## Rundown
 - 2026-10-30: moved lab2 → dev; alpha.24 live since 10-28.
