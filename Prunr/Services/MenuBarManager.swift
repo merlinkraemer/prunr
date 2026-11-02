@@ -1093,8 +1093,11 @@ final class MenuBarManager: NSObject {
 
     /// Public method to reset baseline (called by View)
     func performReset() async {
-        await quiesceScansForScopeChange()
         defer { isScopeChangeInProgress = false }
+        guard await quiesceScansForScopeChange() else {
+            Self.logger.error("Baseline reset skipped: scans did not stop in time")
+            return
+        }
         do {
             try await baselineService.resetBaseline()
             await refreshAfterBaselineReset()
@@ -1117,23 +1120,42 @@ final class MenuBarManager: NSObject {
     /// Applies scope changes that require deleting existing snapshots, then refreshes
     /// all visible menu-bar state so the popover reflects the new scope immediately.
     func applyScopeChanges() async throws {
-        await quiesceScansForScopeChange()
         defer { isScopeChangeInProgress = false }
+        guard await quiesceScansForScopeChange() else {
+            throw ScopeChangeError.scansDidNotStop
+        }
         try await baselineService.resetBaseline()
         await DatabaseCleanupService.shared.performAutoCleanup()
         await refreshAfterBaselineReset()
         configureFileWatcherIfNeeded()
     }
 
-    func quiesceScansForScopeChange() async {
+    enum ScopeChangeError: LocalizedError {
+        case scansDidNotStop
+
+        var errorDescription: String? {
+            "Running scans did not stop in time. Try again in a moment."
+        }
+    }
+
+    static let scanQuiesceTimeout: Duration = .seconds(10)
+
+    @discardableResult
+    func quiesceScansForScopeChange(timeout: Duration = MenuBarManager.scanQuiesceTimeout) async -> Bool {
         isScopeChangeInProgress = true
         recentChangeTask?.cancel()
         reconciliationTask?.cancel()
         await ScanService.shared.cancelScan()
+        let deadline = ContinuousClock.now.advanced(by: timeout)
         while isLoading || isAutoScanning || isReconciling || isProcessingRecentChanges || isInventoryRefreshInProgress {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return false }
+            guard ContinuousClock.now < deadline else {
+                Self.logger.error("Timed out waiting for scans to stop before scope change")
+                return false
+            }
             try? await Task.sleep(for: .milliseconds(50))
         }
+        return true
     }
 
     private func refreshAfterBaselineReset() async {

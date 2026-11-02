@@ -39,6 +39,18 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         XCTAssertFalse(manager.isLoading)
     }
 
+    func testScopeChangeQuiesceTimesOutWhenScanNeverStops() async {
+        let manager = MenuBarManager()
+        manager.isLoading = true
+
+        let quiesced = await manager.quiesceScansForScopeChange(timeout: .milliseconds(200))
+
+        XCTAssertFalse(quiesced)
+        XCTAssertTrue(manager.isLoading)
+        XCTAssertTrue(manager.isScopeChangeInProgress)
+        manager.isLoading = false
+    }
+
     func testFooterActivityShowsReliableFullScanPercentage() {
         let manager = MenuBarManager()
         manager.isAutoScanning = true
