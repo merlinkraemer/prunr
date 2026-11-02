@@ -260,3 +260,4 @@
 2026-11-02 orchestrator O29 O30a+O31a+O31b merged into hands-on-2: 5d19bd4, clean, job queued
 2026-11-02 orchestrator O32a spawn: perf #6 redundant indexes as v28 migration, branch only (schema, Merlin decides) (sonnet medium, seat worktree, base 5d19bd4)
 2026-11-02 orchestrator O32b spawn: combined review #4 drilldown stale after same-size rename (sonnet medium, seat worktree, base 5d19bd4)
+2026-11-02 orchestrator O32b on branch: 8e83f33, drilldown snapshot carries per-group top-entry signature (count, sum and max pathId) so a same-size rename reloads; doubt: one extra GROUP BY per reload, unmeasured; job queued
