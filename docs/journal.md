@@ -185,3 +185,4 @@
 2026-11-01 orchestrator O1 Mac: stack 8b830ce 487 tests, 2 failures left (compact appBusy x2, workaround did not help); O18 job 14be69a pending decides
 2026-11-02 orchestrator O1 done: stack 14be69a green on Mac (all tests); snapshots fetched to review /app/
 2026-11-02 orchestrator O19 spawn: non-UI land branch off main (sonnet medium, seat worktree)
+2026-11-02 orchestrator O19 on branch: drain/land-2026-11-02 8519b7a non-UI subset, job queued

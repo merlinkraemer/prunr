@@ -79,7 +79,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fixed on stack d0064bd (deletes only checkpoints whose keys the path's buckets use; folded-away keys stay until the 90-day expiry)
 - O17 Test expectations vs 24h run cap [done] 107+ tests screened, none affected (fixtures use short runs; the hourly test compares against the same builder)
 - O18 Test host isolation [on branch] stack 14be69a: SettingsStore uses a throwaway defaults suite + empty temp base path under TestHost; fixture home synthetic again (UnitResolver.defaultHome settable for tests); compact-test workaround removed; job 20261101-214156-...-14be69ab3-test
-- O19 Land branch: non-UI, non-schema parts of the stack off main (Q6, Q9, Q10, Q13, O7b/c, O9, O10, O18 + their fixes) [running]; after green Mac job, merge into local main (no push)
+- O19 Land branch [on branch] drain/land-2026-11-02 8519b7a off main (Q6, Q9, Q10 trimmed, Q13, O7b/c, O9, O10, stack fixes incl. cancelled-scan cleanup + test host isolation); job 20261102-003238-...-8519b7aec-test; merge into local main when green (no push)
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown
