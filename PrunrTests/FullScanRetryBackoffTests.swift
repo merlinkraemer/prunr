@@ -40,4 +40,52 @@ final class FullScanRetryBackoffTests: PrunrTestCase {
             }
         }
     }
+
+    func testMissingTrackedPathDoesNotBlockSnapshotsForAvailablePaths() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let manager = MenuBarManager()
+            manager.noBaseline = true
+            let availableRoot = try self.createTrackedPathDirectory(named: "PrunrPartialScan")
+            defer { try? FileManager.default.removeItem(at: availableRoot) }
+            try Data(repeating: 0xAB, count: 64).write(to: availableRoot.appendingPathComponent("file.bin"))
+            let missingRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PrunrMissing-\(UUID().uuidString)", isDirectory: true)
+            let availablePath = TrackedPath(url: availableRoot, displayName: "Available")
+            let missingPath = TrackedPath(url: missingRoot, displayName: "Missing")
+
+            let succeeded = await manager.loadInventory(trackedPathsOverride: [missingPath, availablePath])
+
+            XCTAssertTrue(succeeded)
+            XCTAssertEqual(manager.consecutiveFailedFullScans, 0)
+            let availableSnapshots = try await DatabaseManager.shared.fetchRecentSnapshots(
+                trackedPathId: availablePath.id,
+                limit: 1
+            )
+            let missingSnapshots = try await DatabaseManager.shared.fetchRecentSnapshots(
+                trackedPathId: missingPath.id,
+                limit: 1
+            )
+            XCTAssertEqual(availableSnapshots.count, 1)
+            XCTAssertTrue(missingSnapshots.isEmpty)
+        }
+    }
+
+    func testAllTrackedPathsMissingStillCountsAsFailedScan() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let manager = MenuBarManager()
+            manager.noBaseline = true
+            let paths = (0..<2).map { index in
+                TrackedPath(
+                    url: FileManager.default.temporaryDirectory
+                        .appendingPathComponent("PrunrMissing\(index)-\(UUID().uuidString)", isDirectory: true),
+                    displayName: "Missing\(index)"
+                )
+            }
+
+            let succeeded = await manager.loadInventory(trackedPathsOverride: paths)
+
+            XCTAssertFalse(succeeded)
+            XCTAssertEqual(manager.consecutiveFailedFullScans, 1)
+        }
+    }
 }
