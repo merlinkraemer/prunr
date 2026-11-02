@@ -35,23 +35,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         configureUpdaterIfPossible()
 
-        do {
-            try DatabaseManager.shared.initialize()
-            Task { @MainActor [menuBarManager] in
+        menuBarManager.setDatabaseOpening(true)
+        Task { @MainActor [menuBarManager] in
+            let failure = await Task.detached(priority: .userInitiated) { () -> (any Error)? in
+                do {
+                    try DatabaseManager.shared.initialize()
+                    return nil
+                } catch {
+                    return error
+                }
+            }.value
+
+            if let failure {
+                let alert = NSAlert()
+                alert.messageText = "Prunr could not start"
+                alert.informativeText = "The database failed to initialize: \(failure.localizedDescription)\n\nTry relaunching the app. If the problem persists, delete ~/Library/Application Support/Prunr and relaunch."
+                alert.alertStyle = .critical
+                alert.addButton(withTitle: "Quit")
+                alert.runModal()
+                NSApp.terminate(nil)
+                return
+            }
+
+            menuBarManager.setDatabaseOpening(false)
+            Task { @MainActor in
                 await menuBarManager.configureMonitoringOnLaunch()
             }
             menuBarManager.scheduleQueryPlannerOptimization()
             Task.detached(priority: .utility) {
                 await DatabaseCleanupService.shared.performStartupMaintenance()
             }
-        } catch {
-            let alert = NSAlert()
-            alert.messageText = "Prunr could not start"
-            alert.informativeText = "The database failed to initialize: \(error.localizedDescription)\n\nTry relaunching the app. If the problem persists, delete ~/Library/Application Support/Prunr and relaunch."
-            alert.alertStyle = .critical
-            alert.addButton(withTitle: "Quit")
-            alert.runModal()
-            NSApp.terminate(nil)
         }
     }
 

@@ -571,6 +571,7 @@ final class MenuBarManager: NSObject {
     }
     var errorMessage: String?
     var noBaseline = false
+    @ObservationIgnored private(set) var isDatabaseOpening = false
 
     var scanProgress: String = ""
     var scanCurrentPath: String = ""
@@ -976,6 +977,7 @@ final class MenuBarManager: NSObject {
     }
 
     @objc func openSettings() {
+        guard !isDatabaseOpening else { return }
         // Close popover if open (keep hosting view installed across settings transitions)
         if let panel = panel, panel.isVisible {
             panel.orderOut(nil)
@@ -990,6 +992,7 @@ final class MenuBarManager: NSObject {
     }
 
     @objc private func openFeedback() {
+        guard !isDatabaseOpening else { return }
         SettingsWindowController.shared.showFeedback()
     }
 
@@ -2200,6 +2203,10 @@ final class MenuBarManager: NSObject {
         configureFileWatcherIfNeeded()
     }
 
+    func setDatabaseOpening(_ opening: Bool) {
+        isDatabaseOpening = opening
+    }
+
     func configureMonitoringOnLaunch() async {
         let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         let scanRoots = trackedPaths.map(\.url.standardizedFileURL)
@@ -2469,6 +2476,7 @@ final class MenuBarManager: NSObject {
     // SwiftUI @State and in-memory drilldown caches survive reopen.
 
     @objc private func togglePopover() {
+        guard !isDatabaseOpening else { return }
         guard let button = statusItem?.button else {
             return
         }
@@ -2881,6 +2889,7 @@ final class MenuBarManager: NSObject {
     #endif
 
     private func configureFileWatcherIfNeeded() {
+        guard !isDatabaseOpening else { return }
         guard Self.enableAutomaticFileWatcher else {
             watchedPaths = []
             Task { @MainActor in
