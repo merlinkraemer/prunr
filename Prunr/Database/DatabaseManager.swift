@@ -1690,6 +1690,79 @@ extension DatabaseManager {
         )
     }
 
+    func fetchWorkingSetSizes(trackedPathId: UUID, paths: [String]) async throws -> [String: Int64] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+        guard !paths.isEmpty else { return [:] }
+
+        let trackedPathIdString = trackedPathId.uuidString
+        let normalizedPaths = paths.map { Self.normalizePath($0) }
+        let chunkSize = 500
+
+        return try await dbPool.read { db in
+            var sizes: [String: Int64] = [:]
+            for startIndex in stride(from: 0, to: normalizedPaths.count, by: chunkSize) {
+                let chunk = Array(normalizedPaths[startIndex..<min(startIndex + chunkSize, normalizedPaths.count)])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT p.path AS path, wse.sizeBytes AS sizeBytes
+                        FROM paths p
+                        JOIN workingSetEntry wse ON wse.pathId = p.id
+                        WHERE wse.trackedPathId = ? AND p.path IN (\(placeholders))
+                        """,
+                    arguments: StatementArguments([trackedPathIdString] + chunk)
+                )
+                for row in rows {
+                    if let path: String = row["path"], let sizeBytes: Int64 = row["sizeBytes"] {
+                        sizes[path] = sizeBytes
+                    }
+                }
+            }
+            return sizes
+        }
+    }
+
+    func fetchWorkingSetEntries(
+        trackedPathId: UUID,
+        atOrBelow rootPath: String,
+        afterPath: String?,
+        limit: Int
+    ) async throws -> [ScanResult] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+        let normalizedRoot = Self.normalizePath(rootPath)
+        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
+        let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
+        let lowerBound = afterPath ?? ""
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT p.path AS path, wse.sizeBytes AS sizeBytes
+                    FROM paths p
+                    JOIN workingSetEntry wse ON wse.pathId = p.id
+                    WHERE wse.trackedPathId = ?
+                      AND (p.path = ? OR (p.path >= ? AND p.path < ?))
+                      AND p.path > ?
+                    ORDER BY p.path
+                    LIMIT ?
+                    """,
+                arguments: [trackedPathIdString, normalizedRoot, rootPrefix, rootPrefixUpperBound, lowerBound, limit]
+            )
+            return rows.compactMap { row in
+                guard let path: String = row["path"], let sizeBytes: Int64 = row["sizeBytes"] else { return nil }
+                return ScanResult(path: path, sizeBytes: sizeBytes)
+            }
+        }
+    }
+
     enum WorkingSetPointChange: Sendable {
         case file(ScanResult)
         case removal(String)

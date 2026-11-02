@@ -19,6 +19,21 @@ actor RecentChangeService {
         case needsFullScan
     }
 
+    enum PathState: Equatable {
+        case file
+        case directory
+        case gone
+        case unreadable
+    }
+
+    static func pathState(at path: String) -> PathState {
+        var pathStat = stat()
+        guard lstat(path, &pathStat) == 0 else {
+            return errno == ENOENT || errno == ENOTDIR ? .gone : .unreadable
+        }
+        return (pathStat.st_mode & S_IFMT) == S_IFDIR ? .directory : .file
+    }
+
     private enum RefreshTarget {
         case file(ScanResult)
         case subtree(URL)
@@ -48,8 +63,6 @@ actor RecentChangeService {
             return .noChanges
         }
 
-        // If there are an insane number of events (e.g. 50k+ from a git checkout or npm install),
-        // trying to coalesce them with lstat calls will take too long. Fall back to a full scan.
         if changedPaths.count > 25_000 {
             return .needsFullScan
         }
@@ -81,7 +94,14 @@ actor RecentChangeService {
         for target in targets {
             switch target {
             case .file(let result):
-                pointChanges.append(.file(result))
+                let counted: ScanResult
+                do {
+                    counted = try await applyingHardLinkRule(to: [result], trackedPathId: trackedPath.id)[0]
+                } catch {
+                    logger.error("Failed reading link state for \(result.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    continue
+                }
+                pointChanges.append(.file(counted))
             case .removal(let path):
                 pointChanges.append(.removal(path))
             case .subtree(let root):
@@ -128,9 +148,12 @@ actor RecentChangeService {
         ignoredNames: Set<String>,
         updatedAt: Date
     ) async throws -> [DatabaseManager.JournalDeltaKey: Int64] {
-        var isDirectory: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory)
-        guard exists, isDirectory.boolValue else {
+        switch Self.pathState(at: root.path) {
+        case .unreadable:
+            return [:]
+        case .directory:
+            break
+        case .file, .gone:
             return try await db.replaceWorkingSetSubtree(
                 trackedPathId: trackedPath.id,
                 rootPath: root.path,
@@ -146,13 +169,14 @@ actor RecentChangeService {
             var batch: [ScanResult] = []
             batch.reserveCapacity(Self.stagingBatchSize)
 
-            let stream = scanner.scan(root, ignoredNames: ignoredNames)
+            let skipLog = ScanSkipLog()
+            let stream = scanner.scan(root, ignoredNames: ignoredNames, skipLog: skipLog)
             for try await result in stream {
                 batch.append(result)
                 if batch.count >= Self.stagingBatchSize {
                     try await db.appendWorkingSetRefreshStaging(
                         sessionId: stagingSessionId,
-                        entries: batch
+                        entries: try await applyingHardLinkRule(to: batch, trackedPathId: trackedPath.id)
                     )
                     batch.removeAll(keepingCapacity: true)
                 }
@@ -161,9 +185,15 @@ actor RecentChangeService {
             if !batch.isEmpty {
                 try await db.appendWorkingSetRefreshStaging(
                     sessionId: stagingSessionId,
-                    entries: batch
+                    entries: try await applyingHardLinkRule(to: batch, trackedPathId: trackedPath.id)
                 )
             }
+
+            try await carryDeniedRowsForward(
+                deniedPaths: skipLog.skippedPaths,
+                trackedPathId: trackedPath.id,
+                stagingSessionId: stagingSessionId
+            )
 
             return try await db.replaceWorkingSetSubtree(
                 trackedPathId: trackedPath.id,
@@ -177,8 +207,43 @@ actor RecentChangeService {
         }
     }
 
-    /// Maximum number of individual refresh targets before coalescing to a single tracked-root rescan.
-    /// Prevents unbounded incremental work from bulk operations (e.g., unpacking archives, npm install).
+    private func applyingHardLinkRule(to results: [ScanResult], trackedPathId: UUID) async throws -> [ScanResult] {
+        let linkedPaths = results.filter { $0.linkedDiskBytes != nil }.map(\.path)
+        guard !linkedPaths.isEmpty else { return results }
+
+        let existingSizes = try await db.fetchWorkingSetSizes(trackedPathId: trackedPathId, paths: linkedPaths)
+        return results.map { result in
+            guard let linkedDiskBytes = result.linkedDiskBytes else { return result }
+            var counted = result
+            counted.sizeBytes = FileScanner.linkedFileBytes(
+                linkedDiskBytes: linkedDiskBytes,
+                existingBytes: existingSizes[DatabaseManager.normalizePath(result.path)]
+            )
+            return counted
+        }
+    }
+
+    private func carryDeniedRowsForward(
+        deniedPaths: [String],
+        trackedPathId: UUID,
+        stagingSessionId: String
+    ) async throws {
+        for deniedRoot in ScanService.outermostPaths(deniedPaths) {
+            var afterPath: String?
+            while true {
+                let page = try await db.fetchWorkingSetEntries(
+                    trackedPathId: trackedPathId,
+                    atOrBelow: deniedRoot,
+                    afterPath: afterPath,
+                    limit: Self.stagingBatchSize
+                )
+                try await db.appendWorkingSetRefreshStaging(sessionId: stagingSessionId, entries: page)
+                guard page.count == Self.stagingBatchSize, let last = page.last else { break }
+                afterPath = last.path
+            }
+        }
+    }
+
     private static let maxRefreshTargets = 192
 
     private func refreshTargets(
@@ -187,7 +252,6 @@ actor RecentChangeService {
         ignoredNames: Set<String>
     ) -> [RefreshTarget] {
         let trackedRoot = trackedPath.url.standardizedFileURL
-        let fileManager = FileManager.default
         var filesByPath: [String: ScanResult] = [:]
         var subtreeRoots = Set<String>()
         var removals = Set<String>()
@@ -196,27 +260,29 @@ actor RecentChangeService {
             let standardized = url.standardizedFileURL
             guard isWithinTrackedRoot(standardized.path, trackedRoot: trackedRoot.path) else { continue }
 
-            var isDirectory: ObjCBool = false
-            let exists = fileManager.fileExists(atPath: standardized.path, isDirectory: &isDirectory)
+            let state = Self.pathState(at: standardized.path)
+            if state == .unreadable { continue }
 
-            let skipsAsDirectory = exists && isDirectory.boolValue
             if ScanSkipRules.shouldSkip(
                 path: standardized.path,
-                isDirectory: skipsAsDirectory,
+                isDirectory: state == .directory,
                 belowRoot: trackedRoot.path,
                 ignoredNames: ignoredNames
             ) {
                 continue
             }
 
-            if exists, !isDirectory.boolValue {
+            switch state {
+            case .file:
                 if let fileResult = scanResult(forFileAt: standardized) {
                     filesByPath[fileResult.path] = fileResult
                 }
-            } else if exists {
+            case .directory:
                 subtreeRoots.insert(standardized.path)
-            } else {
+            case .gone:
                 removals.insert(standardized.path)
+            case .unreadable:
+                break
             }
         }
 
@@ -273,14 +339,15 @@ actor RecentChangeService {
     private func scanResult(forFileAt url: URL) -> ScanResult? {
         var fileStat = stat()
         guard lstat(url.path, &fileStat) == 0 else { return nil }
-        let sizeBytes = FileScanner.diskUsageBytes(for: fileStat) / Int64(max(fileStat.st_nlink, 1))
+        let sizeBytes = FileScanner.diskUsageBytes(for: fileStat)
         let path = url.path
         let (category, subcategory) = GrowthCategory.classify(path: path)
         return ScanResult(
             path: path,
             sizeBytes: sizeBytes,
             category: category,
-            subcategory: subcategory
+            subcategory: subcategory,
+            linkedDiskBytes: fileStat.st_nlink > 1 ? sizeBytes : nil
         )
     }
 
