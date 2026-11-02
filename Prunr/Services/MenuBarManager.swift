@@ -1192,26 +1192,50 @@ final class MenuBarManager: NSObject {
                 snapshotsByPath = snapshots
             } else {
                 // Multiple independent paths: scan concurrently via TaskGroup.
-                // Any thrown error cancels the group (and all remaining scans) immediately.
-                snapshotsByPath = try await withThrowingTaskGroup(of: (UUID, Snapshot).self) { group in
+                // Cancellation cancels the group; any other per-path failure is kept
+                // so the remaining paths still get their snapshots.
+                let outcomes = try await withThrowingTaskGroup(of: (TrackedPath, Result<Snapshot, Error>).self) { group in
                     for trackedPath in trackedPaths {
                         let capturedPath = trackedPath
                         group.addTask {
-                            let snapshot = try await self.baselineService.createBaseline(
-                                trackedPath: capturedPath,
-                                skipLog: skipLog,
-                                progress: { progress in progressCallback(capturedPath, progress) }
-                            )
-                            return (capturedPath.id, snapshot)
+                            do {
+                                let snapshot = try await self.baselineService.createBaseline(
+                                    trackedPath: capturedPath,
+                                    skipLog: skipLog,
+                                    progress: { progress in progressCallback(capturedPath, progress) }
+                                )
+                                return (capturedPath, .success(snapshot))
+                            } catch {
+                                if self.isScanCancellation(error) { throw error }
+                                return (capturedPath, .failure(error))
+                            }
                         }
                     }
 
-                    var snapshots: [UUID: Snapshot] = [:]
-                    for try await (pathId, snapshot) in group {
-                        snapshots[pathId] = snapshot
+                    var outcomes: [(TrackedPath, Result<Snapshot, Error>)] = []
+                    for try await outcome in group {
+                        outcomes.append(outcome)
                     }
-                    return snapshots
+                    return outcomes
                 }
+
+                var snapshots: [UUID: Snapshot] = [:]
+                var firstFailure: Error?
+                for (trackedPath, outcome) in outcomes {
+                    switch outcome {
+                    case .success(let snapshot):
+                        snapshots[trackedPath.id] = snapshot
+                    case .failure(let error):
+                        firstFailure = firstFailure ?? error
+                        Self.logger.error(
+                            "Scan failed for \(trackedPath.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                }
+                if snapshots.isEmpty, let firstFailure {
+                    throw firstFailure
+                }
+                snapshotsByPath = snapshots
             }
 
             recordFullScanSuccess()
@@ -3351,7 +3375,7 @@ final class MenuBarManager: NSObject {
         )
     }
 
-    private func isScanCancellation(_ error: Error) -> Bool {
+    private nonisolated func isScanCancellation(_ error: Error) -> Bool {
         if let scanError = error as? ScanError, case .cancelled = scanError {
             return true
         }
