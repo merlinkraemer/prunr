@@ -50,6 +50,7 @@ final class DrilldownStore {
             }
             return
         }
+        let builtGroups = snapshot.buildingTrackedPathIds.isEmpty ? await makeGroups(snapshot.rows) : [:]
         guard requestGeneration == generation else { return }
         groupsReadFailed = false
 
@@ -65,7 +66,7 @@ final class DrilldownStore {
                 snapshot.rows.filter { DrilldownGroupKey.isOwnerGroupKey($0.groupKey) }.map { ($0.groupKey, $0.fileCount) },
                 uniquingKeysWith: +
             )
-            groupsByCategory = makeGroups(snapshot.rows)
+            groupsByCategory = builtGroups
         }
 
         loadedFileCategories = []
@@ -76,7 +77,7 @@ final class DrilldownStore {
         }
     }
 
-    private func makeGroups(_ rows: [DrilldownGroupRow]) -> [GrowthCategory: [SubcategoryGroup]] {
+    private func makeGroups(_ rows: [DrilldownGroupRow]) async -> [GrowthCategory: [SubcategoryGroup]] {
         var groups: [GrowthCategory: [SubcategoryGroup]] = [:]
         var ownerRows: [GrowthCategory: [DrilldownGroupRow]] = [:]
         for row in rows where row.totalBytes > 0 {
@@ -91,7 +92,7 @@ final class DrilldownStore {
                 guard case .app(let id)? = DrilldownGroupKey.owner(of: row.groupKey) else { return nil }
                 return id
             }
-            let catalog = AppCatalogProvider.shared.catalog(resolving: Array(Set(identifiers)).sorted())
+            let catalog = await AppCatalogProvider.shared.catalog(resolving: Array(Set(identifiers)).sorted())
             for (category, rows) in ownerRows {
                 groups[category, default: []] += Self.ownerGroups(rows, catalog: catalog)
             }
@@ -136,11 +137,16 @@ final class DrilldownStore {
             return
         }
         guard requestGeneration == generation else { return }
+        var computedGroups: [GrowthCategory: [SubcategoryGroup]]?
+        if let computedGroupRows {
+            computedGroups = await makeGroups(computedGroupRows)
+        }
+        guard requestGeneration == generation else { return }
         if let computedGroupRows {
             for row in computedGroupRows where DrilldownGroupKey.isOwnerGroupKey(row.groupKey) {
                 ownerFileCounts[row.groupKey] = row.fileCount
             }
-            groupsByCategory[category] = makeGroups(computedGroupRows)[category] ?? []
+            groupsByCategory[category] = computedGroups?[category] ?? []
         }
         guard var groups = groupsByCategory[category] else { return }
         failedFileCategories.remove(category)

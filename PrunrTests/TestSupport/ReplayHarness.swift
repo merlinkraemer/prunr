@@ -64,7 +64,13 @@ enum ReplayHarness {
             TrackedPath(id: $0, url: URL(fileURLWithPath: home, isDirectory: true), displayName: "Home")
         }
         var feed = try await GrowthJournalService.shared.changeFeed(trackedPaths: trackedPaths, now: now, home: home)
-        feed = feed.resolvingOwners(with: catalog ?? AppCatalogProvider.shared.catalog(resolving: feed.ownerAppIdentifiers))
+        let resolvingCatalog: AppCatalog
+        if let catalog {
+            resolvingCatalog = catalog
+        } else {
+            resolvingCatalog = await AppCatalogProvider.shared.catalog(resolving: feed.ownerAppIdentifiers)
+        }
+        feed = feed.resolvingOwners(with: resolvingCatalog)
 
         let slots = try await DatabaseManager.shared.fetchChangeFeedInput(trackedPathIds: trackedPathIds).slots
 
