@@ -219,3 +219,5 @@
 2026-11-02 orchestrator O24c spawn: AppCatalog scan off main (sonnet medium, seat worktree)
 2026-11-02 orchestrator O24d spawn: hard links counted once, on O24a (sonnet medium, seat worktree)
 2026-11-02 orchestrator O24d on branch: 8d957dc, job queued
+2026-11-02 orchestrator O24c on branch: c0b3b4a, job queued
+2026-11-02 orchestrator O24e spawn: publish snapshot last (sonnet medium, seat worktree)
