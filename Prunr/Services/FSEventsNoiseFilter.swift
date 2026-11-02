@@ -5,18 +5,18 @@ import os
 /// This runs on every FSEvent so all checks use fast prefix/suffix matching.
 enum FSEventsNoiseFilter {
 
-    // MARK: - Directory prefix patterns (must end with /)
+    // MARK: - Directory patterns (must start and end with /)
 
-    private static let ignoredDirectoryPrefixes: [String] = [
-        "Library/Saved Application State/",
-        "Library/Caches/com.apple.Safari/",
-        "Library/Caches/CloudKit/",
-        "Library/Caches/com.apple.nsurlsessiond/",
-        "Library/WebKit/",
-        "Library/Metadata/",
-        ".Spotlight-V100/",
-        ".fseventsd/",
-        ".Trashes/",
+    private static let ignoredDirectoryInfixes: [String] = [
+        "/Library/Saved Application State/",
+        "/Library/Caches/com.apple.Safari/",
+        "/Library/Caches/CloudKit/",
+        "/Library/Caches/com.apple.nsurlsessiond/",
+        "/Library/WebKit/",
+        "/Library/Metadata/",
+        "/.Spotlight-V100/",
+        "/.fseventsd/",
+        "/.Trashes/",
     ]
 
     // MARK: - File name patterns
@@ -59,8 +59,8 @@ enum FSEventsNoiseFilter {
         }
 
         // Check directory prefixes (relative to any tracked root)
-        for prefix in ignoredDirectoryPrefixes {
-            if path.contains("/\(prefix)") {
+        for infix in ignoredDirectoryInfixes {
+            if path.contains(infix) {
                 return true
             }
         }

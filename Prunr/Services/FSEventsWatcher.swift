@@ -142,6 +142,8 @@ final class FSEventsWatcher {
     /// Callback context storage - needs to be stored to keep it alive
     private var callbackContext: FSEventStreamContext?
     private var callbackInfoPointer: UnsafeMutableRawPointer?
+
+    private nonisolated let eventQueue = DispatchQueue(label: "com.prunr.fsevents", qos: .utility)
     // MARK: - Initialization
 
     /// Creates a new FSEvents watcher for the given paths.
@@ -158,7 +160,7 @@ final class FSEventsWatcher {
 
     /// Starts monitoring the configured paths for file system events.
     ///
-    /// This creates an FSEventStream, schedules it on the main queue,
+    /// This creates an FSEventStream, schedules it on its own serial utility queue,
     /// and begins receiving notifications for changes.
     func start() {
         guard !isRunning else { return }
@@ -218,8 +220,10 @@ final class FSEventsWatcher {
                     rawEventCount: numEvents
                 ) else { return }
 
-                MainActor.assumeIsolated {
-                    watcher.emitChangeBatch(changeBatch)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        watcher.emitChangeBatch(changeBatch)
+                    }
                 }
             },
             &context,
@@ -234,21 +238,14 @@ final class FSEventsWatcher {
 
         stream = newStream
 
-        // Schedule on the MAIN queue (critical: FSEvents must be on main runloop to receive events)
-        // Use dispatch queue on macOS 13+ to avoid deprecation warning
-        if #available(macOS 13.0, *) {
-            FSEventStreamSetDispatchQueue(newStream, DispatchQueue.main)
-        } else {
-            FSEventStreamScheduleWithRunLoop(newStream, CFRunLoopGetMain(), RunLoop.Mode.default.rawValue as CFString)
-        }
+        FSEventStreamSetDispatchQueue(newStream, eventQueue)
 
         // Start the stream
         if FSEventStreamStart(newStream) {
             isRunning = true
         } else {
-            FSEventStreamInvalidate(newStream)
-            FSEventStreamRelease(newStream)
             stream = nil
+            Self.tearDown(newStream, on: eventQueue)
             releaseCallbackInfoIfNeeded()
         }
     }
@@ -266,13 +263,20 @@ final class FSEventsWatcher {
         isRunning = false
         stream = nil
 
-        // Stop and invalidate the stream
-        FSEventStreamStop(eventStream)
-        FSEventStreamInvalidate(eventStream)
-        FSEventStreamRelease(eventStream)
+        Self.tearDown(eventStream, on: eventQueue)
 
         releaseCallbackInfoIfNeeded()
-        stream = nil
+    }
+
+    /// Runs on the stream's own queue and blocks until no callback can still be
+    /// running, so the context pointer is safe to release afterwards. Callbacks
+    /// never wait on the main thread, so the synchronous hop cannot deadlock.
+    private nonisolated static func tearDown(_ eventStream: FSEventStreamRef, on queue: DispatchQueue) {
+        queue.sync {
+            FSEventStreamStop(eventStream)
+            FSEventStreamInvalidate(eventStream)
+            FSEventStreamRelease(eventStream)
+        }
     }
 
     // MARK: - Callback Management
@@ -337,9 +341,7 @@ final class FSEventsWatcher {
     deinit {
         // Clean up stream if still running
         if let eventStream = stream {
-            FSEventStreamStop(eventStream)
-            FSEventStreamInvalidate(eventStream)
-            FSEventStreamRelease(eventStream)
+            Self.tearDown(eventStream, on: eventQueue)
         }
 
         Self.releaseCallbackInfo(callbackInfoPointer)
