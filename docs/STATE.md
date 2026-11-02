@@ -18,7 +18,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 6. [accepted 2026-10-31 per rec: variant A, building as Q16 on drain/Q16-2026-10-31] Category groups net unrelated places ("Developer +9.9 GB" = +44 up, -34 down) and header vs rows don't reconcile — rec: per-place rows inside groups with up/down split + a "smaller changes" row; mockups first — branch: none
 7. [accepted 2026-10-30 per rec] Row captions "found by scan" / "found by scan · since Sun 18 Oct"; names drop generic parents ("game · dev" → "game") — review wording — branch: drain/Q8b-2026-10-30
 8. [accepted 2026-11-01 per rec, merged into stack] Places changing nonstop for >24h now show one change per day instead of one long change (O13 fix so their history still trims) - rec: accept, the feed math stays identical - branch: drain/O13-2026-11-01
-9. Land the UI/schema rest (Q8a v26 drilldown, Q8b captions, Q12 nav, Q16 category groups, Q18 v27 checkpoints, O13, O16), all green on the Mac on drain/stack-2026-11-01 153f4e7 (incl. O20); snapshots at https://dev.tail87069a.ts.net:4181/app/ - rec: review the snapshots after the holiday, then land in one merge - branch: drain/stack-2026-11-01
+9. Land the UI/schema rest (Q8a v26 drilldown, Q8b captions, Q12 nav, Q16 category groups, Q18 v27 checkpoints, O13, O16), all green on the Mac on drain/stack-2026-11-01 85ef096 (incl. O20, #23); snapshots at https://dev.tail87069a.ts.net:4181/app/ - rec: review the snapshots after the holiday, then land in one merge - branch: drain/stack-2026-11-01
 3. [accepted 2026-10-31 per rec] Rows drift as the 30-day window slides (root cause + design: docs/checkpoint-table-design-2026-10-31.md): v27 growthJournalCheckpoint, show real "building since" date, expire quiet counts after 90 days — building as Q18
 
 
@@ -68,7 +68,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O3 Tester feedback check [done 11-01: 1 positive item, no bugs; Vercel CLI now logged in on dev; recheck weekly]
 - O4 Q18 follow-ups [done] Q18 branch ea0304b: harness uses carries, run across cutoff held whole (no day split), first-prune perf test; 17 py tests pass; job 20261101-050228-...-ea0304bf7-test; doubt: always-active place never prunes
 - O5 replay drift tests [done] drain/Q18-2026-10-31 8a32284: make audit-test, 14 pass on dev; real data 81 shifts -> 0
-- O6 #23 outgoing Categories pane renders from a snapshot [on stack 85ef096, Mac job 20261102-030352; visual check later: drill in/out while index loads, no mid-slide flicker]; #25 onboarding onto PushPager dropped for now (refactor, no user value, triage rec)
+- O6 #23 outgoing Categories pane renders from a snapshot [on stack 85ef096, Mac green; visual check later: drill in/out while index loads, no mid-slide flicker]; #25 onboarding onto PushPager dropped for now (refactor, no user value, triage rec)
 - O7 Test gap audit [landed: docs/test-gap-audit-2026-11-01.md]; O7b 8 tests for top 5 gaps [on branch] drain/O7b-2026-11-01 66171c8, job 20261101-050252-...-66171c8c7-test; O7c 12 tests gaps 6-10 [on branch] 24eba7c, job 20261101-050622-...-24eba7cab-test
 - O9 DiskSpaceService unknown instead of 0 [on branch] drain/O9-2026-11-01 596ce37, 4 tests, job 20261101-050801-...-596ce3735-test; reconciled on stack branch
 - O10 abandoned-snapshot cleanup [done, not a bug] only a crash between markSnapshotComplete and rebuildWorkingSet triggers it (clean rollback); 2 pinning tests on drain/O10-2026-11-01 e48ceb2, job 20261101-051000-...-e48ceb2a9-test

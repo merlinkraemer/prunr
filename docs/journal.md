@@ -194,3 +194,4 @@
 2026-11-02 orchestrator O20 done: stack 153f4e7 green; writer wait 89 ms, first prune total 2.5 s accepted (one-time, background)
 2026-11-02 orchestrator O6a spawn: #23 snapshot outgoing pane on stack (sonnet medium); #25 deferred per triage
 2026-11-02 orchestrator O6a on branch: stack 85ef096 #23 frozen pane content, job queued
+2026-11-02 orchestrator O6a Mac green: stack 85ef096
