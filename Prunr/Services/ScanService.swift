@@ -551,7 +551,7 @@ actor ScanService {
         let sorted = Set(paths.map(DatabaseManager.normalizePath)).sorted()
         var roots: [String] = []
         for path in sorted {
-            if let last = roots.last, last == "/" || path.hasPrefix(last + "/") {
+            if roots.contains(where: { $0 == "/" || path.hasPrefix($0 + "/") }) {
                 continue
             }
             roots.append(path)
