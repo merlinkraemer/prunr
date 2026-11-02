@@ -169,6 +169,11 @@ actor ScanBackpressureGate {
 ///
 /// Optimized for speed: low-level FTS traversal avoids Foundation URL/resourceValues
 /// overhead on every filesystem entry.
+struct LinkedFileIdentity: Hashable {
+    let device: dev_t
+    let inode: ino_t
+}
+
 final class FileScanner {
 
     // MARK: - Properties
@@ -224,6 +229,14 @@ final class FileScanner {
 
     static func diskUsageBytes(for fileStat: stat) -> Int64 {
         Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
+    }
+
+    static func countedBytes(for fileStat: stat, seenLinks: inout Set<LinkedFileIdentity>) -> Int64 {
+        if fileStat.st_nlink > 1 {
+            let identity = LinkedFileIdentity(device: fileStat.st_dev, inode: fileStat.st_ino)
+            guard seenLinks.insert(identity).inserted else { return 0 }
+        }
+        return diskUsageBytes(for: fileStat)
     }
 
     // MARK: - Public API
@@ -312,6 +325,7 @@ final class FileScanner {
 
                 var count = 0
                 var lastLogCount = 0
+                var seenLinks = Set<LinkedFileIdentity>()
                 let logInterval = 5000
                 let normalizedIgnoredNames = Set(ignoredNames.map { $0.lowercased() })
                 let options = FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV
@@ -366,7 +380,7 @@ final class FileScanner {
                         guard !PrunrInternalPaths.isInternalPath(path) else { continue }
                         guard let statPointer = entry.pointee.fts_statp else { continue }
                         let stat = statPointer.pointee
-                        let sizeBytes = Self.diskUsageBytes(for: stat)
+                        let sizeBytes = Self.countedBytes(for: stat, seenLinks: &seenLinks)
                         let (category, subcategory) = GrowthCategory.classify(path: path)
                         let result = ScanResult(
                             path: path,

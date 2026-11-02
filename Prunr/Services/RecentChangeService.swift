@@ -270,7 +270,7 @@ actor RecentChangeService {
         }
         var fileStat = stat()
         guard lstat(url.path, &fileStat) == 0 else { return nil }
-        let sizeBytes = FileScanner.diskUsageBytes(for: fileStat)
+        let sizeBytes = FileScanner.diskUsageBytes(for: fileStat) / Int64(max(fileStat.st_nlink, 1))
         let path = url.path
         let (category, subcategory) = GrowthCategory.classify(path: path)
         return ScanResult(
