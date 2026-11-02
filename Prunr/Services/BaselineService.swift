@@ -471,7 +471,7 @@ actor BaselineService {
     /// - Returns: DiskAccountingResult with free-space tracking data
     /// - Throws: BaselineError if insufficient snapshots exist
     func getDiskAccounting(trackedPath: TrackedPath) async throws -> DiskAccountingResult {
-        let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
 
         guard snapshots.count >= 2 else {
             throw BaselineError.insufficientSnapshots
@@ -601,8 +601,16 @@ actor BaselineService {
     }
 
     private func loadInventoryWithTrends(trackedPath: TrackedPath) async throws -> [CategoryInventoryItem] {
+        let comparisonSnapshots = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id)
+        return try await loadInventoryWithTrends(trackedPath: trackedPath, comparisonSnapshots: comparisonSnapshots)
+    }
+
+    private func loadInventoryWithTrends(
+        trackedPath: TrackedPath,
+        comparisonSnapshots: GrowthComparisonSnapshots?
+    ) async throws -> [CategoryInventoryItem] {
         var inventory = try await loadCategoryInventory(trackedPath: trackedPath)
-        guard let comparisonSnapshots = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id) else {
+        guard let comparisonSnapshots else {
             return inventory
         }
 
@@ -638,6 +646,7 @@ actor BaselineService {
         var baselineSnapshotDate: Date?
 
         for trackedPath in trackedPaths {
+            let comparison: GrowthComparisonSnapshots?
             do {
                 let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
                 if let latestSnapshot = snapshots.first, let latestSnapshotId = latestSnapshot.id {
@@ -647,7 +656,8 @@ actor BaselineService {
                     }
                 }
 
-                if let comparison = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id) {
+                comparison = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id)
+                if let comparison {
                     latestSnapshotIdsByPath[trackedPath.id] = comparison.currentSnapshotId
                     // Use separate baseline when available, otherwise fall back to
                     // the current snapshot so that working-set changes (files added
@@ -672,7 +682,7 @@ actor BaselineService {
 
             let inventory: [CategoryInventoryItem]
             do {
-                inventory = try await loadInventoryWithTrends(trackedPath: trackedPath)
+                inventory = try await loadInventoryWithTrends(trackedPath: trackedPath, comparisonSnapshots: comparison)
             } catch {
                 logger.error("Error getting inventory for \(trackedPath.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 unavailableTrackedPathIDs.insert(trackedPath.id)

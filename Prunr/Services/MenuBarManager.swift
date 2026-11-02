@@ -2268,9 +2268,9 @@ final class MenuBarManager: NSObject {
             suppressGrowthIndicators ? suppressedGrowthItem(from: $0) : $0
         }.sorted(by: Self.inventorySortsBefore)
 
-        allCategories = visibleInventory
+        if allCategories != visibleInventory { allCategories = visibleInventory }
         currentInventorySnapshotIDsByPath = snapshotIDsByPath
-        growthBaselineDate = baselineDate
+        if growthBaselineDate != baselineDate { growthBaselineDate = baselineDate }
 
         reconcileDrillDownSelection()
         // Every journal write (watcher refresh, full scan, accept) ends in an
