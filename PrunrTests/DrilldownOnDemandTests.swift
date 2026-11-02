@@ -134,4 +134,28 @@ final class DrilldownOnDemandTests: PrunrTestCase {
             XCTAssertEqual(store.groupsByCategory, loadedGroups)
         }
     }
+
+    func testSameSizeRenameReloadsExpandedFiles() async throws {
+        try await withEmptyTemporaryDatabase { [self] id in
+            func scan(_ name: String) -> [ScanResult] {
+                [
+                    ScanResult(path: "/Data/Tree/big/\(name)", sizeBytes: 500, category: .developer, subcategory: .nodeModules),
+                    ScanResult(path: "/Data/Tree/big/other.js", sizeBytes: 400, category: .developer, subcategory: .nodeModules)
+                ]
+            }
+            _ = try await db.replaceWorkingSetSubtree(trackedPathId: id, rootPath: "/Data/Tree", entries: scan("before.js"))
+
+            let store = DrilldownStore()
+            await store.reload(trackedPathIds: [id])
+            await store.loadFiles(for: .developer, trackedPathIds: [id])
+            let beforePaths = store.groupsByCategory[.developer]?.flatMap(\.topFiles).map(\.path) ?? []
+            XCTAssertTrue(beforePaths.contains("/Data/Tree/big/before.js"))
+
+            _ = try await db.replaceWorkingSetSubtree(trackedPathId: id, rootPath: "/Data/Tree", entries: scan("after.js"))
+            await store.reload(trackedPathIds: [id])
+            let afterPaths = store.groupsByCategory[.developer]?.flatMap(\.topFiles).map(\.path) ?? []
+            XCTAssertTrue(afterPaths.contains("/Data/Tree/big/after.js"))
+            XCTAssertFalse(afterPaths.contains("/Data/Tree/big/before.js"))
+        }
+    }
 }

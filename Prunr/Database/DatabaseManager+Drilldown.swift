@@ -30,6 +30,16 @@ struct DrilldownGroupsSnapshot: Sendable, Equatable {
     let rows: [DrilldownGroupRow]
     /// Tracked paths whose index has not been built yet (first launch after the upgrade).
     let buildingTrackedPathIds: Set<UUID>
+    var topEntrySignatures: [TopEntrySignature] = []
+}
+
+struct TopEntrySignature: Sendable, Equatable {
+    let trackedPathId: String
+    let category: String
+    let groupKey: String
+    let entryCount: Int
+    let pathIdSum: Int64
+    let pathIdMax: Int64
 }
 
 struct DrilldownFileEntry: Sendable, Equatable {
@@ -787,11 +797,33 @@ extension DatabaseManager {
                 arguments: buildingArguments
             )
 
+            let signatures = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT trackedPathId, category, groupKey, COUNT(*) AS entryCount, SUM(pathId) AS pathIdSum, MAX(pathId) AS pathIdMax
+                    FROM workingSetTopEntry
+                    WHERE trackedPathId IN (\(placeholders))
+                    GROUP BY trackedPathId, category, groupKey
+                    ORDER BY trackedPathId, category, groupKey
+                    """,
+                arguments: StatementArguments(ids)
+            ).map { row in
+                TopEntrySignature(
+                    trackedPathId: row["trackedPathId"] ?? "",
+                    category: row["category"] ?? "",
+                    groupKey: row["groupKey"] ?? "",
+                    entryCount: row["entryCount"] ?? 0,
+                    pathIdSum: row["pathIdSum"] ?? 0,
+                    pathIdMax: row["pathIdMax"] ?? 0
+                )
+            }
+
             return DrilldownGroupsSnapshot(
                 rows: merged.values.sorted {
                     $0.totalBytes == $1.totalBytes ? $0.groupKey < $1.groupKey : $0.totalBytes > $1.totalBytes
                 },
-                buildingTrackedPathIds: Set(building.compactMap(UUID.init(uuidString:)))
+                buildingTrackedPathIds: Set(building.compactMap(UUID.init(uuidString:))),
+                topEntrySignatures: signatures
             )
         }
     }
