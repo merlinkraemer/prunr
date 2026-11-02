@@ -228,3 +228,7 @@
 2026-11-02 orchestrator O25 on branch: drain/hands-on-2026-11-02 f5078cb, 9 merges, conflicts FileScanner/ScanService/tests resolved, job queued
 2026-11-02 orchestrator O26 spawn: review #7 rest + #12 reset race, on hands-on branch (sonnet medium, seat worktree)
 2026-11-02 orchestrator O26 on branch: c26ac8e, job queued
+2026-11-02 orchestrator O25 hands-on branch Mac green: f5078cb
+2026-11-02 orchestrator O26 Mac green: c26ac8e
+2026-11-02 orchestrator O27a spawn: review #13 + #15 (sonnet medium, seat worktree)
+2026-11-02 orchestrator O27b spawn: review #14 clock skew (sonnet medium, seat worktree)
