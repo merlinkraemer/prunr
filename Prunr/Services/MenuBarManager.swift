@@ -736,6 +736,7 @@ final class MenuBarManager: NSObject {
     private var lastReconciliationAttemptAt: Date?
     private var consecutiveFailedReconciliations = 0
     private(set) var isReconciling = false
+    private(set) var isScopeChangeInProgress = false
     @ObservationIgnored
     nonisolated(unsafe) private var reconciliationTask: Task<Void, Never>?
     var lastScanStatusText: String {
@@ -1089,6 +1090,8 @@ final class MenuBarManager: NSObject {
 
     /// Public method to reset baseline (called by View)
     func performReset() async {
+        await quiesceScansForScopeChange()
+        defer { isScopeChangeInProgress = false }
         do {
             try await baselineService.resetBaseline()
             await refreshAfterBaselineReset()
@@ -1111,10 +1114,23 @@ final class MenuBarManager: NSObject {
     /// Applies scope changes that require deleting existing snapshots, then refreshes
     /// all visible menu-bar state so the popover reflects the new scope immediately.
     func applyScopeChanges() async throws {
+        await quiesceScansForScopeChange()
+        defer { isScopeChangeInProgress = false }
         try await baselineService.resetBaseline()
         await DatabaseCleanupService.shared.performAutoCleanup()
         await refreshAfterBaselineReset()
         configureFileWatcherIfNeeded()
+    }
+
+    func quiesceScansForScopeChange() async {
+        isScopeChangeInProgress = true
+        recentChangeTask?.cancel()
+        reconciliationTask?.cancel()
+        await ScanService.shared.cancelScan()
+        while isLoading || isAutoScanning || isReconciling || isProcessingRecentChanges || isInventoryRefreshInProgress {
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     private func refreshAfterBaselineReset() async {
@@ -1265,6 +1281,7 @@ final class MenuBarManager: NSObject {
             errorMessage = "No paths enabled in Settings"
             return false
         }
+        guard !isScopeChangeInProgress else { return false }
         guard beginInventoryRefresh() else { return false }
         defer { endInventoryRefresh() }
 
@@ -1630,7 +1647,7 @@ final class MenuBarManager: NSObject {
             return
         }
         guard isPermissionConfirmedForProtectedTraversal else { return }
-        guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else { return }
+        guard !isScopeChangeInProgress, !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else { return }
         isReconciling = true
         defer {
             isReconciling = false
@@ -3072,7 +3089,7 @@ final class MenuBarManager: NSObject {
             hasPendingRecentChanges = false
             return
         }
-        guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning, !isReconciling else {
+        guard !isScopeChangeInProgress, !isLoading, !isInventoryRefreshInProgress, !isAutoScanning, !isReconciling else {
             // The dirty-refresh task has already fired, so allow the pending work to
             // schedule a later retry once the full scan/reconciliation releases the DB.
             if pendingRecentChangeRequiresFullRefresh {
@@ -3296,9 +3313,12 @@ final class MenuBarManager: NSObject {
         let noiseFiltered = changedPaths.filter { url in
             !FSEventsNoiseFilter.shouldIgnore(url.path)
         }
-        guard !noiseFiltered.isEmpty else { return [] }
-        guard !shouldIgnoreAutoScanChanges(noiseFiltered) else { return [] }
-        return Set(noiseFiltered.map(\.standardizedFileURL))
+        let ignoredRoots = Self.autoScanIgnoredRoots(bundleURL: Bundle.main.bundleURL)
+        return Set(
+            noiseFiltered
+                .map(\.standardizedFileURL)
+                .filter { !Self.isIgnoredByAutoScan(path: $0.path, ignoredRoots: ignoredRoots) }
+        )
     }
 
     private func recordFullScanAttempt(at date: Date = Date()) {
@@ -3523,17 +3543,6 @@ final class MenuBarManager: NSObject {
 
     private func endInventoryRefresh() {
         isInventoryRefreshInProgress = false
-    }
-
-    private func shouldIgnoreAutoScanChanges(_ changedPaths: Set<URL>) -> Bool {
-        guard !changedPaths.isEmpty else { return true }
-
-        let ignoredRoots = Self.autoScanIgnoredRoots(bundleURL: Bundle.main.bundleURL)
-        let relevantChanges = changedPaths.filter { url in
-            !Self.isIgnoredByAutoScan(path: url.standardizedFileURL.path, ignoredRoots: ignoredRoots)
-        }
-
-        return relevantChanges.isEmpty
     }
 
     static func autoScanIgnoredRoots(bundleURL: URL) -> [URL] {

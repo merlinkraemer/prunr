@@ -535,6 +535,7 @@ private struct FolderSettingsTab: View {
             applyStatusText = "Switching folders."
             try await manager.applyScopeChanges()
         } else {
+            await scanService.cancelScan()
             try await baselineService.resetBaseline()
             applyStatusText = "Cleaning up."
             await DatabaseCleanupService.shared.performAutoCleanup()

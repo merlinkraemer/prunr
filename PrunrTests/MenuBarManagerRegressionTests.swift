@@ -13,6 +13,32 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
         XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/other.zip", ignoredRoots: roots))
         XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/Prunr.app-old/a", ignoredRoots: roots))
     }
+    func testAutoScanDoesNotIgnoreSiblingFolderWithSharedPrefix() {
+        let bundle = URL(fileURLWithPath: "/Users/test/Downloads/Prunr.app")
+        let roots = MenuBarManager.autoScanIgnoredRoots(bundleURL: bundle)
+
+        XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads-old/a.zip", ignoredRoots: roots))
+        XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads", ignoredRoots: roots))
+    }
+
+    func testScopeChangeWaitsForInFlightScanAndBlocksNewScans() async {
+        let manager = MenuBarManager()
+        manager.isLoading = true
+
+        let release = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            manager.isLoading = false
+        }
+        await manager.quiesceScansForScopeChange()
+        await release.value
+
+        XCTAssertFalse(manager.isLoading)
+        XCTAssertTrue(manager.isScopeChangeInProgress)
+        let started = await manager.loadInventory(isAutomatic: true)
+        XCTAssertFalse(started)
+        XCTAssertFalse(manager.isLoading)
+    }
+
     func testFooterActivityShowsReliableFullScanPercentage() {
         let manager = MenuBarManager()
         manager.isAutoScanning = true
