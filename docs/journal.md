@@ -262,3 +262,4 @@
 2026-11-02 orchestrator O32b spawn: combined review #4 drilldown stale after same-size rename (sonnet medium, seat worktree, base 5d19bd4)
 2026-11-02 orchestrator O32b on branch: 8e83f33, drilldown snapshot carries per-group top-entry signature (count, sum and max pathId) so a same-size rename reloads; doubt: one extra GROUP BY per reload, unmeasured; job queued
 2026-11-02 orchestrator O32a on branch: 2a02497, v28 drops idx_snapshotEntry_snapshotId + idx_workingSetEntry_trackedPath (exact prefixes); kept growthJournalBucket prefix index (small table); Waiting item 10; job queued
+2026-11-02 orchestrator O29 hands-on-2 Mac green: 5d19bd4 (with O30a O31a O31b); item 9 points at it

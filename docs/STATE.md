@@ -18,7 +18,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 6. [accepted 2026-10-31 per rec: variant A, building as Q16 on drain/Q16-2026-10-31] Category groups net unrelated places ("Developer +9.9 GB" = +44 up, -34 down) and header vs rows don't reconcile — rec: per-place rows inside groups with up/down split + a "smaller changes" row; mockups first — branch: none
 7. [accepted 2026-10-30 per rec] Row captions "found by scan" / "found by scan · since Sun 18 Oct"; names drop generic parents ("game · dev" → "game") — review wording — branch: drain/Q8b-2026-10-30
 8. [accepted 2026-11-01 per rec, merged into stack] Places changing nonstop for >24h now show one change per day instead of one long change (O13 fix so their history still trims) - rec: accept, the feed math stays identical - branch: drain/O13-2026-11-01
-9. Land the UI/schema rest after a hands-on session (Merlin 11-02 via PM: "same for prunr", can't judge from mockups) - plan: docs/hands-on-test-plan-2026-11-02.md (~40 min, real data, 10 steps, DB backup + rollback) - rec: run it at the next Mac session, then land on your ok - branch: drain/hands-on-2-2026-11-02 fa13b78 (stack + O23a-d + O24a-e + O26 + O27a-b + O28a-c, combined Mac green; O30a/O31a/O31b fixes join when green)
+9. Land the UI/schema rest after a hands-on session (Merlin 11-02 via PM: "same for prunr", can't judge from mockups) - plan: docs/hands-on-test-plan-2026-11-02.md (~40 min, real data, 10 steps, DB backup + rollback) - rec: run it at the next Mac session, then land on your ok - branch: drain/hands-on-2-2026-11-02 5d19bd4 (stack + O23-O31 fixes, combined Mac green)
 10. Drop 2 redundant DB indexes (v28 migration, schema; est 10-20% faster scan writes, smaller DB) - rec: merge into the hands-on build once Mac green - branch: drain/O32a-2026-11-02 2a02497
 3. [accepted 2026-10-31 per rec] Rows drift as the 30-day window slides (root cause + design: docs/checkpoint-table-design-2026-10-31.md): v27 growthJournalCheckpoint, show real "building since" date, expire quiet counts after 90 days — building as Q18
 
@@ -40,7 +40,7 @@ Done: O1-O22 (journal); reviews docs/perf-app-review-2026-11-02.md, docs/code-re
 - O30a quiesce wait 10 s timeout, aborts reset/scope change [drain/O30a-2026-11-02 0ee8a84, Mac green; new error copy needs Merlin]
 - O31a watcher: denied is not deleted + hard links one rule [drain/O31a-2026-11-02 c23d919, Mac green; new multi-link file counts 0 until next full scan]
 - O31b partial multi-path success re-arms full refresh [drain/O31b-2026-11-02 4042c28, Mac green; persistent failure = full refresh up to every 30 min]
-- O30a/O31a/O31b merged into hands-on-2 5d19bd4 [Mac pending]
+- O30a/O31a/O31b merged into hands-on-2 5d19bd4 [Mac green]
 - next: perf #6 indexes (schema, ask); combined review #4 (same-size rename stale drilldown, low)
 - known doubts: O27a more watcher churn from browser WAL (check in soak); O28c clicks ignored during long migration (visible, Merlin call)
 
