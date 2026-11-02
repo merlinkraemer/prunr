@@ -138,4 +138,72 @@ final class FileScannerHardLinkTests: XCTestCase {
         XCTAssertEqual(singleFirst, singleSecond)
         XCTAssertEqual(seen.count, 1)
     }
+
+    func testGateReservesChunkBoundedByFreeCapacity() async throws {
+        let gate = ScanBackpressureGate(maxOutstanding: 10)
+
+        let first = await gate.waitToProduce(upTo: 256)
+        XCTAssertEqual(first, 10)
+
+        async let blocked = gate.waitToProduce(upTo: 256)
+        try await Task.sleep(for: .milliseconds(40))
+        await gate.release(4)
+        let second = await blocked
+        XCTAssertEqual(second, 4)
+
+        async let closedWait = gate.waitToProduce(upTo: 5)
+        try await Task.sleep(for: .milliseconds(20))
+        await gate.close()
+        let afterClose = await closedWait
+        XCTAssertEqual(afterClose, 0)
+    }
+
+    func testProgressMarkIsBatchedByTimeOrEntryCount() {
+        XCTAssertFalse(FileScanner.shouldMarkProgress(now: 10.1, lastMarkedAt: 10, entriesSinceMark: 5))
+        XCTAssertTrue(FileScanner.shouldMarkProgress(now: 10.3, lastMarkedAt: 10, entriesSinceMark: 1))
+        XCTAssertTrue(FileScanner.shouldMarkProgress(
+            now: 10.01,
+            lastMarkedAt: 10,
+            entriesSinceMark: FileScanner.progressMarkEntryInterval
+        ))
+        XCTAssertLessThan(FileScanner.progressMarkInterval, FileScanner.defaultTraversalStallTimeout / 10)
+    }
+
+    func testChunkedReservationDeliversEveryFileUnderTightGate() async throws {
+        let directory = try makeDirectory(fileCount: 700)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let gate = ScanBackpressureGate(maxOutstanding: 300)
+        var scanned = 0
+        var pendingRelease = 0
+
+        for try await _ in makeScanner(consumerStallTimeout: 60)
+            .scan(directory, ignoredNames: [], backpressure: gate) {
+            scanned += 1
+            pendingRelease += 1
+            if pendingRelease == 100 {
+                await gate.release(pendingRelease)
+                pendingRelease = 0
+            }
+        }
+
+        XCTAssertEqual(scanned, 700)
+    }
+
+    func testCancellationStopsChunkedProducerPromptly() async throws {
+        let directory = try makeDirectory(fileCount: 700)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let gate = ScanBackpressureGate(maxOutstanding: 1_000)
+        let token = ScanCancellationToken()
+        var scanned = 0
+
+        for try await _ in makeScanner(consumerStallTimeout: 60)
+            .scan(directory, ignoredNames: [], cancellationToken: token, backpressure: gate) {
+            scanned += 1
+            if scanned == 10 { token.cancel() }
+        }
+
+        XCTAssertLessThan(scanned, 700)
+    }
 }
