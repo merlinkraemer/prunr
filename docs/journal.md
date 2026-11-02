@@ -214,3 +214,7 @@
 2026-11-02 orchestrator O23c Mac green: effb77a
 2026-11-02 orchestrator O24a spawn: review #6 watchdog sleep clock + #9 vanishing root (sonnet medium, seat worktree)
 2026-11-02 orchestrator O24b spawn: review #8 per-path scan results (sonnet medium, seat worktree)
+2026-11-02 orchestrator O24a on branch: 2f698d9, job queued
+2026-11-02 orchestrator O24b on branch: 1b7a139, job queued
+2026-11-02 orchestrator O24c spawn: AppCatalog scan off main (sonnet medium, seat worktree)
+2026-11-02 orchestrator O24d spawn: hard links counted once, on O24a (sonnet medium, seat worktree)
