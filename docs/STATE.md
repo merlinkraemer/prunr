@@ -83,7 +83,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O19 Land branch [landed on local main 7cbb6c8, Mac green, not pushed]
 - O21 App performance review [done] docs/perf-app-review-2026-11-02.md (eb635d2): top: hidden-popover reloads every 1.5 s while home busy; FSEvents on main queue with per-event string work; unused SUM after scans; AppCatalog scan on main; per-target watcher transactions; redundant indexes (schema, ask)
 - O22 Detailed bug/code review by area (scan + watcher, database + migrations, journal/feed, menu bar manager/UI state, settings/onboarding, updates/feedback); report docs/code-review-2026-11-02.md ranked, then fixes on branches [running]
-- O23 Fix top findings from O21/O22 (one branch each, Mac-tested, non-UI land on local main): O23a hidden-popover reload deferral + remove unused SUM [running]; next O23b FSEvents off main + batched watcher transaction
+- O23 Fix top findings from O21/O22 (one branch each, Mac-tested, non-UI land on local main): O23a hidden-popover reload deferral + remove unused SUM [on branch drain/O23a-2026-11-02 9a3700e, job queued; note Settings window category list may be stale while panel hidden]; O23b FSEvents off main + one watcher transaction [running]
 - O8 Perf [done] docs/perf-baseline-2026-11-02.md (dbfba72): real data fast (feed 30 ms); worst: first prune after upgrade blocks writers ~700 ms; 200k-bucket feed rebuild 2.2 s; scan persistence
 - O20 Chunked prune [done, on stack 153f4e7, Mac green] longest writer wait 89 ms (was ~700); one-time first prune total 2.5 s (was 0.7, background, Debug); daily prune is one chunk, unchanged
 

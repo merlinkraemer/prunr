@@ -198,3 +198,5 @@
 2026-11-02 orchestrator decided: Merlin 11-02 "without my reviews go for analyzing performance, general app performance and detailed bug / code review"; O21 O22 spawned (opus medium, seat, read-only reports)
 2026-11-02 orchestrator O21 done: perf app review eb635d2
 2026-11-02 orchestrator O23a spawn: defer hidden-popover reloads + drop unused SUM (sonnet medium, seat worktree)
+2026-11-02 orchestrator O23a on branch: 9a3700e, job queued
+2026-11-02 orchestrator O23b spawn: FSEvents off main + batched watcher writes (sonnet medium, seat worktree)
