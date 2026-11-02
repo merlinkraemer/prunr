@@ -842,6 +842,32 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
+    func testDiskAccountingUsesOnlyTheTwoNewestSnapshots() async throws {
+        try await withTemporaryDatabase { trackedPathId, oldestId in
+            let trackedPath = self.makeTrackedPath(trackedPathId)
+            try await DatabaseManager.shared.replaceCategorySnapshots(
+                snapshotId: oldestId,
+                totals: [.developer: 100 * Self.mb]
+            )
+
+            var previousTotal = 8 * Self.mb
+            for total in [8 * Self.mb, 11 * Self.mb] {
+                previousTotal = total
+                let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+                let snapshotId = try XCTUnwrap(snapshot.id)
+                try await DatabaseManager.shared.replaceCategorySnapshots(
+                    snapshotId: snapshotId,
+                    totals: [.developer: total]
+                )
+            }
+
+            let accounting = try await BaselineService.shared.getDiskAccounting(trackedPath: trackedPath)
+
+            XCTAssertEqual(previousTotal, 11 * Self.mb)
+            XCTAssertEqual(accounting.explainedDelta, 3 * Self.mb)
+        }
+    }
+
     func testDiskAccountingWithoutFreeBytesReportsOnlyExplainedDelta() async throws {
         try await withTemporaryDatabase { trackedPathId, previousId in
             let trackedPath = self.makeTrackedPath(trackedPathId)

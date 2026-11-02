@@ -126,6 +126,12 @@ final class DrilldownOnDemandTests: PrunrTestCase {
             XCTAssertFalse(store.isBuilding)
             XCTAssertEqual(store.groupsByCategory[.developer]?.map(\.totalBytes), indexedDeveloper.map(\.totalBytes))
             XCTAssertEqual(store.groupsByCategory[.cachesAndSystem]?.map(\.id), indexedCaches.map(\.id))
+
+            await store.loadFiles(for: .developer, trackedPathIds: [id])
+            let loadedGroups = store.groupsByCategory
+            await store.reload(trackedPathIds: [id])
+            XCTAssertTrue(store.isFilesLoaded(for: .developer))
+            XCTAssertEqual(store.groupsByCategory, loadedGroups)
         }
     }
 }

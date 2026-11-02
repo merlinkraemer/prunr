@@ -19,6 +19,7 @@ final class DrilldownStore {
     @ObservationIgnored private var storedFilesByGroupID: [String: [GrowthItem]] = [:]
     @ObservationIgnored private var ownerFileCounts: [String: Int] = [:]
     @ObservationIgnored private var generation: UInt64 = 0
+    @ObservationIgnored private var appliedSnapshot: DrilldownGroupsSnapshot?
     @ObservationIgnored private let db = DatabaseManager.shared
     @ObservationIgnored private let logger = Logger(subsystem: "com.prunr.app", category: "Drilldown")
 
@@ -26,6 +27,7 @@ final class DrilldownStore {
 
     func clear() {
         generation &+= 1
+        appliedSnapshot = nil
         groupsByCategory = [:]
         isBuilding = false
         loadingFileCategories = []
@@ -38,6 +40,7 @@ final class DrilldownStore {
     /// Re-reads every group. Categories whose files were loaded are re-read too,
     /// keeping as many files per group as were shown.
     func reload(trackedPathIds: [UUID]) async {
+        let previousGeneration = generation
         generation &+= 1
         let requestGeneration = generation
         let snapshot: DrilldownGroupsSnapshot
@@ -46,31 +49,39 @@ final class DrilldownStore {
         } catch {
             logger.error("Drilldown groups read failed: \(error.localizedDescription, privacy: .public)")
             if requestGeneration == generation {
-                groupsReadFailed = true
+                if !groupsReadFailed { groupsReadFailed = true }
+                appliedSnapshot = nil
             }
+            return
+        }
+        if snapshot == appliedSnapshot, !isBuilding, !groupsReadFailed, failedFileCategories.isEmpty, requestGeneration == generation {
+            generation = previousGeneration
             return
         }
         let builtGroups = snapshot.buildingTrackedPathIds.isEmpty ? await makeGroups(snapshot.rows) : [:]
         guard requestGeneration == generation else { return }
-        groupsReadFailed = false
+        if groupsReadFailed { groupsReadFailed = false }
 
         let shownCounts = groupsByCategory.values.joined().reduce(into: [String: Int]()) {
             $0[$1.id] = $1.topFiles.count
         }
         let reloadCategories = loadedFileCategories
-        isBuilding = !snapshot.buildingTrackedPathIds.isEmpty
+        let nowBuilding = !snapshot.buildingTrackedPathIds.isEmpty
+        if isBuilding != nowBuilding { isBuilding = nowBuilding }
         if isBuilding {
-            groupsByCategory = groupsByCategory.filter { reloadCategories.contains($0.key) }
+            let kept = groupsByCategory.filter { reloadCategories.contains($0.key) }
+            if kept != groupsByCategory { groupsByCategory = kept }
         } else {
             ownerFileCounts = Dictionary(
                 snapshot.rows.filter { DrilldownGroupKey.isOwnerGroupKey($0.groupKey) }.map { ($0.groupKey, $0.fileCount) },
                 uniquingKeysWith: +
             )
-            groupsByCategory = builtGroups
+            if builtGroups != groupsByCategory { groupsByCategory = builtGroups }
         }
+        appliedSnapshot = snapshot
 
-        loadedFileCategories = []
-        failedFileCategories = []
+        if !loadedFileCategories.isEmpty { loadedFileCategories = [] }
+        if !failedFileCategories.isEmpty { failedFileCategories = [] }
         storedFilesByGroupID = [:]
         for category in reloadCategories where isBuilding || groupsByCategory[category] != nil {
             await loadFiles(for: category, trackedPathIds: trackedPathIds, shownCounts: shownCounts)
