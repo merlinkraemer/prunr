@@ -210,3 +210,7 @@
 2026-11-02 orchestrator O23d Mac green: 066bc72
 2026-11-02 orchestrator O23a Mac: 1 test bug (file sizes are block-allocated), fixed 183ff1a, requeued
 2026-11-02 orchestrator O23c Mac: real bug in outermostPaths (sorted sibling b-old hid nested path), fixed effb77a, requeued
+2026-11-02 orchestrator O23a Mac green: 183ff1a
+2026-11-02 orchestrator O23c Mac green: effb77a
+2026-11-02 orchestrator O24a spawn: review #6 watchdog sleep clock + #9 vanishing root (sonnet medium, seat worktree)
+2026-11-02 orchestrator O24b spawn: review #8 per-path scan results (sonnet medium, seat worktree)
