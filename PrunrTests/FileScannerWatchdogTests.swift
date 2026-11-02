@@ -85,59 +85,6 @@ final class FileScannerWatchdogTests: XCTestCase {
         XCTAssertNil(FileScanner.stalledDuration(waiting, now: now, traversalStallTimeout: 30, consumerStallTimeout: 900))
         XCTAssertNotNil(FileScanner.stalledDuration(waitingTooLong, now: now, traversalStallTimeout: 30, consumerStallTimeout: 900))
     }
-}
-
-final class FileScannerHardLinkTests: XCTestCase {
-    func testHardLinkedFileCountsBytesOnce() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PrunrHardLinkTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let original = directory.appendingPathComponent("original.bin")
-        let link = directory.appendingPathComponent("link.bin")
-        try Data(repeating: 7, count: 64 * 1024).write(to: original)
-        try FileManager.default.linkItem(at: original, to: link)
-
-        var fileStat = stat()
-        XCTAssertEqual(lstat(original.path, &fileStat), 0)
-        let singleLinkBytes = FileScanner.diskUsageBytes(for: fileStat)
-
-        let scanner = FileScanner()
-        var total: Int64 = 0
-        var entries = 0
-        for try await result in scanner.scan(directory, ignoredNames: []) {
-            total += result.sizeBytes
-            entries += 1
-        }
-
-        XCTAssertEqual(entries, 2)
-        XCTAssertEqual(total, singleLinkBytes)
-    }
-
-    func testCountedBytesCountsOnlyFirstLinkAndAllSingleLinkFiles() {
-        var multi = stat()
-        multi.st_nlink = 2
-        multi.st_dev = 1
-        multi.st_ino = 10
-        multi.st_blocks = 8
-        var single = stat()
-        single.st_nlink = 1
-        single.st_dev = 1
-        single.st_ino = 11
-        single.st_blocks = 8
-
-        var seen = Set<LinkedFileIdentity>()
-        let first = FileScanner.countedBytes(for: multi, seenLinks: &seen)
-        let second = FileScanner.countedBytes(for: multi, seenLinks: &seen)
-        let singleFirst = FileScanner.countedBytes(for: single, seenLinks: &seen)
-        let singleSecond = FileScanner.countedBytes(for: single, seenLinks: &seen)
-
-        XCTAssertEqual(first, FileScanner.diskUsageBytes(for: multi))
-        XCTAssertEqual(second, 0)
-        XCTAssertEqual(singleFirst, singleSecond)
-        XCTAssertEqual(seen.count, 1)
-    }
 
     func testGateReservesChunkBoundedByFreeCapacity() async throws {
         let gate = ScanBackpressureGate(maxOutstanding: 10)
@@ -205,5 +152,58 @@ final class FileScannerHardLinkTests: XCTestCase {
         }
 
         XCTAssertLessThan(scanned, 700)
+    }
+}
+
+final class FileScannerHardLinkTests: XCTestCase {
+    func testHardLinkedFileCountsBytesOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PrunrHardLinkTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let original = directory.appendingPathComponent("original.bin")
+        let link = directory.appendingPathComponent("link.bin")
+        try Data(repeating: 7, count: 64 * 1024).write(to: original)
+        try FileManager.default.linkItem(at: original, to: link)
+
+        var fileStat = stat()
+        XCTAssertEqual(lstat(original.path, &fileStat), 0)
+        let singleLinkBytes = FileScanner.diskUsageBytes(for: fileStat)
+
+        let scanner = FileScanner()
+        var total: Int64 = 0
+        var entries = 0
+        for try await result in scanner.scan(directory, ignoredNames: []) {
+            total += result.sizeBytes
+            entries += 1
+        }
+
+        XCTAssertEqual(entries, 2)
+        XCTAssertEqual(total, singleLinkBytes)
+    }
+
+    func testCountedBytesCountsOnlyFirstLinkAndAllSingleLinkFiles() {
+        var multi = stat()
+        multi.st_nlink = 2
+        multi.st_dev = 1
+        multi.st_ino = 10
+        multi.st_blocks = 8
+        var single = stat()
+        single.st_nlink = 1
+        single.st_dev = 1
+        single.st_ino = 11
+        single.st_blocks = 8
+
+        var seen = Set<LinkedFileIdentity>()
+        let first = FileScanner.countedBytes(for: multi, seenLinks: &seen)
+        let second = FileScanner.countedBytes(for: multi, seenLinks: &seen)
+        let singleFirst = FileScanner.countedBytes(for: single, seenLinks: &seen)
+        let singleSecond = FileScanner.countedBytes(for: single, seenLinks: &seen)
+
+        XCTAssertEqual(first, FileScanner.diskUsageBytes(for: multi))
+        XCTAssertEqual(second, 0)
+        XCTAssertEqual(singleFirst, singleSecond)
+        XCTAssertEqual(seen.count, 1)
     }
 }
