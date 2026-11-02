@@ -208,3 +208,5 @@
 2026-11-02 orchestrator O23c on branch: 599ed4a, job queued
 2026-11-02 orchestrator O23b Mac green: watcher burst200 ~59 ms (was ~80)
 2026-11-02 orchestrator O23d Mac green: 066bc72
+2026-11-02 orchestrator O23a Mac: 1 test bug (file sizes are block-allocated), fixed 183ff1a, requeued
+2026-11-02 orchestrator O23c Mac: real bug in outermostPaths (sorted sibling b-old hid nested path), fixed effb77a, requeued
