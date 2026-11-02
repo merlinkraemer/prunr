@@ -1276,6 +1276,11 @@ final class MenuBarManager: NSObject {
                 if snapshots.isEmpty, let firstFailure {
                     throw firstFailure
                 }
+                if firstFailure != nil {
+                    needsAuthoritativeReconciliation = true
+                    pendingRecentChangeRequiresFullRefresh = true
+                    hasPendingRecentChanges = true
+                }
                 snapshotsByPath = snapshots
             }
 

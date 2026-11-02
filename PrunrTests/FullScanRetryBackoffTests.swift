@@ -67,6 +67,8 @@ final class FullScanRetryBackoffTests: PrunrTestCase {
             )
             XCTAssertEqual(availableSnapshots.count, 1)
             XCTAssertTrue(missingSnapshots.isEmpty)
+            XCTAssertTrue(manager.needsAuthoritativeReconciliation)
+            XCTAssertTrue(manager.hasPendingRecentChanges)
         }
     }
 
@@ -86,6 +88,25 @@ final class FullScanRetryBackoffTests: PrunrTestCase {
 
             XCTAssertFalse(succeeded)
             XCTAssertEqual(manager.consecutiveFailedFullScans, 1)
+        }
+    }
+
+    func testFullySuccessfulMultiPathScanLeavesNoPendingReconciliation() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let manager = MenuBarManager()
+            manager.noBaseline = true
+            let roots = try (0..<2).map { index in
+                try self.createTrackedPathDirectory(named: "PrunrBothOK\(index)")
+            }
+            defer { roots.forEach { try? FileManager.default.removeItem(at: $0) } }
+            let paths = roots.enumerated().map { index, root in
+                TrackedPath(url: root, displayName: "OK\(index)")
+            }
+
+            let succeeded = await manager.loadInventory(trackedPathsOverride: paths)
+
+            XCTAssertTrue(succeeded)
+            XCTAssertFalse(manager.needsAuthoritativeReconciliation)
         }
     }
 }
