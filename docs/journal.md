@@ -202,3 +202,5 @@
 2026-11-02 orchestrator O23b spawn: FSEvents off main + batched watcher writes (sonnet medium, seat worktree)
 2026-11-02 orchestrator O22 done: code review 3e678b6; finding 5 (XDEV) checked on Mac, not real
 2026-11-02 orchestrator O23c spawn: denied-folder carry-forward + cleanup keep newest (opus medium, seat worktree)
+2026-11-02 orchestrator O23b on branch: 1ce72f5, job queued
+2026-11-02 orchestrator O23d spawn: shared skip predicate scan/watcher on O23b (sonnet medium, seat worktree)
