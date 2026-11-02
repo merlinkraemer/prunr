@@ -83,7 +83,7 @@ final class IdleCPUTests: PrunrTestCase {
                 let feedRefreshesBefore = manager.changeFeedRefreshCount
                 let sizeBefore = manager.allCategories.reduce(Int64(0)) { $0 + $1.currentSizeBytes }
 
-                let growthBytes = 100_000
+                let growthBytes = 102_400
                 let refreshCount = 5
                 for index in 0..<refreshCount {
                     let file = trackedRoot.appendingPathComponent("noisy-\(index).bin")
