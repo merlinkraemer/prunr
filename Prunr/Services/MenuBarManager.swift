@@ -130,6 +130,9 @@ final class MenuBarManager: NSObject {
     private var statusItem: NSStatusItem?
     var panel: DropdownPanel?
     var isPopoverShown = false
+    private(set) var presentationStale = false
+    private(set) var inventoryReloadCount = 0
+    private(set) var changeFeedRefreshCount = 0
     var usePanel = true // Use panel instead of popover for native dropdown look
 
     // For debugging menubar click reliability (ISS-013)
@@ -598,9 +601,6 @@ final class MenuBarManager: NSObject {
     var totalBytes: Int64 = 0
     var usedBytes: Int64 = 0
     var freeBytes: Int64 = 0
-    var monitoredPathSizeBytes: Int64 = 0
-    var pathSizeBytesByID: [UUID: Int64] = [:]
-    var isCalculatingPathSize = false
 
     // Cache for disk space updates (avoid excessive disk checks)
     private var lastFreeSpaceUpdate: Date?
@@ -798,7 +798,6 @@ final class MenuBarManager: NSObject {
         totalBytes = MarketingSample.totalBytes
         freeBytes = MarketingSample.freeBytes
         usedBytes = totalBytes - freeBytes
-        monitoredPathSizeBytes = usedBytes
         growthBaselineDate = baselineDate
         noBaseline = false
         isPermissionConfirmedForProtectedTraversal = true
@@ -1116,7 +1115,6 @@ final class MenuBarManager: NSObject {
         await DatabaseCleanupService.shared.performAutoCleanup()
         await refreshAfterBaselineReset()
         configureFileWatcherIfNeeded()
-        await updatePathSize()
     }
 
     private func refreshAfterBaselineReset() async {
@@ -1440,8 +1438,6 @@ final class MenuBarManager: NSObject {
             scheduleReconciliationBackstop()
         }
 
-        await updatePathSize()
-
         // Flush any FSEvents that arrived during the scan
         schedulePendingRecentChangeRefresh()
         return completedSuccessfully
@@ -1452,6 +1448,11 @@ final class MenuBarManager: NSObject {
     /// Panel-open variant: trusts already-displayable inventory so opening the
     /// popover does not re-aggregate snapshots just because time passed.
     func loadInventoryFromLatestSnapshotIfStale() async {
+        if presentationStale, !isInventoryRefreshInProgress {
+            presentationStale = false
+            await loadInventoryFromLatestSnapshot()
+            return
+        }
         if hasDisplayableInventory,
            lastInventoryFromSnapshotLoadedAt != nil,
            !currentInventorySnapshotIDsByPath.isEmpty {
@@ -1460,11 +1461,22 @@ final class MenuBarManager: NSObject {
         await loadInventoryFromLatestSnapshot()
     }
 
+    func refreshPresentationOnOpen() async {
+        guard presentationStale, !isInventoryRefreshInProgress else {
+            await refreshChangeFeed()
+            return
+        }
+        presentationStale = false
+        await loadInventoryFromLatestSnapshot(refreshedAt: Date())
+        scheduleDrilldownRefill()
+    }
+
     func loadInventoryFromLatestSnapshot(refreshedAt: Date? = nil) async {
         guard beginInventoryRefresh() else { return }
         defer {
             endInventoryRefresh()
             lastInventoryFromSnapshotLoadedAt = Date()
+            inventoryReloadCount += 1
         }
 
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
@@ -2239,6 +2251,7 @@ final class MenuBarManager: NSObject {
     /// Reads the change list now. The value is replaced only when it differs,
     /// so an unchanged journal does not redraw the list.
     func refreshChangeFeed() async {
+        changeFeedRefreshCount += 1
         let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         let result: ChangeFeedResult
         do {
@@ -2609,46 +2622,6 @@ final class MenuBarManager: NSObject {
                 self?.configureFileWatcherIfNeeded()
             }
         }
-    }
-
-    /// Updates the monitored path size from the latest baseline or current state
-    func updatePathSize() async {
-        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-        guard let trackedPath = primaryTrackedPath(from: trackedPaths) else {
-            self.monitoredPathSizeBytes = 0
-            self.pathSizeBytesByID = [:]
-            return
-        }
-
-        await updatePathSizesFromLatestSnapshots(for: trackedPaths, primaryPath: trackedPath)
-    }
-
-    private func updatePathSizesFromLatestSnapshots(for trackedPaths: [TrackedPath], primaryPath: TrackedPath) async {
-        isCalculatingPathSize = true
-        defer { isCalculatingPathSize = false }
-
-        var sizesByID: [UUID: Int64] = [:]
-
-        for trackedPath in trackedPaths {
-            do {
-                let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
-                guard let latestId = snapshots.first?.id else {
-                    sizesByID[trackedPath.id] = 0
-                    continue
-                }
-
-                sizesByID[trackedPath.id] = try await DatabaseManager.shared.sumEntrySizes(for: latestId)
-            } catch {
-                sizesByID[trackedPath.id] = 0
-            }
-        }
-
-        pathSizeBytesByID = sizesByID
-        monitoredPathSizeBytes = sizesByID[primaryPath.id] ?? 0
-    }
-
-    func pathSizeBytes(for trackedPath: TrackedPath) -> Int64 {
-        pathSizeBytesByID[trackedPath.id] ?? 0
     }
 
     func closePopover() {
@@ -3204,8 +3177,12 @@ final class MenuBarManager: NSObject {
             lastDetectedChangeAt = Date()
             // Reload inventory and drilldown index from DB ground truth: the
             // incremental refresh already updated every working-set table.
-            await loadInventoryFromLatestSnapshot(refreshedAt: Date())
-            scheduleDrilldownRefill()
+            if isPopoverShown {
+                await loadInventoryFromLatestSnapshot(refreshedAt: Date())
+                scheduleDrilldownRefill()
+            } else {
+                presentationStale = true
+            }
         }
 
         hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
