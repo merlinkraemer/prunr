@@ -357,6 +357,28 @@ final class PerfBaselineTests: PrunrTestCase {
         }
     }
 
+    func testPerfScanTraversalSynthetic() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PrunrPerfTraversal-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for dir in 0..<50 {
+            let directory = root.appendingPathComponent("dir\(dir)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            for file in 0..<200 {
+                try Data().write(to: directory.appendingPathComponent("f\(file)"))
+            }
+        }
+        let scanner = FileScanner()
+        try await self.time("scan.traversal.10k", runs: 3) {
+            let gate = ScanBackpressureGate(maxOutstanding: 20_000)
+            var scanned = 0
+            for try await _ in scanner.scan(root, ignoredNames: [], backpressure: gate) {
+                scanned += 1
+            }
+            XCTAssertEqual(scanned, 10_000)
+        }
+    }
+
     // MARK: - Startup
 
     func testPerfStartupOnEmptyDatabase() throws {

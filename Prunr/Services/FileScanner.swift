@@ -72,7 +72,10 @@ final class ScanTraversalState: @unchecked Sendable {
     }
 
     func markProgress(path: String) {
-        let current = uptime()
+        markProgress(path: path, at: uptime())
+    }
+
+    func markProgress(path: String, at current: TimeInterval) {
         state.withLock {
             $0.lastProgressAt = current
             $0.currentPath = path
@@ -113,7 +116,7 @@ final class ScanTraversalState: @unchecked Sendable {
 actor ScanBackpressureGate {
     private let maxOutstanding: Int
     private var outstanding = 0
-    private var waiters: [CheckedContinuation<Bool, Never>] = []
+    private var waiters: [(count: Int, continuation: CheckedContinuation<Int, Never>)] = []
     private var isClosed = false
 
     init(maxOutstanding: Int = 20_000) {
@@ -124,17 +127,26 @@ actor ScanBackpressureGate {
     /// Returns `false` after `close()` so cancellation cannot deadlock or yield
     /// another result after the consumer has stopped.
     func waitToProduce() async -> Bool {
-        guard !isClosed else { return false }
+        await waitToProduce(upTo: 1) > 0
+    }
+
+    /// Wait until there is capacity, then reserve between 1 and `count` slots
+    /// (as many as are free right now, never beyond `maxOutstanding`).
+    /// Returns the number reserved, or 0 after `close()`.
+    func waitToProduce(upTo count: Int) async -> Int {
+        let requested = max(1, count)
+        guard !isClosed else { return 0 }
         if outstanding < maxOutstanding {
-            outstanding += 1
-            return true
+            let granted = min(requested, maxOutstanding - outstanding)
+            outstanding += granted
+            return granted
         }
 
-        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Int, Never>) in
             if isClosed {
-                continuation.resume(returning: false)
+                continuation.resume(returning: 0)
             } else {
-                waiters.append(continuation)
+                waiters.append((requested, continuation))
             }
         }
     }
@@ -153,14 +165,16 @@ actor ScanBackpressureGate {
         let pending = waiters
         waiters.removeAll(keepingCapacity: false)
         for waiter in pending {
-            waiter.resume(returning: false)
+            waiter.continuation.resume(returning: 0)
         }
     }
 
     private func resumeWaitersIfNeeded() {
         while outstanding < maxOutstanding, !waiters.isEmpty {
-            outstanding += 1
-            waiters.removeFirst().resume(returning: true)
+            let waiter = waiters.removeFirst()
+            let granted = min(waiter.count, maxOutstanding - outstanding)
+            outstanding += granted
+            waiter.continuation.resume(returning: granted)
         }
     }
 }
@@ -182,6 +196,9 @@ final class FileScanner {
     static let defaultTraversalStallTimeout: TimeInterval = 30
     static let defaultConsumerStallTimeout: TimeInterval = 900
     static let defaultWatchdogInterval: TimeInterval = 5
+    static let producerReservationChunk = 256
+    static let progressMarkInterval: TimeInterval = 0.25
+    static let progressMarkEntryInterval = 512
 
     private let traversalStallTimeout: TimeInterval
     private let consumerStallTimeout: TimeInterval
@@ -212,6 +229,10 @@ final class FileScanner {
         }
         let stalledFor = now - snapshot.lastProgressAt
         return stalledFor >= traversalStallTimeout ? stalledFor : nil
+    }
+
+    static func shouldMarkProgress(now: TimeInterval, lastMarkedAt: TimeInterval, entriesSinceMark: Int) -> Bool {
+        entriesSinceMark >= progressMarkEntryInterval || now - lastMarkedAt >= progressMarkInterval
     }
 
     static func diskUsageBytes(for fileStat: stat) -> Int64 {
@@ -311,6 +332,9 @@ final class FileScanner {
                 let rootDevice = rootStat.st_dev
 
                 var count = 0
+                var reservedSlots = 0
+                var lastProgressMarkAt = traversalState.now()
+                var entriesSinceProgressMark = 0
                 var lastLogCount = 0
                 var seenLinks = Set<LinkedFileIdentity>()
                 let logInterval = 5000
@@ -354,7 +378,17 @@ final class FileScanner {
                     let info = Int32(entry.pointee.fts_info)
                     let level = Int(entry.pointee.fts_level)
                     let path = String(cString: entry.pointee.fts_path)
-                    traversalState.markProgress(path: path)
+                    entriesSinceProgressMark += 1
+                    let clock = traversalState.now()
+                    if Self.shouldMarkProgress(
+                        now: clock,
+                        lastMarkedAt: lastProgressMarkAt,
+                        entriesSinceMark: entriesSinceProgressMark
+                    ) {
+                        traversalState.markProgress(path: path, at: clock)
+                        lastProgressMarkAt = clock
+                        entriesSinceProgressMark = 0
+                    }
 
                     switch info {
                     case FTS_D:
@@ -379,15 +413,19 @@ final class FileScanner {
                             fileDates: FileDates(stat)
                         )
                         if let backpressure {
-                            traversalState.beginConsumerWait()
-                            let granted = await backpressure.waitToProduce()
-                            traversalState.endConsumerWait()
-                            guard granted else {
-                                break scanLoop
+                            if reservedSlots == 0 {
+                                traversalState.beginConsumerWait()
+                                reservedSlots = await backpressure.waitToProduce(upTo: Self.producerReservationChunk)
+                                traversalState.endConsumerWait()
+                                lastProgressMarkAt = traversalState.now()
+                                guard reservedSlots > 0 else {
+                                    break scanLoop
+                                }
+                                if Task.isCancelled || cancellationToken?.isCancelled == true {
+                                    break scanLoop
+                                }
                             }
-                            if Task.isCancelled || cancellationToken?.isCancelled == true {
-                                break scanLoop
-                            }
+                            reservedSlots -= 1
                         }
                         continuation.yield(result)
                         count += 1
