@@ -243,3 +243,4 @@
 2026-11-02 orchestrator O28c on branch: 51cad7e, job queued
 2026-11-02 orchestrator O28a O28c Mac green: 9499092 51cad7e
 2026-11-02 orchestrator O28b Mac: compile error, new tests placed in the hard-link class without helpers; moved, d60eb46 requeued
+2026-11-02 orchestrator O29 spawn: hands-on-2 merge O26+O27a+O27b+O28a+O28c, clean 46657f3, job queued (O28b joins when green)
