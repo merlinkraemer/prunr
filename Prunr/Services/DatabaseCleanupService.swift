@@ -512,10 +512,10 @@ actor DatabaseCleanupService {
                     db,
                     sql: """
                     SELECT * FROM snapshot
-                    WHERE trackedPathId = ?
-                    ORDER BY createdAt DESC
+                    WHERE trackedPathId = ? AND lifecycle = ?
+                    ORDER BY createdAt DESC, id DESC
                     """,
-                    arguments: [pathId]
+                    arguments: [pathId, Snapshot.Lifecycle.complete.rawValue]
                 )
 
                 // Find snapshots beyond the retention limit that still have entries
@@ -622,10 +622,10 @@ actor DatabaseCleanupService {
                     db,
                     sql: """
                     SELECT * FROM snapshot
-                    WHERE trackedPathId = ?
-                    ORDER BY createdAt DESC
+                    WHERE trackedPathId = ? AND lifecycle = ?
+                    ORDER BY createdAt DESC, id DESC
                     """,
-                    arguments: [pathId]
+                    arguments: [pathId, Snapshot.Lifecycle.complete.rawValue]
                 )
 
                 // Delete entries for snapshots beyond the retention limit
@@ -726,6 +726,26 @@ actor DatabaseCleanupService {
                 arguments: [Self.maxCategoryHistorySnapshotsPerPath]
             )
             snapshotIDsToDelete.formUnion(orphanOverflowIDs)
+
+            let newestCompleteIDs = try Int64.fetchAll(
+                db,
+                sql: """
+                    SELECT s.id
+                    FROM snapshot s
+                    WHERE s.trackedPathId != ''
+                      AND s.lifecycle = ?
+                      AND s.id = (
+                          SELECT newest.id
+                          FROM snapshot newest
+                          WHERE newest.trackedPathId = s.trackedPathId
+                            AND newest.lifecycle = ?
+                          ORDER BY newest.createdAt DESC, newest.id DESC
+                          LIMIT 1
+                      )
+                    """,
+                arguments: [Snapshot.Lifecycle.complete.rawValue, Snapshot.Lifecycle.complete.rawValue]
+            )
+            snapshotIDsToDelete.subtract(newestCompleteIDs)
 
             guard !snapshotIDsToDelete.isEmpty else { return 0 }
 

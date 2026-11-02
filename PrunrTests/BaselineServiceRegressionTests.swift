@@ -538,6 +538,104 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
+    func testDeniedFolderCarriesForwardWithoutShrinkOrLaterGrowth() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrDeniedCarry")
+            let locked = tempDirectory.appendingPathComponent("locked", isDirectory: true)
+            defer {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+            let readable = tempDirectory.appendingPathComponent("open/notes.txt")
+            let secret = locked.appendingPathComponent("deep/secret.mov")
+            for (url, bytes) in [(readable, 8_192), (secret, 65_536)] {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(repeating: 0x5A, count: bytes).write(to: url)
+                try self.dateBeforeHistory(url)
+            }
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let secretBytes = try self.diskUsageBytes(at: secret)
+            let readableBytes = try self.diskUsageBytes(at: readable)
+
+            let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath, ignoredNames: [])
+            try await self.backdateSnapshot(s0, to: Self.wholeSecondNow().addingTimeInterval(-7_200))
+
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+            let skipLog = ScanSkipLog()
+            let s1 = try await BaselineService.shared.createBaseline(
+                trackedPath: trackedPath,
+                ignoredNames: [],
+                skipLog: skipLog
+            )
+            XCTAssertEqual(s1.lifecycle, .complete)
+            XCTAssertEqual(skipLog.locationLabels, ["locked"])
+
+            let afterDenied = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertTrue(afterDenied.filter { $0.source == .scan }.isEmpty, "a denied folder must not be journaled as a shrink")
+            let pathsWhileDenied = try await self.workingSetPaths(trackedPathId: trackedPathId)
+            XCTAssertTrue(pathsWhileDenied.contains { $0.hasSuffix("/locked/deep/secret.mov") }, "the working set keeps the denied folder")
+            let entryCount = try await DatabaseManager.shared.fetchEntryCount(for: try XCTUnwrap(s1.id))
+            XCTAssertEqual(entryCount, 2)
+            let totals = try await DatabaseManager.shared.fetchWorkingSetCategoryTotals(for: trackedPathId)
+            XCTAssertEqual(totals.reduce(Int64(0)) { $0 + $1.currentSizeBytes }, secretBytes + readableBytes)
+
+            try await self.backdateSnapshot(s1, to: Self.wholeSecondNow().addingTimeInterval(-3_600))
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+            let s2 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath, ignoredNames: [])
+
+            let afterRestored = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertTrue(afterRestored.filter { $0.source == .scan }.isEmpty, "regained access must not be journaled as growth")
+            let restoredCount = try await DatabaseManager.shared.fetchEntryCount(for: try XCTUnwrap(s2.id))
+            XCTAssertEqual(restoredCount, 2)
+            let pathsRestored = try await self.workingSetPaths(trackedPathId: trackedPathId)
+            XCTAssertTrue(pathsRestored.contains { $0.hasSuffix("/locked/deep/secret.mov") })
+        }
+    }
+
+    func testOutermostPathsDropsNestedAndDuplicatePaths() {
+        XCTAssertEqual(
+            ScanService.outermostPaths(["/a/b/c", "/a/b", "/a/b-old", "/a/b/", "/x"]),
+            ["/a/b", "/a/b-old", "/x"]
+        )
+    }
+
+    func testAgeCleanupKeepsNewestCompleteSnapshotAndItsEntries() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let entries = [ScanResult(path: "/Users/tester/dev/app/a.bin", sizeBytes: 1_000)]
+            let now = Date()
+            var completeIds: [Int64] = []
+            for daysAgo in [90, 60, 45] {
+                let id = try await self.insertSnapshotRow(
+                    trackedPathId: trackedPathId,
+                    createdAt: now.addingTimeInterval(TimeInterval(-daysAgo * 24 * 3_600)),
+                    lifecycle: .complete
+                )
+                try await DatabaseManager.shared.addEntries(to: id, entries: entries)
+                completeIds.append(id)
+            }
+            for minutesAgo in [2, 1] {
+                let id = try await self.insertSnapshotRow(
+                    trackedPathId: trackedPathId,
+                    createdAt: now.addingTimeInterval(TimeInterval(-minutesAgo * 60)),
+                    lifecycle: .scanning
+                )
+                try await DatabaseManager.shared.addEntries(to: id, entries: entries)
+            }
+
+            let previous = await MainActor.run { SettingsStore.shared.categoryHistoryRetentionDays }
+            await MainActor.run { SettingsStore.shared.categoryHistoryRetentionDays = 30 }
+            await DatabaseCleanupService.shared.performAutoCleanup()
+            await MainActor.run { SettingsStore.shared.categoryHistoryRetentionDays = previous }
+
+            let kept = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
+            XCTAssertEqual(kept.map(\.id), [completeIds.last], "the newest complete snapshot survives the age cutoff")
+            let keptEntries = try await DatabaseManager.shared.fetchEntryCount(for: try XCTUnwrap(completeIds.last))
+            XCTAssertEqual(keptEntries, 1, "scanning rows must not push the newest complete payload out")
+            let hasBaseline = await BaselineService.shared.hasBaseline()
+            XCTAssertTrue(hasBaseline)
+        }
+    }
+
     func testDiskUsageOfSparseFileIsAllocatedBytesNotLogicalSize() throws {
         let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrSparse")
         defer { try? FileManager.default.removeItem(at: tempDirectory) }
