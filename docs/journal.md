@@ -187,3 +187,5 @@
 2026-11-02 orchestrator O19 spawn: non-UI land branch off main (sonnet medium, seat worktree)
 2026-11-02 orchestrator O19 on branch: drain/land-2026-11-02 8519b7a non-UI subset, job queued
 2026-11-02 orchestrator O19 landed: drain/land-2026-11-02 merged into local main 7cbb6c8 after green Mac job (not pushed); UI/schema rest waits on item 9
+2026-11-02 orchestrator O8 done: perf baseline doc dbfba72, worst path first prune ~700 ms write stall
+2026-11-02 orchestrator O20 spawn: chunked prune on stack (sonnet medium)
