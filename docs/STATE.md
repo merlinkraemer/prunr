@@ -19,6 +19,7 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 7. [accepted 2026-10-30 per rec] Row captions "found by scan" / "found by scan · since Sun 18 Oct"; names drop generic parents ("game · dev" → "game") — review wording — branch: drain/Q8b-2026-10-30
 8. [accepted 2026-11-01 per rec, merged into stack] Places changing nonstop for >24h now show one change per day instead of one long change (O13 fix so their history still trims) - rec: accept, the feed math stays identical - branch: drain/O13-2026-11-01
 9. Land the UI/schema rest after a hands-on session (Merlin 11-02 via PM: "same for prunr", can't judge from mockups) - plan: docs/hands-on-test-plan-2026-11-02.md (~40 min, real data, 10 steps, DB backup + rollback) - rec: run it at the next Mac session, then land on your ok - branch: drain/hands-on-2-2026-11-02 fa13b78 (stack + O23a-d + O24a-e + O26 + O27a-b + O28a-c, combined Mac green; O30a/O31a/O31b fixes join when green)
+10. Drop 2 redundant DB indexes (v28 migration, schema; est 10-20% faster scan writes, smaller DB) - rec: merge into the hands-on build once Mac green - branch: drain/O32a-2026-11-02 2a02497
 3. [accepted 2026-10-31 per rec] Rows drift as the 30-day window slides (root cause + design: docs/checkpoint-table-design-2026-10-31.md): v27 growthJournalCheckpoint, show real "building since" date, expire quiet counts after 90 days — building as Q18
 
 
