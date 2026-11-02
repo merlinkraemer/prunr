@@ -82,7 +82,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O18 Test host isolation [on branch] stack 14be69a: SettingsStore uses a throwaway defaults suite + empty temp base path under TestHost; fixture home synthetic again (UnitResolver.defaultHome settable for tests); compact-test workaround removed; job 20261101-214156-...-14be69ab3-test
 - O19 Land branch [landed on local main 7cbb6c8, Mac green, not pushed]
 - O8 Perf [done] docs/perf-baseline-2026-11-02.md (dbfba72): real data fast (feed 30 ms); worst: first prune after upgrade blocks writers ~700 ms; 200k-bucket feed rebuild 2.2 s; scan persistence
-- O20 Chunked prune (1-day write transactions, identical results) on stack [running]
+- O20 Chunked prune [on branch] stack 1e7755e: midnight chunks, each fold+delete atomic, whole-day hold at edges; equivalence test vs full history; job 20261102-005131-...-1e7755ea4-test
 
 ## Rundown
 - 2026-10-30: moved lab2 → dev; alpha.24 live since 10-28.
