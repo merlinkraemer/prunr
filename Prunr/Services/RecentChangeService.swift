@@ -7,7 +7,6 @@ actor RecentChangeService {
 
     private let scanner = FileScanner()
     private let db = DatabaseManager.shared
-    private let growthJournalService = GrowthJournalService.shared
     private let logger = Logger(subsystem: "com.prunr.app", category: "RecentChanges")
 
     private init() {}
@@ -80,49 +79,48 @@ actor RecentChangeService {
         let scanTimestamp = Date()
         var mergedDeltas: [DatabaseManager.JournalDeltaKey: Int64] = [:]
 
+        var pointChanges: [DatabaseManager.WorkingSetPointChange] = []
+
         for target in targets {
-            do {
-                let deltas: [DatabaseManager.JournalDeltaKey: Int64]
-                switch target {
-                case .file(let result):
-                    deltas = try await db.replaceWorkingSetFile(
-                        trackedPathId: trackedPath.id,
-                        entry: result,
-                        updatedAt: scanTimestamp
-                    )
-                case .subtree(let root):
-                    deltas = try await applySubtreeRefresh(
+            switch target {
+            case .file(let result):
+                pointChanges.append(.file(result))
+            case .removal(let path):
+                pointChanges.append(.removal(path))
+            case .subtree(let root):
+                do {
+                    let deltas = try await applySubtreeRefresh(
                         for: root,
                         trackedPath: trackedPath,
                         ignoredNames: ignoredNames,
                         updatedAt: scanTimestamp
                     )
-                case .removal:
-                    deltas = try await db.removeWorkingSetPathOrSubtree(
-                        trackedPathId: trackedPath.id,
-                        rootPath: target.rootPath,
-                        updatedAt: scanTimestamp
-                    )
+                    for (key, delta) in deltas where delta != 0 {
+                        mergedDeltas[key, default: 0] += delta
+                    }
+                } catch {
+                    logger.error("Failed refreshing target \(root.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 }
-                for (key, delta) in deltas where delta != 0 {
-                    mergedDeltas[key, default: 0] += delta
-                }
-            } catch {
-                logger.error("Failed refreshing target \(target.rootPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
 
-        guard !mergedDeltas.isEmpty else { return .noChanges }
+        guard !pointChanges.isEmpty || !mergedDeltas.isEmpty else { return .noChanges }
 
         do {
-            try await growthJournalService.recordDeltas(
-                trackedPath: trackedPath,
-                deltas: mergedDeltas,
-                at: scanTimestamp
+            let result = try await db.applyWorkingSetPointChanges(
+                trackedPathId: trackedPath.id,
+                changes: pointChanges,
+                extraDeltas: mergedDeltas,
+                journalBucketStart: GrowthJournalService.bucketStart(for: scanTimestamp),
+                updatedAt: scanTimestamp
             )
-            return .updated(deltas: mergedDeltas)
+            for failure in result.failures {
+                logger.error("Failed refreshing target \(failure.rootPath, privacy: .public): \(failure.message, privacy: .public)")
+            }
+            guard !result.deltas.isEmpty else { return .noChanges }
+            return .updated(deltas: result.deltas)
         } catch {
-            logger.error("Failed recording journal deltas: \(error.localizedDescription, privacy: .public)")
+            logger.error("Failed applying refresh batch: \(error.localizedDescription, privacy: .public)")
             return .noChanges
         }
     }

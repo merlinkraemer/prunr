@@ -1396,6 +1396,23 @@ extension DatabaseManager {
         }
 
         let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.write { db in
+            try Self.replaceWorkingSetFileRows(
+                trackedPathId: trackedPathIdString,
+                entry: entry,
+                updatedAt: updatedAt,
+                db: db
+            )
+        }
+    }
+
+    private static func replaceWorkingSetFileRows(
+        trackedPathId trackedPathIdString: String,
+        entry: ScanResult,
+        updatedAt: Date,
+        db: Database
+    ) throws -> [JournalDeltaKey: Int64] {
         let normalizedPath = Self.normalizePath(entry.path)
         let newState = WorkingSetFileState(
             category: entry.category,
@@ -1403,51 +1420,49 @@ extension DatabaseManager {
             sizeBytes: entry.sizeBytes
         )
 
-        return try await dbPool.write { db in
-            try db.execute(
-                sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)",
-                arguments: [normalizedPath]
-            )
+        try db.execute(
+            sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)",
+            arguments: [normalizedPath]
+        )
 
-            guard let pathId: Int64 = try Int64.fetchOne(
-                db,
-                sql: "SELECT id FROM paths WHERE path = ?",
-                arguments: [normalizedPath]
-            ) else {
-                return [:]
-            }
-
-            let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
-
-            try db.execute(
-                sql: """
-                    INSERT INTO pathClassification (pathId, category, subcategory)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(pathId) DO UPDATE SET
-                        category = excluded.category,
-                        subcategory = excluded.subcategory
-                    """,
-                arguments: [pathId, newState.category.rawValue, newState.subcategory?.rawValue ?? ""]
-            )
-
-            try db.execute(
-                sql: """
-                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
-                        sizeBytes = excluded.sizeBytes,
-                        updatedAt = excluded.updatedAt
-                    """,
-                arguments: [trackedPathIdString, pathId, newState.sizeBytes, updatedAt]
-            )
-
-            return try Self.applyWorkingSetChanges(
-                [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: newState)],
-                trackedPathId: trackedPathIdString,
-                updatedAt: updatedAt,
-                db: db
-            )
+        guard let pathId: Int64 = try Int64.fetchOne(
+            db,
+            sql: "SELECT id FROM paths WHERE path = ?",
+            arguments: [normalizedPath]
+        ) else {
+            return [:]
         }
+
+        let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
+
+        try db.execute(
+            sql: """
+                INSERT INTO pathClassification (pathId, category, subcategory)
+                VALUES (?, ?, ?)
+                ON CONFLICT(pathId) DO UPDATE SET
+                    category = excluded.category,
+                    subcategory = excluded.subcategory
+                """,
+            arguments: [pathId, newState.category.rawValue, newState.subcategory?.rawValue ?? ""]
+        )
+
+        try db.execute(
+            sql: """
+                INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
+                    sizeBytes = excluded.sizeBytes,
+                    updatedAt = excluded.updatedAt
+                """,
+            arguments: [trackedPathIdString, pathId, newState.sizeBytes, updatedAt]
+        )
+
+        return try Self.applyWorkingSetChanges(
+            [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: newState)],
+            trackedPathId: trackedPathIdString,
+            updatedAt: updatedAt,
+            db: db
+        )
     }
 
     /// The working-set state of one file; nil when it is not in the working
@@ -1520,35 +1535,214 @@ extension DatabaseManager {
         }
 
         let trackedPathIdString = trackedPathId.uuidString
-        let normalizedPath = Self.normalizePath(path)
 
         return try await dbPool.write { db in
-            guard let pathId = try Int64.fetchOne(
-                db,
-                sql: """
-                    SELECT p.id
-                    FROM paths p
-                    JOIN workingSetEntry wse ON wse.pathId = p.id
-                    WHERE wse.trackedPathId = ? AND p.path = ?
-                    """,
-                arguments: [trackedPathIdString, normalizedPath]
-            ) else {
-                return nil
-            }
-
-            let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
-
-            try db.execute(
-                sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ? AND pathId = ?",
-                arguments: [trackedPathIdString, pathId]
-            )
-
-            return try Self.applyWorkingSetChanges(
-                [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: nil)],
+            try Self.removeWorkingSetFileRowsIfPresent(
                 trackedPathId: trackedPathIdString,
+                path: path,
                 updatedAt: updatedAt,
                 db: db
             )
+        }
+    }
+
+    private static func removeWorkingSetFileRowsIfPresent(
+        trackedPathId trackedPathIdString: String,
+        path: String,
+        updatedAt: Date,
+        db: Database
+    ) throws -> [JournalDeltaKey: Int64]? {
+        let normalizedPath = Self.normalizePath(path)
+
+        guard let pathId = try Int64.fetchOne(
+            db,
+            sql: """
+                SELECT p.id
+                FROM paths p
+                JOIN workingSetEntry wse ON wse.pathId = p.id
+                WHERE wse.trackedPathId = ? AND p.path = ?
+                """,
+            arguments: [trackedPathIdString, normalizedPath]
+        ) else {
+            return nil
+        }
+
+        let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
+
+        try db.execute(
+            sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ? AND pathId = ?",
+            arguments: [trackedPathIdString, pathId]
+        )
+
+        return try Self.applyWorkingSetChanges(
+            [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: nil)],
+            trackedPathId: trackedPathIdString,
+            updatedAt: updatedAt,
+            db: db
+        )
+    }
+
+    private static func removeWorkingSetSubtreeRows(
+        trackedPathId trackedPathIdString: String,
+        rootPath: String,
+        updatedAt: Date,
+        db: Database
+    ) throws -> [JournalDeltaKey: Int64] {
+        let normalizedRoot = Self.normalizePath(rootPath)
+        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
+        let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
+
+        let oldRows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT
+                    p.id AS pathId,
+                    p.path AS path,
+                    wse.sizeBytes AS sizeBytes,
+                    pc.category AS category,
+                    pc.subcategory AS subcategory
+                FROM paths p
+                CROSS JOIN workingSetEntry wse ON wse.pathId = p.id
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                WHERE wse.trackedPathId = ?
+                  AND (
+                      p.path = ?
+                      OR (p.path >= ? AND p.path < ?)
+                  )
+                """,
+            arguments: [trackedPathIdString, normalizedRoot, rootPrefix, rootPrefixUpperBound]
+        )
+
+        let changes = oldRows.compactMap { row -> WorkingSetFileChange? in
+            guard let pathId: Int64 = row["pathId"], let path: String = row["path"] else { return nil }
+            return WorkingSetFileChange(
+                pathId: pathId,
+                path: path,
+                old: Self.workingSetFileState(
+                    category: row["category"],
+                    subcategory: row["subcategory"],
+                    sizeBytes: row["sizeBytes"]
+                ),
+                new: nil
+            )
+        }
+
+        try db.execute(
+            sql: """
+                DELETE FROM workingSetEntry
+                WHERE trackedPathId = ?
+                  AND pathId IN (
+                    SELECT p.id
+                    FROM paths p
+                    WHERE p.path = ?
+                       OR (p.path >= ? AND p.path < ?)
+                  )
+                """,
+            arguments: [trackedPathIdString, normalizedRoot, rootPrefix, rootPrefixUpperBound]
+        )
+
+        return try Self.applyWorkingSetChanges(
+            changes,
+            trackedPathId: trackedPathIdString,
+            updatedAt: updatedAt,
+            db: db
+        )
+    }
+
+    enum WorkingSetPointChange: Sendable {
+        case file(ScanResult)
+        case removal(String)
+
+        var rootPath: String {
+            switch self {
+            case .file(let result): result.path
+            case .removal(let path): path
+            }
+        }
+    }
+
+    struct WorkingSetPointFailure: Sendable {
+        let rootPath: String
+        let message: String
+    }
+
+    struct WorkingSetPointBatchResult: Sendable {
+        let deltas: [JournalDeltaKey: Int64]
+        let failures: [WorkingSetPointFailure]
+    }
+
+    /// Applies file replacements and removals in one write transaction, each in
+    /// its own savepoint so a failing change rolls back alone. The merged
+    /// deltas plus `extraDeltas` are journalled in the same transaction.
+    func applyWorkingSetPointChanges(
+        trackedPathId: UUID,
+        changes: [WorkingSetPointChange],
+        extraDeltas: [JournalDeltaKey: Int64],
+        journalBucketStart: Date,
+        updatedAt: Date
+    ) async throws -> WorkingSetPointBatchResult {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.write { db in
+            var mergedDeltas = extraDeltas
+            var failures: [WorkingSetPointFailure] = []
+
+            for change in changes {
+                do {
+                    var deltas: [JournalDeltaKey: Int64] = [:]
+                    try db.inSavepoint {
+                        switch change {
+                        case .file(let entry):
+                            deltas = try Self.replaceWorkingSetFileRows(
+                                trackedPathId: trackedPathIdString,
+                                entry: entry,
+                                updatedAt: updatedAt,
+                                db: db
+                            )
+                        case .removal(let path):
+                            if let exact = try Self.removeWorkingSetFileRowsIfPresent(
+                                trackedPathId: trackedPathIdString,
+                                path: path,
+                                updatedAt: updatedAt,
+                                db: db
+                            ) {
+                                deltas = exact
+                            } else {
+                                deltas = try Self.removeWorkingSetSubtreeRows(
+                                    trackedPathId: trackedPathIdString,
+                                    rootPath: path,
+                                    updatedAt: updatedAt,
+                                    db: db
+                                )
+                            }
+                        }
+                        return .commit
+                    }
+                    for (key, delta) in deltas where delta != 0 {
+                        mergedDeltas[key, default: 0] += delta
+                    }
+                } catch {
+                    failures.append(WorkingSetPointFailure(
+                        rootPath: change.rootPath,
+                        message: error.localizedDescription
+                    ))
+                }
+            }
+
+            mergedDeltas = mergedDeltas.filter { $0.value != 0 }
+            try Self.upsertGrowthJournalBucketRows(
+                trackedPathId: trackedPathIdString,
+                deltasByBucketStart: [journalBucketStart: mergedDeltas],
+                source: .watch,
+                observedSince: nil,
+                db: db
+            )
+
+            return WorkingSetPointBatchResult(deltas: mergedDeltas, failures: failures)
         }
     }
 
@@ -1823,31 +2017,47 @@ extension DatabaseManager {
         let trackedPathIdString = trackedPathId.uuidString
 
         try await dbPool.write { db in
-            let statement = try db.makeStatement(
-                sql: """
-                    INSERT INTO growthJournalBucket
-                        (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, observedSince, unitKey)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(trackedPathId, bucketStart, category, subcategory, source, unitKey)
-                    DO UPDATE SET
-                        deltaBytes = deltaBytes + excluded.deltaBytes,
-                        observedSince = COALESCE(observedSince, excluded.observedSince)
-                    """
+            try Self.upsertGrowthJournalBucketRows(
+                trackedPathId: trackedPathIdString,
+                deltasByBucketStart: deltasByBucketStart,
+                source: source,
+                observedSince: observedSince,
+                db: db
             )
+        }
+    }
 
-            for (bucketStart, deltas) in deltasByBucketStart {
-                for (key, deltaBytes) in deltas where deltaBytes != 0 {
-                    try statement.execute(arguments: [
-                        trackedPathIdString,
-                        bucketStart,
-                        key.category.rawValue,
-                        key.subcategory?.rawValue ?? "",
-                        deltaBytes,
-                        source.rawValue,
-                        observedSince,
-                        key.unitKey
-                    ])
-                }
+    private static func upsertGrowthJournalBucketRows(
+        trackedPathId trackedPathIdString: String,
+        deltasByBucketStart: [Date: [JournalDeltaKey: Int64]],
+        source: GrowthJournalBucket.Source,
+        observedSince: Date?,
+        db: Database
+    ) throws {
+        let statement = try db.makeStatement(
+            sql: """
+                INSERT INTO growthJournalBucket
+                    (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, observedSince, unitKey)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(trackedPathId, bucketStart, category, subcategory, source, unitKey)
+                DO UPDATE SET
+                    deltaBytes = deltaBytes + excluded.deltaBytes,
+                    observedSince = COALESCE(observedSince, excluded.observedSince)
+                """
+        )
+
+        for (bucketStart, deltas) in deltasByBucketStart {
+            for (key, deltaBytes) in deltas where deltaBytes != 0 {
+                try statement.execute(arguments: [
+                    trackedPathIdString,
+                    bucketStart,
+                    key.category.rawValue,
+                    key.subcategory?.rawValue ?? "",
+                    deltaBytes,
+                    source.rawValue,
+                    observedSince,
+                    key.unitKey
+                ])
             }
         }
     }

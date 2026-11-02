@@ -291,18 +291,21 @@ final class PerfBaselineTests: PrunrTestCase {
             var round = 0
             let total = try await self.time("watcher.burst200.singleFileEvents", runs: 3) {
                 round += 1
-                for index in 0..<events {
-                    _ = try await self.db.replaceWorkingSetFile(
-                        trackedPathId: id,
-                        entry: ScanResult(
-                            path: Self.bigPlace + "/f\(index).bin",
-                            sizeBytes: Int64(5_000_000 + round * 1_000 + index),
-                            category: .other,
-                            subcategory: nil
-                        ),
-                        updatedAt: now.addingTimeInterval(TimeInterval(round * 60 + index))
-                    )
+                let changes = (0..<events).map { index in
+                    DatabaseManager.WorkingSetPointChange.file(ScanResult(
+                        path: Self.bigPlace + "/f\(index).bin",
+                        sizeBytes: Int64(5_000_000 + round * 1_000 + index),
+                        category: .other,
+                        subcategory: nil
+                    ))
                 }
+                _ = try await self.db.applyWorkingSetPointChanges(
+                    trackedPathId: id,
+                    changes: changes,
+                    extraDeltas: [:],
+                    journalBucketStart: now,
+                    updatedAt: now.addingTimeInterval(TimeInterval(round * 60))
+                )
             }
             self.emit("watcher.burst200.perEvent", total / Double(events))
 

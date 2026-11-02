@@ -1666,6 +1666,71 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testRecentChangeRefreshBurstOf190TargetsWritesExpectedRowsAndJournal() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeBurst")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let existingURLs = (0..<180).map { tempDirectory.appendingPathComponent("existing-\($0).bin") }
+            let newURLs = (0..<10).map { tempDirectory.appendingPathComponent("new-\($0).bin") }
+            for fileURL in existingURLs {
+                try Data(repeating: 0x01, count: 32).write(to: fileURL)
+            }
+
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: existingURLs.map { ScanResult(path: $0.path, sizeBytes: 32) }
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 3_000)
+            )
+            let before = try await self.workingSetMetadataByPath()
+            let bytesBefore = before.values.reduce(Int64(0)) { $0 + $1.sizeBytes }
+
+            let modifiedURLs = Array(existingURLs[0..<150])
+            let removedURLs = Array(existingURLs[150..<180])
+            for (index, fileURL) in modifiedURLs.enumerated() {
+                try Data(repeating: 0x02, count: 64 + index).write(to: fileURL)
+            }
+            for fileURL in removedURLs {
+                try FileManager.default.removeItem(at: fileURL)
+            }
+            for fileURL in newURLs {
+                try Data(repeating: 0x03, count: 48).write(to: fileURL)
+            }
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths(
+                Set(modifiedURLs + removedURLs + newURLs),
+                trackedPath: trackedPath
+            )
+
+            guard case .updated(let deltas) = result else {
+                XCTFail("burst below the target cap should stay incremental")
+                return
+            }
+
+            let after = try await self.workingSetMetadataByPath()
+            let expectedPaths = Set((modifiedURLs + newURLs).map(\.path))
+            XCTAssertEqual(Set(after.keys), expectedPaths)
+            var bytesAfter = Int64(0)
+            for fileURL in modifiedURLs + newURLs {
+                let expected = try self.diskUsageBytes(at: fileURL)
+                XCTAssertEqual(after[fileURL.path]?.sizeBytes, expected)
+                bytesAfter += expected
+            }
+
+            XCTAssertEqual(deltas.values.reduce(0, +), bytesAfter - bytesBefore)
+
+            let buckets = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertEqual(buckets.reduce(Int64(0)) { $0 + $1.deltaBytes }, bytesAfter - bytesBefore)
+        }
+    }
+
     func testRecentChangeRefreshPromotesTrackedRootDirectoryEventToFullScan() async throws {
         try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
             let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeRootOnly")
