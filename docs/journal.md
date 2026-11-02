@@ -256,3 +256,5 @@
 2026-11-02 orchestrator O31a on branch: c23d919, watcher lstat (only ENOENT/ENOTDIR = gone) + subtree refresh carries denied rows; hard links follow the full-scan rule via the existing row (no schema change); doubts: a new multi-link file with no row counts 0 until the next full scan (under-reports new hard-linked trees), symlink-to-dir no longer a subtree, chmod tests fail if run as root; job queued
 2026-11-02 orchestrator O29 hands-on-2 Mac green: fa13b78 (O26+O27a-b+O28a-c on the hands-on build); STATE item 9 and test plan now point at it
 2026-11-02 orchestrator O30a Mac green: 0ee8a84
+2026-11-02 orchestrator O31a O31b Mac green: c23d919 4042c28
+2026-11-02 orchestrator O29 O30a+O31a+O31b merged into hands-on-2: 5d19bd4, clean, job queued
