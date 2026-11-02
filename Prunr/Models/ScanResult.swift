@@ -16,16 +16,21 @@ struct ScanResult: Sendable {
     /// Creation and last-write time, when the scanner read them.
     var fileDates: FileDates?
 
+    /// Full allocated size of a file that has other hard links; nil for single-link files.
+    var linkedDiskBytes: Int64?
+
     init(
         path: String,
         sizeBytes: Int64,
         category: GrowthCategory? = nil,
         subcategory: GrowthSubcategory? = nil,
-        fileDates: FileDates? = nil
+        fileDates: FileDates? = nil,
+        linkedDiskBytes: Int64? = nil
     ) {
         self.path = path
         self.sizeBytes = sizeBytes
         self.fileDates = fileDates
+        self.linkedDiskBytes = linkedDiskBytes
         let resolvedCategory = category ?? GrowthCategory.categorize(path: path)
         self.category = resolvedCategory
         self.subcategory = subcategory ?? GrowthCategory.subcategorize(path: path)

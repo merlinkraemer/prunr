@@ -247,6 +247,11 @@ final class FileScanner {
         return diskUsageBytes(for: fileStat)
     }
 
+    static func linkedFileBytes(linkedDiskBytes: Int64, existingBytes: Int64?) -> Int64 {
+        guard let existingBytes, existingBytes > 0 else { return 0 }
+        return linkedDiskBytes
+    }
+
     // MARK: - Public API
 
     /// Recursively scans a directory and streams results via AsyncThrowingStream
@@ -410,7 +415,8 @@ final class FileScanner {
                             sizeBytes: sizeBytes,
                             category: category,
                             subcategory: subcategory,
-                            fileDates: FileDates(stat)
+                            fileDates: FileDates(stat),
+                            linkedDiskBytes: stat.st_nlink > 1 ? Self.diskUsageBytes(for: stat) : nil
                         )
                         if let backpressure {
                             if reservedSlots == 0 {

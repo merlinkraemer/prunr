@@ -2087,6 +2087,163 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testRecentChangeRefreshKeepsRowsOfPermissionDeniedFolder() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeDenied")
+            let locked = tempDirectory.appendingPathComponent("locked", isDirectory: true)
+            defer {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let securedFile = locked.appendingPathComponent("deep/secret.dat")
+            let openFile = tempDirectory.appendingPathComponent("open/notes.txt")
+            for (url, bytes) in [(securedFile, 4_096), (openFile, 4_096)] {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(repeating: 0x5A, count: bytes).write(to: url)
+            }
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [
+                    ScanResult(path: securedFile.path, sizeBytes: 4_096),
+                    ScanResult(path: openFile.path, sizeBytes: 4_096)
+                ]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 1_000)
+            )
+
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let deniedResult = await RecentChangeService.shared.refreshChangedPaths(
+                [securedFile, securedFile.deletingLastPathComponent()],
+                trackedPath: trackedPath
+            )
+            guard case .noChanges = deniedResult else {
+                XCTFail("a denied path must not be refreshed or removed")
+                return
+            }
+            let afterDenied = try await self.workingSetMetadataByPath()
+            XCTAssertEqual(afterDenied[securedFile.path]?.sizeBytes, 4_096)
+        }
+    }
+
+    func testRecentChangeRefreshKeepsDeniedFoldersInsideRefreshedSubtree() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeDeniedSubtree")
+            let parent = tempDirectory.appendingPathComponent("parent", isDirectory: true)
+            let locked = parent.appendingPathComponent("locked", isDirectory: true)
+            defer {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let securedFile = locked.appendingPathComponent("secret.dat")
+            let openFile = parent.appendingPathComponent("notes.txt")
+            try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+            try Data(repeating: 0x5A, count: 4_096).write(to: securedFile)
+            try Data(repeating: 0x5A, count: 4_096).write(to: openFile)
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [
+                    ScanResult(path: securedFile.path, sizeBytes: 4_096),
+                    ScanResult(path: openFile.path, sizeBytes: 4_096)
+                ]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 1_000)
+            )
+
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+            try Data(repeating: 0x5B, count: 8_192).write(to: openFile)
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths([parent], trackedPath: trackedPath)
+            guard case .updated = result else {
+                XCTFail("the readable part of the subtree should refresh")
+                return
+            }
+
+            let openBytes = try self.diskUsageBytes(at: openFile)
+            let metadata = try await self.workingSetMetadataByPath()
+            XCTAssertEqual(metadata[securedFile.path]?.sizeBytes, 4_096)
+            XCTAssertEqual(metadata[openFile.path]?.sizeBytes, openBytes)
+            XCTAssertEqual(result.deltasTotal, openBytes - 4_096)
+        }
+    }
+
+    func testRecentChangeRefreshKeepsHardLinkCountingOfFullScan() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeLinks")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let first = tempDirectory.appendingPathComponent("store/blob.bin")
+            let second = tempDirectory.appendingPathComponent("modules/blob.bin")
+            let sibling = tempDirectory.appendingPathComponent("modules/other.txt")
+            for url in [first, second, sibling] {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            }
+            try Data(repeating: 0x01, count: 16_384).write(to: first)
+            try FileManager.default.linkItem(at: first, to: second)
+            try Data(repeating: 0x02, count: 4_096).write(to: sibling)
+
+            let fullBytes = try self.diskUsageBytes(at: first)
+            let siblingBytes = try self.diskUsageBytes(at: sibling)
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [
+                    ScanResult(path: first.path, sizeBytes: fullBytes),
+                    ScanResult(path: second.path, sizeBytes: 0),
+                    ScanResult(path: sibling.path, sizeBytes: siblingBytes)
+                ]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 1_000)
+            )
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+
+            let fileResult = await RecentChangeService.shared.refreshChangedPaths([second, first], trackedPath: trackedPath)
+            XCTAssertEqual(fileResult.deltasTotal, 0, "touching either link of an unchanged file is not growth")
+            var metadata = try await self.workingSetMetadataByPath()
+            XCTAssertEqual(metadata[first.path]?.sizeBytes, fullBytes)
+            XCTAssertEqual(metadata[second.path]?.sizeBytes, 0)
+
+            try Data(repeating: 0x03, count: 4_096).write(to: sibling)
+            let subtreeResult = await RecentChangeService.shared.refreshChangedPaths(
+                [tempDirectory.appendingPathComponent("modules")],
+                trackedPath: trackedPath
+            )
+            XCTAssertEqual(subtreeResult.deltasTotal, 0, "a subtree refresh must not count the second link in full")
+            metadata = try await self.workingSetMetadataByPath()
+            XCTAssertEqual(metadata[first.path]?.sizeBytes, fullBytes)
+            XCTAssertEqual(metadata[second.path]?.sizeBytes, 0)
+
+            try Data(repeating: 0x04, count: 32_768).write(to: first)
+            let grownBytes = try self.diskUsageBytes(at: first)
+            let grownResult = await RecentChangeService.shared.refreshChangedPaths([first], trackedPath: trackedPath)
+            XCTAssertEqual(grownResult.deltasTotal, grownBytes - fullBytes)
+            metadata = try await self.workingSetMetadataByPath()
+            XCTAssertEqual(metadata[first.path]?.sizeBytes, grownBytes)
+            XCTAssertEqual(metadata[second.path]?.sizeBytes, 0)
+        }
+    }
+
+    func testLinkedFileBytesFollowsExistingWorkingSetRow() {
+        XCTAssertEqual(FileScanner.linkedFileBytes(linkedDiskBytes: 8_192, existingBytes: 4_096), 8_192)
+        XCTAssertEqual(FileScanner.linkedFileBytes(linkedDiskBytes: 8_192, existingBytes: 0), 0)
+        XCTAssertEqual(FileScanner.linkedFileBytes(linkedDiskBytes: 8_192, existingBytes: nil), 0)
+    }
+
     @MainActor
     func testIncompleteInventoryRefreshPreservesDrillDownSelection() async throws {
         let trackedRoot = try createTrackedPathDirectory(named: "PrunrIncompleteInventoryRefresh")
@@ -2885,5 +3042,12 @@ final class PrunrSmokeTests: XCTestCase {
             XCTAssertEqual(report.orphanedPathsDeleted, 0)
             XCTAssertEqual(report.snapshotsDeleted, 0)
         }
+    }
+}
+
+private extension RecentChangeService.RefreshResult {
+    var deltasTotal: Int64 {
+        guard case .updated(let deltas) = self else { return 0 }
+        return deltas.values.reduce(0, +)
     }
 }
