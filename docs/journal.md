@@ -241,3 +241,5 @@
 2026-11-02 orchestrator O27a O27b Mac green: 93239d8 bab8ebd
 2026-11-02 orchestrator O28c spawn: perf #10 async startup (sonnet high, seat worktree)
 2026-11-02 orchestrator O28c on branch: 51cad7e, job queued
+2026-11-02 orchestrator O28a O28c Mac green: 9499092 51cad7e
+2026-11-02 orchestrator O28b Mac: compile error, new tests placed in the hard-link class without helpers; moved, d60eb46 requeued
