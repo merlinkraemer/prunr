@@ -2101,64 +2101,100 @@ extension DatabaseManager {
         }
     }
 
-    /// Deletes the journal before `cutoff`. In the same transaction every
-    /// place's count is folded over those buckets and saved as its checkpoint,
-    /// so the change list counts on from where the deleted history left off.
-    /// A run that crosses the cutoff stays whole in the journal until a later
-    /// prune, so it counts on the day it started like in the full history.
+    /// Deletes the journal before `cutoff`. Every place's count is folded over
+    /// those buckets and saved as its checkpoint, so the change list counts on
+    /// from where the deleted history left off. A run that crosses the cutoff
+    /// stays whole in the journal until a later prune, so it counts on the day
+    /// it started like in the full history.
+    ///
+    /// The range goes in one-day transactions, oldest first, each folding and
+    /// deleting its day together. A run that crosses a day edge is held with
+    /// the rest of its start day and folds whole in the next transaction.
     func pruneGrowthJournalBuckets(olderThan cutoff: Date, calendar: Calendar = .current) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
+        let oldest = try await dbPool.read { db in
+            try Date.fetchOne(db, sql: "SELECT MIN(bucketStart) FROM growthJournalBucket")
+        }
+        var edges: [Date] = []
+        if let oldest {
+            var edge = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: oldest))
+            while let next = edge, next < cutoff {
+                edges.append(next)
+                edge = calendar.date(byAdding: .day, value: 1, to: next)
+            }
+        }
+
+        for edge in edges {
+            try await dbPool.write { db in
+                try Self.pruneJournalRange(db: db, before: edge, finalCutoff: nil, calendar: calendar)
+            }
+        }
         try await dbPool.write { db in
-            let saved = try Self.fetchJournalCheckpoints(db: db)
-            let carries = Dictionary(uniqueKeysWithValues: saved.map { ($0.unitKey, $0.state) })
-            let before = try Self.fetchJournalSlots(db: db, before: cutoff)
-            let following = try Self.fetchJournalSlots(
-                db: db,
-                from: cutoff,
-                before: cutoff.addingTimeInterval(Self.pruneRunLookahead)
-            )
-            let held = EpisodeBuilder.heldRunStarts(before: before, following: following)
-            let foldable = before.filter { slot in held[slot.unitKey].map { slot.firstAt < $0 } ?? true }
-            let counts = EpisodeBuilder.foldedCounts(slots: foldable, carries: carries, calendar: calendar)
-            let expiry = calendar.date(byAdding: .day, value: -EpisodeBuilder.checkpointExpiryDays, to: cutoff) ?? cutoff
-            let checkpoints = counts.compactMap { unitKey, state -> JournalCheckpoint? in
-                guard let checkpoint = JournalCheckpoint(unitKey: unitKey, asOf: cutoff, state: state),
-                      checkpoint.lastActiveDay >= expiry else { return nil }
-                return checkpoint
-            }
-            try Self.replaceJournalCheckpoints(checkpoints, db: db)
-            try db.execute(sql: """
-                CREATE TEMP TABLE IF NOT EXISTS pruneHold (
-                    unitKey TEXT PRIMARY KEY,
-                    holdFrom DATETIME NOT NULL
-                ) WITHOUT ROWID
-                """)
-            try db.execute(sql: "DELETE FROM pruneHold")
-            for (unitKey, start) in held {
-                try db.execute(
-                    sql: "INSERT INTO pruneHold (unitKey, holdFrom) VALUES (?, ?)",
-                    arguments: [unitKey, start]
-                )
-            }
+            try Self.pruneJournalRange(db: db, before: cutoff, finalCutoff: cutoff, calendar: calendar)
+        }
+    }
+
+    private static func pruneJournalRange(
+        db: Database,
+        before edge: Date,
+        finalCutoff: Date?,
+        calendar: Calendar
+    ) throws {
+        let saved = try Self.fetchJournalCheckpoints(db: db)
+        let carries = Dictionary(uniqueKeysWithValues: saved.map { ($0.unitKey, $0.state) })
+        let before = try Self.fetchJournalSlots(db: db, before: edge)
+        let following = try Self.fetchJournalSlots(
+            db: db,
+            from: edge,
+            before: edge.addingTimeInterval(Self.pruneRunLookahead)
+        )
+        let held = EpisodeBuilder.heldRunStarts(
+            before: before,
+            following: following,
+            wholeDayIn: finalCutoff == nil ? calendar : nil
+        )
+        let foldable = before.filter { slot in held[slot.unitKey].map { slot.firstAt < $0 } ?? true }
+        let counts = EpisodeBuilder.foldedCounts(slots: foldable, carries: carries, calendar: calendar)
+        let expiry = finalCutoff.map {
+            calendar.date(byAdding: .day, value: -EpisodeBuilder.checkpointExpiryDays, to: $0) ?? $0
+        }
+        let checkpoints = counts.compactMap { unitKey, state -> JournalCheckpoint? in
+            guard let checkpoint = JournalCheckpoint(unitKey: unitKey, asOf: edge, state: state),
+                  expiry.map({ checkpoint.lastActiveDay >= $0 }) ?? true else { return nil }
+            return checkpoint
+        }
+        try Self.replaceJournalCheckpoints(checkpoints, db: db)
+        try db.execute(sql: """
+            CREATE TEMP TABLE IF NOT EXISTS pruneHold (
+                unitKey TEXT PRIMARY KEY,
+                holdFrom DATETIME NOT NULL
+            ) WITHOUT ROWID
+            """)
+        try db.execute(sql: "DELETE FROM pruneHold")
+        for (unitKey, start) in held {
             try db.execute(
-                sql: """
-                    DELETE FROM growthJournalBucket
-                    WHERE bucketStart < COALESCE(
-                        (SELECT holdFrom FROM pruneHold WHERE pruneHold.unitKey = growthJournalBucket.unitKey),
-                        ?
-                    )
-                    """,
-                arguments: [cutoff]
-            )
-            try db.execute(sql: "DELETE FROM pruneHold")
-            try db.execute(
-                sql: "DELETE FROM growthJournalDetail WHERE bucketStart < ?",
-                arguments: [cutoff]
+                sql: "INSERT INTO pruneHold (unitKey, holdFrom) VALUES (?, ?)",
+                arguments: [unitKey, start]
             )
         }
+        try db.execute(
+            sql: """
+                DELETE FROM growthJournalBucket
+                WHERE bucketStart < COALESCE(
+                    (SELECT holdFrom FROM pruneHold WHERE pruneHold.unitKey = growthJournalBucket.unitKey),
+                    ?
+                )
+                """,
+            arguments: [edge]
+        )
+        try db.execute(sql: "DELETE FROM pruneHold")
+        try db.execute(
+            sql: "DELETE FROM growthJournalDetail WHERE bucketStart < ?",
+            arguments: [edge]
+        )
     }
 
     private static let pruneRunLookahead: TimeInterval = 2 * 60 * 60

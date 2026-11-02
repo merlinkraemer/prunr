@@ -596,16 +596,31 @@ enum EpisodeBuilder {
     /// of `before` when `following` has its next slot within the run gap. A
     /// run belongs to the day it started, so a prune keeps it whole instead of
     /// folding its head and leaving its tail to count on the cutoff day.
-    static func heldRunStarts(before: [JournalSlot], following: [JournalSlot]) -> [String: Date] {
+    ///
+    /// With `wholeDayIn`, the hold starts at the first run that began on the
+    /// same local day, so a day is never folded in two parts.
+    static func heldRunStarts(
+        before: [JournalSlot],
+        following: [JournalSlot],
+        wholeDayIn calendar: Calendar? = nil
+    ) -> [String: Date] {
         let nextSlot = Dictionary(grouping: following, by: \.unitKey).mapValues { $0.map(\.slot).min() ?? Int64.max }
         var held: [String: Date] = [:]
         for (unitKey, unitSlots) in Dictionary(grouping: before, by: \.unitKey) {
-            guard let run = runs(of: unitSlots).last,
+            let unitRuns = runs(of: unitSlots)
+            guard let run = unitRuns.last,
                   let first = run.first, let last = run.last,
                   let next = nextSlot[unitKey],
                   next - last.slot <= maxRunSlotStep,
                   next - first.slot < maxRunSlots else { continue }
-            held[unitKey] = run.map(\.firstAt).min() ?? first.firstAt
+            let start = run.map(\.firstAt).min() ?? first.firstAt
+            held[unitKey] = calendar.flatMap { calendar in
+                let day = calendar.startOfDay(for: start)
+                return unitRuns
+                    .compactMap { $0.map(\.firstAt).min() }
+                    .filter { calendar.startOfDay(for: $0) == day }
+                    .min()
+            } ?? start
         }
         return held
     }

@@ -614,6 +614,65 @@ final class ChangeFeedStoreTests: PrunrTestCase {
         }
     }
 
+    func testOnePruneOverManyDaysEqualsTheFullHistoryAcrossMidnightRuns() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let path = self.trackedPath(trackedPathId)
+            let calendar = self.utc()
+            let base = self.augustFirst()
+            let steady = "place|/Users/tester/steady"
+            var history: [JournalSlot] = []
+
+            func add(_ date: Date, _ net: Int64, unit: String = ChangeFeedStoreTests.place) async throws {
+                try await self.record(path, date, net, unit: unit)
+                history.append(self.memorySlot(date, net, unit: unit))
+            }
+
+            try await add(self.at(5, 10, from: base), 2_000 * Self.mbDecimal)
+            try await add(self.at(5, 23, from: base), -500 * Self.mbDecimal)
+            try await add(self.at(5, 23, 30, from: base), -500 * Self.mbDecimal)
+            try await add(self.at(6, 0, from: base), -500 * Self.mbDecimal)
+            try await add(self.at(6, 0, 30, from: base), 300 * Self.mbDecimal)
+            try await add(self.at(9, 12, from: base), 700 * Self.mbDecimal)
+            for day in 0..<30 {
+                try await add(self.at(day, 22, 30, from: base), 90 * Self.mbDecimal, unit: steady)
+                try await add(self.at(day, 23, from: base), 90 * Self.mbDecimal, unit: steady)
+                try await add(self.at(day, 23, 30, from: base), 90 * Self.mbDecimal, unit: steady)
+                try await add(self.at(day + 1, 0, from: base), 90 * Self.mbDecimal, unit: steady)
+            }
+            for day in 45..<58 {
+                try await add(self.at(day, 9, from: base), 400 * Self.mbDecimal)
+                try await add(self.at(day, 23, 30, from: base), 200 * Self.mbDecimal, unit: steady)
+                try await add(self.at(day + 1, 0, from: base), 200 * Self.mbDecimal, unit: steady)
+            }
+            let now = self.at(60, 20, from: base)
+            let cutoff = self.at(60 - 29, 0, from: base)
+
+            try await DatabaseManager.shared.pruneGrowthJournalBuckets(olderThan: cutoff, calendar: calendar)
+
+            let folded = EpisodeBuilder.foldedCounts(
+                slots: history.filter { $0.firstAt < cutoff }, carries: [:], calendar: calendar
+            )
+            let saved = try await DatabaseManager.shared.fetchJournalCheckpoints()
+            XCTAssertEqual(
+                Dictionary(uniqueKeysWithValues: saved.map { ($0.unitKey, $0.state) }),
+                folded.filter { $0.value.count != 0 }
+            )
+            XCTAssertFalse(saved.isEmpty)
+
+            let feed = try await GrowthJournalService.shared.changeFeed(
+                trackedPaths: [path], now: now, calendar: calendar
+            )
+            let expected = EpisodeBuilder.build(slots: history, now: now, calendar: calendar)
+            XCTAssertEqual(self.rowKeys(feed), self.rowKeys(expected))
+            XCTAssertEqual(feed.weekNetBytes, expected.weekNetBytes)
+            XCTAssertEqual(feed.smallerChangeCount, expected.smallerChangeCount)
+            XCTAssertFalse(expected.episodes.isEmpty)
+
+            let remaining = try await DatabaseManager.shared.fetchChangeFeedInput(trackedPathIds: [trackedPathId])
+            XCTAssertTrue(remaining.slots.allSatisfy { $0.firstAt >= cutoff })
+        }
+    }
+
     func testPlaceActiveEveryHourForFourMonthsKeepsAFewDaysOfJournalAndTheSameFeed() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let path = self.trackedPath(trackedPathId)

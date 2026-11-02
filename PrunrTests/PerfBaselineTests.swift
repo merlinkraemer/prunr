@@ -193,9 +193,21 @@ final class PerfBaselineTests: PrunrTestCase {
                 ).episodes.count
             }
             XCTAssertGreaterThan(rows, 0)
+            let writerProbe = Task.detached { () -> Double in
+                var longest = 0.0
+                while !Task.isCancelled {
+                    let started = DispatchTime.now().uptimeNanoseconds
+                    try? await dbPool.write { db in try db.execute(sql: "SELECT 1") }
+                    longest = max(longest, Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000)
+                    try? await Task.sleep(nanoseconds: 1_000_000)
+                }
+                return longest
+            }
             try await self.once("prune.first.pruneGrowthJournalBuckets") {
                 try await self.db.pruneGrowthJournalBuckets(olderThan: cutoff, calendar: calendar)
             }
+            writerProbe.cancel()
+            self.emit("prune.first.longestWriterWait", await writerProbe.value)
             let checkpoints = try await self.db.fetchJournalCheckpoints()
             self.emit("prune.first.checkpoints", Double(checkpoints.count))
             try await self.time("prune.first.changeFeedAfterPrune", runs: 3) {
