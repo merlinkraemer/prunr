@@ -3,6 +3,16 @@ import XCTest
 
 @MainActor
 final class MenuBarManagerRegressionTests: PrunrTestCase {
+
+    func testAutoScanIgnoresOnlyTheAppBundleNotItsParentFolder() {
+        let bundle = URL(fileURLWithPath: "/Users/test/Downloads/Prunr.app")
+        let roots = MenuBarManager.autoScanIgnoredRoots(bundleURL: bundle)
+
+        XCTAssertTrue(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/Prunr.app", ignoredRoots: roots))
+        XCTAssertTrue(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/Prunr.app/Contents/Info.plist", ignoredRoots: roots))
+        XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/other.zip", ignoredRoots: roots))
+        XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/Prunr.app-old/a", ignoredRoots: roots))
+    }
     func testFooterActivityShowsReliableFullScanPercentage() {
         let manager = MenuBarManager()
         manager.isAutoScanning = true

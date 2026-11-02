@@ -11,11 +11,6 @@ actor RecentChangeService {
 
     private init() {}
 
-    /// Dev-only build-output fragments excluded as a defense in depth. Prunr's
-    /// real operational state is sourced from `PrunrInternalPaths`.
-    private let internalPathFragments: [String] = [
-        "/.build/derivedData/"
-    ]
     private static let stagingBatchSize = 1000
 
     enum RefreshResult: Sendable {
@@ -59,7 +54,10 @@ actor RecentChangeService {
             return .needsFullScan
         }
 
-        let targets = refreshTargets(from: changedPaths, trackedPath: trackedPath)
+        let ignoredNames = ScanSkipRules.normalizedIgnoredNames(
+            await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
+        )
+        let targets = refreshTargets(from: changedPaths, trackedPath: trackedPath, ignoredNames: ignoredNames)
         guard !targets.isEmpty else { return .noChanges }
 
         if targets.count > Self.maxRefreshTargets {
@@ -75,7 +73,6 @@ actor RecentChangeService {
             return .needsFullScan
         }
 
-        let ignoredNames = await MainActor.run { SettingsStore.shared.allScanIgnoreNames }
         let scanTimestamp = Date()
         var mergedDeltas: [DatabaseManager.JournalDeltaKey: Int64] = [:]
 
@@ -184,7 +181,11 @@ actor RecentChangeService {
     /// Prevents unbounded incremental work from bulk operations (e.g., unpacking archives, npm install).
     private static let maxRefreshTargets = 192
 
-    private func refreshTargets(from changedPaths: Set<URL>, trackedPath: TrackedPath) -> [RefreshTarget] {
+    private func refreshTargets(
+        from changedPaths: Set<URL>,
+        trackedPath: TrackedPath,
+        ignoredNames: Set<String>
+    ) -> [RefreshTarget] {
         let trackedRoot = trackedPath.url.standardizedFileURL
         let fileManager = FileManager.default
         var filesByPath: [String: ScanResult] = [:]
@@ -193,13 +194,20 @@ actor RecentChangeService {
 
         for url in changedPaths {
             let standardized = url.standardizedFileURL
-            if shouldIgnoreInternalPath(standardized.path) {
-                continue
-            }
             guard isWithinTrackedRoot(standardized.path, trackedRoot: trackedRoot.path) else { continue }
 
             var isDirectory: ObjCBool = false
             let exists = fileManager.fileExists(atPath: standardized.path, isDirectory: &isDirectory)
+
+            let skipsAsDirectory = exists && isDirectory.boolValue
+            if ScanSkipRules.shouldSkip(
+                path: standardized.path,
+                isDirectory: skipsAsDirectory,
+                belowRoot: trackedRoot.path,
+                ignoredNames: ignoredNames
+            ) {
+                continue
+            }
 
             if exists, !isDirectory.boolValue {
                 if let fileResult = scanResult(forFileAt: standardized) {
@@ -263,9 +271,6 @@ actor RecentChangeService {
     }
 
     private func scanResult(forFileAt url: URL) -> ScanResult? {
-        if shouldIgnoreInternalPath(url.standardizedFileURL.path) {
-            return nil
-        }
         var fileStat = stat()
         guard lstat(url.path, &fileStat) == 0 else { return nil }
         let sizeBytes = FileScanner.diskUsageBytes(for: fileStat)
@@ -277,16 +282,6 @@ actor RecentChangeService {
             category: category,
             subcategory: subcategory
         )
-    }
-
-    private func shouldIgnoreInternalPath(_ path: String) -> Bool {
-        if PrunrInternalPaths.isInternalPath(path) {
-            return true
-        }
-        for fragment in internalPathFragments where path.contains(fragment) {
-            return true
-        }
-        return false
     }
 
     private func coalescedPaths(_ paths: Set<String>) -> [String] {

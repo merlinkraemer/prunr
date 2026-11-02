@@ -1506,6 +1506,67 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testRecentChangeRefreshIgnoresPlacesFullScansSkip() async throws {
+        try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrRecentChangeSkipRules")
+            defer {
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+
+            let keptFileURL = tempDirectory.appendingPathComponent("kept.txt")
+            try Data(repeating: 0x01, count: 128).write(to: keptFileURL)
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [ScanResult(path: keptFileURL.path, sizeBytes: 128)]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPathId,
+                updatedAt: Date(timeIntervalSinceReferenceDate: 6_500)
+            )
+
+            let skippedDirectories = [".Trash", "Pictures/Photos Library.photoslibrary", "Library/Mail"]
+            var changed = Set<URL>()
+            for relative in skippedDirectories {
+                let directory = tempDirectory.appendingPathComponent(relative, isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let file = directory.appendingPathComponent("big.bin")
+                try Data(repeating: 0x02, count: 4096).write(to: file)
+                changed.insert(file)
+                changed.insert(directory)
+            }
+
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let result = await RecentChangeService.shared.refreshChangedPaths(changed, trackedPath: trackedPath)
+
+            guard case .noChanges = result else {
+                XCTFail("watcher must not record places full scans skip, got \(result)")
+                return
+            }
+        }
+    }
+
+    func testScanSkipRulesMatchFullScanSkipping() {
+        let root = "/Users/test"
+        let ignored = ScanSkipRules.normalizedIgnoredNames(["Node_Modules"])
+
+        func skips(_ path: String, isDirectory: Bool = false) -> Bool {
+            ScanSkipRules.shouldSkip(path: path, isDirectory: isDirectory, belowRoot: root, ignoredNames: ignored)
+        }
+
+        XCTAssertTrue(skips("/Users/test/.Trash/a.bin"))
+        XCTAssertTrue(skips("/Users/test/.Trash", isDirectory: true))
+        XCTAssertTrue(skips("/Users/test/Pictures/Photos Library.photoslibrary/x/y.jpg"))
+        XCTAssertTrue(skips("/Users/test/Library/Mail/V10/a.emlx"))
+        XCTAssertTrue(skips("/Users/test/Library/Mobile Documents/com~apple~CloudDocs/a.pdf"))
+        XCTAssertTrue(skips("/Users/test/code/node_modules/pkg/index.js"))
+        XCTAssertFalse(skips("/Users/test/Downloads/a.zip"))
+        XCTAssertFalse(skips("/Users/test/Library/Caches/a.bin"))
+        XCTAssertFalse(skips("/Users/test/code/node_modules"))
+        XCTAssertFalse(skips("/Users/test/Downloads", isDirectory: true))
+        XCTAssertFalse(skips("/Users/test/Library/Mobile Documents/loose.pdf"))
+    }
+
     func testWorkingSetRemovalOfMissingPathPreservesSiblingPrefixes() async throws {
         try await withTemporaryDatabase { [self] trackedPathId, snapshotId in
             let root = "/tmp/root"

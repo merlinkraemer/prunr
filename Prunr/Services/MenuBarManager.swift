@@ -3527,23 +3527,24 @@ final class MenuBarManager: NSObject {
     private func shouldIgnoreAutoScanChanges(_ changedPaths: Set<URL>) -> Bool {
         guard !changedPaths.isEmpty else { return true }
 
-        let ignoredRoots = autoScanIgnoredRoots()
+        let ignoredRoots = Self.autoScanIgnoredRoots(bundleURL: Bundle.main.bundleURL)
         let relevantChanges = changedPaths.filter { url in
-            let standardized = url.standardizedFileURL
-            return !ignoredRoots.contains(where: { standardized.path.hasPrefix($0.path) })
+            !Self.isIgnoredByAutoScan(path: url.standardizedFileURL.path, ignoredRoots: ignoredRoots)
         }
 
         return relevantChanges.isEmpty
     }
 
-    private func autoScanIgnoredRoots() -> [URL] {
+    static func autoScanIgnoredRoots(bundleURL: URL) -> [URL] {
         var roots = PrunrInternalPaths.directoryURLs()
-
-        let bundleURL = Bundle.main.bundleURL.standardizedFileURL
-        roots.append(bundleURL)
-        roots.append(bundleURL.deletingLastPathComponent().standardizedFileURL)
-
+        roots.append(bundleURL.standardizedFileURL)
         return roots
+    }
+
+    static func isIgnoredByAutoScan(path: String, ignoredRoots: [URL]) -> Bool {
+        ignoredRoots.contains { root in
+            path == root.path || path.hasPrefix(root.path + "/")
+        }
     }
 
     deinit {

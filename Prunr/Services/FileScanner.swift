@@ -198,19 +198,6 @@ final class FileScanner {
         return stalledFor >= traversalStallTimeout ? stalledFor : nil
     }
 
-    /// Dev-only build-output fragments excluded as a defense in depth. Prunr's
-    /// real operational state is sourced from `PrunrInternalPaths`.
-    private let internalPathFragments: [String] = [
-        "/.build/derivedData/"
-    ]
-
-    /// iCloud paths that can hang when accessed
-    private let iCloudPathFragments: [String] = [
-        "/Library/Mobile Documents/",
-        "/.icloud/",
-        "/com~apple~"
-    ]
-
     static func diskUsageBytes(for fileStat: stat) -> Int64 {
         Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
     }
@@ -294,7 +281,7 @@ final class FileScanner {
                 var count = 0
                 var lastLogCount = 0
                 let logInterval = 5000
-                let normalizedIgnoredNames = Set(ignoredNames.map { $0.lowercased() })
+                let normalizedIgnoredNames = ScanSkipRules.normalizedIgnoredNames(ignoredNames)
                 let options = FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV
                 let rootPath = rootURL.path
                 let duplicatedRoot = strdup(rootPath)
@@ -338,8 +325,10 @@ final class FileScanner {
 
                     switch info {
                     case FTS_D:
-                        let directoryName = (path as NSString).lastPathComponent
-                        if level > 0 && self.shouldSkipDirectory(path: path, name: directoryName, ignoredNames: normalizedIgnoredNames) {
+                        if level > 0 && ScanSkipRules.shouldSkipDirectory(
+                            path: URL(fileURLWithPath: path).standardizedFileURL.path,
+                            ignoredNames: normalizedIgnoredNames
+                        ) {
                             fts_set(tree, entry, FTS_SKIP)
                         }
 
@@ -440,12 +429,25 @@ final class FileScanner {
             return .traversalFailed(path)
         }
     }
+}
 
-    // MARK: - Private Helpers
+enum ScanSkipRules {
+    private static let internalPathFragments: [String] = [
+        "/.build/derivedData/"
+    ]
 
-    private func shouldSkipDirectory(path: String, name: String, ignoredNames: Set<String>) -> Bool {
-        let lowercasedName = name.lowercased()
-        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+    private static let iCloudPathFragments: [String] = [
+        "/Library/Mobile Documents/",
+        "/.icloud/",
+        "/com~apple~"
+    ]
+
+    static func normalizedIgnoredNames(_ names: Set<String>) -> Set<String> {
+        Set(names.map { $0.lowercased() })
+    }
+
+    static func shouldSkipDirectory(path standardizedPath: String, ignoredNames: Set<String>) -> Bool {
+        let lowercasedName = (standardizedPath as NSString).lastPathComponent.lowercased()
 
         if ignoredNames.contains(lowercasedName) {
             return true
@@ -459,21 +461,43 @@ final class FileScanner {
             return true
         }
 
-        // Skip iCloud directories that can hang
         for fragment in iCloudPathFragments where standardizedPath.contains(fragment) {
             return true
         }
 
-        // Skip known problematic paths that cause FTS stalls
-        if shouldSkipProblematicDirectory(path: standardizedPath, lowercasedName: lowercasedName) {
-            Self.logger.debug("Skipping problematic directory: \(path, privacy: .public)")
+        return shouldSkipProblematicDirectory(path: standardizedPath, lowercasedName: lowercasedName)
+    }
+
+    static func shouldSkip(
+        path standardizedPath: String,
+        isDirectory: Bool,
+        belowRoot standardizedRoot: String,
+        ignoredNames: Set<String>
+    ) -> Bool {
+        if PrunrInternalPaths.isInternalPath(standardizedPath) {
+            return true
+        }
+        for fragment in internalPathFragments where standardizedPath.contains(fragment) {
             return true
         }
 
+        let rootPrefix = standardizedRoot.hasSuffix("/") ? standardizedRoot : standardizedRoot + "/"
+        guard standardizedPath.hasPrefix(rootPrefix) else { return false }
+
+        let components = standardizedPath.dropFirst(rootPrefix.count).split(separator: "/")
+        var current = String(rootPrefix.dropLast())
+        for (index, component) in components.enumerated() {
+            current += "/" + component
+            let isLeaf = index == components.count - 1
+            if isLeaf && !isDirectory { break }
+            if shouldSkipDirectory(path: current, ignoredNames: ignoredNames) {
+                return true
+            }
+        }
         return false
     }
 
-    private func shouldSkipProblematicDirectory(path: String, lowercasedName: String) -> Bool {
+    private static func shouldSkipProblematicDirectory(path: String, lowercasedName: String) -> Bool {
         if lowercasedName.hasSuffix(".photolibrary") || lowercasedName.hasSuffix(".photoslibrary") {
             return true
         }
