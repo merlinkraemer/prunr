@@ -117,6 +117,7 @@ actor BaselineService {
             ignoredNames: ignoredNames,
             alsoWriteWorkingSet: false,
             reconstructsFileHistory: previousSnapshotId == nil,
+            completesSnapshot: false,
             skipLog: skipLog,
             progress: progress
         )
@@ -131,93 +132,109 @@ actor BaselineService {
             ))
         }
 
-        try await db.rebuildWorkingSet(
-            from: snapshotId,
-            trackedPathId: trackedPath.id,
-            updatedAt: snapshot.createdAt,
-            drilldownIndex: outcome.drilldownIndex
-        )
+        do {
+            try await db.rebuildWorkingSet(
+                from: snapshotId,
+                trackedPathId: trackedPath.id,
+                updatedAt: snapshot.createdAt,
+                drilldownIndex: outcome.drilldownIndex
+            )
 
-        if previousSnapshotId == nil {
-            // A first successful baseline must clear stale realtime growth left behind from pre-baseline runs.
-            try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)
-            if let fileHistory = outcome.fileHistory {
-                try await recordFileHistory(fileHistory, trackedPath: trackedPath)
-            }
-        }
-
-        // Record deltas to growth journal only when a previous snapshot exists.
-        // On first scan (previousSnapshotId == nil) this block is skipped entirely —
-        // no calculateDeltas call and no journal recording, so first-scan cost is
-        // scan + insert only, with no expensive diff computation.
-        if let previous = previousSnapshots.first, let previousSnapshotId,
-           HistoryStart.scanWindowKeepsResidual(windowStart: previous.createdAt) {
-            // The realtime watcher already recorded most of this window's changes
-            // at the time they happened. Keep those timestamps and add only the
-            // residual the watcher missed (or over-counted), so the window total
-            // still equals the authoritative snapshot delta without double-counting.
-            // The window is (previous scan start, this scan start]; watcher refreshes
-            // wait while a full scan runs, so later changes belong to the next window.
-            let deltas = try await db.calculateDeltas(beforeId: previousSnapshotId, afterId: snapshotId)
-            var authoritativeByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
-            var authoritativeByChild: [PlaceChildKey: Int64] = [:]
-            for delta in deltas {
-                let category = GrowthCategory.categorize(path: delta.path)
-                let subcategory = GrowthCategory.subcategorize(path: delta.path)
-                let unitKey = UnitResolver.resolve(path: delta.path)
-                let key = DatabaseManager.JournalDeltaKey(
-                    category: category,
-                    subcategory: subcategory,
-                    unitKey: unitKey
-                )
-                authoritativeByKey[key, default: 0] += delta.changeBytes
-                if let child = PlaceChildKey(path: delta.path, unitKey: unitKey) {
-                    authoritativeByChild[child, default: 0] += delta.changeBytes
+            if previousSnapshotId == nil {
+                // A first successful baseline must clear stale realtime growth left behind from pre-baseline runs.
+                try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)
+                if let fileHistory = outcome.fileHistory {
+                    try await recordFileHistory(fileHistory, trackedPath: trackedPath)
                 }
             }
 
-            let recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
-                trackedPathId: trackedPath.id,
-                from: previous.createdAt,
-                to: snapshot.createdAt
-            )
-
-            var residualByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
-            for key in Set(authoritativeByKey.keys).union(recordedByKey.keys) {
-                let residual = (authoritativeByKey[key] ?? 0) - (recordedByKey[key] ?? 0)
-                if residual != 0 {
-                    residualByKey[key] = residual
-                }
-            }
-
-            if !residualByKey.isEmpty {
-                try await growthJournalService.recordDeltas(
-                    trackedPath: trackedPath,
-                    deltas: residualByKey,
-                    at: snapshot.createdAt,
-                    source: .scan,
-                    observedSince: previous.createdAt
-                )
-            }
-
-            let recordedByChild = try await db.fetchJournalDetailTotals(
-                trackedPathId: trackedPath.id,
-                from: previous.createdAt,
-                to: snapshot.createdAt
-            )
-            try await db.upsertJournalDetail(
-                trackedPathId: trackedPath.id,
-                deltasByBucketStart: [
-                    GrowthJournalService.bucketStart(for: snapshot.createdAt): GrowthJournalDetail.residual(
-                        authoritative: authoritativeByChild,
-                        recorded: recordedByChild
+            // Record deltas to growth journal only when a previous snapshot exists.
+            // On first scan (previousSnapshotId == nil) this block is skipped entirely —
+            // no calculateDeltas call and no journal recording, so first-scan cost is
+            // scan + insert only, with no expensive diff computation.
+            if let previous = previousSnapshots.first, let previousSnapshotId,
+               HistoryStart.scanWindowKeepsResidual(windowStart: previous.createdAt) {
+                // The realtime watcher already recorded most of this window's changes
+                // at the time they happened. Keep those timestamps and add only the
+                // residual the watcher missed (or over-counted), so the window total
+                // still equals the authoritative snapshot delta without double-counting.
+                // The window is (previous scan start, this scan start]; watcher refreshes
+                // wait while a full scan runs, so later changes belong to the next window.
+                let deltas = try await db.calculateDeltas(beforeId: previousSnapshotId, afterId: snapshotId)
+                var authoritativeByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+                var authoritativeByChild: [PlaceChildKey: Int64] = [:]
+                for delta in deltas {
+                    let category = GrowthCategory.categorize(path: delta.path)
+                    let subcategory = GrowthCategory.subcategorize(path: delta.path)
+                    let unitKey = UnitResolver.resolve(path: delta.path)
+                    let key = DatabaseManager.JournalDeltaKey(
+                        category: category,
+                        subcategory: subcategory,
+                        unitKey: unitKey
                     )
-                ],
-                source: .scan
-            )
+                    authoritativeByKey[key, default: 0] += delta.changeBytes
+                    if let child = PlaceChildKey(path: delta.path, unitKey: unitKey) {
+                        authoritativeByChild[child, default: 0] += delta.changeBytes
+                    }
+                }
+
+                let recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
+                    trackedPathId: trackedPath.id,
+                    from: previous.createdAt,
+                    to: snapshot.createdAt
+                )
+
+                var residualByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+                for key in Set(authoritativeByKey.keys).union(recordedByKey.keys) {
+                    let residual = (authoritativeByKey[key] ?? 0) - (recordedByKey[key] ?? 0)
+                    if residual != 0 {
+                        residualByKey[key] = residual
+                    }
+                }
+
+                if !residualByKey.isEmpty {
+                    try await growthJournalService.recordDeltas(
+                        trackedPath: trackedPath,
+                        deltas: residualByKey,
+                        at: snapshot.createdAt,
+                        source: .scan,
+                        observedSince: previous.createdAt
+                    )
+                }
+
+                let recordedByChild = try await db.fetchJournalDetailTotals(
+                    trackedPathId: trackedPath.id,
+                    from: previous.createdAt,
+                    to: snapshot.createdAt
+                )
+                try await db.upsertJournalDetail(
+                    trackedPathId: trackedPath.id,
+                    deltasByBucketStart: [
+                        GrowthJournalService.bucketStart(for: snapshot.createdAt): GrowthJournalDetail.residual(
+                            authoritative: authoritativeByChild,
+                            recorded: recordedByChild
+                        )
+                    ],
+                    source: .scan
+                )
+            }
+
+            try await db.markSnapshotComplete(id: snapshotId)
+        } catch {
+            let cleanupOutlivesTaskCancellation = Task {
+                try await self.db.deleteSnapshot(id: snapshotId)
+            }
+            do {
+                try await cleanupOutlivesTaskCancellation.value
+            } catch {
+                logger.error("Failed to delete unpublished snapshot ID \(snapshotId): \(error.localizedDescription)")
+            }
+            throw error
         }
 
-        return snapshot
+        var publishedSnapshot = snapshot
+        publishedSnapshot.lifecycle = .complete
+        return publishedSnapshot
     }
 
     /// Writes the history rebuilt from file dates. Every bucket lies before
