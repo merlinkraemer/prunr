@@ -836,7 +836,7 @@ extension DatabaseManager {
         }
     }
 
-    /// Fetches all snapshots ordered by creation date (newest first)
+    /// Fetches all snapshots ordered by insertion (newest first)
     /// - Parameter trackedPathId: Optional filter to only fetch snapshots for a specific path
     /// - Returns: Array of snapshots
     func fetchAllSnapshots(trackedPathId: UUID? = nil) async throws -> [Snapshot] {
@@ -846,7 +846,7 @@ extension DatabaseManager {
 
         return try await dbPool.read { db in
             var request = Snapshot.all()
-                .order(Snapshot.Columns.createdAt.desc, Snapshot.Columns.id.desc)
+                .order(Snapshot.Columns.id.desc)
                 .filter(Snapshot.Columns.lifecycle == Snapshot.Lifecycle.complete.rawValue)
 
             // Filter by trackedPathId if provided
@@ -863,7 +863,7 @@ extension DatabaseManager {
         }
     }
 
-    /// Fetches the most recent snapshots ordered by creation date (newest first).
+    /// Fetches the most recent snapshots ordered by insertion (newest first).
     /// - Parameters:
     ///   - trackedPathId: Optional filter to only fetch snapshots for a specific path
     ///   - limit: Maximum number of snapshots to return
@@ -876,7 +876,7 @@ extension DatabaseManager {
 
         return try await dbPool.read { db in
             var request = Snapshot.all()
-                .order(Snapshot.Columns.createdAt.desc, Snapshot.Columns.id.desc)
+                .order(Snapshot.Columns.id.desc)
                 .limit(limit)
                 .filter(Snapshot.Columns.lifecycle == Snapshot.Lifecycle.complete.rawValue)
 

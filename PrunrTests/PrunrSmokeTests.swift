@@ -719,6 +719,70 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testRecentSnapshotsOrderByIdWhenCreatedAtIsInTheFuture() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let skewed = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let skewedId = try XCTUnwrap(skewed.id)
+            let later = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let laterId = try XCTUnwrap(later.id)
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let future = Date().addingTimeInterval(7 * 24 * 60 * 60)
+            try await dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE snapshot SET createdAt = ? WHERE id = ?",
+                    arguments: [future, skewedId]
+                )
+            }
+
+            let recent = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 10)
+            XCTAssertEqual(recent.compactMap(\.id), [laterId, skewedId])
+            let all = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
+            XCTAssertEqual(all.compactMap(\.id), [laterId, skewedId])
+        }
+    }
+
+    func testCleanupKeepsCompleteSnapshotsAfterClockGoesBack() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let skewed = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let skewedId = try XCTUnwrap(skewed.id)
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let future = Date().addingTimeInterval(7 * 24 * 60 * 60)
+            try await dbPool.write { db in
+                try db.execute(
+                    sql: "UPDATE snapshot SET createdAt = ? WHERE id = ?",
+                    arguments: [future, skewedId]
+                )
+            }
+            try await DatabaseManager.shared.addEntries(
+                to: skewedId,
+                entries: [ScanResult(path: "/Users/tester/dev/file.dat", sizeBytes: 100)]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: skewedId,
+                trackedPathId: trackedPathId,
+                updatedAt: future
+            )
+
+            let corrected = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let correctedId = try XCTUnwrap(corrected.id)
+            try await DatabaseManager.shared.addEntries(
+                to: correctedId,
+                entries: [ScanResult(path: "/Users/tester/dev/file.dat", sizeBytes: 200)]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: correctedId,
+                trackedPathId: trackedPathId,
+                updatedAt: corrected.createdAt
+            )
+
+            let deleted = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
+
+            XCTAssertEqual(deleted, 0)
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 10)
+            XCTAssertEqual(Set(snapshots.compactMap(\.id)), [skewedId, correctedId])
+        }
+    }
+
     func testCleanupKeepsCompleteSnapshotOfPathWithoutWorkingSet() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)

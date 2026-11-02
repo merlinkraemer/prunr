@@ -236,9 +236,20 @@ actor DatabaseCleanupService {
                        OR (s.lifecycle = ?
                            AND s.trackedPathId != ''
                            AND ws.latestWorkingSetUpdate IS NOT NULL
-                           AND s.createdAt > ws.latestWorkingSetUpdate)
+                           AND s.id > (
+                               SELECT MAX(source.id)
+                               FROM snapshot source
+                               WHERE source.trackedPathId = s.trackedPathId
+                                 AND source.lifecycle = ?
+                                 AND source.createdAt <= ws.latestWorkingSetUpdate
+                           ))
                     """,
-                    arguments: [Snapshot.Lifecycle.complete.rawValue, staleBefore, Snapshot.Lifecycle.complete.rawValue]
+                    arguments: [
+                        Snapshot.Lifecycle.complete.rawValue,
+                        staleBefore,
+                        Snapshot.Lifecycle.complete.rawValue,
+                        Snapshot.Lifecycle.complete.rawValue
+                    ]
                 )
 
             guard !snapshotIDs.isEmpty else { return 0 }
@@ -467,7 +478,7 @@ actor DatabaseCleanupService {
                         SELECT id
                         FROM snapshot
                         WHERE trackedPathId = ?
-                        ORDER BY createdAt DESC
+                        ORDER BY id DESC
                         LIMIT ?
                         """,
                     arguments: [trackedPathId, Self.recentHistorySnapshotsPerPath]
@@ -481,7 +492,7 @@ actor DatabaseCleanupService {
                     SELECT id
                     FROM snapshot
                     WHERE trackedPathId = '' OR trackedPathId IS NULL
-                    ORDER BY createdAt DESC
+                    ORDER BY id DESC
                     LIMIT ?
                     """,
                 arguments: [Self.recentHistorySnapshotsPerPath]
@@ -513,7 +524,7 @@ actor DatabaseCleanupService {
                     sql: """
                     SELECT * FROM snapshot
                     WHERE trackedPathId = ? AND lifecycle = ?
-                    ORDER BY createdAt DESC, id DESC
+                    ORDER BY id DESC
                     """,
                     arguments: [pathId, Snapshot.Lifecycle.complete.rawValue]
                 )
@@ -533,7 +544,7 @@ actor DatabaseCleanupService {
                 sql: """
                 SELECT * FROM snapshot
                 WHERE trackedPathId = '' OR trackedPathId IS NULL
-                ORDER BY createdAt DESC
+                ORDER BY id DESC
                 """
             )
             let orphanedToAggregate = orphanedSnapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
@@ -623,7 +634,7 @@ actor DatabaseCleanupService {
                     sql: """
                     SELECT * FROM snapshot
                     WHERE trackedPathId = ? AND lifecycle = ?
-                    ORDER BY createdAt DESC, id DESC
+                    ORDER BY id DESC
                     """,
                     arguments: [pathId, Snapshot.Lifecycle.complete.rawValue]
                 )
@@ -654,7 +665,7 @@ actor DatabaseCleanupService {
                 sql: """
                 SELECT * FROM snapshot
                 WHERE trackedPathId = '' OR trackedPathId IS NULL
-                ORDER BY createdAt DESC
+                ORDER BY id DESC
                 """
             )
             let orphanedToDelete = orphanedSnapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
@@ -706,7 +717,7 @@ actor DatabaseCleanupService {
                         SELECT id
                         FROM snapshot
                         WHERE trackedPathId = ?
-                        ORDER BY createdAt DESC, id DESC
+                        ORDER BY id DESC
                         LIMIT -1 OFFSET ?
                         """,
                     arguments: [trackedPathId, Self.maxCategoryHistorySnapshotsPerPath]
@@ -720,7 +731,7 @@ actor DatabaseCleanupService {
                     SELECT id
                     FROM snapshot
                     WHERE trackedPathId = '' OR trackedPathId IS NULL
-                    ORDER BY createdAt DESC, id DESC
+                    ORDER BY id DESC
                     LIMIT -1 OFFSET ?
                     """,
                 arguments: [Self.maxCategoryHistorySnapshotsPerPath]
@@ -739,7 +750,7 @@ actor DatabaseCleanupService {
                           FROM snapshot newest
                           WHERE newest.trackedPathId = s.trackedPathId
                             AND newest.lifecycle = ?
-                          ORDER BY newest.createdAt DESC, newest.id DESC
+                          ORDER BY newest.id DESC
                           LIMIT 1
                       )
                     """,

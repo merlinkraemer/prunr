@@ -153,6 +153,7 @@ actor BaselineService {
             // no calculateDeltas call and no journal recording, so first-scan cost is
             // scan + insert only, with no expensive diff computation.
             if let previous = previousSnapshots.first, let previousSnapshotId,
+               previous.createdAt <= snapshot.createdAt,
                HistoryStart.scanWindowKeepsResidual(windowStart: previous.createdAt) {
                 // The realtime watcher already recorded most of this window's changes
                 // at the time they happened. Keep those timestamps and add only the
