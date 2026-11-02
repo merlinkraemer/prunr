@@ -183,19 +183,20 @@ struct CategoryGrowthListView: View {
 
     @ViewBuilder
     private func screenView(for screen: DrilldownListPane) -> some View {
+        let content = screen.content ?? liveContent(for: screen)
         switch screen.level {
         case .main:
             categoryListView
                 .transition(.identity)
         case .subcategories:
             if let category = screen.category {
-                subcategoryListView(for: category)
+                subcategoryListView(for: category, content: content)
                     .transition(.identity)
             } else {
                 Color.clear
             }
         case .files:
-            fileListView(for: resolvedSubcategory(for: screen), category: screen.category?.category)
+            fileListView(for: content.fileGroup, category: screen.category?.category, content: content)
                 .transition(.identity)
         }
     }
@@ -204,6 +205,24 @@ struct CategoryGrowthListView: View {
         guard screen.level == .files, let category = screen.category?.category else { return screen.subcategory }
         let shown = screen.subcategory ?? manager.selectedSubcategory
         return shown.map { manager.drilldownFileGroup($0, in: category) }
+    }
+
+    private func liveContent(for screen: DrilldownListPane) -> DrilldownPaneContent {
+        let category = screen.category?.category
+        let store = manager.drilldownStore
+        let filesReadFailed = category.map { store.failedFileCategories.contains($0) } ?? false
+        return DrilldownPaneContent(
+            groups: category.flatMap { manager.subcategoryGroupsByCategory[$0] } ?? [],
+            fileGroup: resolvedSubcategory(for: screen),
+            isGroupsPending: category.map { store.isGroupsPending(for: $0) } ?? false,
+            groupsReadFailed: store.groupsReadFailed || filesReadFailed,
+            filesReadFailed: filesReadFailed,
+            isFilesLoaded: category.map { store.isFilesLoaded(for: $0) } ?? false
+        )
+    }
+
+    private func frozen(_ screen: DrilldownListPane) -> DrilldownListPane {
+        screen.frozen(with: screen.content ?? liveContent(for: screen))
     }
 
     private func screenPage(for screen: DrilldownListPane, width: CGFloat) -> some View {
@@ -256,12 +275,14 @@ struct CategoryGrowthListView: View {
             },
             phase1: {
                 manager.isDrillDownTransitionAnimating = true
+                let outgoing = self.frozen(previousScreen)
+                let incoming = self.frozen(newScreen)
                 activeTransition = ActiveTransition(
-                    outgoing: previousScreen,
-                    incoming: newScreen,
+                    outgoing: outgoing,
+                    incoming: incoming,
                     direction: direction
                 )
-                onPrepareHeaderTransition?(previousScreen, newScreen, forward)
+                onPrepareHeaderTransition?(outgoing, incoming, forward)
             },
             phase3: {
                 displayedScreen = newScreen
@@ -333,16 +354,15 @@ struct CategoryGrowthListView: View {
 
     // MARK: - Subcategory List View
 
-    private func subcategoryListView(for category: CategoryInventoryItem) -> some View {
-        let groups = CategorySizes.subcategoriesBySize(manager.subcategoryGroupsByCategory[category.category] ?? [])
-        let store = manager.drilldownStore
+    private func subcategoryListView(for category: CategoryInventoryItem, content: DrilldownPaneContent) -> some View {
+        let groups = CategorySizes.subcategoriesBySize(content.groups)
 
         return ScrollView {
             VStack(spacing: 0) {
                 if let status = CategorySizes.groupsStatus(
                     isEmpty: groups.isEmpty,
-                    isPending: store.isGroupsPending(for: category.category),
-                    readFailed: store.groupsReadFailed || store.failedFileCategories.contains(category.category)
+                    isPending: content.isGroupsPending,
+                    readFailed: content.groupsReadFailed
                 ) {
                     InlineStatusRow(status: status, onRetry: { manager.retryDrilldownRead(for: category.category) })
                 } else {
@@ -364,8 +384,7 @@ struct CategoryGrowthListView: View {
 
     // MARK: - File List View
 
-    private func fileListView(for group: SubcategoryGroup?, category: GrowthCategory?) -> some View {
-        let store = manager.drilldownStore
+    private func fileListView(for group: SubcategoryGroup?, category: GrowthCategory?, content: DrilldownPaneContent) -> some View {
         let files = (group?.topFiles ?? []).sorted { lhs, rhs in
             if lhs.currentSizeBytes != rhs.currentSizeBytes {
                 return lhs.currentSizeBytes > rhs.currentSizeBytes
@@ -375,9 +394,9 @@ struct CategoryGrowthListView: View {
         let status = CategorySizes.filesStatus(
             hasGroup: group != nil,
             hasFiles: !files.isEmpty,
-            isPending: category.map { store.isGroupsPending(for: $0) } ?? false,
-            isLoaded: category.map { store.isFilesLoaded(for: $0) } ?? false,
-            readFailed: category.map { store.failedFileCategories.contains($0) } ?? false
+            isPending: content.isGroupsPending,
+            isLoaded: content.isFilesLoaded,
+            readFailed: content.filesReadFailed
         )
         let remainingCount = CategorySizes.remainingFileCount(group)
 

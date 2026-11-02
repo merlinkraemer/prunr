@@ -108,6 +108,7 @@ struct MenuBarView: View {
         let level: HeaderLevel
         let category: CategoryInventoryItem?
         let subcategory: SubcategoryGroup?
+        var frozenBackReturnsToSubcategories: Bool?
 
         static let feed = HeaderScreen(level: .feed, category: nil, subcategory: nil)
         static let overview = HeaderScreen(level: .overview, category: nil, subcategory: nil)
@@ -130,16 +131,21 @@ struct MenuBarView: View {
         }
     }
 
+    private func frozenBackReturns(_ pane: DrilldownListPane) -> Bool? {
+        guard let content = pane.content, let category = pane.category?.category else { return nil }
+        return MenuBarManager.filesBackReturnsToSubcategories(for: category, groups: content.groups)
+    }
+
     private func headerScreen(for pane: DrilldownListPane) -> HeaderScreen {
         switch pane.level {
         case .main:
             return .overview
         case .subcategories:
             guard let category = pane.category else { return .overview }
-            return HeaderScreen(level: .category, category: category, subcategory: nil)
+            return HeaderScreen(level: .category, category: category, subcategory: nil, frozenBackReturnsToSubcategories: frozenBackReturns(pane))
         case .files:
             guard let category = pane.category else { return .overview }
-            return HeaderScreen(level: .files, category: category, subcategory: pane.subcategory)
+            return HeaderScreen(level: .files, category: category, subcategory: pane.subcategory, frozenBackReturnsToSubcategories: frozenBackReturns(pane))
         }
     }
 
@@ -1448,7 +1454,10 @@ struct MenuBarView: View {
             categoriesHeader
                 .transition(.identity)
         case .category, .files:
-            if let category = resolvedHeaderCategory(for: screen) {
+            if let frozenBackReturns = screen.frozenBackReturnsToSubcategories, let category = screen.category {
+                drillDownHeader(category: category, subcategory: frozenBackReturns ? screen.subcategory : nil)
+                    .transition(.identity)
+            } else if let category = resolvedHeaderCategory(for: screen) {
                 drillDownHeader(category: category, subcategory: headerSubcategory(for: screen, in: category))
                     .transition(.identity)
             } else {
