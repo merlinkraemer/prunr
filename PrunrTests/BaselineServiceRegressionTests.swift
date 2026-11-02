@@ -557,15 +557,10 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
             try await dbPool.write { db in
                 try db.execute(sql: """
-                    CREATE TEMP TRIGGER failJournalInsert BEFORE INSERT ON growthJournalBucket
+                    CREATE TRIGGER failJournalInsert BEFORE INSERT ON growthJournalBucket
                     BEGIN SELECT RAISE(ABORT, 'injected failure'); END
                     """)
             }
-            let failingConnectionCount = try await dbPool.read { db in
-                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sqlite_temp_master WHERE name = 'failJournalInsert'") ?? 0
-            }
-            try XCTSkipIf(failingConnectionCount == 0, "temp trigger is per connection")
-
             do {
                 _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
                 XCTFail("the injected journal failure must surface")
