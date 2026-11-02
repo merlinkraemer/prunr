@@ -12,8 +12,6 @@ enum FSEventsNoiseFilter {
         "/Library/Caches/com.apple.Safari/",
         "/Library/Caches/CloudKit/",
         "/Library/Caches/com.apple.nsurlsessiond/",
-        "/Library/WebKit/",
-        "/Library/Metadata/",
         "/.Spotlight-V100/",
         "/.fseventsd/",
         "/.Trashes/",
@@ -31,11 +29,6 @@ enum FSEventsNoiseFilter {
     private static let ignoredFileSuffixes: [String] = [
         ".swp",
         ".swo",
-        ".tmp",
-        "~",
-        "-wal",
-        "-shm",
-        "-journal",
     ]
 
     /// Returns `true` if the path should be ignored (it represents noise, not meaningful storage changes).

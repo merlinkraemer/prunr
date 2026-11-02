@@ -190,14 +190,26 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
     }
 
     func testDiagnosticsRedactsLegacyUserAndVolumePaths() {
-        let text = "scope: /Users/jane/Work/AcmeCorp and /Volumes/Archive/Private\n"
+        let text = "scope: /Users/jane/Work/AcmeCorp\nand /Volumes/Archive/Private\n"
 
         let redacted = DiagnosticsReporter.redactingFilesystemPaths(in: text)
 
-        XCTAssertEqual(redacted, "scope: <redacted-path> and <redacted-path>\n")
+        XCTAssertEqual(redacted, "scope: <redacted-path>\nand <redacted-path>\n")
         XCTAssertFalse(redacted.contains("jane"))
         XCTAssertFalse(redacted.contains("AcmeCorp"))
         XCTAssertFalse(redacted.contains("Archive"))
+    }
+
+    func testDiagnosticsRedactsPathsWithSpacesAndUnicode() {
+        let text = "opened ~/Client Name/Verträge 2024/Müller Ünïcode 日本語.pdf\nnext /Users/jane/My Documents/résumé final.pdf\n"
+
+        let redacted = DiagnosticsReporter.redactingFilesystemPaths(in: text)
+
+        XCTAssertEqual(redacted, "opened <redacted-path>\nnext <redacted-path>\n")
+        XCTAssertFalse(redacted.contains("Name"))
+        XCTAssertFalse(redacted.contains("Verträge"))
+        XCTAssertFalse(redacted.contains("Müller"))
+        XCTAssertFalse(redacted.contains("résumé"))
     }
 
     func testDiagnosticsRedactsTildePaths() {

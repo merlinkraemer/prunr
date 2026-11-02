@@ -1000,16 +1000,29 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
-    func testFSEventsNoiseFilterIgnoresSQLiteSidecars() {
-        XCTAssertTrue(
-            FSEventsNoiseFilter.shouldIgnore("/Users/tester/Library/Application Support/Prunr/prunr.sqlite-wal")
-        )
-        XCTAssertTrue(
-            FSEventsNoiseFilter.shouldIgnore("/Users/tester/Library/Application Support/Prunr/prunr.sqlite-shm")
-        )
-        XCTAssertTrue(
-            FSEventsNoiseFilter.shouldIgnore("/Users/tester/Library/Application Support/Prunr/prunr.sqlite-journal")
-        )
+    func testFSEventsNoiseFilterIgnoresSQLiteSidecarsInPrunrDirectory() {
+        let prunrDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Prunr", isDirectory: true)
+            .standardizedFileURL.path
+        for suffix in ["-wal", "-shm", "-journal"] {
+            XCTAssertTrue(FSEventsNoiseFilter.shouldIgnore(prunrDir + "/prunr.sqlite" + suffix))
+        }
+    }
+
+    func testFSEventsNoiseFilterKeepsOtherAppsGrowth() {
+        let paths = [
+            "/Users/tester/Library/Application Support/Other/store.sqlite-wal",
+            "/Users/tester/Library/Application Support/Other/store.sqlite-shm",
+            "/Users/tester/Library/Application Support/Other/store.sqlite-journal",
+            "/Users/tester/Library/WebKit/com.other.app/WebsiteData/big.db",
+            "/Users/tester/Library/Metadata/CoreSpotlight/index.db",
+            "/Users/tester/Downloads/download.tmp",
+            "/Users/tester/Documents/draft.txt~",
+        ]
+        for path in paths {
+            XCTAssertFalse(FSEventsNoiseFilter.shouldIgnore(path), path)
+        }
+        XCTAssertTrue(FSEventsNoiseFilter.shouldIgnore("/Users/tester/Documents/.DS_Store"))
     }
 
     func testPrunrInternalPathsCoversActiveDatabaseDirectory() async throws {

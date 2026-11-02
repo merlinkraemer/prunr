@@ -109,7 +109,7 @@ final class DiagnosticsReporter {
     static let maximumLogBytes = 1_000_000
     static let maximumAttachmentBytes = 200_000
     private static let filesystemPathPattern = try! NSRegularExpression(
-        pattern: #"(?:~|/(?:Users|Volumes))(?:/[^\s\]\[\(\),;\"']*)?"#
+        pattern: #"(?:~|/(?:Users|Volumes))(?:/[^\n]*)?"#
     )
 
     /// How often the rolling window is flushed to disk (seconds).
@@ -409,7 +409,7 @@ final class DiagnosticsReporter {
     }
 
     /// Redacts the user-visible portion of the macOS path families that can
-    /// carry a username and arbitrary folder names, including `~/…` forms.
+    /// carry a username and arbitrary folder names, including `~/…` forms. A path runs to the end of its line so names with spaces or unicode are fully redacted.
     static func redactingFilesystemPaths(in text: String) -> String {
         let range = NSRange(text.startIndex..., in: text)
         return filesystemPathPattern.stringByReplacingMatches(
