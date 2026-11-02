@@ -56,9 +56,9 @@ final class FileScannerWatchdogTests: XCTestCase {
     }
 
     func testTraversalStallIsDetectedWhenNotWaitingOnConsumer() {
-        let now = Date()
+        let now: TimeInterval = 1_000
         let snapshot = ScanTraversalState.Snapshot(
-            lastProgressAt: now.addingTimeInterval(-31),
+            lastProgressAt: now - 31,
             currentPath: "/slow",
             isFinished: false,
             consumerWaitStartedAt: nil
@@ -68,18 +68,18 @@ final class FileScannerWatchdogTests: XCTestCase {
     }
 
     func testConsumerWaitIsNotATraversalStallUntilConsumerTimeout() {
-        let now = Date()
+        let now: TimeInterval = 1_000
         let waiting = ScanTraversalState.Snapshot(
-            lastProgressAt: now.addingTimeInterval(-300),
+            lastProgressAt: now - 300,
             currentPath: "/busy",
             isFinished: false,
-            consumerWaitStartedAt: now.addingTimeInterval(-300)
+            consumerWaitStartedAt: now - 300
         )
         let waitingTooLong = ScanTraversalState.Snapshot(
-            lastProgressAt: now.addingTimeInterval(-901),
+            lastProgressAt: now - 901,
             currentPath: "/busy",
             isFinished: false,
-            consumerWaitStartedAt: now.addingTimeInterval(-901)
+            consumerWaitStartedAt: now - 901
         )
 
         XCTAssertNil(FileScanner.stalledDuration(waiting, now: now, traversalStallTimeout: 30, consumerStallTimeout: 900))

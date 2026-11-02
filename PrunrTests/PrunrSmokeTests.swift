@@ -855,19 +855,19 @@ final class PrunrSmokeTests: XCTestCase {
     }
 
     func testFileScannerContinuesOnTransientFTSErrors() {
-        XCTAssertNil(FileScanner.abortError(forFTSErrno: ENOENT, path: "/tmp/gone"))
-        XCTAssertNil(FileScanner.abortError(forFTSErrno: ESTALE, path: "/tmp/stale"))
+        XCTAssertNil(FileScanner.abortError(forFTSErrno: ENOENT, path: "/tmp/gone", level: 2))
+        XCTAssertNil(FileScanner.abortError(forFTSErrno: ESTALE, path: "/tmp/stale", level: 2))
 
-        guard case .permissionDenied(let deniedPath)? = FileScanner.abortError(forFTSErrno: EACCES, path: "/tmp/denied") else {
+        guard case .permissionDenied(let deniedPath)? = FileScanner.abortError(forFTSErrno: EACCES, path: "/tmp/denied", level: 1) else {
             return XCTFail("Expected permissionDenied for EACCES")
         }
         XCTAssertEqual(deniedPath, "/tmp/denied")
 
-        guard case .permissionDenied? = FileScanner.abortError(forFTSErrno: EPERM, path: "/tmp/perm") else {
+        guard case .permissionDenied? = FileScanner.abortError(forFTSErrno: EPERM, path: "/tmp/perm", level: 1) else {
             return XCTFail("Expected permissionDenied for EPERM")
         }
 
-        guard case .traversalFailed(let failedPath)? = FileScanner.abortError(forFTSErrno: EIO, path: "/tmp/io") else {
+        guard case .traversalFailed(let failedPath)? = FileScanner.abortError(forFTSErrno: EIO, path: "/tmp/io", level: 1) else {
             return XCTFail("Expected traversalFailed for EIO")
         }
         XCTAssertEqual(failedPath, "/tmp/io")
