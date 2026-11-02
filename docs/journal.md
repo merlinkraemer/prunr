@@ -206,3 +206,4 @@
 2026-11-02 orchestrator O23d spawn: shared skip predicate scan/watcher on O23b (sonnet medium, seat worktree)
 2026-11-02 orchestrator O23d on branch: 066bc72, job queued
 2026-11-02 orchestrator O23c on branch: 599ed4a, job queued
+2026-11-02 orchestrator O23b Mac green: watcher burst200 ~59 ms (was ~80)
