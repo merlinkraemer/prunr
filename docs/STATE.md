@@ -81,9 +81,9 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O17 Test expectations vs 24h run cap [done] 107+ tests screened, none affected (fixtures use short runs; the hourly test compares against the same builder)
 - O18 Test host isolation [on branch] stack 14be69a: SettingsStore uses a throwaway defaults suite + empty temp base path under TestHost; fixture home synthetic again (UnitResolver.defaultHome settable for tests); compact-test workaround removed; job 20261101-214156-...-14be69ab3-test
 - O19 Land branch [landed on local main 7cbb6c8, Mac green, not pushed]
-- O21 App performance analysis: idle CPU/memory, startup, scan, watcher, feed, popover open; code-level hot paths; report docs/perf-app-review-2026-11-02.md, then fixes on branches [running]
+- O21 App performance review [done] docs/perf-app-review-2026-11-02.md (eb635d2): top: hidden-popover reloads every 1.5 s while home busy; FSEvents on main queue with per-event string work; unused SUM after scans; AppCatalog scan on main; per-target watcher transactions; redundant indexes (schema, ask)
 - O22 Detailed bug/code review by area (scan + watcher, database + migrations, journal/feed, menu bar manager/UI state, settings/onboarding, updates/feedback); report docs/code-review-2026-11-02.md ranked, then fixes on branches [running]
-- O23 Fix top findings from O21/O22 (one branch each, Mac-tested, non-UI land on local main) [queued]
+- O23 Fix top findings from O21/O22 (one branch each, Mac-tested, non-UI land on local main): O23a hidden-popover reload deferral + remove unused SUM [running]; next O23b FSEvents off main + batched watcher transaction
 - O8 Perf [done] docs/perf-baseline-2026-11-02.md (dbfba72): real data fast (feed 30 ms); worst: first prune after upgrade blocks writers ~700 ms; 200k-bucket feed rebuild 2.2 s; scan persistence
 - O20 Chunked prune [done, on stack 153f4e7, Mac green] longest writer wait 89 ms (was ~700); one-time first prune total 2.5 s (was 0.7, background, Debug); daily prune is one chunk, unchanged
 
