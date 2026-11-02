@@ -195,3 +195,4 @@
 2026-11-02 orchestrator O6a spawn: #23 snapshot outgoing pane on stack (sonnet medium); #25 deferred per triage
 2026-11-02 orchestrator O6a on branch: stack 85ef096 #23 frozen pane content, job queued
 2026-11-02 orchestrator O6a Mac green: stack 85ef096
+2026-11-02 orchestrator decided: Merlin 11-02 "without my reviews go for analyzing performance, general app performance and detailed bug / code review"; O21 O22 spawned (opus medium, seat, read-only reports)

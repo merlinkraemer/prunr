@@ -63,7 +63,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 ### Q17 Checkpoint table design [landed] [box] - docs/checkpoint-table-design-2026-10-31.md on main; drift visible from ~14 Nov on real data
 ### Q18 Checkpoint table build [on branch, Mac check pending] [mac] - drain/Q18-2026-10-31 8f77404 (on Q16), job 20261031-193012-...-8f77404fb-test; replay.py on real data: 81 row shifts in 16 places -> 0; doubts: first prune after upgrade folds whole journal (unmeasured), midnight-spanning run splits
 
-### Own priorities (holiday queue, Merlin 11-01: no reviews, keep working until he says stop; work top down, refill when empty)
+### Own priorities (Merlin 11-02: after the visible Mac batch, no reviews: perf analysis, general app performance, detailed bug/code review, then own prios; holiday queue, Merlin 11-01: no reviews, keep working until he says stop; work top down, refill when empty)
 - O1 Mac results [done] stack 14be69a green (12 failures fixed; 1 real bug: cancelled scan cleanup); snapshots on review page /app/
 - O3 Tester feedback check [done 11-01: 1 positive item, no bugs; Vercel CLI now logged in on dev; recheck weekly]
 - O4 Q18 follow-ups [done] Q18 branch ea0304b: harness uses carries, run across cutoff held whole (no day split), first-prune perf test; 17 py tests pass; job 20261101-050228-...-ea0304bf7-test; doubt: always-active place never prunes
@@ -81,6 +81,9 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O17 Test expectations vs 24h run cap [done] 107+ tests screened, none affected (fixtures use short runs; the hourly test compares against the same builder)
 - O18 Test host isolation [on branch] stack 14be69a: SettingsStore uses a throwaway defaults suite + empty temp base path under TestHost; fixture home synthetic again (UnitResolver.defaultHome settable for tests); compact-test workaround removed; job 20261101-214156-...-14be69ab3-test
 - O19 Land branch [landed on local main 7cbb6c8, Mac green, not pushed]
+- O21 App performance analysis: idle CPU/memory, startup, scan, watcher, feed, popover open; code-level hot paths; report docs/perf-app-review-2026-11-02.md, then fixes on branches [running]
+- O22 Detailed bug/code review by area (scan + watcher, database + migrations, journal/feed, menu bar manager/UI state, settings/onboarding, updates/feedback); report docs/code-review-2026-11-02.md ranked, then fixes on branches [running]
+- O23 Fix top findings from O21/O22 (one branch each, Mac-tested, non-UI land on local main) [queued]
 - O8 Perf [done] docs/perf-baseline-2026-11-02.md (dbfba72): real data fast (feed 30 ms); worst: first prune after upgrade blocks writers ~700 ms; 200k-bucket feed rebuild 2.2 s; scan persistence
 - O20 Chunked prune [done, on stack 153f4e7, Mac green] longest writer wait 89 ms (was ~700); one-time first prune total 2.5 s (was 0.7, background, Debug); daily prune is one chunk, unchanged
 
