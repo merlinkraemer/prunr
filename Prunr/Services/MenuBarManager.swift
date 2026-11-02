@@ -2285,7 +2285,7 @@ final class MenuBarManager: NSObject {
                 trackedPaths: trackedPaths,
                 watchingSince: watchingSince
             )
-            let catalog = AppCatalogProvider.shared.catalog(resolving: feed.ownerAppIdentifiers)
+            let catalog = await AppCatalogProvider.shared.catalog(resolving: feed.ownerAppIdentifiers)
             result = .loaded(feed.resolvingOwners(with: catalog))
         } catch {
             Self.logger.error("Failed to read change feed: \(error.localizedDescription, privacy: .public)")
