@@ -2166,7 +2166,33 @@ extension DatabaseManager {
                   expiry.map({ checkpoint.lastActiveDay >= $0 }) ?? true else { return nil }
             return checkpoint
         }
-        try Self.replaceJournalCheckpoints(checkpoints, db: db)
+        if finalCutoff != nil {
+            try Self.replaceJournalCheckpoints(checkpoints, db: db)
+        } else {
+            let savedByKey = Dictionary(uniqueKeysWithValues: saved.map { ($0.unitKey, $0) })
+            let keptKeys = Set(checkpoints.map(\.unitKey))
+            for unitKey in savedByKey.keys where !keptKeys.contains(unitKey) {
+                try db.execute(sql: "DELETE FROM growthJournalCheckpoint WHERE unitKey = ?", arguments: [unitKey])
+            }
+            let changed = checkpoints.filter { savedByKey[$0.unitKey]?.state != $0.state }
+            if !changed.isEmpty {
+                let statement = try db.makeStatement(sql: """
+                    INSERT OR REPLACE INTO growthJournalCheckpoint
+                        (unitKey, asOf, countBytes, grossBytes, countStartDay, lastActiveDay)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """)
+                for checkpoint in changed {
+                    try statement.execute(arguments: [
+                        checkpoint.unitKey,
+                        checkpoint.asOf,
+                        checkpoint.countBytes,
+                        checkpoint.grossBytes,
+                        checkpoint.countStartDay,
+                        checkpoint.lastActiveDay
+                    ])
+                }
+            }
+        }
         try db.execute(sql: """
             CREATE TEMP TABLE IF NOT EXISTS pruneHold (
                 unitKey TEXT PRIMARY KEY,

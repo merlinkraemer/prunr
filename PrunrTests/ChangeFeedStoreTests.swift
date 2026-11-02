@@ -632,12 +632,12 @@ final class ChangeFeedStoreTests: PrunrTestCase {
             try await add(self.at(5, 23, 30, from: base), -500 * Self.mbDecimal)
             try await add(self.at(6, 0, from: base), -500 * Self.mbDecimal)
             try await add(self.at(6, 0, 30, from: base), 300 * Self.mbDecimal)
-            try await add(self.at(9, 12, from: base), 700 * Self.mbDecimal)
+            try await add(self.at(9, 12, from: base), 100 * Self.mbDecimal)
             for day in 0..<30 {
-                try await add(self.at(day, 22, 30, from: base), 90 * Self.mbDecimal, unit: steady)
-                try await add(self.at(day, 23, from: base), 90 * Self.mbDecimal, unit: steady)
-                try await add(self.at(day, 23, 30, from: base), 90 * Self.mbDecimal, unit: steady)
-                try await add(self.at(day + 1, 0, from: base), 90 * Self.mbDecimal, unit: steady)
+                try await add(self.at(day, 22, 30, from: base), 70 * Self.mbDecimal, unit: steady)
+                try await add(self.at(day, 23, from: base), 70 * Self.mbDecimal, unit: steady)
+                try await add(self.at(day, 23, 30, from: base), 70 * Self.mbDecimal, unit: steady)
+                try await add(self.at(day + 1, 0, from: base), 70 * Self.mbDecimal, unit: steady)
             }
             for day in 45..<58 {
                 try await add(self.at(day, 9, from: base), 400 * Self.mbDecimal)
