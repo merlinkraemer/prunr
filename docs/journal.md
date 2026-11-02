@@ -250,3 +250,5 @@
 2026-11-02 orchestrator O30b spawn: interaction review of combined hands-on-2 fa13b78 (opus medium, read-only)
 2026-11-02 orchestrator O30a on branch: 0ee8a84, 10 s quiesce timeout aborts reset/scope change; new user-facing error copy 'Running scans did not stop in time. Try again in a moment.' (copy, Merlin's call); job queued
 2026-11-02 orchestrator O30b done: docs/code-review-combined-2026-11-02.md, 4 interaction bugs (watcher deletes carried-forward denied folders; hard links counted 3 ways; partial multi-path success drops failed path's dirty flag; drilldown stale after same-size rename)
+2026-11-02 orchestrator O31a spawn: combined review #1 watcher denied != deleted + #2 hard links one rule (sonnet medium, seat worktree, base fa13b78)
+2026-11-02 orchestrator O31b spawn: combined review #3 partial multi-path success keeps failed path dirty (sonnet medium, seat worktree, base fa13b78); #4 low (same-size rename stale drilldown) left as known
