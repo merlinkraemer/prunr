@@ -695,6 +695,47 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
+    func testCleanupKeepsCompleteSnapshotWhenWorkingSetMatchesIt() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let older = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let olderId = try XCTUnwrap(older.id)
+            let newer = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let newerId = try XCTUnwrap(newer.id)
+            try await DatabaseManager.shared.addEntries(
+                to: newerId,
+                entries: [ScanResult(path: "/Users/tester/dev/file.dat", sizeBytes: 100)]
+            )
+            try await DatabaseManager.shared.rebuildWorkingSet(
+                from: newerId,
+                trackedPathId: trackedPathId,
+                updatedAt: newer.createdAt
+            )
+
+            let deleted = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
+
+            XCTAssertEqual(deleted, 0)
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 10)
+            XCTAssertEqual(Set(snapshots.compactMap(\.id)), [olderId, newerId])
+        }
+    }
+
+    func testCleanupKeepsCompleteSnapshotOfPathWithoutWorkingSet() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+            let snapshotId = try XCTUnwrap(snapshot.id)
+            try await DatabaseManager.shared.addEntries(
+                to: snapshotId,
+                entries: [ScanResult(path: "/Users/tester/dev/file.dat", sizeBytes: 100)]
+            )
+
+            let deleted = try await DatabaseCleanupService.shared.cleanupAbandonedSnapshots()
+
+            XCTAssertEqual(deleted, 0)
+            let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPathId, limit: 10)
+            XCTAssertEqual(snapshots.map(\.id), [snapshotId])
+        }
+    }
+
     func testIncompleteSnapshotIsNeverReadableAndFreshScanningSurvivesCleanup() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let snapshot = try await DatabaseManager.shared.createSnapshot(
