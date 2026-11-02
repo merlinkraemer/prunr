@@ -22,11 +22,11 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 
 
 ## Run
-status: running (stack d0064bd compiled on Mac: 487 tests, 12 failures; O1 fix worker running) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
+status: running (stack 14be69a GREEN on Mac, all 487 tests; building non-UI land branch O19) · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land any green work on local main; never push, no beta/release)
 targets: hardening + real-data usefulness. Rows like "folder grew +x" whose drilldown only lists that folder's children must explain what actually grew. Plus perf and test infra.
 plan: Q6 → Q7 → Q8 → Q9 (absorbs Q2) → Q10 → Q11 → Q12, then Q3 if the Mac is idle; skip L6, L3, website, pricing
 mac-queue from dev: LAB2_HOST=dev (default points at lab2). Mac jobs are batched: workers only `mac-queue add`; drains and ssh mbp run only after Grok relays "Mac open" (Merlin 10-30: laptop travels, not always on)
-mac batch pending (in order): stack job d0064bd on drain/stack-2026-11-01 (integration + Q16 + Q18 + O7b/c + O9 + O10 + O13; replaces every earlier prunr job) -> compile/test fixes -> make snapshots-fetch -> Q9 idle soak 2h (visible go given: Merlin 11-01 19:53 WITA via PM, "all mac queue tasks can run now", for the night)
+mac batch pending: O19 land-branch job -> Q9 idle soak 2h (visible, real Prunr in menu bar; the 11-01 night go has passed, needs the next Mac night go)
 data: Merlin's Prunr DB may be copied to dev (scratch, gitignored) for analysis; committed fixtures synthetic only
 visuals: headless snapshot PNGs via mac-queue anytime; real-app runs batched under ### Visible Mac batch, run only on Merlin's go via Grok
 review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the first Mac open + make snapshots-fetch)
@@ -34,7 +34,7 @@ review: https://dev.tail87069a.ts.net:4181 (snapshot PNGs; placeholder until the
 ## Run review
 Checked 2026-11-01 12:30 WITA over Tailscale (valid TLS, 200, real content):
 - https://dev.tail87069a.ts.net:4181/mockups/category-groups.html - category groups mockups A/B/C (Q15; A is built on branch Q16)
-- https://dev.tail87069a.ts.net:4181/ - index; app snapshot PNGs appear here after the Mac test run + make snapshots-fetch (not yet)
+- https://dev.tail87069a.ts.net:4181/app/ - 36 panel snapshots (fixture, replay, real data) from green stack 14be69a
 
 ## Queue
 Done: Q1 baseline · Q2 #35 status (absorbed by Q9, docs/issue-35-status-2026-10-30.md on main) · Q4 PRD · Q5 core screen · Q7 audit (docs/real-data-audit-2026-10-30.md) · Q11 triage (docs/issue-triage-2026-10-30.md)
@@ -63,7 +63,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 ### Q18 Checkpoint table build [on branch, Mac check pending] [mac] - drain/Q18-2026-10-31 8f77404 (on Q16), job 20261031-193012-...-8f77404fb-test; replay.py on real data: 81 row shifts in 16 places -> 0; doubts: first prune after upgrade folds whole journal (unmeasured), midnight-spanning run splits
 
 ### Own priorities (holiday queue, Merlin 11-01: no reviews, keep working until he says stop; work top down, refill when empty)
-- O1 Mac results [fix on branch] stack 8b830ce: Mac 10 of 12 green (compact appBusy x2 left, O18 job decides); (10 test bugs; 1 real bug: a scan cancelled via its Task left its scanning snapshot + partial working set, cleanup now runs in its own Task); job 20261101-213939-...-8b830ce38-test; doubt: fixture home now = host home (snapshots show real home path)
+- O1 Mac results [done] stack 14be69a green (12 failures fixed; 1 real bug: cancelled scan cleanup); snapshots on review page /app/
 - O3 Tester feedback check [done 11-01: 1 positive item, no bugs; Vercel CLI now logged in on dev; recheck weekly]
 - O4 Q18 follow-ups [done] Q18 branch ea0304b: harness uses carries, run across cutoff held whole (no day split), first-prune perf test; 17 py tests pass; job 20261101-050228-...-ea0304bf7-test; doubt: always-active place never prunes
 - O5 replay drift tests [done] drain/Q18-2026-10-31 8a32284: make audit-test, 14 pass on dev; real data 81 shifts -> 0
@@ -79,6 +79,7 @@ goal: Q15 variant A in the panel (up/down split line, per-place rows, "smaller c
 - O16 Per-path journal clear wipes every path's checkpoints [real, doc called it rare/acceptable; reachable via Accept growth and adding a 2nd path, loses folded history of other paths] fixed on stack d0064bd (deletes only checkpoints whose keys the path's buckets use; folded-away keys stay until the 90-day expiry)
 - O17 Test expectations vs 24h run cap [done] 107+ tests screened, none affected (fixtures use short runs; the hourly test compares against the same builder)
 - O18 Test host isolation [on branch] stack 14be69a: SettingsStore uses a throwaway defaults suite + empty temp base path under TestHost; fixture home synthetic again (UnitResolver.defaultHome settable for tests); compact-test workaround removed; job 20261101-214156-...-14be69ab3-test
+- O19 Land branch: non-UI, non-schema parts of the stack off main (Q6, Q9, Q10, Q13, O7b/c, O9, O10, O18 + their fixes) [running]; after green Mac job, merge into local main (no push)
 - O8 Perf: scan + feed rebuild on the real snapshot via PerfBaselineTests, fix the worst [mac]
 
 ## Rundown

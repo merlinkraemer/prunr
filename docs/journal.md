@@ -183,3 +183,5 @@
 2026-11-01 orchestrator O1 fix on branch: stack 8b830ce, 12 failures addressed (1 real bug: cancelled scan cleanup), job queued; O18 test host isolation queued
 2026-11-01 orchestrator O18 on branch: stack 14be69a test host isolation, job queued
 2026-11-01 orchestrator O1 Mac: stack 8b830ce 487 tests, 2 failures left (compact appBusy x2, workaround did not help); O18 job 14be69a pending decides
+2026-11-02 orchestrator O1 done: stack 14be69a green on Mac (all tests); snapshots fetched to review /app/
+2026-11-02 orchestrator O19 spawn: non-UI land branch off main (sonnet medium, seat worktree)
