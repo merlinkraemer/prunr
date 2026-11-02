@@ -82,6 +82,7 @@ actor GrowthJournalService {
         trackedPaths: [TrackedPath],
         now: Date = Date(),
         calendar: Calendar = .current,
+        home: String = UnitResolver.defaultHome,
         watchingSince: Date? = nil
     ) async throws -> ChangeFeed {
         let ids = trackedPaths.map(\.id)
@@ -93,7 +94,7 @@ actor GrowthJournalService {
         } else {
             start = try await db.fetchOldestCompleteSnapshotDate(trackedPathIds: ids)
         }
-        return EpisodeBuilder.build(slots: slots, now: now, calendar: calendar, watchingSince: start)
+        return EpisodeBuilder.build(slots: slots, now: now, calendar: calendar, home: home, watchingSince: start)
     }
 
     /// The free space every kept snapshot of this path recorded, for the
