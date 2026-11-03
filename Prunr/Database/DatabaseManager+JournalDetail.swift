@@ -51,7 +51,7 @@ extension DatabaseManager {
     }
 
     static func registerDropPrefixIndexesMigration(in migrator: inout DatabaseMigrator) {
-        migrator.registerMigration(dropPrefixIndexesMigrationIdentifier) { db in
+        migrator.registerMigration(dropPrefixIndexesMigrationIdentifier, foreignKeyChecks: .immediate) { db in
             try db.execute(sql: "DROP INDEX IF EXISTS idx_snapshotEntry_snapshotId")
             try db.execute(sql: "DROP INDEX IF EXISTS idx_workingSetEntry_trackedPath")
         }
