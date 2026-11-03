@@ -41,7 +41,7 @@ Done: O1-O22 (journal); reviews docs/perf-app-review-2026-11-02.md, docs/code-re
 - O31a watcher: denied is not deleted + hard links one rule [drain/O31a-2026-11-02 c23d919, Mac green; new multi-link file counts 0 until next full scan]
 - O31b partial multi-path success re-arms full refresh [drain/O31b-2026-11-02 4042c28, Mac green; persistent failure = full refresh up to every 30 min]
 - O30a/O31a/O31b merged into hands-on-2 5d19bd4 [Mac green]
-- O32b same-size rename reloads drilldown [drain/O32b-2026-11-02 9e745ae, Mac green]; O32a indexes = Waiting item 10; O33 real-DB dry run [Mac green 04b9607: your DB v25->v27 migrate 13.4 s, prune 3 ms, feed 39 ms, 53 episodes, 1032 drilldown groups]; O32b+O33 merged into hands-on-2 ab61cce; O34 retry only failed paths [drain/O34-2026-11-03 886c9fa, test fix, Mac pending]
+- O32b same-size rename reloads drilldown [drain/O32b-2026-11-02 9e745ae, Mac green]; O32a indexes = Waiting item 10; O33 real-DB dry run [Mac green 04b9607: your DB v25->v27 migrate 13.4 s, prune 3 ms, feed 39 ms, 53 episodes, 1032 drilldown groups]; O32b+O33 merged into hands-on-2 ab61cce; O34 retry only failed paths [886c9fa Mac green, merged into hands-on-2 05b2f5d]; O35 found v26/v27 cost 8.6 s + 7.5 s on your DB (whole-DB foreign key check after create-only steps); O36 skips that check [drain/O36-2026-11-03 723d4cf, Mac pending]
 - known doubts: O27a more watcher churn from browser WAL (check in soak); O28c clicks ignored during long migration (visible, Merlin call; real DB shows it lasts ~13 s on first launch)
 
 ## Rundown

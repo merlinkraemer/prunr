@@ -278,3 +278,6 @@
 2026-11-03 orchestrator hands-on-2 merged O32b + O33: ab61cce; Mac run waits for O34 to merge in too
 2026-11-03 orchestrator O35 spawn: per-migration timing on the real-DB copy to find the 13.4 s first-launch migration (sonnet, seat worktree, base ab61cce, test-only)
 2026-11-03 orchestrator O35 on branch: 37dbd98, test-only per-migration PERF lines on the real-DB copy; suspects GRDB deferred foreign_key_check per migration (v26/v27 are only CREATEs); job queued
+2026-11-03 orchestrator O34 Mac green: 886c9fa; merged into hands-on-2 05b2f5d
+2026-11-03 orchestrator O35 Mac green: real DB v26 8638 ms, v27 7484 ms, both CREATE-only, so GRDB's deferred whole-DB foreign_key_check (4.4M paths, 8.6M snapshotEntry) is the cost
+2026-11-03 orchestrator O36 on branch: 723d4cf (hands-on-2 + O35 test), v26/v27 registered with foreignKeyChecks: .immediate per GRDB docs; job queued
