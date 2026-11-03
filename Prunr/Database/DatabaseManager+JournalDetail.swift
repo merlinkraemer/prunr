@@ -14,7 +14,7 @@ extension DatabaseManager {
         // Migration v26: per-child detail of the growth journal (PRD L1). No
         // back-fill: per-file history before this is gone, so older rows keep
         // the sizes-now page.
-        migrator.registerMigration(journalDetailMigrationIdentifier) { db in
+        migrator.registerMigration(journalDetailMigrationIdentifier, foreignKeyChecks: .immediate) { db in
             try db.execute(sql: """
                 CREATE TABLE growthJournalDetail (
                     trackedPathId TEXT NOT NULL,
@@ -35,7 +35,7 @@ extension DatabaseManager {
     }
 
     static func registerJournalCheckpointMigration(in migrator: inout DatabaseMigrator) {
-        migrator.registerMigration(journalCheckpointMigrationIdentifier) { db in
+        migrator.registerMigration(journalCheckpointMigrationIdentifier, foreignKeyChecks: .immediate) { db in
             try db.execute(sql: """
                 CREATE TABLE growthJournalCheckpoint (
                     unitKey TEXT PRIMARY KEY,
