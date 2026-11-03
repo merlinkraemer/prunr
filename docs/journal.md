@@ -287,3 +287,4 @@
 2026-11-03 orchestrator O37 Mac green: 9324eed, real DB is 3.47 GB (not 687 MB): paths+unique index 1.41 GB, workingSetEntry 891 MB, snapshotEntry 594 MB; O32a indexes = 343 MB so item 10 rec flips to land; new item 11 path-store redesign
 2026-11-03 orchestrator hands-on-2: merged O32a (item 10 per new rec) + v28 foreignKeyChecks .immediate (089c234) + O37 size counts = d4b06ab; Mac queued
 2026-11-03 orchestrator hands-on-2 Mac green: d4b06ab; real DB v28 3399 ms, free pages 55k->139k (16%), below the 18% auto-VACUUM threshold so the file stays 3.47 GB until a VACUUM
+2026-11-03 orchestrator O38 spawn: path-store redesign design doc for item 11 (3.47 GB DB), doc only (opus, seat worktree, base d4b06ab)
