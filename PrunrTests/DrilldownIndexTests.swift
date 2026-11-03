@@ -731,18 +731,22 @@ final class DrilldownIndexTests: PrunrTestCase {
     }
 
     func testPrefixIndexesAreDroppedAndCoveringOnesRemain() async throws {
-        let snapshotIndexes = try await indexNames("snapshotEntry")
-        XCTAssertFalse(snapshotIndexes.contains("idx_snapshotEntry_snapshotId"))
-        XCTAssertTrue(snapshotIndexes.contains("idx_snapshotEntry_snapshotId_pathId"))
-        let workingSetIndexes = try await indexNames("workingSetEntry")
-        XCTAssertFalse(workingSetIndexes.contains("idx_workingSetEntry_trackedPath"))
-        XCTAssertTrue(workingSetIndexes.contains("idx_workingSetEntry_trackedPath_path"))
+        try await withEmptyTemporaryDatabase { [self] _ in
+            let snapshotIndexes = try await self.indexNames("snapshotEntry")
+            XCTAssertFalse(snapshotIndexes.contains("idx_snapshotEntry_snapshotId"))
+            XCTAssertTrue(snapshotIndexes.contains("idx_snapshotEntry_snapshotId_pathId"))
+            let workingSetIndexes = try await self.indexNames("workingSetEntry")
+            XCTAssertFalse(workingSetIndexes.contains("idx_workingSetEntry_trackedPath"))
+            XCTAssertTrue(workingSetIndexes.contains("idx_workingSetEntry_trackedPath_path"))
+        }
     }
 
     func testLookupsByLeadingColumnStillUseAnIndex() async throws {
-        let snapshotPlan = try await queryPlan("SELECT sizeBytes FROM snapshotEntry WHERE snapshotId = ?")
-        XCTAssertTrue(snapshotPlan.contains("USING"), snapshotPlan)
-        let workingSetPlan = try await queryPlan("SELECT sizeBytes FROM workingSetEntry WHERE trackedPathId = ?")
-        XCTAssertTrue(workingSetPlan.contains("USING"), workingSetPlan)
+        try await withEmptyTemporaryDatabase { [self] _ in
+            let snapshotPlan = try await self.queryPlan("SELECT sizeBytes FROM snapshotEntry WHERE snapshotId = ?")
+            XCTAssertTrue(snapshotPlan.contains("USING"), snapshotPlan)
+            let workingSetPlan = try await self.queryPlan("SELECT sizeBytes FROM workingSetEntry WHERE trackedPathId = ?")
+            XCTAssertTrue(workingSetPlan.contains("USING"), workingSetPlan)
+        }
     }
 }
