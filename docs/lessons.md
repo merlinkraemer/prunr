@@ -74,3 +74,13 @@ interaction path before editing; do not infer the target from shared iconography
 not create an effective larger target when an ancestor constrains hit testing.
 Use a real frame for the required target size and compensate surrounding layout
 when visuals must remain fixed.
+
+## 2026-11-03 - GRDB migrations: default foreign key check scans the whole DB
+
+**What happened:** v26 and v27 only create empty tables, yet on a real 4.4M-path
+DB each took 7-9 s at first launch. GRDB's default `foreignKeyChecks: .deferred`
+runs `PRAGMA foreign_key_check` over the entire database after every migration.
+
+**Rule:** Register migrations that do not touch existing rows (CREATE TABLE,
+CREATE INDEX, new empty tables) with `foreignKeyChecks: .immediate`. Measure new
+migrations on a real-sized DB copy (`ReplayHarnessTests` real-DB test).
