@@ -117,6 +117,71 @@ final class ReplayHarnessTests: PrunrTestCase {
         }
     }
 
+    private static func emitSizeCounts(_ queue: DatabaseQueue) throws {
+        let scalarQueries: [(String, String)] = [
+            ("size.paths.orphan", """
+                SELECT COUNT(*) FROM paths p
+                WHERE NOT EXISTS (SELECT 1 FROM snapshotEntry se WHERE se.pathId = p.id)
+                  AND NOT EXISTS (SELECT 1 FROM workingSetEntry w WHERE w.pathId = p.id)
+                """),
+            ("size.paths.onlySnapshotEntry", """
+                SELECT COUNT(*) FROM paths p
+                WHERE EXISTS (SELECT 1 FROM snapshotEntry se WHERE se.pathId = p.id)
+                  AND NOT EXISTS (SELECT 1 FROM workingSetEntry w WHERE w.pathId = p.id)
+                """),
+            ("size.paths.onlyWorkingSet", """
+                SELECT COUNT(*) FROM paths p
+                WHERE NOT EXISTS (SELECT 1 FROM snapshotEntry se WHERE se.pathId = p.id)
+                  AND EXISTS (SELECT 1 FROM workingSetEntry w WHERE w.pathId = p.id)
+                """),
+            ("size.paths.inBoth", """
+                SELECT COUNT(*) FROM paths p
+                WHERE EXISTS (SELECT 1 FROM snapshotEntry se WHERE se.pathId = p.id)
+                  AND EXISTS (SELECT 1 FROM workingSetEntry w WHERE w.pathId = p.id)
+                """),
+            ("size.paths.sumPathBytes", "SELECT COALESCE(SUM(LENGTH(CAST(path AS BLOB))), 0) FROM paths"),
+            ("size.paths.maxPathBytes", "SELECT COALESCE(MAX(LENGTH(CAST(path AS BLOB))), 0) FROM paths"),
+            ("size.snapshotEntry.distinctPathIds", "SELECT COUNT(DISTINCT pathId) FROM snapshotEntry"),
+            ("size.snapshotEntry.snapshotsWithEntries", "SELECT COUNT(DISTINCT snapshotId) FROM snapshotEntry"),
+            ("size.snapshot.total", "SELECT COUNT(*) FROM snapshot"),
+            ("size.snapshot.complete", "SELECT COUNT(*) FROM snapshot WHERE lifecycle = 'complete'"),
+            ("size.snapshot.trackedPaths", "SELECT COUNT(DISTINCT trackedPathId) FROM snapshot"),
+            ("size.snapshot.oldestAgeDays", """
+                SELECT COALESCE(CAST(julianday('now') - julianday(MIN(createdAt)) AS INTEGER), 0) FROM snapshot
+                """),
+            ("size.snapshot.newestAgeHours", """
+                SELECT COALESCE(CAST((julianday('now') - julianday(MAX(createdAt))) * 24 AS INTEGER), 0) FROM snapshot
+                """),
+            ("size.workingSetEntry.trackedPaths", "SELECT COUNT(DISTINCT trackedPathId) FROM workingSetEntry"),
+            ("size.pathClassification.withoutPath", """
+                SELECT COUNT(*) FROM pathClassification c WHERE NOT EXISTS (SELECT 1 FROM paths p WHERE p.id = c.pathId)
+                """),
+            ("size.pragma.pageCount", "PRAGMA page_count"),
+            ("size.pragma.pageSize", "PRAGMA page_size"),
+            ("size.pragma.freelistCount", "PRAGMA freelist_count"),
+            ("size.pragma.autoVacuum", "PRAGMA auto_vacuum")
+        ]
+        for (name, sql) in scalarQueries {
+            let value = try queue.read { db in try Int.fetchOne(db, sql: sql) ?? 0 }
+            emitRealDB(name, value)
+        }
+        let entriesPerSnapshot = try queue.read { db in
+            try Int.fetchAll(db, sql: """
+                SELECT COUNT(*) FROM snapshotEntry GROUP BY snapshotId ORDER BY snapshotId DESC
+                """)
+        }
+        for (rank, count) in entriesPerSnapshot.enumerated() {
+            emitRealDB("size.snapshotEntry.rank\(rank)", count)
+        }
+        let objectBytes = try? queue.read { db in
+            try Row.fetchAll(db, sql: "SELECT name, SUM(pgsize) AS bytes FROM dbstat GROUP BY name")
+                .map { (name: $0["name"] as String? ?? "", bytes: $0["bytes"] as Int? ?? 0) }
+        }
+        for (name, bytes) in objectBytes ?? [] where bytes > 0 {
+            emitRealDB("size.bytes.\(name)", bytes)
+        }
+    }
+
     private static func appliedMigrationCount(_ queue: DatabaseQueue) throws -> Int {
         try queue.read { db in try DatabaseManager.makeMigrator().appliedIdentifiers(db).count }
     }
@@ -210,6 +275,7 @@ final class ReplayHarnessTests: PrunrTestCase {
 
         let afterQueue = try DatabaseQueue(path: copy)
         let after = try Self.rowCounts(afterQueue)
+        try Self.emitSizeCounts(afterQueue)
         try afterQueue.close()
         for table in after.keys.sorted() {
             Self.emitRealDB("\(table).after", after[table] ?? 0)
