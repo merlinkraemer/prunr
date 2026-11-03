@@ -302,3 +302,4 @@
 2026-11-03 orchestrator O42 spawn: fix O41 findings 1-6 on drain/O42-2026-11-03 (sonnet, seat worktree, base 208f850)
 2026-11-03 orchestrator O42 on branch: a70f91e, O41 findings 1-6 fixed (live-size disk check + idle retry + Compact now lowDisk error, 1d/7d backoff, checkpoint busy retry, keep 1/3 live as free-page reserve, orphan trim lifecycle filter, entryCount written at complete); job queued
 2026-11-03 20:31 orchestrator O42 Mac green: a70f91e, 536 tests 0 failures; real DB 3.47 -> 2.77 GB file (170 MB free kept as reserve, live 2.60 GB), convert 13.1 s, cleanup+reclaim 4.3 s, v28 1.8 s; item 11 reviewable on drain/O42-2026-11-03
+2026-11-03 20:35 orchestrator O43 spawn: path-store slice S3 slim workingSetEntry (WITHOUT ROWID, int key, v30 .immediate) on drain/O43-2026-11-03 from O42 a70f91e, unlanded (opus, seat worktree)
