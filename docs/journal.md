@@ -288,3 +288,4 @@
 2026-11-03 orchestrator hands-on-2: merged O32a (item 10 per new rec) + v28 foreignKeyChecks .immediate (089c234) + O37 size counts = d4b06ab; Mac queued
 2026-11-03 orchestrator hands-on-2 Mac green: d4b06ab; real DB v28 3399 ms, free pages 55k->139k (16%), below the 18% auto-VACUUM threshold so the file stays 3.47 GB until a VACUUM
 2026-11-03 orchestrator O38 spawn: path-store redesign design doc for item 11 (3.47 GB DB), doc only (opus, seat worktree, base d4b06ab)
+2026-11-03 orchestrator O38 on branch: e11829f, path-store design doc landed on main; ~3.47 -> ~1.2 GB in 5 slices, all schema/storage = Merlin; hash-index option rejected (kills subtree range queries)
