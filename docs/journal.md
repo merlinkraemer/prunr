@@ -276,3 +276,4 @@
 2026-11-03 orchestrator O33 Mac green: 04b9607, real DB v25->v27 migrate 13.4 s, prune 3 ms, feed 39 ms (53 episodes), drilldown 1032 groups; first-launch migration makes O28c (clicks ignored) a ~13 s wait
 2026-11-03 orchestrator O34 Mac: 1 test failed (retry set only cleared when no full refresh pending, test enters with flag set); fixed 886c9fa to clear when every retried path scanned; requeued
 2026-11-03 orchestrator hands-on-2 merged O32b + O33: ab61cce; Mac run waits for O34 to merge in too
+2026-11-03 orchestrator O35 spawn: per-migration timing on the real-DB copy to find the 13.4 s first-launch migration (sonnet, seat worktree, base ab61cce, test-only)
