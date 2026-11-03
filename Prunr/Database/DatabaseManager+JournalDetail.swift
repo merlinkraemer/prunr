@@ -77,13 +77,7 @@ extension DatabaseManager {
                     updatedAt DATETIME
                 )
                 """)
-            try db.execute(sql: """
-                INSERT INTO workingSetTrackedPath (trackedPathId, updatedAt)
-                SELECT trackedPathId, MAX(updatedAt)
-                FROM workingSetEntry
-                GROUP BY trackedPathId
-                ORDER BY trackedPathId
-                """)
+            let hasLegacyTable = try db.tableExists("workingSetEntry")
             try db.execute(sql: """
                 CREATE TABLE workingSetEntry_new (
                     trackedPathKey INTEGER NOT NULL,
@@ -92,18 +86,31 @@ extension DatabaseManager {
                     PRIMARY KEY (trackedPathKey, pathId)
                 ) WITHOUT ROWID
                 """)
-            try db.execute(sql: """
-                INSERT INTO workingSetEntry_new (trackedPathKey, pathId, sizeBytes)
-                SELECT t.key, w.pathId, w.sizeBytes
-                FROM workingSetTrackedPath t
-                CROSS JOIN workingSetEntry w ON w.trackedPathId = t.trackedPathId
-                WHERE EXISTS (SELECT 1 FROM paths p WHERE p.id = w.pathId)
-                ORDER BY t.key, w.pathId
-                """)
-            try db.execute(sql: "DROP TABLE workingSetEntry")
+            if hasLegacyTable {
+                try Self.copyLegacyWorkingSetEntries(db)
+            }
             try db.execute(sql: "ALTER TABLE workingSetEntry_new RENAME TO workingSetEntry")
             try db.execute(sql: "CREATE INDEX idx_workingSetEntry_pathId ON workingSetEntry(pathId)")
         }
+    }
+
+    private static func copyLegacyWorkingSetEntries(_ db: Database) throws {
+        try db.execute(sql: """
+            INSERT INTO workingSetTrackedPath (trackedPathId, updatedAt)
+            SELECT trackedPathId, MAX(updatedAt)
+            FROM workingSetEntry
+            GROUP BY trackedPathId
+            ORDER BY trackedPathId
+            """)
+        try db.execute(sql: """
+            INSERT INTO workingSetEntry_new (trackedPathKey, pathId, sizeBytes)
+            SELECT t.key, w.pathId, w.sizeBytes
+            FROM workingSetTrackedPath t
+            CROSS JOIN workingSetEntry w ON w.trackedPathId = t.trackedPathId
+            WHERE EXISTS (SELECT 1 FROM paths p WHERE p.id = w.pathId)
+            ORDER BY t.key, w.pathId
+            """)
+        try db.execute(sql: "DROP TABLE workingSetEntry")
     }
 
     static func workingSetKey(trackedPathId: String, db: Database) throws -> Int64 {
