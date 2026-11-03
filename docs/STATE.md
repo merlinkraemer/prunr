@@ -41,7 +41,7 @@ Done: O1-O22 (journal); reviews docs/perf-app-review-2026-11-02.md, docs/code-re
 - O31a watcher: denied is not deleted + hard links one rule [drain/O31a-2026-11-02 c23d919, Mac green; new multi-link file counts 0 until next full scan]
 - O31b partial multi-path success re-arms full refresh [drain/O31b-2026-11-02 4042c28, Mac green; persistent failure = full refresh up to every 30 min]
 - O30a/O31a/O31b merged into hands-on-2 5d19bd4 [Mac green]
-- next: perf #6 indexes (schema, ask); combined review #4 (same-size rename stale drilldown, low)
+- O32b same-size rename reloads drilldown [drain/O32b-2026-11-02 9e745ae, Mac green]; O32a indexes = Waiting item 10; O33 real-DB migration dry run [drain/O33-2026-11-02, Mac pending]
 - known doubts: O27a more watcher churn from browser WAL (check in soak); O28c clicks ignored during long migration (visible, Merlin call)
 
 ## Rundown
