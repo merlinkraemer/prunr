@@ -9,6 +9,7 @@ struct ChangeFeedInput: Sendable {
 extension DatabaseManager {
     static let journalDetailMigrationIdentifier = "v26_journal_detail"
     static let journalCheckpointMigrationIdentifier = "v27_journal_checkpoint"
+    static let dropPrefixIndexesMigrationIdentifier = "v28_drop_prefix_indexes"
 
     static func registerJournalDetailMigration(in migrator: inout DatabaseMigrator) {
         // Migration v26: per-child detail of the growth journal (PRD L1). No
@@ -46,6 +47,13 @@ extension DatabaseManager {
                     lastActiveDay DATETIME NOT NULL
                 ) WITHOUT ROWID
                 """)
+        }
+    }
+
+    static func registerDropPrefixIndexesMigration(in migrator: inout DatabaseMigrator) {
+        migrator.registerMigration(dropPrefixIndexesMigrationIdentifier) { db in
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_snapshotEntry_snapshotId")
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_workingSetEntry_trackedPath")
         }
     }
 

@@ -553,6 +553,7 @@ final class DatabaseManager {
         registerOwnerGroupsMigration(in: &migrator)
         registerJournalDetailMigration(in: &migrator)
         registerJournalCheckpointMigration(in: &migrator)
+        registerDropPrefixIndexesMigration(in: &migrator)
 
         return migrator
     }

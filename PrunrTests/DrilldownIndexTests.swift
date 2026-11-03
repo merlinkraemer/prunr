@@ -709,4 +709,44 @@ final class DrilldownIndexTests: PrunrTestCase {
             XCTAssertTrue(hasStatistics)
         }
     }
+
+    private func indexNames(_ table: String) async throws -> Set<String> {
+        let dbPool = try XCTUnwrap(db.dbPool)
+        return try await dbPool.read { db in
+            Set(try String.fetchAll(
+                db,
+                sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?",
+                arguments: [table]
+            ))
+        }
+    }
+
+    private func queryPlan(_ sql: String) async throws -> String {
+        let dbPool = try XCTUnwrap(db.dbPool)
+        return try await dbPool.read { db in
+            try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN " + sql, arguments: [1])
+                .map { $0["detail"] as String? ?? "" }
+                .joined(separator: "\n")
+        }
+    }
+
+    func testPrefixIndexesAreDroppedAndCoveringOnesRemain() async throws {
+        try await withEmptyTemporaryDatabase { [self] _ in
+            let snapshotIndexes = try await self.indexNames("snapshotEntry")
+            XCTAssertFalse(snapshotIndexes.contains("idx_snapshotEntry_snapshotId"))
+            XCTAssertTrue(snapshotIndexes.contains("idx_snapshotEntry_snapshotId_pathId"))
+            let workingSetIndexes = try await self.indexNames("workingSetEntry")
+            XCTAssertFalse(workingSetIndexes.contains("idx_workingSetEntry_trackedPath"))
+            XCTAssertTrue(workingSetIndexes.contains("idx_workingSetEntry_trackedPath_path"))
+        }
+    }
+
+    func testLookupsByLeadingColumnStillUseAnIndex() async throws {
+        try await withEmptyTemporaryDatabase { [self] _ in
+            let snapshotPlan = try await self.queryPlan("SELECT sizeBytes FROM snapshotEntry WHERE snapshotId = ?")
+            XCTAssertTrue(snapshotPlan.contains("USING"), snapshotPlan)
+            let workingSetPlan = try await self.queryPlan("SELECT sizeBytes FROM workingSetEntry WHERE trackedPathId = ?")
+            XCTAssertTrue(workingSetPlan.contains("USING"), workingSetPlan)
+        }
+    }
 }
