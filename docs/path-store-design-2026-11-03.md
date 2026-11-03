@@ -233,3 +233,11 @@ Expected result after S1 to S5: about 1.2 GB between scans and about 1.45 GB pea
 - Exact NOCASE lookup: 1,000 in 29 ms.
 - calculateDeltas on the two newest snapshots: 4.4 s for 325,973 deltas.
 - The subtree timing did not run (the test found no top-level folder); needs a fix in the test.
+
+## Measured slices 1-2 (O40b, Mac run 208f850, real DB, test artifact fixed)
+
+- One-time conversion to incremental auto_vacuum: 13.3 s, file 3.47 -> 2.77 GB.
+- Keep 1 payload + cleanup + incremental reclaim: 4.6 s, file 2.77 -> 2.60 GB (snapshotEntry 8.6M -> 4.4M). Working set intact (4,405,167 rows, 0 without a path).
+- Net: 3.47 -> 2.60 GB (-875 MB). The 1.88 GB in the first O40 run was wrong: the test host had wiped the working set.
+- File-size mix of the working set: 3.77M of 4.41M files (86%) are under 64 KB and hold 38 GB of 1.68 TB. 27k files are empty. That is the "roll up tiny files" lever.
+- Subtree count over 2.59M files: 524 ms. Exact lookup: 1,000 in 15 ms.
