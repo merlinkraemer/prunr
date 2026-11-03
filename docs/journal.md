@@ -283,3 +283,4 @@
 2026-11-03 orchestrator O36 on branch: 723d4cf (hands-on-2 + O35 test), v26/v27 registered with foreignKeyChecks: .immediate per GRDB docs; job queued
 2026-11-03 orchestrator O36 Mac green: 723d4cf, real DB v26 2.9 ms + v27 0.2 ms (was 8638 + 7484); hands-on-2 fast-forwarded to 723d4cf, item 9 points at it
 2026-11-03 orchestrator O37 spawn: DB size + retention review (687 MB real DB, 8.6M snapshotEntry for 14 snapshots), analysis doc + test-only counts (sonnet, seat worktree, base 723d4cf)
+2026-11-03 orchestrator O37 on branch: 9324eed, docs/db-size-review-2026-11-03.md; size flat over 6 months (full scans max daily, 30-day caps); full snapshot copies + daily full VACUUM rewrite are the cost; byte model unreliable, REALDB size counts queued
