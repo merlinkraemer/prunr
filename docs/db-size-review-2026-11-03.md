@@ -97,3 +97,22 @@ WHERE NOT EXISTS (SELECT 1 FROM snapshotEntry se WHERE se.pathId = p.id)
 ```
 
 What to read from the result: `freelistCount * pageSize` over file size tells whether VACUUM thrash is real (finding 2); `size.bytes.idx_workingSetEntry_trackedPath` and `idx_snapshotEntry_snapshotId` confirm finding 3; `size.snapshotEntry.rank0` and `rank1` against `workingSetEntry.after` confirm full-copy payloads (finding 1).
+
+## Measured on the real DB (Mac run 9324eed, dbstat)
+
+The file is 3.47 GB (848,228 pages of 4 KB), not 687 MB. 225 MB of it is free pages (54,945).
+
+| Area | Table | Indexes | Total | Share |
+|---|---|---|---|---|
+| paths (full path text, stored twice) | 695 MB | 714 MB (unique autoindex) | 1.41 GB | 41% |
+| workingSetEntry | 345 MB | 546 MB (3 indexes) | 891 MB | 26% |
+| snapshotEntry | 160 MB | 434 MB (3 indexes) | 594 MB | 17% |
+| pathClassification | 151 MB | 171 MB | 322 MB | 9% |
+| everything else | | | under 30 MB | 1% |
+
+Findings, corrected:
+1. Path text dominates. 4.46M paths average 140 bytes each (625 MB of raw text), and the unique index stores it a second time. Storing parent id + name instead of the full path would save most of the 1.41 GB. That is a schema and storage-logic redesign, Merlin's call.
+2. The 2 redundant prefix indexes (O32a, v28) are 343 MB: idx_workingSetEntry_trackedPath 235 MB + idx_snapshotEntry_snapshotId 109 MB. That is 10% of the file, a real disk win even though it is no faster.
+3. There are no orphans. 57,342 paths are referenced only by the older snapshot and get freed when it is pruned.
+4. Two snapshots hold entries (4.41M + 4.19M rows); the 11 others are empty, as designed.
+5. auto_vacuum is off, so the free pages stay in the file until a full VACUUM.
