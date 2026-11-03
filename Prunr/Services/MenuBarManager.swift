@@ -3142,15 +3142,16 @@ final class MenuBarManager: NSObject {
         }
         guard beginInventoryRefresh() else { return false }
 
+        let snapshots: [UUID: Snapshot]
         do {
-            _ = try await createBaselines(for: retryPaths, isFailedPathRetry: true) { _, _ in }
+            snapshots = try await createBaselines(for: retryPaths, isFailedPathRetry: true) { _, _ in }
         } catch {
             endInventoryRefresh()
             return false
         }
         endInventoryRefresh()
 
-        if !pendingRecentChangeRequiresFullRefresh {
+        if snapshots.count == retryPaths.count {
             failedScanRetryPathIDs = nil
         }
         if isPopoverShown {
