@@ -568,6 +568,7 @@ final class DatabaseManager {
         registerJournalCheckpointMigration(in: &migrator)
         registerDropPrefixIndexesMigration(in: &migrator)
         registerSnapshotEntryCountMigration(in: &migrator)
+        registerSlimWorkingSetEntryMigration(in: &migrator)
 
         return migrator
     }
@@ -650,7 +651,7 @@ extension DatabaseManager {
             try db.execute(
                 sql: """
                     INSERT INTO snapshotEntry (snapshotId, pathId, sizeBytes)
-                    SELECT ?, pathId, sizeBytes FROM workingSetEntry WHERE trackedPathId = ?
+                    SELECT ?, pathId, sizeBytes FROM workingSetEntry WHERE trackedPathKey = \(Self.workingSetKeySQL)
                     """,
                 arguments: [newSnapshotId, trackedPathId.uuidString]
             )
@@ -760,9 +761,6 @@ extension DatabaseManager {
             throw DatabaseError.notInitialized
         }
 
-        // Inner SQL chunk: 500 rows per multi-row VALUES statement.
-        // Each snapshotEntry row has 3 params (500×3=1500) and workingSetEntry has 4 (500×4=2000),
-        // both well within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER default of 32766 on macOS.
         let sqlChunkSize = 500
 
         let trackedPathIdString = trackedPathId?.uuidString
@@ -825,23 +823,23 @@ extension DatabaseManager {
 
                 // Optionally also write to workingSetEntry in the same transaction
                 if let trackedPathIdString, let updatedAt {
-                    let wsPlaceholders = Array(repeating: "(?,?,?,?)", count: snapshotRows.count).joined(separator: ",")
+                    let workingSetKey = try Self.workingSetKey(trackedPathId: trackedPathIdString, db: db)
+                    let wsPlaceholders = Array(repeating: "(?,?,?)", count: snapshotRows.count).joined(separator: ",")
                     let wsSQL = """
-                        INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
+                        INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes)
                         VALUES \(wsPlaceholders)
-                        ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
-                            sizeBytes = excluded.sizeBytes,
-                            updatedAt = excluded.updatedAt
+                        ON CONFLICT(trackedPathKey, pathId) DO UPDATE SET
+                            sizeBytes = excluded.sizeBytes
                         """
                     var wsArgs: [DatabaseValueConvertible?] = []
-                    wsArgs.reserveCapacity(snapshotRows.count * 4)
+                    wsArgs.reserveCapacity(snapshotRows.count * 3)
                     for row in snapshotRows {
-                        wsArgs.append(trackedPathIdString)
+                        wsArgs.append(workingSetKey)
                         wsArgs.append(row.pathId)
                         wsArgs.append(row.sizeBytes)
-                        wsArgs.append(updatedAt)
                     }
                     try db.execute(sql: wsSQL, arguments: StatementArguments(wsArgs))
+                    try Self.touchWorkingSet(key: workingSetKey, updatedAt: updatedAt, db: db)
                 }
             }
 
@@ -1340,20 +1338,21 @@ extension DatabaseManager {
         let trackedPathIdString = trackedPathId.uuidString
 
         try await dbPool.write { db in
-            try db.execute(
-                sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
-                arguments: [trackedPathIdString]
-            )
+            try Self.clearWorkingSetRows(trackedPathId: trackedPathIdString, db: db)
 
+            let workingSetKey = try Self.workingSetKey(trackedPathId: trackedPathIdString, db: db)
             try db.execute(
                 sql: """
-                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
-                    SELECT ?, pathId, sizeBytes, ?
+                    INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes)
+                    SELECT ?, pathId, sizeBytes
                     FROM snapshotEntry
                     WHERE snapshotId = ?
                     """,
-                arguments: [trackedPathIdString, updatedAt, snapshotId]
+                arguments: [workingSetKey, snapshotId]
             )
+            if db.changesCount > 0 {
+                try Self.touchWorkingSet(key: workingSetKey, updatedAt: updatedAt, db: db)
+            }
 
             try db.execute(
                 sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
@@ -1396,10 +1395,7 @@ extension DatabaseManager {
 
         let trackedPathIdString = trackedPathId.uuidString
         try await dbPool.write { db in
-            try db.execute(
-                sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
-                arguments: [trackedPathIdString]
-            )
+            try Self.clearWorkingSetRows(trackedPathId: trackedPathIdString, db: db)
             try db.execute(
                 sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
                 arguments: [trackedPathIdString]
@@ -1559,16 +1555,17 @@ extension DatabaseManager {
             arguments: [pathId, newState.category.rawValue, newState.subcategory?.rawValue ?? ""]
         )
 
+        let workingSetKey = try Self.workingSetKey(trackedPathId: trackedPathIdString, db: db)
         try db.execute(
             sql: """
-                INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
-                    sizeBytes = excluded.sizeBytes,
-                    updatedAt = excluded.updatedAt
+                INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes)
+                VALUES (?, ?, ?)
+                ON CONFLICT(trackedPathKey, pathId) DO UPDATE SET
+                    sizeBytes = excluded.sizeBytes
                 """,
-            arguments: [trackedPathIdString, pathId, newState.sizeBytes, updatedAt]
+            arguments: [workingSetKey, pathId, newState.sizeBytes]
         )
+        try Self.touchWorkingSet(key: workingSetKey, updatedAt: updatedAt, db: db)
 
         return try Self.applyWorkingSetChanges(
             [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: newState)],
@@ -1593,7 +1590,7 @@ extension DatabaseManager {
                        pc.subcategory AS subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
-                WHERE wse.trackedPathId = ? AND wse.pathId = ?
+                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = ?
                 """,
             arguments: [trackedPathId, pathId]
         ) else {
@@ -1673,7 +1670,7 @@ extension DatabaseManager {
                 SELECT p.id
                 FROM paths p
                 JOIN workingSetEntry wse ON wse.pathId = p.id
-                WHERE wse.trackedPathId = ? AND p.path = ?
+                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND p.path = ?
                 """,
             arguments: [trackedPathIdString, normalizedPath]
         ) else {
@@ -1683,7 +1680,7 @@ extension DatabaseManager {
         let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
 
         try db.execute(
-            sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ? AND pathId = ?",
+            sql: "DELETE FROM workingSetEntry WHERE trackedPathKey = \(Self.workingSetKeySQL) AND pathId = ?",
             arguments: [trackedPathIdString, pathId]
         )
 
@@ -1717,7 +1714,7 @@ extension DatabaseManager {
                 FROM paths p
                 CROSS JOIN workingSetEntry wse ON wse.pathId = p.id
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
-                WHERE wse.trackedPathId = ?
+                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
                   AND (
                       p.path = ?
                       OR (p.path >= ? AND p.path < ?)
@@ -1743,7 +1740,7 @@ extension DatabaseManager {
         try db.execute(
             sql: """
                 DELETE FROM workingSetEntry
-                WHERE trackedPathId = ?
+                WHERE trackedPathKey = \(Self.workingSetKeySQL)
                   AND pathId IN (
                     SELECT p.id
                     FROM paths p
@@ -1783,7 +1780,7 @@ extension DatabaseManager {
                         SELECT p.path AS path, wse.sizeBytes AS sizeBytes
                         FROM paths p
                         JOIN workingSetEntry wse ON wse.pathId = p.id
-                        WHERE wse.trackedPathId = ? AND p.path IN (\(placeholders))
+                        WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND p.path IN (\(placeholders))
                         """,
                     arguments: StatementArguments([trackedPathIdString] + chunk)
                 )
@@ -1820,7 +1817,7 @@ extension DatabaseManager {
                     SELECT p.path AS path, wse.sizeBytes AS sizeBytes
                     FROM paths p
                     JOIN workingSetEntry wse ON wse.pathId = p.id
-                    WHERE wse.trackedPathId = ?
+                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
                       AND (p.path = ? OR (p.path >= ? AND p.path < ?))
                       AND p.path > ?
                     ORDER BY p.path
@@ -2044,7 +2041,7 @@ extension DatabaseManager {
                         FROM paths p
                         CROSS JOIN workingSetEntry wse ON wse.pathId = p.id
                         JOIN pathClassification pc ON pc.pathId = wse.pathId
-                        WHERE wse.trackedPathId = ?
+                        WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
                           AND (
                               p.path = ?
                               OR (p.path >= ? AND p.path < ?)
@@ -2125,7 +2122,7 @@ extension DatabaseManager {
             try db.execute(
                 sql: """
                     DELETE FROM workingSetEntry
-                    WHERE trackedPathId = ?
+                    WHERE trackedPathKey = \(Self.workingSetKeySQL)
                       AND pathId IN (
                         SELECT p.id
                         FROM paths p
@@ -2141,20 +2138,23 @@ extension DatabaseManager {
                 ]
             )
 
+            let workingSetKey = try Self.workingSetKey(trackedPathId: trackedPathIdString, db: db)
             try db.execute(
                 sql: """
-                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
-                    SELECT ?, p.id, MAX(s.sizeBytes), ?
+                    INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes)
+                    SELECT ?, p.id, MAX(s.sizeBytes)
                     FROM workingSetRefreshStaging s
                     JOIN paths p ON p.path = s.path
                     WHERE s.sessionId = ?
                     GROUP BY p.id
-                    ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
-                        sizeBytes = excluded.sizeBytes,
-                        updatedAt = excluded.updatedAt
+                    ON CONFLICT(trackedPathKey, pathId) DO UPDATE SET
+                        sizeBytes = excluded.sizeBytes
                     """,
-                arguments: [trackedPathIdString, updatedAt, stagingSessionId]
+                arguments: [workingSetKey, stagingSessionId]
             )
+            if db.changesCount > 0 {
+                try Self.touchWorkingSet(key: workingSetKey, updatedAt: updatedAt, db: db)
+            }
 
             let deltas = try Self.applyWorkingSetChanges(
                 changes,
@@ -2631,8 +2631,9 @@ extension DatabaseManager {
         try await dbPool.write { db in
             if let trackedPathIdString {
                 try Self.deleteJournalCheckpoints(trackedPathId: trackedPathIdString, db: db)
+                try Self.clearWorkingSetRows(trackedPathId: trackedPathIdString, db: db)
                 try db.execute(
-                    sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
+                    sql: "DELETE FROM workingSetTrackedPath WHERE trackedPathId = ?",
                     arguments: [trackedPathIdString]
                 )
                 try db.execute(
@@ -2645,6 +2646,7 @@ extension DatabaseManager {
                 )
             } else {
                 try db.execute(sql: "DELETE FROM workingSetEntry")
+                try db.execute(sql: "DELETE FROM workingSetTrackedPath")
                 try db.execute(sql: "DELETE FROM workingSetCategoryTotal")
                 try db.execute(sql: "DELETE FROM growthJournalBucket")
                 try Self.deleteJournalCheckpoints(db: db)
@@ -2908,6 +2910,7 @@ extension DatabaseManager {
         case notInitialized
         case pathLookupFailed(String)
         case snapshotVanished(Int64)
+        case workingSetKeyMissing(String)
 
         var errorDescription: String? {
             switch self {
@@ -2919,6 +2922,8 @@ extension DatabaseManager {
                 return "Failed to resolve path ID for: \(path)"
             case .snapshotVanished(let id):
                 return "Snapshot \(id) vanished before it could be published"
+            case .workingSetKeyMissing(let trackedPathId):
+                return "No working-set key for tracked path \(trackedPathId)"
             }
         }
     }

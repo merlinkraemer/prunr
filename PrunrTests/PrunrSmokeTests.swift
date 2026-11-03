@@ -47,27 +47,38 @@ final class PrunrSmokeTests: XCTestCase {
         try await body(trackedPathId, snapshotId)
     }
 
-    private func workingSetMetadataByPath() async throws -> [String: (sizeBytes: Int64, updatedAt: Date)] {
+    private func workingSetMetadataByPath() async throws -> [String: (sizeBytes: Int64, pathId: Int64)] {
         let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
         return try await dbPool.read { db in
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                    SELECT p.path AS path, wse.sizeBytes AS sizeBytes, wse.updatedAt AS updatedAt
+                    SELECT p.path AS path, wse.sizeBytes AS sizeBytes, wse.pathId AS pathId
                     FROM workingSetEntry wse
                     JOIN paths p ON p.id = wse.pathId
                     """
             )
 
-            var result: [String: (sizeBytes: Int64, updatedAt: Date)] = [:]
+            var result: [String: (sizeBytes: Int64, pathId: Int64)] = [:]
             result.reserveCapacity(rows.count)
             for row in rows {
                 let path: String = row["path"] ?? ""
                 let sizeBytes: Int64 = row["sizeBytes"] ?? 0
-                let updatedAt: Date = row["updatedAt"] ?? .distantPast
-                result[path] = (sizeBytes, updatedAt)
+                let pathId: Int64 = row["pathId"] ?? 0
+                result[path] = (sizeBytes, pathId)
             }
             return result
+        }
+    }
+
+    private func workingSetUpdatedAt(trackedPathId: UUID) async throws -> Date? {
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        return try await dbPool.read { db in
+            try Date.fetchOne(
+                db,
+                sql: "SELECT updatedAt FROM workingSetTrackedPath WHERE trackedPathId = ?",
+                arguments: [trackedPathId.uuidString]
+            )
         }
     }
 
@@ -1303,10 +1314,12 @@ final class PrunrSmokeTests: XCTestCase {
                         arguments: [newestId, pathId]
                     )
                     if path == workingSetOnly {
+                        let workingSetKey = try DatabaseManager.workingSetKey(trackedPathId: trackedPathIdText, db: db)
                         try db.execute(
-                            sql: "INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt) VALUES (?, ?, 100, ?)",
-                            arguments: [trackedPathIdText, pathId, Date()]
+                            sql: "INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes) VALUES (?, ?, 100)",
+                            arguments: [workingSetKey, pathId]
                         )
+                        try DatabaseManager.touchWorkingSet(key: workingSetKey, updatedAt: Date(), db: db)
                     }
                 }
             }
@@ -1538,9 +1551,9 @@ final class PrunrSmokeTests: XCTestCase {
             let changedExpectedBytes = try self.diskUsageBytes(at: changedFileURL)
 
             XCTAssertEqual(changed.sizeBytes, changedExpectedBytes)
-            XCTAssertGreaterThan(changed.updatedAt, initialUpdatedAt)
+            let workingSetUpdatedAt = try await self.workingSetUpdatedAt(trackedPathId: trackedPathId)
+            XCTAssertGreaterThan(try XCTUnwrap(workingSetUpdatedAt), initialUpdatedAt)
             XCTAssertEqual(untouched.sizeBytes, 256)
-            XCTAssertEqual(untouched.updatedAt, initialUpdatedAt)
         }
     }
 
@@ -1752,9 +1765,9 @@ final class PrunrSmokeTests: XCTestCase {
             let changedExpectedBytes = try self.diskUsageBytes(at: changedFileURL)
 
             XCTAssertEqual(changed.sizeBytes, changedExpectedBytes)
-            XCTAssertGreaterThan(changed.updatedAt, initialUpdatedAt)
+            let workingSetUpdatedAt = try await self.workingSetUpdatedAt(trackedPathId: trackedPathId)
+            XCTAssertGreaterThan(try XCTUnwrap(workingSetUpdatedAt), initialUpdatedAt)
             XCTAssertEqual(untouched.sizeBytes, 96)
-            XCTAssertEqual(untouched.updatedAt, initialUpdatedAt)
         }
     }
 

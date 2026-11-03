@@ -239,7 +239,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
                 let journalCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM growthJournalBucket") ?? 0
                 let workingSetCount = try Int.fetchOne(
                     db,
-                    sql: "SELECT COUNT(*) FROM workingSetEntry WHERE trackedPathId = ?",
+                    sql: "SELECT COUNT(*) FROM workingSetEntry WHERE trackedPathKey = \(DatabaseManager.workingSetKeySQL)",
                     arguments: [trackedPathId.uuidString]
                 ) ?? 0
                 return (journalCount, workingSetCount)
@@ -764,7 +764,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
                     SELECT p.path
                     FROM workingSetEntry w
                     JOIN paths p ON p.id = w.pathId
-                    WHERE w.trackedPathId = ?
+                    WHERE w.trackedPathKey = \(DatabaseManager.workingSetKeySQL)
                     ORDER BY p.path
                     """,
                 arguments: [trackedPathIdText]
@@ -787,10 +787,12 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             let pathId = try XCTUnwrap(
                 Int64.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [path])
             )
+            let workingSetKey = try DatabaseManager.workingSetKey(trackedPathId: trackedPathIdText, db: db)
             try db.execute(
-                sql: "INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt) VALUES (?, ?, 1, ?)",
-                arguments: [trackedPathIdText, pathId, Date()]
+                sql: "INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes) VALUES (?, ?, 1)",
+                arguments: [workingSetKey, pathId]
             )
+            try DatabaseManager.touchWorkingSet(key: workingSetKey, updatedAt: Date(), db: db)
         }
     }
 

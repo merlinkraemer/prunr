@@ -152,7 +152,8 @@ final class ReplayHarnessTests: PrunrTestCase {
             ("size.snapshot.newestAgeHours", """
                 SELECT COALESCE(CAST((julianday('now') - julianday(MAX(createdAt))) * 24 AS INTEGER), 0) FROM snapshot
                 """),
-            ("size.workingSetEntry.trackedPaths", "SELECT COUNT(DISTINCT trackedPathId) FROM workingSetEntry"),
+            ("size.workingSetEntry.trackedPaths", "SELECT COUNT(DISTINCT trackedPathKey) FROM workingSetEntry"),
+            ("size.workingSetTrackedPath.rows", "SELECT COUNT(*) FROM workingSetTrackedPath"),
             ("size.pathClassification.withoutPath", """
                 SELECT COUNT(*) FROM pathClassification c WHERE NOT EXISTS (SELECT 1 FROM paths p WHERE p.id = c.pathId)
                 """),
@@ -182,6 +183,105 @@ final class ReplayHarnessTests: PrunrTestCase {
         }
     }
 
+    private static func workingSetChecksum(_ queue: DatabaseQueue, trackedPathColumn: String) throws -> [String: Int] {
+        try queue.read { db in
+            let row = try Row.fetchOne(db, sql: """
+                SELECT COUNT(*) AS rows,
+                       COALESCE(SUM(sizeBytes), 0) AS bytes,
+                       COALESCE(SUM(pathId), 0) AS pathIdSum,
+                       COUNT(DISTINCT \(trackedPathColumn)) AS trackedPaths
+                FROM workingSetEntry
+                """)
+            var values: [String: Int] = [:]
+            for name in ["rows", "bytes", "pathIdSum", "trackedPaths"] {
+                values[name] = row?[name] ?? -1
+            }
+            return values
+        }
+    }
+
+    private static func emitWorkingSetChecksum(_ stage: String, _ values: [String: Int]?) {
+        guard let values else {
+            emitRealDBError("wse.\(stage)", "unavailable")
+            return
+        }
+        for name in values.keys.sorted() {
+            emitRealDB("wse.\(name).\(stage)", values[name] ?? -1)
+        }
+    }
+
+    private static func emitRealDBText(_ name: String, _ text: String) {
+        let line = "REALDB \(name) \(text)"
+        print(line)
+        NSLog("%@", line)
+    }
+
+    private static func emitWorkingSetPlans(_ queue: DatabaseQueue, trackedPathId: String) {
+        let key = DatabaseManager.workingSetKeySQL
+        let plans: [(String, String, StatementArguments)] = [
+            ("fileState", """
+                SELECT wse.sizeBytes, pc.category, pc.subcategory
+                FROM workingSetEntry wse
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                WHERE wse.trackedPathKey = \(key) AND wse.pathId = ?
+                """, [trackedPathId, 1]),
+            ("subtreeRows", """
+                SELECT p.id, p.path, wse.sizeBytes, pc.category, pc.subcategory
+                FROM paths p
+                CROSS JOIN workingSetEntry wse ON wse.pathId = p.id
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                WHERE wse.trackedPathKey = \(key)
+                  AND (p.path = ? OR (p.path >= ? AND p.path < ?))
+                """, [trackedPathId, "/a", "/a/", "/a0"]),
+            ("subtreeDelete", """
+                DELETE FROM workingSetEntry
+                WHERE trackedPathKey = \(key)
+                  AND pathId IN (
+                    SELECT p.id FROM paths p
+                    WHERE p.path = ? OR (p.path >= ? AND p.path < ?)
+                  )
+                """, [trackedPathId, "/a", "/a/", "/a0"]),
+            ("indexBuilder", """
+                SELECT wse.pathId, p.path, wse.sizeBytes, pc.category, pc.subcategory
+                FROM workingSetEntry wse
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                JOIN paths p ON p.id = wse.pathId
+                WHERE wse.trackedPathKey = \(key)
+                """, [trackedPathId]),
+            ("groupFiles", """
+                SELECT wse.pathId, p.path, wse.sizeBytes
+                FROM pathClassification pc
+                CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
+                JOIN paths p ON p.id = wse.pathId
+                WHERE wse.trackedPathKey = \(key) AND pc.category = ? AND pc.subcategory = ?
+                ORDER BY wse.sizeBytes DESC, p.path ASC
+                LIMIT ? OFFSET ?
+                """, [trackedPathId, "developer", "nodeModules", 50, 0]),
+            ("placeChildren", """
+                SELECT p.path, wse.sizeBytes
+                FROM paths p
+                CROSS JOIN workingSetEntry wse ON wse.trackedPathKey = \(key) AND wse.pathId = p.id
+                WHERE p.path >= ? AND p.path < ?
+                """, [trackedPathId, "/a/", "/a0"]),
+            ("snapshotCopy", """
+                SELECT pathId, sizeBytes FROM workingSetEntry WHERE trackedPathKey = \(key)
+                """, [trackedPathId])
+        ]
+        for (name, sql, arguments) in plans {
+            failSoft("plan.\(name)") {
+                let details = try queue.read { db in
+                    try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN " + sql, arguments: arguments)
+                        .map { $0["detail"] as String? ?? "" }
+                }
+                for detail in details {
+                    emitRealDBText("plan.\(name)", detail)
+                }
+                let scansWorkingSet = details.contains { $0.hasPrefix("SCAN wse") || $0.hasPrefix("SCAN workingSetEntry") }
+                emitRealDB("plan.\(name).scansWorkingSet", scansWorkingSet ? 1 : 0)
+            }
+        }
+    }
+
     private static func emitRealDBError(_ name: String, _ detail: String) {
         let line = "REALDB \(name).error \(detail)"
         print(line)
@@ -207,6 +307,17 @@ final class ReplayHarnessTests: PrunrTestCase {
             let bytes = (try FileManager.default.attributesOfItem(atPath: target)[.size] as? NSNumber)?.intValue ?? 0
             emitRealDB("size.file.vacuumed", bytes)
             try? FileManager.default.removeItem(atPath: target)
+        }
+        failSoft("size.bytes.workingSetEntryWithIndexes") {
+            let bytes = try queue.read { db in
+                try Int.fetchOne(db, sql: """
+                    SELECT COALESCE(SUM(d.pgsize), 0)
+                    FROM dbstat d
+                    JOIN sqlite_master m ON m.name = d.name
+                    WHERE m.tbl_name = 'workingSetEntry'
+                    """) ?? 0
+            }
+            emitRealDB("size.bytes.workingSetEntryWithIndexes", bytes)
         }
         failSoft("size.file.bytes") {
             let bytes = try queue.read { db in
@@ -400,6 +511,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         } catch {
             emitRealDBError("o40.reclaimAgain", "\(type(of: error))")
         }
+        emitRealDB("o43.final.file", fileBytes(copy))
     }
 
     private static func isolateTrackedPathIds(_ queue: DatabaseQueue) throws -> [String] {
@@ -487,11 +599,19 @@ final class ReplayHarnessTests: PrunrTestCase {
         let before = try Self.rowCounts(beforeQueue)
         let versionBefore = try Self.appliedMigrationCount(beforeQueue)
         let ids = try Self.isolateTrackedPathIds(beforeQueue).compactMap(UUID.init(uuidString:))
+        let workingSetBefore = try? Self.workingSetChecksum(beforeQueue, trackedPathColumn: "trackedPathId")
         let home = try ReplayHarness.detectHome(inDatabaseAt: copy) ?? Self.realHomeDirectory
         try beforeQueue.close()
         Self.emitRealDB("schema.before", versionBefore)
 
         try Self.migrateStepByStep(at: copy)
+
+        let migratedQueue = try DatabaseQueue(path: copy)
+        let workingSetAfter = try? Self.workingSetChecksum(migratedQueue, trackedPathColumn: "trackedPathKey")
+        try migratedQueue.close()
+        Self.emitWorkingSetChecksum("before", workingSetBefore)
+        Self.emitWorkingSetChecksum("afterMigrate", workingSetAfter)
+        Self.emitRealDB("wse.checksumMatch", workingSetBefore != nil && workingSetBefore == workingSetAfter ? 1 : 0)
 
         started = Self.nowMs()
         try DatabaseManager.shared.initialize(at: copy)
@@ -531,6 +651,9 @@ final class ReplayHarnessTests: PrunrTestCase {
         let after = try Self.rowCounts(afterQueue)
         try Self.emitSizeCounts(afterQueue)
         await Self.emitMeasurements(afterQueue, home: home, tempDirectory: tempDirectory)
+        if let trackedPathId = ids.first?.uuidString {
+            Self.emitWorkingSetPlans(afterQueue, trackedPathId: trackedPathId)
+        }
         try afterQueue.close()
         for table in after.keys.sorted() {
             Self.emitRealDB("\(table).after", after[table] ?? 0)

@@ -566,7 +566,7 @@ extension DatabaseManager {
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
                 JOIN paths p ON p.id = wse.pathId
-                WHERE wse.trackedPathId = ?
+                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
                 """,
             arguments: [trackedPathId]
         )
@@ -726,7 +726,7 @@ extension DatabaseManager {
                     FROM pathClassification pc
                     CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                     JOIN paths p ON p.id = wse.pathId
-                    WHERE wse.trackedPathId = ? AND pc.category = ?
+                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = ?
                       AND prunr_owner_group(p.path) IN (\(placeholders))
                     ORDER BY wse.sizeBytes DESC, p.path ASC
                     LIMIT ? OFFSET ?
@@ -742,7 +742,7 @@ extension DatabaseManager {
                     FROM pathClassification pc
                     CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                     JOIN paths p ON p.id = wse.pathId
-                    WHERE wse.trackedPathId = ? AND pc.category = ? AND pc.subcategory = ?
+                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = ? AND pc.subcategory = ?
                     ORDER BY wse.sizeBytes DESC, p.path ASC
                     LIMIT ? OFFSET ?
                     """,
@@ -1240,7 +1240,7 @@ extension DatabaseManager {
             sql: """
                 SELECT p.path AS path, wse.sizeBytes AS sizeBytes
                 FROM paths p
-                CROSS JOIN workingSetEntry wse ON wse.trackedPathId = ? AND wse.pathId = p.id
+                CROSS JOIN workingSetEntry wse ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = p.id
                 WHERE p.path >= ? AND p.path < ?
                 """,
             arguments: [trackedPathId, root, pathPrefixUpperBound(root)]
@@ -1273,7 +1273,7 @@ extension DatabaseManager {
                         FROM pathClassification pc
                         CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                         JOIN paths p ON p.id = wse.pathId
-                        WHERE wse.trackedPathId = ? AND pc.category = ?
+                        WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = ?
                         """,
                     arguments: [trackedPathId.uuidString, category.rawValue]
                 )
@@ -1358,10 +1358,10 @@ extension DatabaseManager {
                     sql: """
                         SELECT t.pathId AS pathId, t.sizeBytes AS sizeBytes, wse.sizeBytes AS liveSize
                         FROM workingSetTopEntry t
-                        LEFT JOIN workingSetEntry wse ON wse.trackedPathId = t.trackedPathId AND wse.pathId = t.pathId
+                        LEFT JOIN workingSetEntry wse ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = t.pathId
                         WHERE t.trackedPathId = ? AND t.category = ? AND t.groupKey = ?
                         """,
-                    arguments: [id, groupId.category.rawValue, groupId.groupKey]
+                    arguments: [id, id, groupId.category.rawValue, groupId.groupKey]
                 )
                 let topIds = Set(top.compactMap { $0["pathId"] as Int64? })
                 if top.contains(where: { ($0["liveSize"] as Int64?) != ($0["sizeBytes"] as Int64?) }) {

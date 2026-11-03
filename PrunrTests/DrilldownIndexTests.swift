@@ -488,8 +488,9 @@ final class DrilldownIndexTests: PrunrTestCase {
             try await dbPool.write { db in
                 let insertPath = try db.makeStatement(sql: "INSERT INTO paths (id, path) VALUES (?, ?)")
                 let insertClass = try db.makeStatement(sql: "INSERT INTO pathClassification (pathId, category, subcategory) VALUES (?, ?, ?)")
+                let workingSetKey = try DatabaseManager.workingSetKey(trackedPathId: id.uuidString, db: db)
                 let insertLive = try db.makeStatement(sql: """
-                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt) VALUES (?, ?, ?, ?)
+                    INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes) VALUES (?, ?, ?)
                     """)
                 let now = Date()
                 for index in 1...rowCount {
@@ -515,14 +516,14 @@ final class DrilldownIndexTests: PrunrTestCase {
                     }
                     try insertPath.execute(arguments: [index, path])
                     try insertClass.execute(arguments: [index, category.rawValue, subcategory?.rawValue ?? ""])
-                    try insertLive.execute(arguments: [id.uuidString, index, Int64((index * 7_919) % 1_000_003), now])
+                    try insertLive.execute(arguments: [workingSetKey, index, Int64((index * 7_919) % 1_000_003)])
                 }
                 try db.execute(
                     sql: """
                         INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
                         SELECT ?, pc.category, SUM(wse.sizeBytes), ?
                         FROM workingSetEntry wse JOIN pathClassification pc ON pc.pathId = wse.pathId
-                        WHERE wse.trackedPathId = ?
+                        WHERE wse.trackedPathKey = \(DatabaseManager.workingSetKeySQL)
                         GROUP BY pc.category
                         """,
                     arguments: [id.uuidString, now, id.uuidString]
@@ -736,8 +737,7 @@ final class DrilldownIndexTests: PrunrTestCase {
             XCTAssertFalse(snapshotIndexes.contains("idx_snapshotEntry_snapshotId"))
             XCTAssertTrue(snapshotIndexes.contains("idx_snapshotEntry_snapshotId_pathId"))
             let workingSetIndexes = try await self.indexNames("workingSetEntry")
-            XCTAssertFalse(workingSetIndexes.contains("idx_workingSetEntry_trackedPath"))
-            XCTAssertTrue(workingSetIndexes.contains("idx_workingSetEntry_trackedPath_path"))
+            XCTAssertEqual(workingSetIndexes, ["idx_workingSetEntry_pathId"])
         }
     }
 
@@ -745,8 +745,8 @@ final class DrilldownIndexTests: PrunrTestCase {
         try await withEmptyTemporaryDatabase { [self] _ in
             let snapshotPlan = try await self.queryPlan("SELECT sizeBytes FROM snapshotEntry WHERE snapshotId = ?")
             XCTAssertTrue(snapshotPlan.contains("USING"), snapshotPlan)
-            let workingSetPlan = try await self.queryPlan("SELECT sizeBytes FROM workingSetEntry WHERE trackedPathId = ?")
-            XCTAssertTrue(workingSetPlan.contains("USING"), workingSetPlan)
+            let workingSetPlan = try await self.queryPlan("SELECT sizeBytes FROM workingSetEntry WHERE trackedPathKey = ?")
+            XCTAssertTrue(workingSetPlan.contains("USING PRIMARY KEY"), workingSetPlan)
         }
     }
 }

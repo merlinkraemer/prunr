@@ -11,6 +11,8 @@ extension DatabaseManager {
     static let journalCheckpointMigrationIdentifier = "v27_journal_checkpoint"
     static let dropPrefixIndexesMigrationIdentifier = "v28_drop_prefix_indexes"
     static let snapshotEntryCountMigrationIdentifier = "v29_snapshot_entry_count"
+    static let slimWorkingSetEntryMigrationIdentifier = "v30_slim_working_set_entry"
+    static let workingSetKeySQL = "(SELECT key FROM workingSetTrackedPath WHERE trackedPathId = ?)"
 
     static func registerJournalDetailMigration(in migrator: inout DatabaseMigrator) {
         // Migration v26: per-child detail of the growth journal (PRD L1). No
@@ -64,6 +66,77 @@ extension DatabaseManager {
                 t.add(column: "entryCount", .integer)
             }
         }
+    }
+
+    static func registerSlimWorkingSetEntryMigration(in migrator: inout DatabaseMigrator) {
+        migrator.registerMigration(slimWorkingSetEntryMigrationIdentifier, foreignKeyChecks: .immediate) { db in
+            try db.execute(sql: """
+                CREATE TABLE workingSetTrackedPath (
+                    key INTEGER PRIMARY KEY,
+                    trackedPathId TEXT NOT NULL UNIQUE,
+                    updatedAt DATETIME
+                )
+                """)
+            try db.execute(sql: """
+                INSERT INTO workingSetTrackedPath (trackedPathId, updatedAt)
+                SELECT trackedPathId, MAX(updatedAt)
+                FROM workingSetEntry
+                GROUP BY trackedPathId
+                ORDER BY trackedPathId
+                """)
+            try db.execute(sql: """
+                CREATE TABLE workingSetEntry_new (
+                    trackedPathKey INTEGER NOT NULL,
+                    pathId INTEGER NOT NULL REFERENCES paths(id) ON DELETE CASCADE,
+                    sizeBytes INTEGER NOT NULL,
+                    PRIMARY KEY (trackedPathKey, pathId)
+                ) WITHOUT ROWID
+                """)
+            try db.execute(sql: """
+                INSERT INTO workingSetEntry_new (trackedPathKey, pathId, sizeBytes)
+                SELECT t.key, w.pathId, w.sizeBytes
+                FROM workingSetTrackedPath t
+                CROSS JOIN workingSetEntry w ON w.trackedPathId = t.trackedPathId
+                WHERE EXISTS (SELECT 1 FROM paths p WHERE p.id = w.pathId)
+                ORDER BY t.key, w.pathId
+                """)
+            try db.execute(sql: "DROP TABLE workingSetEntry")
+            try db.execute(sql: "ALTER TABLE workingSetEntry_new RENAME TO workingSetEntry")
+            try db.execute(sql: "CREATE INDEX idx_workingSetEntry_pathId ON workingSetEntry(pathId)")
+        }
+    }
+
+    static func workingSetKey(trackedPathId: String, db: Database) throws -> Int64 {
+        try db.execute(
+            sql: "INSERT OR IGNORE INTO workingSetTrackedPath (trackedPathId) VALUES (?)",
+            arguments: [trackedPathId]
+        )
+        guard let key = try Int64.fetchOne(
+            db,
+            sql: "SELECT key FROM workingSetTrackedPath WHERE trackedPathId = ?",
+            arguments: [trackedPathId]
+        ) else {
+            throw DatabaseError.workingSetKeyMissing(trackedPathId)
+        }
+        return key
+    }
+
+    static func touchWorkingSet(key: Int64, updatedAt: Date, db: Database) throws {
+        try db.execute(
+            sql: "UPDATE workingSetTrackedPath SET updatedAt = MAX(COALESCE(updatedAt, ?), ?) WHERE key = ?",
+            arguments: [updatedAt, updatedAt, key]
+        )
+    }
+
+    static func clearWorkingSetRows(trackedPathId: String, db: Database) throws {
+        try db.execute(
+            sql: "DELETE FROM workingSetEntry WHERE trackedPathKey = \(workingSetKeySQL)",
+            arguments: [trackedPathId]
+        )
+        try db.execute(
+            sql: "UPDATE workingSetTrackedPath SET updatedAt = NULL WHERE trackedPathId = ?",
+            arguments: [trackedPathId]
+        )
     }
 
     func fetchJournalCheckpoints() async throws -> [JournalCheckpoint] {

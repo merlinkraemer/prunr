@@ -320,9 +320,8 @@ actor DatabaseCleanupService {
                     SELECT s.id
                     FROM snapshot s
                     LEFT JOIN (
-                        SELECT trackedPathId, MAX(updatedAt) AS latestWorkingSetUpdate
-                        FROM workingSetEntry
-                        GROUP BY trackedPathId
+                        SELECT trackedPathId, updatedAt AS latestWorkingSetUpdate
+                        FROM workingSetTrackedPath
                     ) ws ON ws.trackedPathId = s.trackedPathId
                     WHERE (s.lifecycle != ? AND s.createdAt < ?)
                        OR (s.lifecycle = ?

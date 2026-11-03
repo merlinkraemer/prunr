@@ -59,16 +59,6 @@ struct GrowthJournalBucket: Codable, Identifiable, Sendable, Equatable, Hashable
     }
 }
 
-struct WorkingSetEntry: Codable, Identifiable, Sendable, Equatable, Hashable, FetchableRecord {
-    static let databaseTableName = "workingSetEntry"
-
-    var id: Int64?
-    let trackedPathId: String
-    let pathId: Int64
-    let sizeBytes: Int64
-    let updatedAt: Date
-}
-
 /// Supplemental inventory entry used for storage shown in the drive bar
 /// that does not map to a drill-down category.
 struct SupplementalInventoryItem: Identifiable, Sendable, Equatable {
