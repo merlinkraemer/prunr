@@ -266,3 +266,4 @@
 2026-11-03 orchestrator O33 spawn: real-DB migration dry run on a backup copy (v26-v27 + first prune, PERF/REALDB counts only, no paths) before the hands-on install (sonnet medium, seat worktree, base 5d19bd4)
 2026-11-03 orchestrator O33 on branch: 1ad28e2, ReplayHarnessTests real-DB copy (readonly backup) -> migrate -> 30-day prune -> feed + drilldown, prints PERF realdb/REALDB counts only; job queued
 2026-11-03 orchestrator O32b Mac: compile error (new test lacked @MainActor); fixed 9e745ae, requeued
+2026-11-03 orchestrator O32a Mac: 2 new tests failed (no temp DB, nil pool); rest green; PERF addEntriesWithWorkingSet.10k 140 ms (was 223 on hands-on base); fixed 7141ff4, requeued
