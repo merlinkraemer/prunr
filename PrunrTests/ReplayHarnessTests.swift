@@ -121,6 +121,24 @@ final class ReplayHarnessTests: PrunrTestCase {
         try queue.read { db in try DatabaseManager.makeMigrator().appliedIdentifiers(db).count }
     }
 
+    private static func migrateStepByStep(at path: String) throws {
+        var configuration = Configuration()
+        configuration.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA foreign_keys = ON")
+            db.add(function: DatabaseManager.unitKeyFunction)
+            db.add(function: DatabaseManager.ownerGroupFunction)
+        }
+        let queue = try DatabaseQueue(path: path, configuration: configuration)
+        let migrator = DatabaseManager.makeMigrator()
+        let applied = try queue.read { db in try migrator.appliedIdentifiers(db) }
+        for identifier in migrator.migrations where !applied.contains(identifier) {
+            let started = nowMs()
+            try migrator.migrate(queue, upTo: identifier)
+            emitPerf("migrate.\(identifier)", nowMs() - started)
+        }
+        try queue.close()
+    }
+
     @MainActor
     func testRealDatabaseCopyMigratesPrunesAndBuildsFeed() async throws {
         let source = Self.realHomeDirectory + "/Library/Application Support/Prunr/prunr.db"
@@ -155,6 +173,8 @@ final class ReplayHarnessTests: PrunrTestCase {
         let home = try ReplayHarness.detectHome(inDatabaseAt: copy) ?? Self.realHomeDirectory
         try beforeQueue.close()
         Self.emitRealDB("schema.before", versionBefore)
+
+        try Self.migrateStepByStep(at: copy)
 
         started = Self.nowMs()
         try DatabaseManager.shared.initialize(at: copy)
