@@ -75,7 +75,7 @@ not create an effective larger target when an ancestor constrains hit testing.
 Use a real frame for the required target size and compensate surrounding layout
 when visuals must remain fixed.
 
-## 2026-11-03 - GRDB migrations: default foreign key check scans the whole DB
+## GRDB default foreign key check scans the whole DB (2026-11-03)
 
 **What happened:** v26 and v27 only create empty tables, yet on a real 4.4M-path
 DB each took 7-9 s at first launch. GRDB's default `foreignKeyChecks: .deferred`
