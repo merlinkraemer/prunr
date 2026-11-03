@@ -291,3 +291,4 @@
 2026-11-03 orchestrator O38 on branch: e11829f, path-store design doc landed on main; ~3.47 -> ~1.2 GB in 5 slices, all schema/storage = Merlin; hash-index option rejected (kills subtree range queries)
 2026-11-03 orchestrator O39 spawn: test-only measurement slice of the path-store design (VACUUM INTO live size, dir count, name length, size histogram, query timings) (sonnet, seat worktree, base e11829f)
 2026-11-03 orchestrator O39 on branch: 44f68ab, real-DB test adds VACUUM INTO live size, dir/name bytes, size histogram, subtree/lookup/delta timings (fail-soft); job queued
+2026-11-03 orchestrator O39 Mac green: 44f68ab, live size after VACUUM 2.76 GB (-712 MB), 628k dirs, avg name 29 B, dir+name text 208 MB vs 625 MB full paths; calculateDeltas 4.4 s; design estimates hold

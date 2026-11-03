@@ -225,3 +225,11 @@ Expected result after S1 to S5: about 1.2 GB between scans and about 1.45 GB pea
 - Migration times are estimates; nothing here has been timed on the Mac. `PERF realdb.migrate.<id>` gives real numbers per slice.
 - Whether S3 and S4 should share one migration (one transient disk spike, one VACUUM-free cycle) or stay separate (smaller risk per step). Recommendation: separate, because S1 makes the space return cheap.
 - d2 changes the residual journal math; it needs its own design pass before any estimate of effort.
+
+## Measured (O39, Mac run 44f68ab, real DB)
+
+- Live size after VACUUM: 2.76 GB (file 3.47 GB), so one VACUUM frees 712 MB (estimate was 568 MB). VACUUM INTO took 8.5 s.
+- 627,866 distinct folders (estimate 0.6M). Average file-name length 29.3 bytes (estimate 32). Folder text 77 MB + name text 131 MB = 208 MB, against 625 MB of full-path text.
+- Exact NOCASE lookup: 1,000 in 29 ms.
+- calculateDeltas on the two newest snapshots: 4.4 s for 325,973 deltas.
+- The subtree timing did not run (the test found no top-level folder); needs a fix in the test.
