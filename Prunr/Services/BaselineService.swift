@@ -220,7 +220,7 @@ actor BaselineService {
                 )
             }
 
-            try await db.markSnapshotComplete(id: snapshotId)
+            try await db.markSnapshotComplete(id: snapshotId, entryCount: outcome.entryCount)
         } catch {
             let cleanupOutlivesTaskCancellation = Task {
                 try await self.db.deleteSnapshot(id: snapshotId)

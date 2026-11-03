@@ -374,6 +374,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         case .skippedLowDisk: return 2
         case .skippedBusy: return 3
         case .failed: return 4
+        case .skippedBackoff: return 5
         }
     }
 

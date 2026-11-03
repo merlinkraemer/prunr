@@ -134,6 +134,7 @@ actor ScanService {
         let drilldownIndex: DrilldownIndexBuilder
         /// Set when the scan was asked to rebuild the history from file dates.
         let fileHistory: FileDateHistory?
+        let entryCount: Int
     }
 
     func scanWithDrilldownIndex(
@@ -490,7 +491,7 @@ actor ScanService {
             }
 
             if completesSnapshot {
-                try await db.markSnapshotComplete(id: snapshotId)
+                try await db.markSnapshotComplete(id: snapshotId, entryCount: count)
             }
             let skippedCount = deniedLog.count
             logger.info("Scan completed successfully: \(count) files scanned, \(skippedCount) unreadable entries skipped")
@@ -499,7 +500,7 @@ actor ScanService {
             if completesSnapshot {
                 completedSnapshot.lifecycle = .complete
             }
-            return ScanOutcome(snapshot: completedSnapshot, drilldownIndex: drilldownIndex, fileHistory: fileHistory)
+            return ScanOutcome(snapshot: completedSnapshot, drilldownIndex: drilldownIndex, fileHistory: fileHistory, entryCount: count)
 
         } catch {
             // A failed DB write can stop consuming the stream before its normal

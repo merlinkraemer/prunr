@@ -906,7 +906,7 @@ final class PrunrSmokeTests: XCTestCase {
     func testMarkSnapshotCompleteThrowsWhenSnapshotVanished() async throws {
         try await withEmptyTemporaryDatabase { _ in
             do {
-                try await DatabaseManager.shared.markSnapshotComplete(id: 9_999_999)
+                try await DatabaseManager.shared.markSnapshotComplete(id: 9_999_999, entryCount: 0)
                 XCTFail("Expected snapshotVanished")
             } catch let error as DatabaseManager.DatabaseError {
                 guard case .snapshotVanished(9_999_999) = error else {
@@ -3109,11 +3109,63 @@ final class PrunrSmokeTests: XCTestCase {
             let reclaimed = try await DatabaseCleanupService.shared.reclaimFreePages()
 
             let pageSize = try await self.pragma("page_size")
-            XCTAssertEqual(reclaimed, freeBefore * pageSize)
             let freeAfter = try await self.pragma("freelist_count")
-            XCTAssertEqual(freeAfter, 0)
+            let expectedKept = freeBefore - DatabaseCleanupService.reclaimablePages(
+                pageCount: pagesBefore,
+                freelistCount: freeBefore
+            )
+            XCTAssertEqual(freeAfter, expectedKept)
+            XCTAssertEqual(reclaimed, (freeBefore - freeAfter) * pageSize)
+            XCTAssertGreaterThan(reclaimed, 0)
             let pagesAfter = try await self.pragma("page_count")
-            XCTAssertLessThanOrEqual(pagesAfter, pagesBefore - freeBefore)
+            XCTAssertEqual(pagesAfter, pagesBefore - (freeBefore - freeAfter))
+        }
+    }
+
+    func testOrphanSnapshotTrimIgnoresIncompleteSnapshots() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let entries = [ScanResult(path: "/Users/tester/orphan/a.bin", sizeBytes: 10)]
+            let oldest = try await self.seedCompleteSnapshot(trackedPathIdText: "", createdAt: Date().addingTimeInterval(-300), entries: entries)
+            let newestComplete = try await self.seedCompleteSnapshot(trackedPathIdText: "", createdAt: Date().addingTimeInterval(-200), entries: entries)
+            let scanning = try await self.seedCompleteSnapshot(trackedPathIdText: "", createdAt: Date().addingTimeInterval(-100), entries: entries)
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            try await dbPool.write { db in
+                try db.execute(sql: "UPDATE snapshot SET lifecycle = 'scanning' WHERE id = ?", arguments: [scanning])
+            }
+
+            let trimmed = try await DatabaseCleanupService.shared.cleanupOldSnapshotEntries()
+
+            XCTAssertEqual(trimmed, 1)
+            let oldestCount = try await DatabaseManager.shared.fetchEntryCount(for: oldest)
+            let newestCompleteCount = try await DatabaseManager.shared.fetchEntryCount(for: newestComplete)
+            let scanningCount = try await DatabaseManager.shared.fetchEntryCount(for: scanning)
+            XCTAssertEqual(oldestCount, 0)
+            XCTAssertEqual(newestCompleteCount, 1)
+            XCTAssertEqual(scanningCount, 1)
+        }
+    }
+
+    func testMarkSnapshotCompleteRecordsEntryCount() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let snapshotId = try await dbPool.write { db -> Int64 in
+                try db.execute(
+                    sql: "INSERT INTO snapshot (trackedPathId, createdAt, lifecycle) VALUES (?, ?, 'scanning')",
+                    arguments: [trackedPathId.uuidString, Date()]
+                )
+                return db.lastInsertedRowID
+            }
+
+            try await DatabaseManager.shared.markSnapshotComplete(id: snapshotId, entryCount: 4_400_000)
+
+            let stored = try await dbPool.read { db in
+                try Row.fetchOne(db, sql: "SELECT lifecycle, entryCount FROM snapshot WHERE id = ?", arguments: [snapshotId])
+                    .map { (lifecycle: $0["lifecycle"] as String? ?? "", entryCount: $0["entryCount"] as Int? ?? -1) }
+            }
+            XCTAssertEqual(stored?.lifecycle, "complete")
+            XCTAssertEqual(stored?.entryCount, 4_400_000)
+            let comparable = try await DatabaseManager.shared.fetchComparableEntryCount(for: snapshotId)
+            XCTAssertEqual(comparable, 4_400_000)
         }
     }
 

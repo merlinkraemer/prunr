@@ -71,16 +71,37 @@ final class StartupMaintenancePlanTests: XCTestCase {
         XCTAssertTrue(DatabaseCleanupService.freePagesWorthReclaiming(freelistBytes: 64 * mb))
     }
 
-    func testIncrementalConversionNeedsTwiceTheDatabaseOnDisk() {
-        XCTAssertTrue(
-            DatabaseCleanupService.hasDiskForIncrementalConversion(databaseBytes: 3_500 * mb, availableBytes: 7_000 * mb)
+    func testRewriteDiskRequirementUsesLivePagesTwiceAndTheWal() {
+        let required = DatabaseCleanupService.rewriteDiskRequirement(
+            pageCount: 1_000,
+            freelistCount: 400,
+            pageSize: 4_096,
+            walBytes: 50 * mb
         )
-        XCTAssertFalse(
-            DatabaseCleanupService.hasDiskForIncrementalConversion(databaseBytes: 3_500 * mb, availableBytes: 6_999 * mb)
-        )
-        XCTAssertFalse(
-            DatabaseCleanupService.hasDiskForIncrementalConversion(databaseBytes: 3_500 * mb, availableBytes: nil)
-        )
+        XCTAssertEqual(required, 600 * 4_096 * 2 + 50 * mb)
+    }
+
+    func testRewriteDiskCheckComparesAgainstAvailableSpace() {
+        XCTAssertTrue(DatabaseCleanupService.hasDiskForRewrite(requiredBytes: 7_000 * mb, availableBytes: 7_000 * mb))
+        XCTAssertFalse(DatabaseCleanupService.hasDiskForRewrite(requiredBytes: 7_000 * mb, availableBytes: 6_999 * mb))
+        XCTAssertFalse(DatabaseCleanupService.hasDiskForRewrite(requiredBytes: 1, availableBytes: nil))
+    }
+
+    func testConversionBackoffIsOneDayThenSevenDays() {
+        let day: TimeInterval = 24 * hour
+        XCTAssertFalse(DatabaseCleanupService.conversionBackoffActive(failedAt: 0, failureCount: 0, now: now))
+        XCTAssertTrue(DatabaseCleanupService.conversionBackoffActive(failedAt: now - day + 1, failureCount: 1, now: now))
+        XCTAssertFalse(DatabaseCleanupService.conversionBackoffActive(failedAt: now - day, failureCount: 1, now: now))
+        XCTAssertTrue(DatabaseCleanupService.conversionBackoffActive(failedAt: now - 6 * day, failureCount: 2, now: now))
+        XCTAssertFalse(DatabaseCleanupService.conversionBackoffActive(failedAt: now - 7 * day, failureCount: 2, now: now))
+        XCTAssertTrue(DatabaseCleanupService.conversionBackoffActive(failedAt: now - 6 * day, failureCount: 5, now: now))
+    }
+
+    func testReclaimKeepsOneThirdOfLiveSizeAsHeadroom() {
+        XCTAssertEqual(DatabaseCleanupService.reclaimablePages(pageCount: 1_000, freelistCount: 400), 200)
+        XCTAssertEqual(DatabaseCleanupService.reclaimablePages(pageCount: 1_000, freelistCount: 100), 0)
+        XCTAssertEqual(DatabaseCleanupService.reclaimablePages(pageCount: 1_000, freelistCount: 0), 0)
+        XCTAssertEqual(DatabaseCleanupService.reclaimablePages(pageCount: 0, freelistCount: 0), 0)
     }
 
     func testIncrementalVacuumStepsAreBoundedByBytes() {

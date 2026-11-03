@@ -611,15 +611,15 @@ extension DatabaseManager {
     }
 
     /// Publishes a staged snapshot after all scan payloads and summaries exist.
-    func markSnapshotComplete(id: Int64) async throws {
+    func markSnapshotComplete(id: Int64, entryCount: Int) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
         try await dbPool.write { db in
             try db.execute(
-                sql: "UPDATE snapshot SET lifecycle = ? WHERE id = ?",
-                arguments: [Snapshot.Lifecycle.complete.rawValue, id]
+                sql: "UPDATE snapshot SET lifecycle = ?, entryCount = ? WHERE id = ?",
+                arguments: [Snapshot.Lifecycle.complete.rawValue, entryCount, id]
             )
             guard db.changesCount == 1 else {
                 throw DatabaseError.snapshotVanished(id)
@@ -1174,13 +1174,16 @@ extension DatabaseManager {
     }
 
     /// Truncates the SQLite WAL file to reclaim space.
-    func checkpointWalTruncate() async throws {
+    /// - Returns: false when a reader kept the checkpoint from finishing (SQLite reports busy without throwing).
+    @discardableResult
+    func checkpointWalTruncate() async throws -> Bool {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
-        try await dbPool.writeWithoutTransaction { db in
-            try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+        return try await dbPool.writeWithoutTransaction { db in
+            let busy = try Int.fetchOne(db, sql: "PRAGMA wal_checkpoint(TRUNCATE)") ?? 1
+            return busy == 0
         }
     }
 

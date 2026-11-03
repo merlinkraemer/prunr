@@ -41,6 +41,13 @@ actor DatabaseCleanupService {
     private static let minimumReclaimFreeBytes: Int64 = 64 * 1024 * 1024
     private static let incrementalVacuumChunkBytes: Int64 = 64 * 1024 * 1024
     private static let incrementalConversionDiskFactor: Int64 = 2
+    private static let reclaimHeadroomDivisor: Int64 = 3
+    private static let conversionFailedAtKey = "databaseConversionFailedAt"
+    private static let conversionFailureCountKey = "databaseConversionFailureCount"
+    private static let firstFailureBackoff: TimeInterval = 24 * 60 * 60
+    private static let repeatFailureBackoff: TimeInterval = 7 * 24 * 60 * 60
+    private static let checkpointRetryAttempts = 5
+    private static let checkpointRetryDelay: Duration = .milliseconds(300)
 
     /// Default retention period for category history (30 days)
     private static let defaultCategoryHistoryRetentionDays = 30
@@ -66,6 +73,10 @@ actor DatabaseCleanupService {
         var freelistBytes: Int64 {
             freelistCount * pageSize
         }
+
+        var reclaimableFreelistBytes: Int64 {
+            DatabaseCleanupService.reclaimablePages(pageCount: pageCount, freelistCount: freelistCount) * pageSize
+        }
     }
 
     // MARK: - Public API
@@ -82,9 +93,11 @@ actor DatabaseCleanupService {
 
             let snapshotsDeleted = try await cleanupOldCategoryHistory()
 
+            await convertToIncrementalAutoVacuumIfNeeded()
+
             let reclaimedRows = entriesDeleted > 0 || pathsDeleted > 0 || snapshotsDeleted > 0
             let storageAfterCleanup = await databaseStorageStats()
-            if reclaimedRows && Self.freePagesWorthReclaiming(freelistBytes: storageAfterCleanup.freelistBytes) {
+            if reclaimedRows && Self.freePagesWorthReclaiming(freelistBytes: storageAfterCleanup.reclaimableFreelistBytes) {
                 _ = try await reclaimFreePages()
                 try await db.checkpointWalTruncate()
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
@@ -108,6 +121,7 @@ actor DatabaseCleanupService {
         case converted
         case skippedLowDisk
         case skippedBusy
+        case skippedBackoff
         case failed
     }
 
@@ -134,9 +148,27 @@ actor DatabaseCleanupService {
         freelistBytes >= minimumReclaimFreeBytes
     }
 
-    static func hasDiskForIncrementalConversion(databaseBytes: Int64, availableBytes: Int64?) -> Bool {
+    static func rewriteDiskRequirement(pageCount: Int64, freelistCount: Int64, pageSize: Int64, walBytes: Int64) -> Int64 {
+        max(0, pageCount - freelistCount) * pageSize * incrementalConversionDiskFactor + walBytes
+    }
+
+    static func hasDiskForRewrite(requiredBytes: Int64, availableBytes: Int64?) -> Bool {
         guard let availableBytes else { return false }
-        return availableBytes >= databaseBytes * incrementalConversionDiskFactor
+        return availableBytes >= requiredBytes
+    }
+
+    static func reclaimablePages(pageCount: Int64, freelistCount: Int64) -> Int64 {
+        let headroom = max(0, pageCount - freelistCount) / reclaimHeadroomDivisor
+        return max(0, freelistCount - headroom)
+    }
+
+    static func conversionBackoff(failureCount: Int) -> TimeInterval {
+        failureCount <= 1 ? firstFailureBackoff : repeatFailureBackoff
+    }
+
+    static func conversionBackoffActive(failedAt: TimeInterval, failureCount: Int, now: TimeInterval) -> Bool {
+        guard failedAt > 0, failureCount > 0 else { return false }
+        return now - failedAt < conversionBackoff(failureCount: failureCount)
     }
 
     static func incrementalVacuumPagesPerStep(pageSize: Int64) -> Int {
@@ -158,9 +190,16 @@ actor DatabaseCleanupService {
             return .failed
         }
 
-        let sizes = databaseFileSizes()
-        let databaseBytes = sizes.dbBytes + sizes.walBytes
-        guard Self.hasDiskForIncrementalConversion(databaseBytes: databaseBytes, availableBytes: availableDiskBytes()) else {
+        let defaults = UserDefaults.standard
+        guard !Self.conversionBackoffActive(
+            failedAt: defaults.double(forKey: Self.conversionFailedAtKey),
+            failureCount: defaults.integer(forKey: Self.conversionFailureCountKey),
+            now: Date().timeIntervalSince1970
+        ) else {
+            return .skippedBackoff
+        }
+
+        guard await hasDiskForRewrite() else {
             logger.notice("Incremental auto-vacuum switch skipped: low disk space")
             return .skippedLowDisk
         }
@@ -173,15 +212,19 @@ actor DatabaseCleanupService {
         guard !busy else { return .skippedBusy }
 
         do {
-            try await db.checkpointWalTruncate()
+            try await checkpointWalTruncateRetrying()
             try await vacuumDatabase()
-            try await db.checkpointWalTruncate()
+            try await checkpointWalTruncateRetrying()
             let now = Date().timeIntervalSince1970
-            UserDefaults.standard.set(now, forKey: Self.vacuumTimestampKey)
-            UserDefaults.standard.set(now, forKey: Self.checkpointTimestampKey)
+            defaults.set(now, forKey: Self.vacuumTimestampKey)
+            defaults.set(now, forKey: Self.checkpointTimestampKey)
+            defaults.removeObject(forKey: Self.conversionFailedAtKey)
+            defaults.removeObject(forKey: Self.conversionFailureCountKey)
             return .converted
         } catch {
             logger.error("Incremental auto-vacuum switch failed: \(error.localizedDescription, privacy: .public)")
+            defaults.set(Date().timeIntervalSince1970, forKey: Self.conversionFailedAtKey)
+            defaults.set(defaults.integer(forKey: Self.conversionFailureCountKey) + 1, forKey: Self.conversionFailureCountKey)
             return .failed
         }
     }
@@ -192,9 +235,11 @@ actor DatabaseCleanupService {
 
         let stats = await databaseStorageStats()
         let pagesPerStep = Self.incrementalVacuumPagesPerStep(pageSize: stats.pageSize)
+        let headroomPages = stats.freelistCount - Self.reclaimablePages(pageCount: stats.pageCount, freelistCount: stats.freelistCount)
         var remaining = stats.freelistCount
-        while remaining > 0 {
-            let next = try await db.incrementalVacuum(pages: pagesPerStep)
+        while remaining > headroomPages {
+            let step = min(Int64(pagesPerStep), remaining - headroomPages)
+            let next = try await db.incrementalVacuum(pages: Int(step))
             guard next < remaining else { break }
             remaining = next
         }
@@ -206,7 +251,6 @@ actor DatabaseCleanupService {
         isStartupMaintenanceRunning = true
         defer { isStartupMaintenanceRunning = false }
 
-        // Give initial autoscan/watcher setup time to settle before maintenance can claim the writer.
         try? await Task.sleep(for: .milliseconds(Int(Self.startupInitialDelay * 1000)))
 
         let becameIdle = await waitForAppToBeIdle(
@@ -218,8 +262,6 @@ actor DatabaseCleanupService {
         }
 
         _ = try? await cleanupAbandonedSnapshots()
-        // Journal pruning otherwise runs only after a full scan; at startup it
-        // keeps the history at its window even when no scan has run for days.
         await pruneGrowthJournal()
 
         let appVersion = currentAppVersion()
@@ -340,8 +382,13 @@ actor DatabaseCleanupService {
         let pathsDeleted = try await cleanupOrphanedPaths()
         let snapshotsDeleted = try await cleanupOldCategoryHistory()
 
-        try await db.checkpointWalTruncate()
+        guard await hasDiskForRewrite() else {
+            throw CleanupError.lowDisk
+        }
+
+        try await checkpointWalTruncateRetrying()
         try await vacuumDatabase()
+        try await checkpointWalTruncateRetrying()
         let after = databaseFileSizes()
 
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.vacuumTimestampKey)
@@ -365,7 +412,7 @@ actor DatabaseCleanupService {
         return Self.startupMaintenancePlan(
             versionChanged: versionChanged,
             walBytes: stats.walBytes,
-            freelistBytes: stats.freelistBytes,
+            freelistBytes: stats.reclaimableFreelistBytes,
             lastCleanupAt: defaults.double(forKey: Self.startupCleanupTimestampKey),
             lastCheckpointAt: defaults.double(forKey: Self.checkpointTimestampKey),
             now: Date().timeIntervalSince1970
@@ -435,14 +482,33 @@ actor DatabaseCleanupService {
     private func availableDiskBytes() -> Int64? {
         guard let dbPath = db.databasePath else { return nil }
         let directory = URL(fileURLWithPath: dbPath).deletingLastPathComponent()
-        let values = try? directory.resourceValues(forKeys: [
-            .volumeAvailableCapacityForImportantUsageKey,
-            .volumeAvailableCapacityKey
-        ])
-        if let important = values?.volumeAvailableCapacityForImportantUsage, important > 0 {
-            return important
-        }
+        let values = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityKey])
         return values?.volumeAvailableCapacity.map { Int64($0) }
+    }
+
+    private func hasDiskForRewrite() async -> Bool {
+        let stats = await databaseStorageStats()
+        let required = Self.rewriteDiskRequirement(
+            pageCount: stats.pageCount,
+            freelistCount: stats.freelistCount,
+            pageSize: stats.pageSize,
+            walBytes: stats.walBytes
+        )
+        return Self.hasDiskForRewrite(requiredBytes: required, availableBytes: availableDiskBytes())
+    }
+
+    @discardableResult
+    private func checkpointWalTruncateRetrying() async throws -> Bool {
+        for attempt in 1...Self.checkpointRetryAttempts {
+            if try await db.checkpointWalTruncate() {
+                return true
+            }
+            if attempt < Self.checkpointRetryAttempts {
+                try? await Task.sleep(for: Self.checkpointRetryDelay)
+            }
+        }
+        logger.notice("WAL checkpoint stayed busy after \(Self.checkpointRetryAttempts) attempts")
+        return false
     }
 
     private func fileSizeBytes(atPath path: String) -> Int64 {
@@ -561,7 +627,6 @@ actor DatabaseCleanupService {
         guard let dbPool = db.dbPool else { return }
 
         let snapshotIdsToAggregate = try await dbPool.read { db -> [Int64] in
-            // Get all tracked path IDs that have snapshots
             let pathIds = try String.fetchAll(
                 db,
                 sql: "SELECT DISTINCT trackedPathId FROM snapshot WHERE trackedPathId != '' ORDER BY trackedPathId"
@@ -570,7 +635,6 @@ actor DatabaseCleanupService {
             var snapshotIdsToAggregate: [Int64] = []
 
             for pathId in pathIds {
-                // Get snapshots for this path, ordered by newest first
                 let snapshots = try Snapshot.fetchAll(
                     db,
                     sql: """
@@ -581,7 +645,6 @@ actor DatabaseCleanupService {
                     arguments: [pathId, Snapshot.Lifecycle.complete.rawValue]
                 )
 
-                // Find snapshots beyond the retention limit that still have entries
                 let toAggregate = snapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
                 for snapshot in toAggregate {
                     if let snapshotId = snapshot.id {
@@ -590,14 +653,14 @@ actor DatabaseCleanupService {
                 }
             }
 
-            // Also handle orphaned snapshots
             let orphanedSnapshots = try Snapshot.fetchAll(
                 db,
                 sql: """
                 SELECT * FROM snapshot
-                WHERE trackedPathId = '' OR trackedPathId IS NULL
+                WHERE (trackedPathId = '' OR trackedPathId IS NULL) AND lifecycle = ?
                 ORDER BY id DESC
-                """
+                """,
+                arguments: [Snapshot.Lifecycle.complete.rawValue]
             )
             let orphanedToAggregate = orphanedSnapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
             for snapshot in orphanedToAggregate {
@@ -667,7 +730,7 @@ actor DatabaseCleanupService {
     /// Deletes snapshotEntry rows for old snapshots, keeping only the latest full payload per tracked path
     /// Snapshot metadata (and categorySnapshot rows) are preserved for historical trend analysis
     /// - Returns: Number of snapshots that had their entries deleted
-    private func cleanupOldSnapshotEntries() async throws -> Int {
+    func cleanupOldSnapshotEntries() async throws -> Int {
         guard let dbPool = db.dbPool else { return 0 }
 
         return try await dbPool.write { db in
@@ -701,9 +764,10 @@ actor DatabaseCleanupService {
                 db,
                 sql: """
                 SELECT * FROM snapshot
-                WHERE trackedPathId = '' OR trackedPathId IS NULL
+                WHERE (trackedPathId = '' OR trackedPathId IS NULL) AND lifecycle = ?
                 ORDER BY id DESC
-                """
+                """,
+                arguments: [Snapshot.Lifecycle.complete.rawValue]
             )
             let orphanedToDelete = orphanedSnapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
             for snapshot in orphanedToDelete {
@@ -861,9 +925,12 @@ actor DatabaseCleanupService {
 extension DatabaseCleanupService {
     enum CleanupError: Error, LocalizedError {
         case appBusy
+        case lowDisk
 
         var errorDescription: String? {
             switch self {
+            case .lowDisk:
+                return "Not enough free disk space to compact safely. Free up space and try again."
             case .appBusy:
                 return "Cannot compact while a scan or refresh is running. Try again when Prunr is idle."
             }
