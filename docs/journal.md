@@ -281,3 +281,4 @@
 2026-11-03 orchestrator O34 Mac green: 886c9fa; merged into hands-on-2 05b2f5d
 2026-11-03 orchestrator O35 Mac green: real DB v26 8638 ms, v27 7484 ms, both CREATE-only, so GRDB's deferred whole-DB foreign_key_check (4.4M paths, 8.6M snapshotEntry) is the cost
 2026-11-03 orchestrator O36 on branch: 723d4cf (hands-on-2 + O35 test), v26/v27 registered with foreignKeyChecks: .immediate per GRDB docs; job queued
+2026-11-03 orchestrator O36 Mac green: 723d4cf, real DB v26 2.9 ms + v27 0.2 ms (was 8638 + 7484); hands-on-2 fast-forwarded to 723d4cf, item 9 points at it
