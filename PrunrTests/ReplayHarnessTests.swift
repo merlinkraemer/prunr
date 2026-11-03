@@ -85,7 +85,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         XCTAssertFalse(panels.isEmpty)
     }
 
-    private static let survivingTables = ["snapshot", "snapshotEntry", "paths"]
+    private static let survivingTables = ["snapshot", "snapshotEntry", "paths", "workingSetEntry"]
 
     private static func nowMs() -> Double {
         Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000
@@ -329,7 +329,7 @@ final class ReplayHarnessTests: PrunrTestCase {
     private static func emitStorage(_ stage: String, path: String) async {
         do {
             let pool = try XCTUnwrap(DatabaseManager.shared.dbPool)
-            let names = ["pages", "pageSize", "free", "autoVacuum", "entries", "payloads", "recordedCounts"]
+            let names = ["pages", "pageSize", "free", "autoVacuum", "entries", "payloads", "recordedCounts", "workingSet", "paths", "workingSetWithoutPath"]
             let values = try await pool.read { db -> [Int] in
                 let row = try Row.fetchOne(db, sql: """
                     SELECT (SELECT page_count FROM pragma_page_count) AS pages,
@@ -338,7 +338,11 @@ final class ReplayHarnessTests: PrunrTestCase {
                            (SELECT auto_vacuum FROM pragma_auto_vacuum) AS autoVacuum,
                            (SELECT COUNT(*) FROM snapshotEntry) AS entries,
                            (SELECT COUNT(DISTINCT snapshotId) FROM snapshotEntry) AS payloads,
-                           (SELECT COUNT(*) FROM snapshot WHERE entryCount IS NOT NULL) AS recordedCounts
+                           (SELECT COUNT(*) FROM snapshot WHERE entryCount IS NOT NULL) AS recordedCounts,
+                           (SELECT COUNT(*) FROM workingSetEntry) AS workingSet,
+                           (SELECT COUNT(*) FROM paths) AS paths,
+                           (SELECT COUNT(*) FROM workingSetEntry w
+                            WHERE NOT EXISTS (SELECT 1 FROM paths p WHERE p.id = w.pathId)) AS workingSetWithoutPath
                     """)
                 return names.map { name -> Int in
                     let value: Int? = row?[name]
@@ -355,6 +359,9 @@ final class ReplayHarnessTests: PrunrTestCase {
             emitRealDB("o40.\(stage).snapshotEntry", value["entries"] ?? -1)
             emitRealDB("o40.\(stage).payloads", value["payloads"] ?? -1)
             emitRealDB("o40.\(stage).recordedCounts", value["recordedCounts"] ?? -1)
+            emitRealDB("o40.\(stage).workingSetEntry", value["workingSet"] ?? -1)
+            emitRealDB("o40.\(stage).paths", value["paths"] ?? -1)
+            emitRealDB("o40.\(stage).workingSetWithoutPath", value["workingSetWithoutPath"] ?? -1)
         } catch {
             emitRealDBError("o40.\(stage)", "\(type(of: error))")
         }
@@ -374,7 +381,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         await emitStorage("start", path: copy)
 
         var started = nowMs()
-        let outcome = await DatabaseCleanupService.shared.convertToIncrementalAutoVacuumIfNeeded()
+        let outcome = await DatabaseCleanupService.shared.convertToIncrementalAutoVacuumIfNeeded(busyCheck: { false })
         emitPerf("convertIncremental", nowMs() - started)
         emitRealDB("o40.convert.outcome", conversionCode(outcome))
         await emitStorage("converted", path: copy)
@@ -391,6 +398,29 @@ final class ReplayHarnessTests: PrunrTestCase {
             emitRealDB("o40.reclaimAgain.bytes", Int(reclaimed))
         } catch {
             emitRealDBError("o40.reclaimAgain", "\(type(of: error))")
+        }
+    }
+
+    private static func isolateTrackedPathIds(_ queue: DatabaseQueue) throws -> [String] {
+        try queue.writeWithoutTransaction { db in
+            let tables = try String.fetchAll(db, sql: """
+                SELECT m.name FROM sqlite_master m
+                WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'
+                  AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) WHERE name = 'trackedPathId')
+                """)
+            let originals = try String.fetchAll(db, sql: "SELECT DISTINCT trackedPathId FROM snapshot WHERE trackedPathId != ''")
+            var replacements: [String] = []
+            for original in originals {
+                let replacement = UUID().uuidString
+                replacements.append(replacement)
+                for table in tables {
+                    try db.execute(
+                        sql: "UPDATE \"\(table)\" SET trackedPathId = ? WHERE trackedPathId = ?",
+                        arguments: [replacement, original]
+                    )
+                }
+            }
+            return replacements
         }
     }
 
@@ -455,9 +485,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         let beforeQueue = try DatabaseQueue(path: copy)
         let before = try Self.rowCounts(beforeQueue)
         let versionBefore = try Self.appliedMigrationCount(beforeQueue)
-        let ids = try await beforeQueue.read { db in
-            try String.fetchAll(db, sql: "SELECT DISTINCT trackedPathId FROM snapshot WHERE trackedPathId != ''")
-        }.compactMap(UUID.init(uuidString:))
+        let ids = try Self.isolateTrackedPathIds(beforeQueue).compactMap(UUID.init(uuidString:))
         let home = try ReplayHarness.detectHome(inDatabaseAt: copy) ?? Self.realHomeDirectory
         try beforeQueue.close()
         Self.emitRealDB("schema.before", versionBefore)

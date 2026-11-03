@@ -148,7 +148,7 @@ actor DatabaseCleanupService {
     /// SQLite only changes that mode through a full VACUUM outside a
     /// transaction, so this cannot be a migration.
     @discardableResult
-    func convertToIncrementalAutoVacuumIfNeeded() async -> AutoVacuumConversion {
+    func convertToIncrementalAutoVacuumIfNeeded(busyCheck: (@Sendable () async -> Bool)? = nil) async -> AutoVacuumConversion {
         do {
             guard try await db.autoVacuumMode() != DatabaseManager.incrementalAutoVacuumMode else {
                 return .alreadyIncremental
@@ -164,7 +164,13 @@ actor DatabaseCleanupService {
             logger.notice("Incremental auto-vacuum switch skipped: low disk space")
             return .skippedLowDisk
         }
-        guard await !isAppBusy() else { return .skippedBusy }
+        let busy: Bool
+        if let busyCheck {
+            busy = await busyCheck()
+        } else {
+            busy = await isAppBusy()
+        }
+        guard !busy else { return .skippedBusy }
 
         do {
             try await db.checkpointWalTruncate()
