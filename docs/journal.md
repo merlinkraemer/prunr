@@ -271,3 +271,4 @@
 2026-11-03 orchestrator O33 Mac: compile error (2 GRDB reads in async test without await); fixed 04b9607, requeued
 2026-11-03 orchestrator O32b Mac green: 9e745ae (joins hands-on-2 with O33 to share one Mac run)
 2026-11-03 orchestrator O32a Mac green: 7141ff4; PERF addEntries 10k 141 ms vs 143 ms on same base 5d19bd4 (the earlier 223 ms was a different run), so no measurable win; item 10 rec now: park
+2026-11-03 orchestrator O34 spawn: scope O31b retry to failed paths only (CPU risk from persistent failures) (sonnet medium, seat worktree, base 5d19bd4)
