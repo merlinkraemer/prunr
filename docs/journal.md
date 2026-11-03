@@ -267,3 +267,4 @@
 2026-11-03 orchestrator O33 on branch: 1ad28e2, ReplayHarnessTests real-DB copy (readonly backup) -> migrate -> 30-day prune -> feed + drilldown, prints PERF realdb/REALDB counts only; job queued
 2026-11-03 orchestrator O32b Mac: compile error (new test lacked @MainActor); fixed 9e745ae, requeued
 2026-11-03 orchestrator O32a Mac: 2 new tests failed (no temp DB, nil pool); rest green; PERF addEntriesWithWorkingSet.10k 140 ms (was 223 on hands-on base); fixed 7141ff4, requeued
+2026-11-03 orchestrator housekeeping: removed 32 merged clean worktrees (branch refs kept, all ancestors of hands-on-2 5d19bd4 or main), 2.9G -> 1.1G; kept agent-af3404dcb519d0940 (holds a modified 687 MB scratch copy of Merlin's DB from Q10, delete is Merlin's call) and 2 locked by an old agent pid
