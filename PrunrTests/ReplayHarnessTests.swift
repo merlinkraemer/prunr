@@ -149,7 +149,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         let beforeQueue = try DatabaseQueue(path: copy)
         let before = try Self.rowCounts(beforeQueue)
         let versionBefore = try Self.appliedMigrationCount(beforeQueue)
-        let ids = try beforeQueue.read { db in
+        let ids = try await beforeQueue.read { db in
             try String.fetchAll(db, sql: "SELECT DISTINCT trackedPathId FROM snapshot WHERE trackedPathId != ''")
         }.compactMap(UUID.init(uuidString:))
         let home = try ReplayHarness.detectHome(inDatabaseAt: copy) ?? Self.realHomeDirectory
@@ -161,7 +161,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         Self.emitPerf("migrate", Self.nowMs() - started)
 
         let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
-        let versionAfter = try dbPool.read { db in try DatabaseManager.makeMigrator().appliedIdentifiers(db).count }
+        let versionAfter = try await dbPool.read { db in try DatabaseManager.makeMigrator().appliedIdentifiers(db).count }
         let total = DatabaseManager.makeMigrator().migrations.count
         Self.emitRealDB("schema.after", versionAfter)
         XCTAssertEqual(versionAfter, total)
