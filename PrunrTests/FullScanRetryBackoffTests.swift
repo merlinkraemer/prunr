@@ -72,6 +72,54 @@ final class FullScanRetryBackoffTests: PrunrTestCase {
         }
     }
 
+    func testRetryAfterPartialScanTargetsOnlyTheFailedPath() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let manager = MenuBarManager()
+            manager.noBaseline = true
+            let availableRoot = try self.createTrackedPathDirectory(named: "PrunrRetryAvailable")
+            defer { try? FileManager.default.removeItem(at: availableRoot) }
+            try Data(repeating: 0xAB, count: 64).write(to: availableRoot.appendingPathComponent("file.bin"))
+            let missingRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PrunrRetryMissing-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: missingRoot) }
+            let availablePath = TrackedPath(url: availableRoot, displayName: "Available")
+            let missingPath = TrackedPath(url: missingRoot, displayName: "Missing")
+            let paths = [missingPath, availablePath]
+
+            _ = await manager.loadInventory(trackedPathsOverride: paths)
+            XCTAssertEqual(manager.failedScanRetryPathIDs, [missingPath.id])
+
+            let stillFailing = await manager.retryFailedScanPaths([missingPath.id], in: paths)
+
+            XCTAssertFalse(stillFailing)
+            XCTAssertEqual(manager.failedScanRetryPathIDs, [missingPath.id])
+            XCTAssertEqual(manager.consecutiveFailedFullScans, 0)
+            let availableAfterFailedRetry = try await DatabaseManager.shared.fetchRecentSnapshots(
+                trackedPathId: availablePath.id,
+                limit: 5
+            )
+            XCTAssertEqual(availableAfterFailedRetry.count, 1)
+
+            try FileManager.default.createDirectory(at: missingRoot, withIntermediateDirectories: true)
+            try Data(repeating: 0xCD, count: 64).write(to: missingRoot.appendingPathComponent("late.bin"))
+
+            let recovered = await manager.retryFailedScanPaths([missingPath.id], in: paths)
+
+            XCTAssertTrue(recovered)
+            XCTAssertNil(manager.failedScanRetryPathIDs)
+            let availableAfterRecovery = try await DatabaseManager.shared.fetchRecentSnapshots(
+                trackedPathId: availablePath.id,
+                limit: 5
+            )
+            let missingAfterRecovery = try await DatabaseManager.shared.fetchRecentSnapshots(
+                trackedPathId: missingPath.id,
+                limit: 5
+            )
+            XCTAssertEqual(availableAfterRecovery.count, 1)
+            XCTAssertEqual(missingAfterRecovery.count, 1)
+        }
+    }
+
     func testAllTrackedPathsMissingStillCountsAsFailedScan() async throws {
         try await withEmptyTemporaryDatabase { _ in
             let manager = MenuBarManager()
@@ -107,6 +155,7 @@ final class FullScanRetryBackoffTests: PrunrTestCase {
 
             XCTAssertTrue(succeeded)
             XCTAssertFalse(manager.needsAuthoritativeReconciliation)
+            XCTAssertNil(manager.failedScanRetryPathIDs)
         }
     }
 }

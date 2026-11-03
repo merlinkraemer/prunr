@@ -656,6 +656,7 @@ final class MenuBarManager: NSObject {
     /// A dirty watcher signal survives active scans and full-scan cooldowns.
     /// It is cleared only after a successful authoritative refresh begins.
     private(set) var needsAuthoritativeReconciliation = false
+    private(set) var failedScanRetryPathIDs: Set<UUID>?
     private(set) var lastFullScanCompletedAt: Date?
     private var lastFullScanAttemptAt: Date?
     private(set) var consecutiveFailedFullScans = 0
@@ -1164,6 +1165,7 @@ final class MenuBarManager: NSObject {
         hasPendingRecentChanges = false
         pendingRecentChangePaths.removeAll()
         pendingRecentChangeRequiresFullRefresh = false
+        failedScanRetryPathIDs = nil
         lastDetectedChangeAt = nil
         lastManualRefreshAt = nil
         lastAutomaticScanAt = nil
@@ -1206,6 +1208,7 @@ final class MenuBarManager: NSObject {
 
     private func createBaselines(
         for trackedPaths: [TrackedPath],
+        isFailedPathRetry: Bool = false,
         progressCallback: @escaping (TrackedPath, ScanService.ScanProgress) -> Void
     ) async throws -> [UUID: Snapshot] {
         // `effectiveTrackedPaths` already deduplicates nested paths, so all paths in
@@ -1262,12 +1265,14 @@ final class MenuBarManager: NSObject {
 
                 var snapshots: [UUID: Snapshot] = [:]
                 var firstFailure: Error?
+                var failedPathIDs: Set<UUID> = []
                 for (trackedPath, outcome) in outcomes {
                     switch outcome {
                     case .success(let snapshot):
                         snapshots[trackedPath.id] = snapshot
                     case .failure(let error):
                         firstFailure = firstFailure ?? error
+                        failedPathIDs.insert(trackedPath.id)
                         Self.logger.error(
                             "Scan failed for \(trackedPath.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)"
                         )
@@ -1277,6 +1282,9 @@ final class MenuBarManager: NSObject {
                     throw firstFailure
                 }
                 if firstFailure != nil {
+                    if !pendingRecentChangeRequiresFullRefresh {
+                        failedScanRetryPathIDs = failedPathIDs
+                    }
                     needsAuthoritativeReconciliation = true
                     pendingRecentChangeRequiresFullRefresh = true
                     hasPendingRecentChanges = true
@@ -1284,12 +1292,16 @@ final class MenuBarManager: NSObject {
                 snapshotsByPath = snapshots
             }
 
-            recordFullScanSuccess()
-            runtimeBlockedLocations = skipLog.locationLabels
+            if !isFailedPathRetry {
+                recordFullScanSuccess()
+                runtimeBlockedLocations = skipLog.locationLabels
+            }
             return snapshotsByPath
         } catch {
             if !isScanCancellation(error) {
-                recordFullScanFailure(error)
+                if !isFailedPathRetry {
+                    recordFullScanFailure(error)
+                }
             } else {
                 recordFullScanCancellation()
             }
@@ -1339,6 +1351,7 @@ final class MenuBarManager: NSObject {
         }
         pendingRecentChangePaths.removeAll()
         pendingRecentChangeRequiresFullRefresh = false
+        failedScanRetryPathIDs = nil
         hasPendingRecentChanges = false
         scanProgress = "Scanning \(trackedPath.displayName)..."
         scanCurrentPath = trackedPath.url.path
@@ -3038,6 +3051,7 @@ final class MenuBarManager: NSObject {
     private func markDirty(reason: String, rawEventCount: Int = 0) {
         needsAuthoritativeReconciliation = true
         pendingRecentChangeRequiresFullRefresh = true
+        failedScanRetryPathIDs = nil
         pendingDirtyReason = reason
         hasPendingRecentChanges = true
         Logger.fsEvents.notice(
@@ -3120,6 +3134,33 @@ final class MenuBarManager: NSObject {
         schedulePendingRecentChangeRefresh()
     }
 
+    func retryFailedScanPaths(_ failedPathIDs: Set<UUID>, in enabledPaths: [TrackedPath]) async -> Bool {
+        let retryPaths = enabledPaths.filter { failedPathIDs.contains($0.id) }
+        guard !retryPaths.isEmpty else {
+            failedScanRetryPathIDs = nil
+            return true
+        }
+        guard beginInventoryRefresh() else { return false }
+
+        do {
+            _ = try await createBaselines(for: retryPaths, isFailedPathRetry: true) { _, _ in }
+        } catch {
+            endInventoryRefresh()
+            return false
+        }
+        endInventoryRefresh()
+
+        if !pendingRecentChangeRequiresFullRefresh {
+            failedScanRetryPathIDs = nil
+        }
+        if isPopoverShown {
+            await loadInventoryFromLatestSnapshot(refreshedAt: Date())
+        } else {
+            presentationStale = true
+        }
+        return true
+    }
+
     func performRecentChangeRefresh(allowFullRefresh: Bool = true) async {
         guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
             hasPendingRecentChanges = false
@@ -3139,6 +3180,7 @@ final class MenuBarManager: NSObject {
         guard !enabledPaths.isEmpty else {
             pendingRecentChangePaths.removeAll()
             pendingRecentChangeRequiresFullRefresh = false
+            failedScanRetryPathIDs = nil
             hasPendingRecentChanges = false
             return
         }
@@ -3167,7 +3209,12 @@ final class MenuBarManager: NSObject {
             }
 
             lastDetectedChangeAt = Date()
-            let succeeded = await loadInventory(isAutomatic: true)
+            let succeeded: Bool
+            if let retryPathIDs = failedScanRetryPathIDs {
+                succeeded = await retryFailedScanPaths(retryPathIDs, in: enabledPaths)
+            } else {
+                succeeded = await loadInventory(isAutomatic: true)
+            }
             if !succeeded {
                 needsAuthoritativeReconciliation = true
                 pendingRecentChangeRequiresFullRefresh = true
@@ -3236,6 +3283,7 @@ final class MenuBarManager: NSObject {
         if requiresFullRefresh {
             perfMeter.recordFullScanEscalation()
             lastDetectedChangeAt = Date()
+            failedScanRetryPathIDs = nil
             guard allowFullRefresh else {
                 pendingRecentChangeRequiresFullRefresh = true
                 hasPendingRecentChanges = true
@@ -3476,6 +3524,7 @@ final class MenuBarManager: NSObject {
     }
 
     private func promotePendingChangesToFullRefreshIfAllowed(reason: String) -> Bool {
+        failedScanRetryPathIDs = nil
         let now = Date()
         guard !isWithinFullRescanCooldown(at: now) else {
             let elapsed = Int(now.timeIntervalSince(lastFullScanCompletedAt ?? now))
