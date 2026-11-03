@@ -182,6 +182,139 @@ final class ReplayHarnessTests: PrunrTestCase {
         }
     }
 
+    private static func emitRealDBError(_ name: String, _ detail: String) {
+        let line = "REALDB \(name).error \(detail)"
+        print(line)
+        NSLog("%@", line)
+    }
+
+    private static func failSoft(_ name: String, _ body: () throws -> Void) {
+        do {
+            try body()
+        } catch {
+            emitRealDBError(name, "\(type(of: error))")
+        }
+    }
+
+    private static func emitMeasurements(_ queue: DatabaseQueue, home: String, tempDirectory: URL) async {
+        failSoft("size.file.vacuumed") {
+            let target = tempDirectory.appendingPathComponent("vacuumed.sqlite").path
+            let started = nowMs()
+            try queue.writeWithoutTransaction { db in
+                try db.execute(sql: "VACUUM INTO ?", arguments: [target])
+            }
+            emitPerf("vacuumInto", nowMs() - started)
+            let bytes = (try FileManager.default.attributesOfItem(atPath: target)[.size] as? NSNumber)?.intValue ?? 0
+            emitRealDB("size.file.vacuumed", bytes)
+            try? FileManager.default.removeItem(atPath: target)
+        }
+        failSoft("size.file.bytes") {
+            let bytes = try queue.read { db in
+                (try Int.fetchOne(db, sql: "PRAGMA page_count") ?? 0) * (try Int.fetchOne(db, sql: "PRAGMA page_size") ?? 0)
+            }
+            emitRealDB("size.file.bytes", bytes)
+        }
+        failSoft("size.paths.distinctDirs") {
+            let row = try queue.read { db in
+                try Row.fetchOne(db, sql: """
+                    SELECT COUNT(*) AS dirs, COALESCE(SUM(LENGTH(CAST(dir AS BLOB))), 0) AS dirBytes
+                    FROM (SELECT DISTINCT rtrim(path, replace(path, '/', '')) AS dir FROM paths)
+                    """)
+            }
+            emitRealDB("size.paths.distinctDirs", row?["dirs"] ?? 0)
+            emitRealDB("size.paths.sumDirBytes", row?["dirBytes"] ?? 0)
+        }
+        failSoft("size.paths.sumNameBytes") {
+            let row = try queue.read { db in
+                try Row.fetchOne(db, sql: """
+                    SELECT COUNT(*) AS files,
+                           COALESCE(SUM(LENGTH(CAST(path AS BLOB)) - LENGTH(CAST(rtrim(path, replace(path, '/', '')) AS BLOB))), 0) AS nameBytes
+                    FROM paths
+                    """)
+            }
+            let files: Int = row?["files"] ?? 0
+            let nameBytes: Int = row?["nameBytes"] ?? 0
+            emitRealDB("size.paths.sumNameBytes", nameBytes)
+            emitRealDB("size.paths.avgNameBytesX10", files > 0 ? nameBytes * 10 / files : 0)
+        }
+        failSoft("size.wse.histogram") {
+            let rows = try queue.read { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT CASE WHEN sizeBytes < 4096 THEN 'under4k'
+                                WHEN sizeBytes < 65536 THEN 'under64k'
+                                WHEN sizeBytes < 1048576 THEN 'under1m'
+                                ELSE 'over1m' END AS bucket,
+                           COUNT(*) AS files, COALESCE(SUM(sizeBytes), 0) AS bytes
+                    FROM workingSetEntry GROUP BY bucket
+                    """)
+            }
+            for row in rows {
+                let bucket: String = row["bucket"] ?? "unknown"
+                emitRealDB("size.wse.\(bucket).count", row["files"] ?? 0)
+                emitRealDB("size.wse.\(bucket).bytes", row["bytes"] ?? 0)
+            }
+        }
+        failSoft("size.subtree") {
+            let prefixOffset = home.utf8.count + 2
+            let folder = try queue.read { db in
+                try String.fetchOne(db, sql: """
+                    SELECT substr(p.path, 1, ? + instr(substr(p.path, ?), '/') - 1) AS folder
+                    FROM workingSetEntry w JOIN paths p ON p.id = w.pathId
+                    WHERE p.path LIKE ? || '/%' AND instr(substr(p.path, ?), '/') > 0
+                    GROUP BY folder ORDER BY COUNT(*) DESC LIMIT 1
+                    """, arguments: [prefixOffset - 1, prefixOffset, home, prefixOffset])
+            }
+            guard let folder else {
+                emitRealDBError("size.subtree", "no top-level folder")
+                return
+            }
+            let started = nowMs()
+            let count = try queue.read { db in
+                try Int.fetchOne(db, sql: """
+                    SELECT COUNT(*) FROM paths p JOIN workingSetEntry w ON w.pathId = p.id
+                    WHERE p.path >= ? AND p.path < ?
+                    """, arguments: [folder + "/", folder + "0"]) ?? 0
+            }
+            emitPerf("subtree", nowMs() - started)
+            emitRealDB("size.subtree.files", count)
+        }
+        failSoft("size.lookup") {
+            let sample = try queue.read { db in
+                try String.fetchAll(db, sql: "SELECT path FROM paths WHERE id % 4400 = 0 LIMIT 1000")
+            }
+            let started = nowMs()
+            let hits = try queue.read { db in
+                var hits = 0
+                for path in sample {
+                    if try Int.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [path]) != nil {
+                        hits += 1
+                    }
+                }
+                return hits
+            }
+            emitPerf("lookup", nowMs() - started)
+            emitRealDB("size.lookup.samples", sample.count)
+            emitRealDB("size.lookup.hits", hits)
+        }
+        do {
+            let pair = try await queue.read { db in
+                try Int64.fetchAll(db, sql: """
+                    SELECT snapshotId FROM snapshotEntry GROUP BY snapshotId ORDER BY snapshotId DESC LIMIT 2
+                    """)
+            }
+            if pair.count == 2 {
+                let started = nowMs()
+                let deltas = try await DatabaseManager.shared.calculateDeltas(beforeId: pair[1], afterId: pair[0])
+                emitPerf("deltas", nowMs() - started)
+                emitRealDB("size.deltas.count", deltas.count)
+            } else {
+                emitRealDB("size.deltas.snapshotsWithEntries", pair.count)
+            }
+        } catch {
+            emitRealDBError("size.deltas", "\(type(of: error))")
+        }
+    }
+
     private static func appliedMigrationCount(_ queue: DatabaseQueue) throws -> Int {
         try queue.read { db in try DatabaseManager.makeMigrator().appliedIdentifiers(db).count }
     }
@@ -276,6 +409,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         let afterQueue = try DatabaseQueue(path: copy)
         let after = try Self.rowCounts(afterQueue)
         try Self.emitSizeCounts(afterQueue)
+        await Self.emitMeasurements(afterQueue, home: home, tempDirectory: tempDirectory)
         try afterQueue.close()
         for table in after.keys.sorted() {
             Self.emitRealDB("\(table).after", after[table] ?? 0)
