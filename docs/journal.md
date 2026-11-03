@@ -273,3 +273,6 @@
 2026-11-03 orchestrator O32a Mac green: 7141ff4; PERF addEntries 10k 141 ms vs 143 ms on same base 5d19bd4 (the earlier 223 ms was a different run), so no measurable win; item 10 rec now: park
 2026-11-03 orchestrator O34 spawn: scope O31b retry to failed paths only (CPU risk from persistent failures) (sonnet medium, seat worktree, base 5d19bd4)
 2026-11-03 orchestrator O34 on branch: 6bde1b7, failedScanRetryPathIDs scopes the retry to failed paths (own retryFailedScanPaths, not loadInventory), cadence unchanged, scope reset on any dirty signal; doubt: bigger than hoped (new refresh path), worth a second look before landing; job queued
+2026-11-03 orchestrator O33 Mac green: 04b9607, real DB v25->v27 migrate 13.4 s, prune 3 ms, feed 39 ms (53 episodes), drilldown 1032 groups; first-launch migration makes O28c (clicks ignored) a ~13 s wait
+2026-11-03 orchestrator O34 Mac: 1 test failed (retry set only cleared when no full refresh pending, test enters with flag set); fixed 886c9fa to clear when every retried path scanned; requeued
+2026-11-03 orchestrator hands-on-2 merged O32b + O33: ab61cce; Mac run waits for O34 to merge in too
