@@ -10,6 +10,7 @@ extension DatabaseManager {
     static let journalDetailMigrationIdentifier = "v26_journal_detail"
     static let journalCheckpointMigrationIdentifier = "v27_journal_checkpoint"
     static let dropPrefixIndexesMigrationIdentifier = "v28_drop_prefix_indexes"
+    static let snapshotEntryCountMigrationIdentifier = "v29_snapshot_entry_count"
 
     static func registerJournalDetailMigration(in migrator: inout DatabaseMigrator) {
         // Migration v26: per-child detail of the growth journal (PRD L1). No
@@ -54,6 +55,14 @@ extension DatabaseManager {
         migrator.registerMigration(dropPrefixIndexesMigrationIdentifier, foreignKeyChecks: .immediate) { db in
             try db.execute(sql: "DROP INDEX IF EXISTS idx_snapshotEntry_snapshotId")
             try db.execute(sql: "DROP INDEX IF EXISTS idx_workingSetEntry_trackedPath")
+        }
+    }
+
+    static func registerSnapshotEntryCountMigration(in migrator: inout DatabaseMigrator) {
+        migrator.registerMigration(snapshotEntryCountMigrationIdentifier, foreignKeyChecks: .immediate) { db in
+            try db.alter(table: "snapshot") { t in
+                t.add(column: "entryCount", .integer)
+            }
         }
     }
 

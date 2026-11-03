@@ -50,6 +50,10 @@ final class DatabaseManager {
 
         databasePath = dbURL.path
 
+        if !fileManager.fileExists(atPath: dbURL.path) {
+            try Self.createIncrementalAutoVacuumFile(at: dbURL.path)
+        }
+
         var config = Configuration()
         config.busyMode = .timeout(10)
         config.prepareDatabase { db in
@@ -89,6 +93,15 @@ final class DatabaseManager {
         try dbPool.write { db in
             try Self.clearWorkingSetRefreshStagingRows(sessionId: sessionId, db: db)
         }
+    }
+
+    private static func createIncrementalAutoVacuumFile(at path: String) throws {
+        let queue = try DatabaseQueue(path: path)
+        try queue.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA auto_vacuum = INCREMENTAL")
+            try db.execute(sql: "VACUUM")
+        }
+        try queue.close()
     }
 
     /// `prunr_unit(path)`: the persisted unit key for a path (`UnitResolver`).
@@ -554,6 +567,7 @@ final class DatabaseManager {
         registerJournalDetailMigration(in: &migrator)
         registerJournalCheckpointMigration(in: &migrator)
         registerDropPrefixIndexesMigration(in: &migrator)
+        registerSnapshotEntryCountMigration(in: &migrator)
 
         return migrator
     }
@@ -987,6 +1001,25 @@ extension DatabaseManager {
         }
     }
 
+    func fetchComparableEntryCount(for snapshotId: Int64) async throws -> Int {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COALESCE(
+                        (SELECT entryCount FROM snapshot WHERE id = ?),
+                        (SELECT COUNT(*) FROM snapshotEntry WHERE snapshotId = ?)
+                    )
+                    """,
+                arguments: [snapshotId, snapshotId]
+            ) ?? 0
+        }
+    }
+
     /// Fetches the top N largest entries for a snapshot, ordered by size descending.
     /// This is much faster than fetchEntries for large snapshots when you only need big files.
     /// - Parameters:
@@ -1102,6 +1135,41 @@ extension DatabaseManager {
                 sql: "SELECT COALESCE(SUM(sizeBytes), 0) FROM snapshotEntry WHERE snapshotId = ?",
                 arguments: [snapshotId]
             ) ?? 0
+        }
+    }
+
+    static let incrementalAutoVacuumMode = 2
+
+    func autoVacuumMode() async throws -> Int {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try Int.fetchOne(db, sql: "PRAGMA auto_vacuum") ?? 0
+        }
+    }
+
+    func vacuumIntoIncrementalAutoVacuum() async throws {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        try await dbPool.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA auto_vacuum = INCREMENTAL")
+            try db.execute(sql: "VACUUM")
+        }
+    }
+
+    func incrementalVacuum(pages: Int) async throws -> Int64 {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let pageLimit = max(1, pages)
+        return try await dbPool.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA incremental_vacuum(\(pageLimit))")
+            return try Int64.fetchOne(db, sql: "PRAGMA freelist_count") ?? 0
         }
     }
 

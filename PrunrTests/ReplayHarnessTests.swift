@@ -255,17 +255,14 @@ final class ReplayHarnessTests: PrunrTestCase {
             }
         }
         failSoft("size.subtree") {
-            let prefixOffset = home.utf8.count + 2
-            let folder = try queue.read { db in
-                try String.fetchOne(db, sql: """
-                    SELECT substr(p.path, 1, ? + instr(substr(p.path, ?), '/') - 1) AS folder
-                    FROM workingSetEntry w JOIN paths p ON p.id = w.pathId
-                    WHERE p.path LIKE ? || '/%' AND instr(substr(p.path, ?), '/') > 0
-                    GROUP BY folder ORDER BY COUNT(*) DESC LIMIT 1
-                    """, arguments: [prefixOffset - 1, prefixOffset, home, prefixOffset])
+            let sample = try queue.read { db in
+                try String.fetchAll(db, sql: """
+                    SELECT p.path FROM workingSetEntry w JOIN paths p ON p.id = w.pathId
+                    WHERE w.pathId % 997 = 0
+                    """)
             }
-            guard let folder else {
-                emitRealDBError("size.subtree", "no top-level folder")
+            guard let folder = busiestFolder(in: sample, depth: 3) else {
+                emitRealDBError("size.subtree", "no folder at depth 3 in \(sample.count) sampled paths")
                 return
             }
             let started = nowMs()
@@ -315,6 +312,88 @@ final class ReplayHarnessTests: PrunrTestCase {
         }
     }
 
+    static func busiestFolder(in paths: [String], depth: Int) -> String? {
+        var counts: [String: Int] = [:]
+        for path in paths {
+            let components = path.split(separator: "/", omittingEmptySubsequences: true)
+            guard components.count > depth else { continue }
+            counts["/" + components.prefix(depth).joined(separator: "/"), default: 0] += 1
+        }
+        return counts.max { $0.value == $1.value ? $0.key > $1.key : $0.value < $1.value }?.key
+    }
+
+    private static func fileBytes(_ path: String) -> Int {
+        (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue ?? 0
+    }
+
+    private static func emitStorage(_ stage: String, path: String) async {
+        do {
+            let pool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let names = ["pages", "pageSize", "free", "autoVacuum", "entries", "payloads", "recordedCounts"]
+            let values = try await pool.read { db -> [Int] in
+                let row = try Row.fetchOne(db, sql: """
+                    SELECT (SELECT page_count FROM pragma_page_count) AS pages,
+                           (SELECT page_size FROM pragma_page_size) AS pageSize,
+                           (SELECT freelist_count FROM pragma_freelist_count) AS free,
+                           (SELECT auto_vacuum FROM pragma_auto_vacuum) AS autoVacuum,
+                           (SELECT COUNT(*) FROM snapshotEntry) AS entries,
+                           (SELECT COUNT(DISTINCT snapshotId) FROM snapshotEntry) AS payloads,
+                           (SELECT COUNT(*) FROM snapshot WHERE entryCount IS NOT NULL) AS recordedCounts
+                    """)
+                return names.map { name -> Int in
+                    let value: Int? = row?[name]
+                    return value ?? -1
+                }
+            }
+            let value = Dictionary(uniqueKeysWithValues: zip(names, values))
+            let pageSize = value["pageSize"] ?? 0
+            emitRealDB("o40.\(stage).file", fileBytes(path))
+            emitRealDB("o40.\(stage).wal", fileBytes(path + "-wal"))
+            emitRealDB("o40.\(stage).pagesBytes", (value["pages"] ?? 0) * pageSize)
+            emitRealDB("o40.\(stage).freeBytes", (value["free"] ?? 0) * pageSize)
+            emitRealDB("o40.\(stage).autoVacuum", value["autoVacuum"] ?? -1)
+            emitRealDB("o40.\(stage).snapshotEntry", value["entries"] ?? -1)
+            emitRealDB("o40.\(stage).payloads", value["payloads"] ?? -1)
+            emitRealDB("o40.\(stage).recordedCounts", value["recordedCounts"] ?? -1)
+        } catch {
+            emitRealDBError("o40.\(stage)", "\(type(of: error))")
+        }
+    }
+
+    private static func conversionCode(_ outcome: DatabaseCleanupService.AutoVacuumConversion) -> Int {
+        switch outcome {
+        case .alreadyIncremental: return 0
+        case .converted: return 1
+        case .skippedLowDisk: return 2
+        case .skippedBusy: return 3
+        case .failed: return 4
+        }
+    }
+
+    private static func runStorageSlices(copy: String) async {
+        await emitStorage("start", path: copy)
+
+        var started = nowMs()
+        let outcome = await DatabaseCleanupService.shared.convertToIncrementalAutoVacuumIfNeeded()
+        emitPerf("convertIncremental", nowMs() - started)
+        emitRealDB("o40.convert.outcome", conversionCode(outcome))
+        await emitStorage("converted", path: copy)
+
+        started = nowMs()
+        await DatabaseCleanupService.shared.performAutoCleanup()
+        emitPerf("cleanupWithReclaim", nowMs() - started)
+        await emitStorage("cleaned", path: copy)
+
+        do {
+            started = nowMs()
+            let reclaimed = try await DatabaseCleanupService.shared.reclaimFreePages()
+            emitPerf("reclaimAgain", nowMs() - started)
+            emitRealDB("o40.reclaimAgain.bytes", Int(reclaimed))
+        } catch {
+            emitRealDBError("o40.reclaimAgain", "\(type(of: error))")
+        }
+    }
+
     private static func appliedMigrationCount(_ queue: DatabaseQueue) throws -> Int {
         try queue.read { db in try DatabaseManager.makeMigrator().appliedIdentifiers(db).count }
     }
@@ -335,6 +414,17 @@ final class ReplayHarnessTests: PrunrTestCase {
             emitPerf("migrate.\(identifier)", nowMs() - started)
         }
         try queue.close()
+    }
+
+    func testBusiestFolderPicksTheMostCommonPrefixAtDepth() {
+        let paths = [
+            "/Users/x/Library/Caches/a",
+            "/Users/x/Library/b",
+            "/Users/x/dev/c",
+            "/Users/x/file.txt"
+        ]
+        XCTAssertEqual(Self.busiestFolder(in: paths, depth: 3), "/Users/x/Library")
+        XCTAssertNil(Self.busiestFolder(in: ["/Users/x/file.txt"], depth: 3))
     }
 
     @MainActor
@@ -391,6 +481,8 @@ final class ReplayHarnessTests: PrunrTestCase {
         started = Self.nowMs()
         try await DatabaseManager.shared.checkpointWalTruncate()
         Self.emitPerf("checkpoint", Self.nowMs() - started)
+
+        await Self.runStorageSlices(copy: copy)
 
         let now = Date()
         let paths = ids.map {

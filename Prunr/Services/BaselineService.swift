@@ -328,7 +328,7 @@ actor BaselineService {
             return nil
         }
 
-        let latestEntryCount = try await db.fetchEntryCount(for: latestSnapshotId)
+        let latestEntryCount = try await db.fetchComparableEntryCount(for: latestSnapshotId)
         let baselineSnapshotId = try await comparableBaselineSnapshotId(
             from: snapshots,
             latestSnapshotId: latestSnapshotId,
@@ -448,7 +448,7 @@ actor BaselineService {
             guard let candidateSnapshotId = snapshot.id else { continue }
             guard candidateSnapshotId != latestSnapshotId else { continue }
 
-            let candidateEntryCount = try await db.fetchEntryCount(for: candidateSnapshotId)
+            let candidateEntryCount = try await db.fetchComparableEntryCount(for: candidateSnapshotId)
             if candidateEntryCount <= 100 {
                 continue
             }

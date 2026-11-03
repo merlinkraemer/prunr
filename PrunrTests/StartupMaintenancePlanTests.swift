@@ -10,52 +10,46 @@ final class StartupMaintenancePlanTests: XCTestCase {
         versionChanged: Bool = false,
         walBytes: Int64 = 0,
         freelistBytes: Int64 = 0,
-        freelistRatio: Double = 0,
         lastCleanupAt: TimeInterval? = nil,
-        lastCheckpointAt: TimeInterval? = nil,
-        lastVacuumAt: TimeInterval? = nil
+        lastCheckpointAt: TimeInterval? = nil
     ) -> DatabaseCleanupService.StartupMaintenancePlan {
         DatabaseCleanupService.startupMaintenancePlan(
             versionChanged: versionChanged,
             walBytes: walBytes,
             freelistBytes: freelistBytes,
-            freelistRatio: freelistRatio,
             lastCleanupAt: lastCleanupAt ?? now - 60,
             lastCheckpointAt: lastCheckpointAt ?? now - 10,
-            lastVacuumAt: lastVacuumAt ?? now - 60,
             now: now
         )
     }
 
-    func testLargeDatabaseWithoutFreePagesNeverVacuums() {
+    func testLargeDatabaseWithoutFreePagesNeverReclaims() {
         let result = plan(
             versionChanged: true,
             walBytes: 3000 * mb,
             freelistBytes: 0,
-            freelistRatio: 0,
             lastCleanupAt: 0,
-            lastCheckpointAt: 0,
-            lastVacuumAt: 0
+            lastCheckpointAt: 0
         )
-        XCTAssertFalse(result.vacuum)
+        XCTAssertFalse(result.reclaimFreePages)
         XCTAssertTrue(result.checkpoint)
         XCTAssertTrue(result.runCleanup)
     }
 
     func testVersionChangeCheckpointsOnly() {
         let result = plan(versionChanged: true)
-        XCTAssertEqual(result, .init(runCleanup: true, checkpoint: true, vacuum: false))
+        XCTAssertEqual(result, .init(runCleanup: true, checkpoint: true, reclaimFreePages: false))
     }
 
     func testQuietRecentLaunchDoesNothing() {
-        XCTAssertEqual(plan(), .init(runCleanup: false, checkpoint: false, vacuum: false))
+        XCTAssertEqual(plan(), .init(runCleanup: false, checkpoint: false, reclaimFreePages: false))
     }
 
     func testLargeWalTriggersCheckpoint() {
         let result = plan(walBytes: 64 * mb)
         XCTAssertTrue(result.checkpoint)
         XCTAssertTrue(result.runCleanup)
-        XCTAssertFalse(result.vacuum)
+        XCTAssertFalse(result.reclaimFreePages)
     }
 
     func testDueCheckpointIntervalCheckpoints() {
@@ -66,47 +60,31 @@ final class StartupMaintenancePlanTests: XCTestCase {
         XCTAssertTrue(plan(lastCleanupAt: now - 13 * hour).runCleanup)
     }
 
-    func testReclaimableFreelistVacuumsWhenIntervalPassed() {
-        let result = plan(freelistBytes: 600 * mb, freelistRatio: 0.3, lastVacuumAt: now - 13 * hour)
-        XCTAssertTrue(result.vacuum)
+    func testReclaimableFreelistReclaimsAndCheckpoints() {
+        let result = plan(freelistBytes: 600 * mb)
+        XCTAssertTrue(result.reclaimFreePages)
         XCTAssertTrue(result.checkpoint)
     }
 
-    func testReclaimableFreelistWaitsForVacuumInterval() {
-        let result = plan(freelistBytes: 600 * mb, freelistRatio: 0.3, lastVacuumAt: now - 1 * hour)
-        XCTAssertFalse(result.vacuum)
+    func testFreelistUnderThresholdIsLeftForReuse() {
+        XCTAssertFalse(DatabaseCleanupService.freePagesWorthReclaiming(freelistBytes: 63 * mb))
+        XCTAssertTrue(DatabaseCleanupService.freePagesWorthReclaiming(freelistBytes: 64 * mb))
     }
 
-    func testLowRatioDoesNotVacuumEvenWithManyFreeBytes() {
-        XCTAssertFalse(
-            DatabaseCleanupService.vacuumWorthwhile(
-                freelistBytes: 200 * mb,
-                freelistRatio: 0.05,
-                lastVacuumAt: 0,
-                now: now
-            )
-        )
-    }
-
-    func testHighRatioOnTinyDatabaseDoesNotVacuum() {
-        XCTAssertFalse(
-            DatabaseCleanupService.vacuumWorthwhile(
-                freelistBytes: 2 * mb,
-                freelistRatio: 0.5,
-                lastVacuumAt: 0,
-                now: now
-            )
-        )
-    }
-
-    func testNeverVacuumedWithReclaimableSpaceVacuums() {
+    func testIncrementalConversionNeedsTwiceTheDatabaseOnDisk() {
         XCTAssertTrue(
-            DatabaseCleanupService.vacuumWorthwhile(
-                freelistBytes: 200 * mb,
-                freelistRatio: 0.2,
-                lastVacuumAt: 0,
-                now: now
-            )
+            DatabaseCleanupService.hasDiskForIncrementalConversion(databaseBytes: 3_500 * mb, availableBytes: 7_000 * mb)
         )
+        XCTAssertFalse(
+            DatabaseCleanupService.hasDiskForIncrementalConversion(databaseBytes: 3_500 * mb, availableBytes: 6_999 * mb)
+        )
+        XCTAssertFalse(
+            DatabaseCleanupService.hasDiskForIncrementalConversion(databaseBytes: 3_500 * mb, availableBytes: nil)
+        )
+    }
+
+    func testIncrementalVacuumStepsAreBoundedByBytes() {
+        XCTAssertEqual(DatabaseCleanupService.incrementalVacuumPagesPerStep(pageSize: 4096), 16_384)
+        XCTAssertEqual(DatabaseCleanupService.incrementalVacuumPagesPerStep(pageSize: 0), 1)
     }
 }

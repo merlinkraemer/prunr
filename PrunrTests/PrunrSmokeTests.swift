@@ -1196,7 +1196,7 @@ final class PrunrSmokeTests: XCTestCase {
         }
     }
 
-    func testSnapshotEntryCleanupKeepsTwoNewestPerPathAndSnapshotRows() async throws {
+    func testSnapshotEntryCleanupKeepsNewestPayloadPerPathAndSnapshotRows() async throws {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let otherPathId = UUID()
             let base = Date().addingTimeInterval(-3_600)
@@ -1238,19 +1238,19 @@ final class PrunrSmokeTests: XCTestCase {
             for snapshotId in mainIds {
                 mainCounts.append(try await DatabaseManager.shared.fetchEntryCount(for: snapshotId))
             }
-            XCTAssertEqual(mainCounts, [0, 0, 3, 3])
+            XCTAssertEqual(mainCounts, [0, 0, 0, 3])
 
             var otherCounts: [Int] = []
             for snapshotId in otherIds {
                 otherCounts.append(try await DatabaseManager.shared.fetchEntryCount(for: snapshotId))
             }
-            XCTAssertEqual(otherCounts, [3, 3])
+            XCTAssertEqual(otherCounts, [0, 3])
 
             var unassignedCounts: [Int] = []
             for snapshotId in unassignedIds {
                 unassignedCounts.append(try await DatabaseManager.shared.fetchEntryCount(for: snapshotId))
             }
-            XCTAssertEqual(unassignedCounts, [0, 3, 3])
+            XCTAssertEqual(unassignedCounts, [0, 0, 3])
 
             let remainingSnapshots = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
             XCTAssertEqual(Set(remainingSnapshots.compactMap(\.id)), Set(mainIds))
@@ -1266,7 +1266,7 @@ final class PrunrSmokeTests: XCTestCase {
         try await withEmptyTemporaryDatabase { trackedPathId in
             let base = Date().addingTimeInterval(-3_600)
             let trimmedOnly = "/Users/tester/orphans/trimmed-only.bin"
-            let keptOld = "/Users/tester/orphans/kept-old.bin"
+            let trimmedPrevious = "/Users/tester/orphans/trimmed-previous.bin"
             let keptNew = "/Users/tester/orphans/kept-new.bin"
             let workingSetOnly = "/Users/tester/orphans/working-set-only.bin"
             let unreferenced = "/Users/tester/orphans/unreferenced.bin"
@@ -1279,7 +1279,7 @@ final class PrunrSmokeTests: XCTestCase {
             _ = try await self.seedCompleteSnapshot(
                 trackedPathIdText: trackedPathId.uuidString,
                 createdAt: base.addingTimeInterval(60),
-                entries: [ScanResult(path: keptOld, sizeBytes: 100)]
+                entries: [ScanResult(path: trimmedPrevious, sizeBytes: 100)]
             )
             let newestId = try await self.seedCompleteSnapshot(
                 trackedPathIdText: trackedPathId.uuidString,
@@ -1314,7 +1314,7 @@ final class PrunrSmokeTests: XCTestCase {
             await DatabaseCleanupService.shared.performAutoCleanup()
 
             let remaining = Set(try await self.storedPaths())
-            XCTAssertTrue(remaining.contains(keptOld))
+            XCTAssertFalse(remaining.contains(trimmedPrevious))
             XCTAssertTrue(remaining.contains(keptNew))
             XCTAssertTrue(remaining.contains(workingSetOnly))
             XCTAssertFalse(remaining.contains(unreferenced))
@@ -3011,8 +3011,8 @@ final class PrunrSmokeTests: XCTestCase {
             let report = try await DatabaseCleanupService.shared.compactDatabaseNow()
 
             XCTAssertEqual(report.backfilledSnapshots, 2)
-            XCTAssertEqual(report.snapshotEntrySnapshotsTrimmed, 1)
-            XCTAssertEqual(report.orphanedPathsDeleted, 2)
+            XCTAssertEqual(report.snapshotEntrySnapshotsTrimmed, 2)
+            XCTAssertEqual(report.orphanedPathsDeleted, 4)
             XCTAssertEqual(report.snapshotsDeleted, 0)
             XCTAssertGreaterThan(report.dbBytesAfter, 0)
 
@@ -3026,7 +3026,7 @@ final class PrunrSmokeTests: XCTestCase {
             let oldestEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: seeded[0].id)
             let middleEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: seeded[1].id)
             let newestEntryCount = try await DatabaseManager.shared.fetchEntryCount(for: seeded[2].id)
-            XCTAssertEqual([oldestEntryCount, middleEntryCount, newestEntryCount], [0, 2, 2])
+            XCTAssertEqual([oldestEntryCount, middleEntryCount, newestEntryCount], [0, 0, 2])
 
             let remaining = try await DatabaseManager.shared.fetchAllSnapshots()
             XCTAssertEqual(remaining.count, 4)
@@ -3041,6 +3041,144 @@ final class PrunrSmokeTests: XCTestCase {
             XCTAssertEqual(report.snapshotEntrySnapshotsTrimmed, 0)
             XCTAssertEqual(report.orphanedPathsDeleted, 0)
             XCTAssertEqual(report.snapshotsDeleted, 0)
+        }
+    }
+
+    private func pragma(_ name: String) async throws -> Int64 {
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        return try await dbPool.read { db in
+            try Int64.fetchOne(db, sql: "PRAGMA \(name)") ?? 0
+        }
+    }
+
+    private func seedThenDeleteBulk(trackedPathId: UUID) async throws {
+        let entries = (0..<4_000).map {
+            ScanResult(path: "/Users/tester/bulk/\(String(repeating: "x", count: 200))-\($0).bin", sizeBytes: 1_000)
+        }
+        let snapshotId = try await seedCompleteSnapshot(
+            trackedPathIdText: trackedPathId.uuidString,
+            createdAt: Date(),
+            entries: entries
+        )
+        let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+        try await dbPool.write { db in
+            try db.execute(sql: "DELETE FROM snapshot WHERE id = ?", arguments: [snapshotId])
+            try db.execute(sql: "DELETE FROM paths")
+        }
+    }
+
+    func testFreshDatabaseStartsInIncrementalAutoVacuum() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let mode = try await DatabaseManager.shared.autoVacuumMode()
+            XCTAssertEqual(mode, DatabaseManager.incrementalAutoVacuumMode)
+        }
+    }
+
+    func testIncrementalAutoVacuumConversionIsOneTimeAndDropsFreePages() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            try await dbPool.writeWithoutTransaction { db in
+                try db.execute(sql: "PRAGMA auto_vacuum = NONE")
+                try db.execute(sql: "VACUUM")
+            }
+            let legacyMode = try await DatabaseManager.shared.autoVacuumMode()
+            XCTAssertEqual(legacyMode, 0)
+            try await self.seedThenDeleteBulk(trackedPathId: trackedPathId)
+            let freeBefore = try await self.pragma("freelist_count")
+            XCTAssertGreaterThan(freeBefore, 0)
+
+            let first = await DatabaseCleanupService.shared.convertToIncrementalAutoVacuumIfNeeded()
+            XCTAssertEqual(first, .converted)
+            let mode = try await DatabaseManager.shared.autoVacuumMode()
+            XCTAssertEqual(mode, DatabaseManager.incrementalAutoVacuumMode)
+            let freeAfter = try await self.pragma("freelist_count")
+            XCTAssertEqual(freeAfter, 0)
+
+            let second = await DatabaseCleanupService.shared.convertToIncrementalAutoVacuumIfNeeded()
+            XCTAssertEqual(second, .alreadyIncremental)
+        }
+    }
+
+    func testReclaimFreePagesShrinksIncrementalDatabaseWithoutFullVacuum() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            try await self.seedThenDeleteBulk(trackedPathId: trackedPathId)
+            let pagesBefore = try await self.pragma("page_count")
+            let freeBefore = try await self.pragma("freelist_count")
+            XCTAssertGreaterThan(freeBefore, 0)
+
+            let reclaimed = try await DatabaseCleanupService.shared.reclaimFreePages()
+
+            let pageSize = try await self.pragma("page_size")
+            XCTAssertEqual(reclaimed, freeBefore * pageSize)
+            let freeAfter = try await self.pragma("freelist_count")
+            XCTAssertEqual(freeAfter, 0)
+            let pagesAfter = try await self.pragma("page_count")
+            XCTAssertLessThanOrEqual(pagesAfter, pagesBefore - freeBefore)
+        }
+    }
+
+    func testReclaimFreePagesLeavesLegacyDatabaseForTheConversion() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            try await dbPool.writeWithoutTransaction { db in
+                try db.execute(sql: "PRAGMA auto_vacuum = NONE")
+                try db.execute(sql: "VACUUM")
+            }
+            try await self.seedThenDeleteBulk(trackedPathId: trackedPathId)
+            let freeBefore = try await self.pragma("freelist_count")
+
+            let reclaimed = try await DatabaseCleanupService.shared.reclaimFreePages()
+
+            XCTAssertEqual(reclaimed, 0)
+            let freeAfter = try await self.pragma("freelist_count")
+            XCTAssertEqual(freeAfter, freeBefore)
+        }
+    }
+
+    func testTrimmedPreviousSnapshotKeepsItsEntryCountForTheBaselineCheck() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let base = Date().addingTimeInterval(-3_600)
+            func entries(_ prefix: String) -> [ScanResult] {
+                (0..<150).map { ScanResult(path: "/Users/tester/dev/\(prefix)/f-\($0).bin", sizeBytes: 10) }
+            }
+            let previousId = try await self.seedCompleteSnapshot(
+                trackedPathIdText: trackedPathId.uuidString,
+                createdAt: base,
+                entries: entries("shared")
+            )
+            let latestId = try await self.seedCompleteSnapshot(
+                trackedPathIdText: trackedPathId.uuidString,
+                createdAt: base.addingTimeInterval(60),
+                entries: entries("shared")
+            )
+
+            await DatabaseCleanupService.shared.performAutoCleanup()
+
+            let previousPayload = try await DatabaseManager.shared.fetchEntryCount(for: previousId)
+            XCTAssertEqual(previousPayload, 0, "only the newest payload is kept")
+            let previousCount = try await DatabaseManager.shared.fetchComparableEntryCount(for: previousId)
+            XCTAssertEqual(previousCount, 150)
+            let latestCount = try await DatabaseManager.shared.fetchComparableEntryCount(for: latestId)
+            XCTAssertEqual(latestCount, 150, "an untrimmed snapshot falls back to its live payload")
+
+            let comparison = try await BaselineService.shared.resolveGrowthComparisonSnapshots(trackedPathId: trackedPathId)
+            XCTAssertEqual(
+                comparison,
+                BaselineService.GrowthComparisonSnapshots(currentSnapshotId: latestId, baselineSnapshotId: previousId)
+            )
+        }
+    }
+
+    func testSnapshotEntryCountMigrationOnlyAddsANullableColumn() async throws {
+        try await withEmptyTemporaryDatabase { _ in
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            let shape = try await dbPool.read { db -> [Bool]? in
+                guard let column = try db.columns(in: "snapshot").first(where: { $0.name == "entryCount" }) else {
+                    return nil
+                }
+                return [column.isNotNull, column.defaultValueSQL == nil]
+            }
+            XCTAssertEqual(shape, [false, true], "entryCount is nullable with no default")
         }
     }
 }
