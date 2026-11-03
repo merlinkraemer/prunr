@@ -290,3 +290,4 @@
 2026-11-03 orchestrator O38 spawn: path-store redesign design doc for item 11 (3.47 GB DB), doc only (opus, seat worktree, base d4b06ab)
 2026-11-03 orchestrator O38 on branch: e11829f, path-store design doc landed on main; ~3.47 -> ~1.2 GB in 5 slices, all schema/storage = Merlin; hash-index option rejected (kills subtree range queries)
 2026-11-03 orchestrator O39 spawn: test-only measurement slice of the path-store design (VACUUM INTO live size, dir count, name length, size histogram, query timings) (sonnet, seat worktree, base e11829f)
+2026-11-03 orchestrator O39 on branch: 44f68ab, real-DB test adds VACUUM INTO live size, dir/name bytes, size histogram, subtree/lookup/delta timings (fail-soft); job queued
