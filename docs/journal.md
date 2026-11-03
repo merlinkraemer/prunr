@@ -304,3 +304,4 @@
 2026-11-03 20:31 orchestrator O42 Mac green: a70f91e, 536 tests 0 failures; real DB 3.47 -> 2.77 GB file (170 MB free kept as reserve, live 2.60 GB), convert 13.1 s, cleanup+reclaim 4.3 s, v28 1.8 s; item 11 reviewable on drain/O42-2026-11-03
 2026-11-03 20:35 orchestrator O43 spawn: path-store slice S3 slim workingSetEntry (WITHOUT ROWID, int key, v30 .immediate) on drain/O43-2026-11-03 from O42 a70f91e, unlanded (opus, seat worktree)
 2026-11-03 21:00 orchestrator O43 on branch: a7253c9, v30 workingSetEntry WITHOUT ROWID (trackedPathKey,pathId) + workingSetTrackedPath map (per-path updatedAt); sqlite sim checksums match, plans SEARCH; job queued
+2026-11-03 23:25 orchestrator O43 failed: a7253c9 2/536 red (real-snapshot fixture DB has no workingSetEntry, v30 SELECT fails); real DB numbers good: wse 891 -> 96 MB, v30 6.4 s, file 2.23 GB, checksums match, no SCAN; worker fixing
