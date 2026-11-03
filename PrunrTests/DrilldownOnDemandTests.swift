@@ -135,6 +135,7 @@ final class DrilldownOnDemandTests: PrunrTestCase {
         }
     }
 
+    @MainActor
     func testSameSizeRenameReloadsExpandedFiles() async throws {
         try await withEmptyTemporaryDatabase { [self] id in
             func scan(_ name: String) -> [ScanResult] {
