@@ -2245,6 +2245,7 @@ final class MenuBarManager: NSObject {
 
     func setDatabaseOpening(_ opening: Bool) {
         isDatabaseOpening = opening
+        updateMenuBarActivityEffect()
     }
 
     func configureMonitoringOnLaunch() async {
@@ -2648,7 +2649,11 @@ final class MenuBarManager: NSObject {
     }
 
     private var shouldPulseActivity: Bool {
-        isLoading || isAutoScanning
+        isDatabaseOpening || isLoading || isAutoScanning
+    }
+
+    var isActivityPulseActive: Bool {
+        activityPulseTimer != nil
     }
 
     private func updateMenuBarActivityEffect() {

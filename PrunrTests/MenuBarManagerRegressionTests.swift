@@ -4,6 +4,28 @@ import XCTest
 @MainActor
 final class MenuBarManagerRegressionTests: PrunrTestCase {
 
+    func testDatabaseOpeningDrivesActivityPulse() {
+        let manager = MenuBarManager()
+        XCTAssertFalse(manager.isActivityPulseActive)
+
+        manager.setDatabaseOpening(true)
+        XCTAssertTrue(manager.isActivityPulseActive)
+
+        manager.setDatabaseOpening(false)
+        XCTAssertFalse(manager.isActivityPulseActive)
+    }
+
+    func testActivityPulseFollowsScanStateAfterDatabaseOpens() {
+        let manager = MenuBarManager()
+        manager.isAutoScanning = true
+        manager.setDatabaseOpening(true)
+        manager.setDatabaseOpening(false)
+        XCTAssertTrue(manager.isActivityPulseActive)
+
+        manager.isAutoScanning = false
+        XCTAssertFalse(manager.isActivityPulseActive)
+    }
+
     func testAutoScanIgnoresOnlyTheAppBundleNotItsParentFolder() {
         let bundle = URL(fileURLWithPath: "/Users/test/Downloads/Prunr.app")
         let roots = MenuBarManager.autoScanIgnoredRoots(bundleURL: bundle)
