@@ -486,7 +486,10 @@ final class DrilldownIndexTests: PrunrTestCase {
             let dbPool = try XCTUnwrap(db.dbPool)
             let seeded = Date()
             try await dbPool.write { db in
-                let insertClass = try db.makeStatement(sql: "INSERT INTO pathClassification (pathId, category, subcategory) VALUES (?, ?, ?)")
+                let insertClass = try db.makeStatement(sql: """
+                    INSERT INTO pathClassification (pathId, category, subcategory)
+                    VALUES (?, \(DatabaseManager.classificationCodeSQL), \(DatabaseManager.classificationCodeSQL))
+                    """)
                 let workingSetKey = try DatabaseManager.workingSetKey(trackedPathId: id.uuidString, db: db)
                 let insertLive = try db.makeStatement(sql: """
                     INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes) VALUES (?, ?, ?)
@@ -520,7 +523,7 @@ final class DrilldownIndexTests: PrunrTestCase {
                 try db.execute(
                     sql: """
                         INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
-                        SELECT ?, pc.category, SUM(wse.sizeBytes), ?
+                        SELECT ?, \(DatabaseManager.classificationNameSQL("pc.category")), SUM(wse.sizeBytes), ?
                         FROM workingSetEntry wse JOIN pathClassification pc ON pc.pathId = wse.pathId
                         WHERE wse.trackedPathKey = \(DatabaseManager.workingSetKeySQL)
                         GROUP BY pc.category

@@ -253,7 +253,7 @@ final class OwnerUnitsTests: PrunrTestCase {
 
         try queue.read { db in
             let categories = try Dictionary(uniqueKeysWithValues: Row.fetchAll(
-                db, sql: "SELECT pathId, category FROM pathClassification"
+                db, sql: "SELECT pathId, \(DatabaseManager.classificationNameSQL("category")) AS category FROM pathClassification"
             ).map { row -> (Int64, String) in (row["pathId"], row["category"]) })
             XCTAssertEqual(categories[1], "mediaAndDocuments")
             XCTAssertEqual(categories[2], "developer")
@@ -277,6 +277,64 @@ final class OwnerUnitsTests: PrunrTestCase {
                 ),
                 DatabaseManager.DrilldownIndexState.building.rawValue
             )
+        }
+    }
+
+    func testClassificationCodesMigrationKeepsEveryNameAsASmallCode() throws {
+        let directory = try createTrackedPathDirectory(named: "PrunrClassificationCodes")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let queue = try DatabaseQueue(path: directory.appendingPathComponent("prunr.sqlite").path)
+        let migrator = DatabaseManager.makeMigrator()
+        try migrator.migrate(queue, upTo: DatabaseManager.pathDirsMigrationIdentifier)
+
+        let rows: [(path: String, category: String, subcategory: String)] = [
+            ("/Users/x/dev/acme/node_modules/a.js", "developer", "nodeModules"),
+            ("/Users/x/Pictures/b.jpg", "mediaAndDocuments", "photos"),
+            ("/Users/x/notes.txt", "other", ""),
+            ("/Users/x/legacy.bin", "retiredCategory", "retiredSubcategory")
+        ]
+        try queue.write { db in
+            for (index, row) in rows.enumerated() {
+                try DatabaseManager.insertPath(row.path, id: Int64(index + 1), db: db)
+                try db.execute(
+                    sql: "INSERT INTO pathClassification (pathId, category, subcategory) VALUES (?, ?, ?)",
+                    arguments: [index + 1, row.category, row.subcategory]
+                )
+            }
+        }
+
+        try migrator.migrate(queue)
+
+        try queue.read { db in
+            let stored = try Row.fetchAll(db, sql: """
+                SELECT pathId,
+                       typeof(category) AS categoryType,
+                       \(DatabaseManager.classificationNameSQL("category")) AS category,
+                       \(DatabaseManager.classificationNameSQL("subcategory")) AS subcategory
+                FROM pathClassification
+                ORDER BY pathId
+                """)
+            XCTAssertEqual(stored.count, rows.count)
+            for (index, row) in rows.enumerated() {
+                XCTAssertEqual(stored[index]["pathId"] as Int64?, Int64(index + 1))
+                XCTAssertEqual(stored[index]["categoryType"] as String?, "integer")
+                XCTAssertEqual(stored[index]["category"] as String?, row.category)
+                XCTAssertEqual(stored[index]["subcategory"] as String?, row.subcategory)
+            }
+            let names = try Set(String.fetchAll(db, sql: "SELECT name FROM classificationName"))
+            XCTAssertTrue(names.isSuperset(of: DatabaseManager.classificationNames))
+            let plan = try Row.fetchAll(
+                db,
+                sql: """
+                    EXPLAIN QUERY PLAN
+                    SELECT pathId FROM pathClassification
+                    WHERE category = \(DatabaseManager.classificationCodeSQL)
+                      AND subcategory = \(DatabaseManager.classificationCodeSQL)
+                    """,
+                arguments: ["developer", "nodeModules"]
+            ).map { $0["detail"] as String? ?? "" }
+            XCTAssertTrue(plan.contains { $0.contains("idx_pathClassification_category_subcategory_pathId") }, "\(plan)")
+            XCTAssertFalse(plan.contains { $0.hasPrefix("SCAN") }, "\(plan)")
         }
     }
 }

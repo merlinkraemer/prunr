@@ -118,6 +118,9 @@ final class DatabaseManager {
         }
 
         try Self.makeMigrator().migrate(dbPool)
+        try dbPool.write { db in
+            try Self.insertClassificationNames(db)
+        }
     }
 
     /// The full migration list. Exposed so tests can migrate a fixture database
@@ -570,6 +573,7 @@ final class DatabaseManager {
         registerSnapshotEntryCountMigration(in: &migrator)
         registerSlimWorkingSetEntryMigration(in: &migrator)
         registerPathDirsMigration(in: &migrator)
+        registerClassificationCodesMigration(in: &migrator)
 
         return migrator
     }
@@ -1370,7 +1374,7 @@ extension DatabaseManager {
                     INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
                     SELECT
                         ?,
-                        pc.category,
+                        \(Self.classificationNameSQL("pc.category")),
                         COALESCE(SUM(se.sizeBytes), 0),
                         ?
                     FROM snapshotEntry se
@@ -1544,7 +1548,7 @@ extension DatabaseManager {
         try db.execute(
             sql: """
                 INSERT INTO pathClassification (pathId, category, subcategory)
-                VALUES (?, ?, ?)
+                VALUES (?, \(Self.classificationCodeSQL), \(Self.classificationCodeSQL))
                 ON CONFLICT(pathId) DO UPDATE SET
                     category = excluded.category,
                     subcategory = excluded.subcategory
@@ -1583,8 +1587,8 @@ extension DatabaseManager {
             db,
             sql: """
                 SELECT wse.sizeBytes AS sizeBytes,
-                       pc.category AS category,
-                       pc.subcategory AS subcategory
+                       \(Self.classificationNameSQL("pc.category")) AS category,
+                       \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
                 WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = ?
@@ -1704,8 +1708,8 @@ extension DatabaseManager {
                     s.id AS pathId,
                     s.path AS path,
                     wse.sizeBytes AS sizeBytes,
-                    pc.category AS category,
-                    pc.subcategory AS subcategory
+                    \(Self.classificationNameSQL("pc.category")) AS category,
+                    \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
                 FROM (\(Self.subtreePathsSQL)) s
                 CROSS JOIN workingSetEntry wse
                     ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = s.id
@@ -2046,8 +2050,8 @@ extension DatabaseManager {
                             sub.id AS pathId,
                             sub.path AS path,
                             wse.sizeBytes AS sizeBytes,
-                            pc.category AS category,
-                            pc.subcategory AS subcategory
+                            \(Self.classificationNameSQL("pc.category")) AS category,
+                            \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
                         FROM (\(Self.subtreePathsSQL)) sub
                         CROSS JOIN workingSetEntry wse
                             ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = sub.id
@@ -2109,7 +2113,9 @@ extension DatabaseManager {
             try db.execute(
                 sql: """
                     INSERT INTO pathClassification (pathId, category, subcategory)
-                    SELECT p.id, s.category, s.subcategory
+                    SELECT p.id,
+                           (SELECT code FROM classificationName WHERE name = s.category),
+                           (SELECT code FROM classificationName WHERE name = s.subcategory)
                     FROM workingSetRefreshStaging s
                     CROSS JOIN dirs d ON d.path = s.dir
                     CROSS JOIN paths p ON p.dirId = d.id AND p.name = s.name
@@ -2681,8 +2687,8 @@ extension DatabaseManager {
     ) throws {
         guard !pathIdByPath.isEmpty else { return }
 
-        // Build flat array of (pathId, category, subcategory) tuples for chunked multi-row INSERT
-        var rows: [(pathId: Int64, category: String, subcategory: String)] = []
+        let codes = try Self.classificationCodes(db)
+        var rows: [(pathId: Int64, category: Int64, subcategory: Int64)] = []
         rows.reserveCapacity(pathIdByPath.count)
         for (path, pathId) in pathIdByPath {
             let resolved = classificationsByPath?[path]
@@ -2690,14 +2696,17 @@ extension DatabaseManager {
                     category: GrowthCategory.categorize(path: path),
                     subcategory: GrowthCategory.subcategorize(path: path)
                 )
-            rows.append((
-                pathId: pathId,
-                category: resolved.category.rawValue,
-                subcategory: resolved.subcategory?.rawValue ?? ""
-            ))
+            let categoryName = resolved.category.rawValue
+            let subcategoryName = resolved.subcategory?.rawValue ?? ""
+            guard let category = codes[categoryName] else {
+                throw DatabaseError.classificationNameMissing(categoryName)
+            }
+            guard let subcategory = codes[subcategoryName] else {
+                throw DatabaseError.classificationNameMissing(subcategoryName)
+            }
+            rows.append((pathId: pathId, category: category, subcategory: subcategory))
         }
 
-        // Insert in chunks of 500 rows using multi-row VALUES — ~500x fewer round-trips
         let chunkSize = 500
         for startIndex in stride(from: 0, to: rows.count, by: chunkSize) {
             let endIndex = min(startIndex + chunkSize, rows.count)
@@ -2907,6 +2916,7 @@ extension DatabaseManager {
         case pathLookupFailed(String)
         case snapshotVanished(Int64)
         case workingSetKeyMissing(String)
+        case classificationNameMissing(String)
 
         var errorDescription: String? {
             switch self {
@@ -2920,6 +2930,8 @@ extension DatabaseManager {
                 return "Snapshot \(id) vanished before it could be published"
             case .workingSetKeyMissing(let trackedPathId):
                 return "No working-set key for tracked path \(trackedPathId)"
+            case .classificationNameMissing(let name):
+                return "No classification code for \(name)"
             }
         }
     }

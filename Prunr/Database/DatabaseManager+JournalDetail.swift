@@ -13,6 +13,7 @@ extension DatabaseManager {
     static let snapshotEntryCountMigrationIdentifier = "v29_snapshot_entry_count"
     static let slimWorkingSetEntryMigrationIdentifier = "v30_slim_working_set_entry"
     static let pathDirsMigrationIdentifier = "v31_path_dirs"
+    static let classificationCodesMigrationIdentifier = "v32_classification_codes"
     static let workingSetKeySQL = "(SELECT key FROM workingSetTrackedPath WHERE trackedPathId = ?)"
 
     static func registerJournalDetailMigration(in migrator: inout DatabaseMigrator) {
@@ -174,6 +175,79 @@ extension DatabaseManager {
                 """)
             try db.execute(sql: "PRAGMA cache_size = \(previousCacheSize)")
         }
+    }
+
+    static func registerClassificationCodesMigration(in migrator: inout DatabaseMigrator) {
+        migrator.registerMigration(classificationCodesMigrationIdentifier, foreignKeyChecks: .immediate) { db in
+            try db.execute(sql: """
+                CREATE TABLE classificationName (
+                    code INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE
+                )
+                """)
+            try Self.insertClassificationNames(db)
+            try db.execute(sql: """
+                CREATE TABLE pathClassification_new (
+                    pathId INTEGER PRIMARY KEY NOT NULL REFERENCES paths(id) ON DELETE CASCADE,
+                    category INTEGER NOT NULL,
+                    subcategory INTEGER NOT NULL
+                )
+                """)
+            if try db.tableExists("pathClassification") {
+                try Self.copyLegacyPathClassification(db)
+            }
+            try db.execute(sql: "ALTER TABLE pathClassification_new RENAME TO pathClassification")
+            try db.execute(sql: """
+                CREATE INDEX idx_pathClassification_category_subcategory_pathId
+                ON pathClassification(category, subcategory, pathId)
+                """)
+        }
+    }
+
+    private static func copyLegacyPathClassification(_ db: Database) throws {
+        try db.execute(sql: """
+            INSERT OR IGNORE INTO classificationName (name)
+            SELECT category FROM pathClassification
+            UNION
+            SELECT subcategory FROM pathClassification
+            """)
+        try db.execute(sql: """
+            INSERT INTO pathClassification_new (pathId, category, subcategory)
+            SELECT pc.pathId, c.code, s.code
+            FROM pathClassification pc
+            CROSS JOIN classificationName c ON c.name = pc.category
+            CROSS JOIN classificationName s ON s.name = pc.subcategory
+            WHERE EXISTS (SELECT 1 FROM paths p WHERE p.id = pc.pathId)
+            ORDER BY pc.pathId
+            """)
+        try db.execute(sql: "DROP TABLE pathClassification")
+    }
+
+    static var classificationNames: [String] {
+        [""] + GrowthCategory.allCases.map(\.rawValue) + GrowthSubcategory.allCases.map(\.rawValue)
+    }
+
+    static func insertClassificationNames(_ db: Database) throws {
+        let insert = try db.makeStatement(sql: "INSERT OR IGNORE INTO classificationName (name) VALUES (?)")
+        for name in classificationNames {
+            try insert.execute(arguments: [name])
+        }
+    }
+
+    static let classificationCodeSQL = "(SELECT code FROM classificationName WHERE name = ?)"
+
+    static func classificationNameSQL(_ codeColumn: String) -> String {
+        "(SELECT name FROM classificationName WHERE code = \(codeColumn))"
+    }
+
+    static func classificationCodes(_ db: Database) throws -> [String: Int64] {
+        var codes: [String: Int64] = [:]
+        for row in try Row.fetchAll(db, sql: "SELECT name, code FROM classificationName") {
+            let name: String = row["name"]
+            let code: Int64 = row["code"]
+            codes[name] = code
+        }
+        return codes
     }
 
     private static func copyLegacyPaths(_ db: Database) throws {

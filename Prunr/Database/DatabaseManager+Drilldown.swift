@@ -562,7 +562,8 @@ extension DatabaseManager {
             db,
             sql: """
                 SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes,
-                       pc.category AS category, pc.subcategory AS subcategory
+                       \(Self.classificationNameSQL("pc.category")) AS category,
+                       \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
                 JOIN pathText p ON p.id = wse.pathId
@@ -726,7 +727,7 @@ extension DatabaseManager {
                     FROM pathClassification pc
                     CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                     JOIN pathText p ON p.id = wse.pathId
-                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = ?
+                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = \(Self.classificationCodeSQL)
                       AND prunr_owner_group(p.path) IN (\(placeholders))
                     ORDER BY wse.sizeBytes DESC, p.path ASC
                     LIMIT ? OFFSET ?
@@ -742,7 +743,9 @@ extension DatabaseManager {
                     FROM pathClassification pc
                     CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                     JOIN pathText p ON p.id = wse.pathId
-                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = ? AND pc.subcategory = ?
+                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
+                      AND pc.category = \(Self.classificationCodeSQL)
+                      AND pc.subcategory = \(Self.classificationCodeSQL)
                     ORDER BY wse.sizeBytes DESC, p.path ASC
                     LIMIT ? OFFSET ?
                     """,
@@ -1268,11 +1271,12 @@ extension DatabaseManager {
                 let cursor = try Row.fetchCursor(
                     db,
                     sql: """
-                        SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes, pc.subcategory AS subcategory
+                        SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes,
+                               \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
                         FROM pathClassification pc
                         CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                         JOIN pathText p ON p.id = wse.pathId
-                        WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = ?
+                        WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = \(Self.classificationCodeSQL)
                         """,
                     arguments: [trackedPathId.uuidString, category.rawValue]
                 )
