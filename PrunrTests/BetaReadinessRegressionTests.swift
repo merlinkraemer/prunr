@@ -44,7 +44,7 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
                     sql: """
                         SELECT p.path AS path, wse.sizeBytes AS sizeBytes
                         FROM workingSetEntry wse
-                        JOIN paths p ON p.id = wse.pathId
+                        JOIN pathText p ON p.id = wse.pathId
                         WHERE wse.trackedPathKey = \(DatabaseManager.workingSetKeySQL)
                         ORDER BY p.path
                         """,

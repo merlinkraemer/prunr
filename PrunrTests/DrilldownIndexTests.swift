@@ -33,7 +33,7 @@ final class DrilldownIndexTests: PrunrTestCase {
                 db,
                 sql: """
                     SELECT p.path AS path, t.sizeBytes AS sizeBytes
-                    FROM workingSetTopEntry t JOIN paths p ON p.id = t.pathId
+                    FROM workingSetTopEntry t JOIN pathText p ON p.id = t.pathId
                     WHERE t.trackedPathId = ? AND t.category = ? AND t.groupKey = ?
                     ORDER BY t.sizeBytes DESC
                     """,
@@ -486,7 +486,6 @@ final class DrilldownIndexTests: PrunrTestCase {
             let dbPool = try XCTUnwrap(db.dbPool)
             let seeded = Date()
             try await dbPool.write { db in
-                let insertPath = try db.makeStatement(sql: "INSERT INTO paths (id, path) VALUES (?, ?)")
                 let insertClass = try db.makeStatement(sql: "INSERT INTO pathClassification (pathId, category, subcategory) VALUES (?, ?, ?)")
                 let workingSetKey = try DatabaseManager.workingSetKey(trackedPathId: id.uuidString, db: db)
                 let insertLive = try db.makeStatement(sql: """
@@ -514,7 +513,7 @@ final class DrilldownIndexTests: PrunrTestCase {
                         path = "/Users/tester/Misc/m\(index % 100)/f-\(index)"
                         (category, subcategory) = (.other, nil)
                     }
-                    try insertPath.execute(arguments: [index, path])
+                    try DatabaseManager.insertPath(path, id: Int64(index), db: db)
                     try insertClass.execute(arguments: [index, category.rawValue, subcategory?.rawValue ?? ""])
                     try insertLive.execute(arguments: [workingSetKey, index, Int64((index * 7_919) % 1_000_003)])
                 }

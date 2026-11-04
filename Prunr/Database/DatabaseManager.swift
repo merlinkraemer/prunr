@@ -569,6 +569,7 @@ final class DatabaseManager {
         registerDropPrefixIndexesMigration(in: &migrator)
         registerSnapshotEntryCountMigration(in: &migrator)
         registerSlimWorkingSetEntryMigration(in: &migrator)
+        registerPathDirsMigration(in: &migrator)
 
         return migrator
     }
@@ -926,7 +927,7 @@ extension DatabaseManager {
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 ORDER BY p.path ASC
                 """, arguments: [snapshotId])
@@ -946,28 +947,33 @@ extension DatabaseManager {
         let normalizedRoot = Self.normalizePath(rootPath)
         let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
         let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
+        let root = Self.splitPath(normalizedRoot)
+        let keyset = Self.keysetLowerDir(rootPrefix: rootPrefix, afterPath: afterPath)
 
         return try await dbPool.read { db in
             try Row.fetchAll(
                 db,
                 sql: """
-                    SELECT p.path AS path, se.sizeBytes AS sizeBytes
-                    FROM paths p
+                    SELECT d.path || p.name AS path, se.sizeBytes AS sizeBytes, d.path AS dir, p.name AS name
+                    FROM dirs d
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = ?
                     CROSS JOIN snapshotEntry se INDEXED BY idx_snapshotEntry_snapshotId_pathId
                         ON se.pathId = p.id AND se.snapshotId = ?
-                    WHERE p.path = ? AND ?
+                    WHERE d.path = ? AND ?
                     UNION ALL
-                    SELECT p.path AS path, se.sizeBytes AS sizeBytes
-                    FROM paths p
+                    SELECT d.path || p.name, se.sizeBytes, d.path, p.name
+                    FROM dirs d
+                    CROSS JOIN paths p ON p.dirId = d.id
                     CROSS JOIN snapshotEntry se INDEXED BY idx_snapshotEntry_snapshotId_pathId
                         ON se.pathId = p.id AND se.snapshotId = ?
-                    WHERE p.path > ? AND p.path < ?
-                    ORDER BY path
+                    WHERE d.path >= ? AND d.path < ?
+                      AND (d.path > ? OR p.name > ?)
+                    ORDER BY dir, name
                     LIMIT ?
                     """,
                 arguments: [
-                    snapshotId, normalizedRoot, afterPath == nil,
-                    snapshotId, afterPath ?? rootPrefix, rootPrefixUpperBound,
+                    root.name, snapshotId, root.dir, afterPath == nil,
+                    snapshotId, keyset.lowerDir, rootPrefixUpperBound, keyset.afterDir, keyset.afterName,
                     limit
                 ]
             ).map { (path: $0["path"] as String? ?? "", sizeBytes: $0["sizeBytes"] as Int64? ?? 0) }
@@ -1033,7 +1039,7 @@ extension DatabaseManager {
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 ORDER BY se.sizeBytes DESC, p.path ASC
                 LIMIT ?
@@ -1056,7 +1062,7 @@ extension DatabaseManager {
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 ORDER BY se.sizeBytes DESC, p.path ASC
                 LIMIT ? OFFSET ?
@@ -1080,7 +1086,7 @@ extension DatabaseManager {
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 LIMIT ? OFFSET ?
                 """, arguments: [snapshotId, limit, offset])
@@ -1103,7 +1109,7 @@ extension DatabaseManager {
                 return try SnapshotEntryWithPath.fetchAll(db, sql: """
                     SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                     FROM snapshotEntry se
-                    JOIN paths p ON p.id = se.pathId
+                    JOIN pathText p ON p.id = se.pathId
                     WHERE se.snapshotId = ? AND se.id > ?
                     ORDER BY se.id
                     LIMIT ?
@@ -1113,7 +1119,7 @@ extension DatabaseManager {
             return try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 ORDER BY se.id
                 LIMIT ?
@@ -1529,16 +1535,7 @@ extension DatabaseManager {
             sizeBytes: entry.sizeBytes
         )
 
-        try db.execute(
-            sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)",
-            arguments: [normalizedPath]
-        )
-
-        guard let pathId: Int64 = try Int64.fetchOne(
-            db,
-            sql: "SELECT id FROM paths WHERE path = ?",
-            arguments: [normalizedPath]
-        ) else {
+        guard let pathId = try Self.insertPath(normalizedPath, db: db) else {
             return [:]
         }
 
@@ -1667,12 +1664,12 @@ extension DatabaseManager {
         guard let pathId = try Int64.fetchOne(
             db,
             sql: """
-                SELECT p.id
-                FROM paths p
-                JOIN workingSetEntry wse ON wse.pathId = p.id
-                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND p.path = ?
+                SELECT wse.pathId
+                FROM workingSetEntry wse
+                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
+                  AND wse.pathId = (\(Self.pathIdSQL))
                 """,
-            arguments: [trackedPathIdString, normalizedPath]
+            arguments: [trackedPathIdString] + Self.pathIdArguments(normalizedPath)
         ) else {
             return nil
         }
@@ -1698,29 +1695,23 @@ extension DatabaseManager {
         updatedAt: Date,
         db: Database
     ) throws -> [JournalDeltaKey: Int64] {
-        let normalizedRoot = Self.normalizePath(rootPath)
-        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
-        let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
+        let subtreeArguments = Self.subtreeArguments(root: Self.normalizePath(rootPath))
 
         let oldRows = try Row.fetchAll(
             db,
             sql: """
                 SELECT
-                    p.id AS pathId,
-                    p.path AS path,
+                    s.id AS pathId,
+                    s.path AS path,
                     wse.sizeBytes AS sizeBytes,
                     pc.category AS category,
                     pc.subcategory AS subcategory
-                FROM paths p
-                CROSS JOIN workingSetEntry wse ON wse.pathId = p.id
+                FROM (\(Self.subtreePathsSQL)) s
+                CROSS JOIN workingSetEntry wse
+                    ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = s.id
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
-                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
-                  AND (
-                      p.path = ?
-                      OR (p.path >= ? AND p.path < ?)
-                  )
                 """,
-            arguments: [trackedPathIdString, normalizedRoot, rootPrefix, rootPrefixUpperBound]
+            arguments: subtreeArguments + [trackedPathIdString]
         )
 
         let changes = oldRows.compactMap { row -> WorkingSetFileChange? in
@@ -1741,14 +1732,9 @@ extension DatabaseManager {
             sql: """
                 DELETE FROM workingSetEntry
                 WHERE trackedPathKey = \(Self.workingSetKeySQL)
-                  AND pathId IN (
-                    SELECT p.id
-                    FROM paths p
-                    WHERE p.path = ?
-                       OR (p.path >= ? AND p.path < ?)
-                  )
+                  AND pathId IN (SELECT id FROM (\(Self.subtreePathsSQL)))
                 """,
-            arguments: [trackedPathIdString, normalizedRoot, rootPrefix, rootPrefixUpperBound]
+            arguments: [trackedPathIdString] + subtreeArguments
         )
 
         return try Self.applyWorkingSetChanges(
@@ -1773,16 +1759,18 @@ extension DatabaseManager {
             var sizes: [String: Int64] = [:]
             for startIndex in stride(from: 0, to: normalizedPaths.count, by: chunkSize) {
                 let chunk = Array(normalizedPaths[startIndex..<min(startIndex + chunkSize, normalizedPaths.count)])
-                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ",")
                 let rows = try Row.fetchAll(
                     db,
                     sql: """
-                        SELECT p.path AS path, wse.sizeBytes AS sizeBytes
-                        FROM paths p
-                        JOIN workingSetEntry wse ON wse.pathId = p.id
-                        WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND p.path IN (\(placeholders))
+                        \(Self.pathValuesSQL(count: chunk.count))
+                        SELECT d.path || p.name AS path, wse.sizeBytes AS sizeBytes
+                        FROM input
+                        CROSS JOIN dirs d ON d.path = input.dir
+                        CROSS JOIN paths p ON p.dirId = d.id AND p.name = input.name
+                        CROSS JOIN workingSetEntry wse
+                            ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = p.id
                         """,
-                    arguments: StatementArguments([trackedPathIdString] + chunk)
+                    arguments: StatementArguments(Self.pathValueArguments(chunk) + [trackedPathIdString])
                 )
                 for row in rows {
                     if let path: String = row["path"], let sizeBytes: Int64 = row["sizeBytes"] {
@@ -1808,22 +1796,35 @@ extension DatabaseManager {
         let normalizedRoot = Self.normalizePath(rootPath)
         let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
         let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
-        let lowerBound = afterPath ?? ""
+        let root = Self.splitPath(normalizedRoot)
+        let keyset = Self.keysetLowerDir(rootPrefix: rootPrefix, afterPath: afterPath)
 
         return try await dbPool.read { db in
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                    SELECT p.path AS path, wse.sizeBytes AS sizeBytes
-                    FROM paths p
-                    JOIN workingSetEntry wse ON wse.pathId = p.id
-                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
-                      AND (p.path = ? OR (p.path >= ? AND p.path < ?))
-                      AND p.path > ?
-                    ORDER BY p.path
+                    SELECT d.path || p.name AS path, wse.sizeBytes AS sizeBytes, d.path AS dir, p.name AS name
+                    FROM dirs d
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = ?
+                    CROSS JOIN workingSetEntry wse
+                        ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = p.id
+                    WHERE d.path = ? AND ?
+                    UNION ALL
+                    SELECT d.path || p.name, wse.sizeBytes, d.path, p.name
+                    FROM dirs d
+                    CROSS JOIN paths p ON p.dirId = d.id
+                    CROSS JOIN workingSetEntry wse
+                        ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = p.id
+                    WHERE d.path >= ? AND d.path < ?
+                      AND (d.path > ? OR p.name > ?)
+                    ORDER BY dir, name
                     LIMIT ?
                     """,
-                arguments: [trackedPathIdString, normalizedRoot, rootPrefix, rootPrefixUpperBound, lowerBound, limit]
+                arguments: [
+                    root.name, trackedPathIdString, root.dir, afterPath == nil,
+                    trackedPathIdString, keyset.lowerDir, rootPrefixUpperBound, keyset.afterDir, keyset.afterName,
+                    limit
+                ]
             )
             return rows.compactMap { row in
                 guard let path: String = row["path"], let sizeBytes: Int64 = row["sizeBytes"] else { return nil }
@@ -1947,28 +1948,29 @@ extension DatabaseManager {
                 let batch = entries[startIndex..<endIndex]
                 let normalizedBatch = batch.map {
                     (
-                        path: Self.normalizePath($0.path),
+                        parts: Self.splitPath(Self.normalizePath($0.path)),
                         sizeBytes: $0.sizeBytes,
                         category: $0.category.rawValue,
                         subcategory: $0.subcategory?.rawValue ?? ""
                     )
                 }
 
-                let placeholders = Array(repeating: "(?,?,?,?,?)", count: normalizedBatch.count).joined(separator: ",")
+                let placeholders = Array(repeating: "(?,?,?,?,?,?)", count: normalizedBatch.count).joined(separator: ",")
                 let sql = """
-                    INSERT INTO workingSetRefreshStaging (sessionId, path, sizeBytes, category, subcategory)
+                    INSERT INTO workingSetRefreshStaging (sessionId, dir, name, sizeBytes, category, subcategory)
                     VALUES \(placeholders)
-                    ON CONFLICT(sessionId, path) DO UPDATE SET
+                    ON CONFLICT(sessionId, dir, name) DO UPDATE SET
                         sizeBytes = excluded.sizeBytes,
                         category = excluded.category,
                         subcategory = excluded.subcategory
                     """
 
                 var arguments: [DatabaseValueConvertible?] = []
-                arguments.reserveCapacity(normalizedBatch.count * 5)
+                arguments.reserveCapacity(normalizedBatch.count * 6)
                 for entry in normalizedBatch {
                     arguments.append(sessionId)
-                    arguments.append(entry.path)
+                    arguments.append(entry.parts.dir)
+                    arguments.append(entry.parts.name)
                     arguments.append(entry.sizeBytes)
                     arguments.append(entry.category)
                     arguments.append(entry.subcategory)
@@ -2011,17 +2013,25 @@ extension DatabaseManager {
         }
 
         let trackedPathIdString = trackedPathId.uuidString
-        let normalizedRoot = Self.normalizePath(rootPath)
-        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
-        let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
+        let subtreeArguments = Self.subtreeArguments(root: Self.normalizePath(rootPath))
 
         return try await dbPool.write { db in
             try db.execute(
                 sql: """
-                    INSERT OR IGNORE INTO paths (path)
-                    SELECT path
+                    INSERT OR IGNORE INTO dirs (path)
+                    SELECT dir
                     FROM workingSetRefreshStaging
                     WHERE sessionId = ?
+                    """,
+                arguments: [stagingSessionId]
+            )
+            try db.execute(
+                sql: """
+                    INSERT OR IGNORE INTO paths (dirId, name)
+                    SELECT d.id, s.name
+                    FROM workingSetRefreshStaging s
+                    CROSS JOIN dirs d ON d.path = s.dir
+                    WHERE s.sessionId = ?
                     """,
                 arguments: [stagingSessionId]
             )
@@ -2033,29 +2043,26 @@ extension DatabaseManager {
                 sql: """
                     WITH oldRows AS (
                         SELECT
-                            p.id AS pathId,
-                            p.path AS path,
+                            sub.id AS pathId,
+                            sub.path AS path,
                             wse.sizeBytes AS sizeBytes,
                             pc.category AS category,
                             pc.subcategory AS subcategory
-                        FROM paths p
-                        CROSS JOIN workingSetEntry wse ON wse.pathId = p.id
+                        FROM (\(Self.subtreePathsSQL)) sub
+                        CROSS JOIN workingSetEntry wse
+                            ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = sub.id
                         JOIN pathClassification pc ON pc.pathId = wse.pathId
-                        WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
-                          AND (
-                              p.path = ?
-                              OR (p.path >= ? AND p.path < ?)
-                          )
                     ),
                     newRows AS (
                         SELECT
                             p.id AS pathId,
-                            p.path AS path,
+                            d.path || p.name AS path,
                             MAX(s.sizeBytes) AS sizeBytes,
                             s.category AS category,
                             s.subcategory AS subcategory
                         FROM workingSetRefreshStaging s
-                        JOIN paths p ON p.path = s.path
+                        CROSS JOIN dirs d ON d.path = s.dir
+                        CROSS JOIN paths p ON p.dirId = d.id AND p.name = s.name
                         WHERE s.sessionId = ?
                         GROUP BY p.id
                     )
@@ -2078,13 +2085,7 @@ extension DatabaseManager {
                     LEFT JOIN oldRows o ON o.pathId = n.pathId
                     WHERE o.pathId IS NULL
                     """,
-                arguments: [
-                    trackedPathIdString,
-                    normalizedRoot,
-                    rootPrefix,
-                    rootPrefixUpperBound,
-                    stagingSessionId
-                ]
+                arguments: subtreeArguments + [trackedPathIdString, stagingSessionId]
             )
 
             let changes = changeRows.compactMap { row -> WorkingSetFileChange? in
@@ -2110,7 +2111,8 @@ extension DatabaseManager {
                     INSERT INTO pathClassification (pathId, category, subcategory)
                     SELECT p.id, s.category, s.subcategory
                     FROM workingSetRefreshStaging s
-                    JOIN paths p ON p.path = s.path
+                    CROSS JOIN dirs d ON d.path = s.dir
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = s.name
                     WHERE s.sessionId = ?
                     ON CONFLICT(pathId) DO UPDATE SET
                         category = excluded.category,
@@ -2123,19 +2125,9 @@ extension DatabaseManager {
                 sql: """
                     DELETE FROM workingSetEntry
                     WHERE trackedPathKey = \(Self.workingSetKeySQL)
-                      AND pathId IN (
-                        SELECT p.id
-                        FROM paths p
-                        WHERE p.path = ?
-                           OR (p.path >= ? AND p.path < ?)
-                      )
+                      AND pathId IN (SELECT id FROM (\(Self.subtreePathsSQL)))
                     """,
-                arguments: [
-                    trackedPathIdString,
-                    normalizedRoot,
-                    rootPrefix,
-                    rootPrefixUpperBound
-                ]
+                arguments: [trackedPathIdString] + subtreeArguments
             )
 
             let workingSetKey = try Self.workingSetKey(trackedPathId: trackedPathIdString, db: db)
@@ -2144,7 +2136,8 @@ extension DatabaseManager {
                     INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes)
                     SELECT ?, p.id, MAX(s.sizeBytes)
                     FROM workingSetRefreshStaging s
-                    JOIN paths p ON p.path = s.path
+                    CROSS JOIN dirs d ON d.path = s.dir
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = s.name
                     WHERE s.sessionId = ?
                     GROUP BY p.id
                     ON CONFLICT(trackedPathKey, pathId) DO UPDATE SET
@@ -2730,11 +2723,7 @@ extension DatabaseManager {
 
     private func getOrCreatePathId(path: String, db: Database) throws -> Int64 {
         let normalizedPath = Self.normalizePath(path)
-        try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [normalizedPath])
-        // Column collation is NOCASE: a prior row with different casing still matches.
-        // INSERT OR IGNORE leaves the stored spelling unchanged when that happens.
-        if let row = try Row.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [normalizedPath]),
-           let id: Int64 = row["id"] {
+        if let id = try Self.insertPath(normalizedPath, db: db) {
             try upsertPathClassifications(pathIdByPath: [normalizedPath: id], db: db)
             return id
         }
@@ -2753,31 +2742,39 @@ extension DatabaseManager {
         let normalizedPaths = Array(Set(paths.map { Self.normalizePath($0) }))
         let pathChunkSize = 500
 
-        // Bulk-insert any new paths. COLLATE NOCASE UNIQUE + INSERT OR IGNORE means a
-        // case-only rename leaves the existing row (old spelling) in place.
-        for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
-            let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
-            let chunk = Array(normalizedPaths[startIndex..<endIndex])
-            let values = Array(repeating: "(?)", count: chunk.count).joined(separator: ", ")
-            try db.execute(
-                sql: "INSERT OR IGNORE INTO paths (path) VALUES \(values)",
-                arguments: StatementArguments(chunk)
-            )
-        }
-
         var idsByLowercasedPath: [String: Int64] = [:]
         idsByLowercasedPath.reserveCapacity(normalizedPaths.count)
 
-        // SELECT uses NOCASE collation via the column definition, so IN matches
-        // regardless of stored vs requested casing. Key the Swift map by lowercased
-        // stored path, then remap onto each *requested* normalized spelling so
-        // callers (addEntriesCore) can look up scanResult.path without pathLookupFailed.
         for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
             let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
             let chunk = Array(normalizedPaths[startIndex..<endIndex])
-            let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
-            let sql = "SELECT id, path FROM paths WHERE path IN (\(placeholders))"
-            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(chunk))
+            let pathValues = StatementArguments(Self.pathValueArguments(chunk))
+            let dirs = Array(Set(chunk.map { Self.splitPath($0).dir }))
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO dirs (path) VALUES \(Array(repeating: "(?)", count: dirs.count).joined(separator: ", "))",
+                arguments: StatementArguments(dirs)
+            )
+            try db.execute(
+                sql: """
+                    \(Self.pathValuesSQL(count: chunk.count))
+                    INSERT OR IGNORE INTO paths (dirId, name)
+                    SELECT d.id, input.name
+                    FROM input
+                    CROSS JOIN dirs d ON d.path = input.dir
+                    """,
+                arguments: pathValues
+            )
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    \(Self.pathValuesSQL(count: chunk.count))
+                    SELECT p.id AS id, d.path || p.name AS path
+                    FROM input
+                    CROSS JOIN dirs d ON d.path = input.dir
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = input.name
+                    """,
+                arguments: pathValues
+            )
 
             for row in rows {
                 guard
@@ -2865,16 +2862,15 @@ extension DatabaseManager {
             let query = """
             WITH combined AS (
                 SELECT
-                    COALESCE(pAfter.path, pBefore.path) as path,
+                    pBefore.path as path,
                     beforeEntry.sizeBytes as oldSizeBytes,
                     afterEntry.sizeBytes as newSizeBytes,
                     COALESCE(afterEntry.sizeBytes, 0) - COALESCE(beforeEntry.sizeBytes, 0) as changeBytes
                 FROM snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
-                JOIN paths pBefore ON pBefore.id = beforeEntry.pathId
+                JOIN pathText pBefore ON pBefore.id = beforeEntry.pathId
                 LEFT JOIN snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
                     ON beforeEntry.pathId = afterEntry.pathId
                     AND afterEntry.snapshotId = ?
-                LEFT JOIN paths pAfter ON pAfter.id = afterEntry.pathId
                 WHERE beforeEntry.snapshotId = ?
                 UNION ALL
                 SELECT
@@ -2883,7 +2879,7 @@ extension DatabaseManager {
                     afterEntry.sizeBytes as newSizeBytes,
                     COALESCE(afterEntry.sizeBytes, 0) - COALESCE(beforeEntry.sizeBytes, 0) as changeBytes
                 FROM snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
-                JOIN paths pAfter ON pAfter.id = afterEntry.pathId
+                JOIN pathText pAfter ON pAfter.id = afterEntry.pathId
                 LEFT JOIN snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
                     ON afterEntry.pathId = beforeEntry.pathId
                     AND beforeEntry.snapshotId = ?

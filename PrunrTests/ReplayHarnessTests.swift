@@ -139,8 +139,8 @@ final class ReplayHarnessTests: PrunrTestCase {
                 WHERE EXISTS (SELECT 1 FROM snapshotEntry se WHERE se.pathId = p.id)
                   AND EXISTS (SELECT 1 FROM workingSetEntry w WHERE w.pathId = p.id)
                 """),
-            ("size.paths.sumPathBytes", "SELECT COALESCE(SUM(LENGTH(CAST(path AS BLOB))), 0) FROM paths"),
-            ("size.paths.maxPathBytes", "SELECT COALESCE(MAX(LENGTH(CAST(path AS BLOB))), 0) FROM paths"),
+            ("size.paths.sumPathBytes", "SELECT COALESCE(SUM(LENGTH(CAST(path AS BLOB))), 0) FROM pathText"),
+            ("size.paths.maxPathBytes", "SELECT COALESCE(MAX(LENGTH(CAST(path AS BLOB))), 0) FROM pathText"),
             ("size.snapshotEntry.distinctPathIds", "SELECT COUNT(DISTINCT pathId) FROM snapshotEntry"),
             ("size.snapshotEntry.snapshotsWithEntries", "SELECT COUNT(DISTINCT snapshotId) FROM snapshotEntry"),
             ("size.snapshot.total", "SELECT COUNT(*) FROM snapshot"),
@@ -218,6 +218,9 @@ final class ReplayHarnessTests: PrunrTestCase {
 
     private static func emitWorkingSetPlans(_ queue: DatabaseQueue, trackedPathId: String) {
         let key = DatabaseManager.workingSetKeySQL
+        let subtree = DatabaseManager.subtreePathsSQL
+        let subtreeArguments = DatabaseManager.subtreeArguments(root: "/a")
+        let samplePaths = StatementArguments(DatabaseManager.pathValueArguments(["/a/x", "/b/y"]))
         let plans: [(String, String, StatementArguments)] = [
             ("fileState", """
                 SELECT wse.sizeBytes, pc.category, pc.subcategory
@@ -225,43 +228,63 @@ final class ReplayHarnessTests: PrunrTestCase {
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
                 WHERE wse.trackedPathKey = \(key) AND wse.pathId = ?
                 """, [trackedPathId, 1]),
+            ("pathLookup", DatabaseManager.pathIdSQL, DatabaseManager.pathIdArguments("/a/b")),
             ("subtreeRows", """
-                SELECT p.id, p.path, wse.sizeBytes, pc.category, pc.subcategory
-                FROM paths p
-                CROSS JOIN workingSetEntry wse ON wse.pathId = p.id
+                SELECT s.id, s.path, wse.sizeBytes, pc.category, pc.subcategory
+                FROM (\(subtree)) s
+                CROSS JOIN workingSetEntry wse ON wse.trackedPathKey = \(key) AND wse.pathId = s.id
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
-                WHERE wse.trackedPathKey = \(key)
-                  AND (p.path = ? OR (p.path >= ? AND p.path < ?))
-                """, [trackedPathId, "/a", "/a/", "/a0"]),
+                """, subtreeArguments + [trackedPathId]),
             ("subtreeDelete", """
                 DELETE FROM workingSetEntry
                 WHERE trackedPathKey = \(key)
-                  AND pathId IN (
-                    SELECT p.id FROM paths p
-                    WHERE p.path = ? OR (p.path >= ? AND p.path < ?)
-                  )
-                """, [trackedPathId, "/a", "/a/", "/a0"]),
+                  AND pathId IN (SELECT id FROM (\(subtree)))
+                """, [trackedPathId] + subtreeArguments),
+            ("scanInsertDirs", "INSERT OR IGNORE INTO dirs (path) VALUES (?), (?)", ["/a/", "/b/"]),
+            ("scanInsertPaths", """
+                \(DatabaseManager.pathValuesSQL(count: 2))
+                INSERT OR IGNORE INTO paths (dirId, name)
+                SELECT d.id, input.name
+                FROM input
+                CROSS JOIN dirs d ON d.path = input.dir
+                """, samplePaths),
+            ("scanSelectIds", """
+                \(DatabaseManager.pathValuesSQL(count: 2))
+                SELECT p.id AS id, d.path || p.name AS path
+                FROM input
+                CROSS JOIN dirs d ON d.path = input.dir
+                CROSS JOIN paths p ON p.dirId = d.id AND p.name = input.name
+                """, samplePaths),
+            ("stagingPaths", """
+                SELECT p.id, MAX(s.sizeBytes)
+                FROM workingSetRefreshStaging s
+                CROSS JOIN dirs d ON d.path = s.dir
+                CROSS JOIN paths p ON p.dirId = d.id AND p.name = s.name
+                WHERE s.sessionId = ?
+                GROUP BY p.id
+                """, ["session"]),
             ("indexBuilder", """
                 SELECT wse.pathId, p.path, wse.sizeBytes, pc.category, pc.subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
-                JOIN paths p ON p.id = wse.pathId
+                JOIN pathText p ON p.id = wse.pathId
                 WHERE wse.trackedPathKey = \(key)
                 """, [trackedPathId]),
             ("groupFiles", """
                 SELECT wse.pathId, p.path, wse.sizeBytes
                 FROM pathClassification pc
                 CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-                JOIN paths p ON p.id = wse.pathId
+                JOIN pathText p ON p.id = wse.pathId
                 WHERE wse.trackedPathKey = \(key) AND pc.category = ? AND pc.subcategory = ?
                 ORDER BY wse.sizeBytes DESC, p.path ASC
                 LIMIT ? OFFSET ?
                 """, [trackedPathId, "developer", "nodeModules", 50, 0]),
             ("placeChildren", """
-                SELECT p.path, wse.sizeBytes
-                FROM paths p
+                SELECT d.path || p.name AS path, wse.sizeBytes
+                FROM dirs d
+                CROSS JOIN paths p ON p.dirId = d.id
                 CROSS JOIN workingSetEntry wse ON wse.trackedPathKey = \(key) AND wse.pathId = p.id
-                WHERE p.path >= ? AND p.path < ?
+                WHERE d.path >= ? AND d.path < ?
                 """, [trackedPathId, "/a/", "/a0"]),
             ("snapshotCopy", """
                 SELECT pathId, sizeBytes FROM workingSetEntry WHERE trackedPathKey = \(key)
@@ -276,10 +299,98 @@ final class ReplayHarnessTests: PrunrTestCase {
                 for detail in details {
                     emitRealDBText("plan.\(name)", detail)
                 }
-                let scansWorkingSet = details.contains { $0.hasPrefix("SCAN wse") || $0.hasPrefix("SCAN workingSetEntry") }
+                let scanned = details
+                    .map { $0.split(separator: " ").prefix(2).map(String.init) }
+                    .filter { $0.count == 2 && $0[0] == "SCAN" }
+                    .map { $0[1] }
+                let scansWorkingSet = scanned.contains { $0 == "wse" || $0 == "workingSetEntry" }
+                let scansPathStore = scanned.contains { ["p", "d", "paths", "dirs"].contains($0) }
                 emitRealDB("plan.\(name).scansWorkingSet", scansWorkingSet ? 1 : 0)
+                emitRealDB("plan.\(name).scansPathStore", scansPathStore ? 1 : 0)
             }
         }
+    }
+
+    private struct PathChecksum: Equatable {
+        let count: Int
+        let hash: Int
+    }
+
+    private struct PathStoreCheck {
+        let checksum: PathChecksum?
+        let counts: [String: Int]?
+    }
+
+    private static func pathChecksum(_ queue: DatabaseQueue, source: String) throws -> PathChecksum {
+        try queue.read { db in
+            var hash: UInt64 = 14_695_981_039_346_656_037
+            var count = 0
+            let cursor = try Row.fetchCursor(db, sql: "SELECT id, path FROM \(source) ORDER BY id")
+            while let row = try cursor.next() {
+                let id: Int64 = row[0]
+                let path: String = row[1]
+                var bits = UInt64(bitPattern: id)
+                for _ in 0..<8 {
+                    hash = (hash ^ (bits & 0xff)) &* 1_099_511_628_211
+                    bits >>= 8
+                }
+                for byte in path.utf8 {
+                    hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211
+                }
+                hash = (hash ^ 0x0a) &* 1_099_511_628_211
+                count += 1
+            }
+            return PathChecksum(count: count, hash: Int(Int64(bitPattern: hash)))
+        }
+    }
+
+    private static let pathStoreCountedTables = ["snapshotEntry", "workingSetEntry", "pathClassification", "workingSetTopEntry"]
+
+    private static func pathStoreRowCounts(_ queue: DatabaseQueue) throws -> [String: Int] {
+        try queue.read { db in
+            var counts: [String: Int] = [:]
+            for table in pathStoreCountedTables {
+                guard try db.tableExists(table) else { continue }
+                counts[table] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \"\(table)\"") ?? 0
+            }
+            return counts
+        }
+    }
+
+    private static func emitPathStoreCheck(_ queue: DatabaseQueue, stage: String) -> PathStoreCheck {
+        let source = stage == "before" ? "paths" : "pathText"
+        var checksum: PathChecksum?
+        var counts: [String: Int]?
+        failSoft("paths.checksum.\(stage)") {
+            let started = nowMs()
+            let value = try pathChecksum(queue, source: source)
+            emitPerf("pathsChecksum.\(stage)", nowMs() - started)
+            emitRealDB("paths.checksum.count.\(stage)", value.count)
+            emitRealDB("paths.checksum.hash.\(stage)", value.hash)
+            checksum = value
+        }
+        failSoft("v31.counts.\(stage)") {
+            let value = try pathStoreRowCounts(queue)
+            for table in value.keys.sorted() {
+                emitRealDB("v31.\(table).\(stage)", value[table] ?? -1)
+            }
+            counts = value
+        }
+        if stage == "before" {
+            failSoft("paths.caseVariantDirs") {
+                let variants = try queue.read { db in
+                    try Int.fetchOne(db, sql: """
+                        SELECT COUNT(*) FROM (
+                            SELECT 1 FROM paths
+                            GROUP BY prunr_path_dir(path) COLLATE NOCASE
+                            HAVING COUNT(DISTINCT prunr_path_dir(path)) > 1
+                        )
+                        """) ?? 0
+                }
+                emitRealDB("paths.caseVariantDirs", variants)
+            }
+        }
+        return PathStoreCheck(checksum: checksum, counts: counts)
     }
 
     private static func emitRealDBError(_ name: String, _ detail: String) {
@@ -325,11 +436,22 @@ final class ReplayHarnessTests: PrunrTestCase {
             }
             emitRealDB("size.file.bytes", bytes)
         }
+        failSoft("size.bytes.pathStoreWithIndexes") {
+            let bytes = try queue.read { db in
+                try Int.fetchOne(db, sql: """
+                    SELECT COALESCE(SUM(d.pgsize), 0)
+                    FROM dbstat d
+                    JOIN sqlite_master m ON m.name = d.name
+                    WHERE m.tbl_name IN ('paths', 'dirs')
+                    """) ?? 0
+            }
+            emitRealDB("size.bytes.pathStoreWithIndexes", bytes)
+        }
         failSoft("size.paths.distinctDirs") {
             let row = try queue.read { db in
                 try Row.fetchOne(db, sql: """
-                    SELECT COUNT(*) AS dirs, COALESCE(SUM(LENGTH(CAST(dir AS BLOB))), 0) AS dirBytes
-                    FROM (SELECT DISTINCT rtrim(path, replace(path, '/', '')) AS dir FROM paths)
+                    SELECT COUNT(*) AS dirs, COALESCE(SUM(LENGTH(CAST(path AS BLOB))), 0) AS dirBytes
+                    FROM dirs
                     """)
             }
             emitRealDB("size.paths.distinctDirs", row?["dirs"] ?? 0)
@@ -339,7 +461,7 @@ final class ReplayHarnessTests: PrunrTestCase {
             let row = try queue.read { db in
                 try Row.fetchOne(db, sql: """
                     SELECT COUNT(*) AS files,
-                           COALESCE(SUM(LENGTH(CAST(path AS BLOB)) - LENGTH(CAST(rtrim(path, replace(path, '/', '')) AS BLOB))), 0) AS nameBytes
+                           COALESCE(SUM(LENGTH(CAST(name AS BLOB))), 0) AS nameBytes
                     FROM paths
                     """)
             }
@@ -368,7 +490,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         failSoft("size.subtree") {
             let sample = try queue.read { db in
                 try String.fetchAll(db, sql: """
-                    SELECT p.path FROM workingSetEntry w JOIN paths p ON p.id = w.pathId
+                    SELECT p.path FROM workingSetEntry w JOIN pathText p ON p.id = w.pathId
                     WHERE w.pathId % 997 = 0
                     """)
             }
@@ -379,8 +501,11 @@ final class ReplayHarnessTests: PrunrTestCase {
             let started = nowMs()
             let count = try queue.read { db in
                 try Int.fetchOne(db, sql: """
-                    SELECT COUNT(*) FROM paths p JOIN workingSetEntry w ON w.pathId = p.id
-                    WHERE p.path >= ? AND p.path < ?
+                    SELECT COUNT(*)
+                    FROM dirs d
+                    CROSS JOIN paths p ON p.dirId = d.id
+                    JOIN workingSetEntry w ON w.pathId = p.id
+                    WHERE d.path >= ? AND d.path < ?
                     """, arguments: [folder + "/", folder + "0"]) ?? 0
             }
             emitPerf("subtree", nowMs() - started)
@@ -388,13 +513,13 @@ final class ReplayHarnessTests: PrunrTestCase {
         }
         failSoft("size.lookup") {
             let sample = try queue.read { db in
-                try String.fetchAll(db, sql: "SELECT path FROM paths WHERE id % 4400 = 0 LIMIT 1000")
+                try String.fetchAll(db, sql: "SELECT path FROM pathText WHERE id % 4400 = 0 LIMIT 1000")
             }
             let started = nowMs()
             let hits = try queue.read { db in
                 var hits = 0
                 for path in sample {
-                    if try Int.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [path]) != nil {
+                    if try DatabaseManager.pathId(path, db: db) != nil {
                         hits += 1
                     }
                 }
@@ -512,6 +637,7 @@ final class ReplayHarnessTests: PrunrTestCase {
             emitRealDBError("o40.reclaimAgain", "\(type(of: error))")
         }
         emitRealDB("o43.final.file", fileBytes(copy))
+        emitRealDB("o44.final.file", fileBytes(copy))
     }
 
     private static func isolateTrackedPathIds(_ queue: DatabaseQueue) throws -> [String] {
@@ -547,14 +673,25 @@ final class ReplayHarnessTests: PrunrTestCase {
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             db.add(function: DatabaseManager.unitKeyFunction)
             db.add(function: DatabaseManager.ownerGroupFunction)
+            db.add(function: DatabaseManager.pathDirFunction)
         }
         let queue = try DatabaseQueue(path: path, configuration: configuration)
         let migrator = DatabaseManager.makeMigrator()
         let applied = try queue.read { db in try migrator.appliedIdentifiers(db) }
+        var pathStoreBefore: PathStoreCheck?
         for identifier in migrator.migrations where !applied.contains(identifier) {
+            if identifier == DatabaseManager.pathDirsMigrationIdentifier {
+                pathStoreBefore = emitPathStoreCheck(queue, stage: "before")
+            }
             let started = nowMs()
             try migrator.migrate(queue, upTo: identifier)
             emitPerf("migrate.\(identifier)", nowMs() - started)
+        }
+        if let pathStoreBefore {
+            let after = emitPathStoreCheck(queue, stage: "after")
+            let checksumMatch = pathStoreBefore.checksum != nil && pathStoreBefore.checksum == after.checksum
+            emitRealDB("paths.checksumMatch", checksumMatch ? 1 : 0)
+            emitRealDB("v31.countsMatch", pathStoreBefore.counts != nil && pathStoreBefore.counts == after.counts ? 1 : 0)
         }
         try queue.close()
     }

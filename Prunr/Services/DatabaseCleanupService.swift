@@ -910,7 +910,12 @@ actor DatabaseCleanupService {
                 )
                 """
             )
-            return try Int.fetchOne(db, sql: "SELECT changes()") ?? 0
+            let deletedPaths = db.changesCount
+            try db.execute(sql: """
+                DELETE FROM dirs
+                WHERE NOT EXISTS (SELECT 1 FROM paths WHERE paths.dirId = dirs.id)
+                """)
+            return deletedPaths
         }
     }
 

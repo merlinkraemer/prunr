@@ -524,7 +524,7 @@ extension DatabaseManager {
             INSERT OR REPLACE INTO workingSetTopEntry (trackedPathId, pathId, category, groupKey, sizeBytes)
             VALUES (?, ?, ?, ?, ?)
             """)
-        let pathIdStatement = try db.cachedStatement(sql: "SELECT id FROM paths WHERE path = ?")
+        let pathIdStatement = try db.cachedStatement(sql: pathIdSQL)
 
         for (id, group) in builder.groups {
             var stored = 0
@@ -533,7 +533,7 @@ extension DatabaseManager {
                 if let knownId = file.pathId {
                     pathId = knownId
                 } else {
-                    pathId = try Int64.fetchOne(pathIdStatement, arguments: [file.path])
+                    pathId = try Int64.fetchOne(pathIdStatement, arguments: pathIdArguments(file.path))
                 }
                 guard let pathId else { continue }
                 try insertTop.execute(arguments: [trackedPathId, pathId, id.category.rawValue, id.groupKey, file.sizeBytes])
@@ -565,7 +565,7 @@ extension DatabaseManager {
                        pc.category AS category, pc.subcategory AS subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
-                JOIN paths p ON p.id = wse.pathId
+                JOIN pathText p ON p.id = wse.pathId
                 WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
                 """,
             arguments: [trackedPathId]
@@ -725,7 +725,7 @@ extension DatabaseManager {
                     SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes
                     FROM pathClassification pc
                     CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-                    JOIN paths p ON p.id = wse.pathId
+                    JOIN pathText p ON p.id = wse.pathId
                     WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = ?
                       AND prunr_owner_group(p.path) IN (\(placeholders))
                     ORDER BY wse.sizeBytes DESC, p.path ASC
@@ -741,7 +741,7 @@ extension DatabaseManager {
                     SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes
                     FROM pathClassification pc
                     CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-                    JOIN paths p ON p.id = wse.pathId
+                    JOIN pathText p ON p.id = wse.pathId
                     WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = ? AND pc.subcategory = ?
                     ORDER BY wse.sizeBytes DESC, p.path ASC
                     LIMIT ? OFFSET ?
@@ -853,7 +853,7 @@ extension DatabaseManager {
                     sql: """
                         SELECT t.groupKey AS groupKey, p.path AS path, t.sizeBytes AS sizeBytes
                         FROM workingSetTopEntry t
-                        JOIN paths p ON p.id = t.pathId
+                        JOIN pathText p ON p.id = t.pathId
                         WHERE t.trackedPathId = ? AND t.category = ? \(groupFilter)
                         """,
                     arguments: arguments
@@ -1235,15 +1235,17 @@ extension DatabaseManager {
         trackedPathId: String,
         db: Database
     ) throws -> [PlaceChildKey: DrilldownIndexBuilder.Totals] {
+        let rootPrefix = root.hasSuffix("/") ? root : root + "/"
         let cursor = try Row.fetchCursor(
             db,
             sql: """
-                SELECT p.path AS path, wse.sizeBytes AS sizeBytes
-                FROM paths p
+                SELECT d.path || p.name AS path, wse.sizeBytes AS sizeBytes
+                FROM dirs d
+                CROSS JOIN paths p ON p.dirId = d.id
                 CROSS JOIN workingSetEntry wse ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = p.id
-                WHERE p.path >= ? AND p.path < ?
+                WHERE d.path >= ? AND d.path < ?
                 """,
-            arguments: [trackedPathId, root, pathPrefixUpperBound(root)]
+            arguments: [trackedPathId, rootPrefix, pathPrefixUpperBound(rootPrefix)]
         )
         var children: [PlaceChildKey: DrilldownIndexBuilder.Totals] = [:]
         while let row = try cursor.next() {
@@ -1272,7 +1274,7 @@ extension DatabaseManager {
                         SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes, pc.subcategory AS subcategory
                         FROM pathClassification pc
                         CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-                        JOIN paths p ON p.id = wse.pathId
+                        JOIN pathText p ON p.id = wse.pathId
                         WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = ?
                         """,
                     arguments: [trackedPathId.uuidString, category.rawValue]

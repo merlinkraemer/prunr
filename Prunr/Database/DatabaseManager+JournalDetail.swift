@@ -12,6 +12,7 @@ extension DatabaseManager {
     static let dropPrefixIndexesMigrationIdentifier = "v28_drop_prefix_indexes"
     static let snapshotEntryCountMigrationIdentifier = "v29_snapshot_entry_count"
     static let slimWorkingSetEntryMigrationIdentifier = "v30_slim_working_set_entry"
+    static let pathDirsMigrationIdentifier = "v31_path_dirs"
     static let workingSetKeySQL = "(SELECT key FROM workingSetTrackedPath WHERE trackedPathId = ?)"
 
     static func registerJournalDetailMigration(in migrator: inout DatabaseMigrator) {
@@ -111,6 +112,164 @@ extension DatabaseManager {
             ORDER BY t.key, w.pathId
             """)
         try db.execute(sql: "DROP TABLE workingSetEntry")
+    }
+
+    static func registerPathDirsMigration(in migrator: inout DatabaseMigrator) {
+        migrator = migrator.disablingDeferredForeignKeyChecks()
+        migrator.registerMigration(pathDirsMigrationIdentifier) { db in
+            db.add(function: Self.pathDirFunction)
+            let previousCacheSize = try Int.fetchOne(db, sql: "PRAGMA cache_size") ?? -2000
+            try db.execute(sql: "PRAGMA cache_size = -131072")
+            try db.execute(sql: """
+                CREATE TABLE dirs (
+                    id INTEGER PRIMARY KEY,
+                    path TEXT NOT NULL UNIQUE COLLATE NOCASE
+                )
+                """)
+            try db.execute(sql: """
+                CREATE TABLE paths_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dirId INTEGER NOT NULL REFERENCES dirs(id),
+                    name TEXT NOT NULL COLLATE NOCASE
+                )
+                """)
+            var pathSequence: Int64 = 0
+            if try db.tableExists("paths") {
+                pathSequence = try Int64.fetchOne(
+                    db,
+                    sql: "SELECT seq FROM sqlite_sequence WHERE name = 'paths'"
+                ) ?? 0
+                try Self.copyLegacyPaths(db)
+            }
+            try db.execute(sql: "ALTER TABLE paths_new RENAME TO paths")
+            try db.execute(
+                sql: """
+                    INSERT INTO sqlite_sequence (name, seq)
+                    SELECT 'paths', ? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'paths')
+                    """,
+                arguments: [pathSequence]
+            )
+            try db.execute(
+                sql: "UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'paths'",
+                arguments: [pathSequence]
+            )
+            try db.execute(sql: "CREATE UNIQUE INDEX idx_paths_dirId_name ON paths(dirId, name)")
+            try db.execute(sql: """
+                CREATE VIEW pathText AS
+                SELECT p.id AS id, (d.path || p.name) COLLATE NOCASE AS path
+                FROM paths p
+                JOIN dirs d ON d.id = p.dirId
+                """)
+            try db.execute(sql: "DROP TABLE IF EXISTS workingSetRefreshStaging")
+            try db.execute(sql: """
+                CREATE TABLE workingSetRefreshStaging (
+                    sessionId TEXT NOT NULL,
+                    dir TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    sizeBytes INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    subcategory TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (sessionId, dir, name)
+                )
+                """)
+            try db.execute(sql: "PRAGMA cache_size = \(previousCacheSize)")
+        }
+    }
+
+    private static func copyLegacyPaths(_ db: Database) throws {
+        try db.execute(sql: """
+            INSERT OR IGNORE INTO dirs (path)
+            SELECT prunr_path_dir(path) FROM paths ORDER BY id
+            """)
+        try db.execute(sql: """
+            INSERT INTO paths_new (id, dirId, name)
+            SELECT p.id, d.id, substr(p.path, length(d.path) + 1)
+            FROM paths p
+            CROSS JOIN dirs d ON d.path = prunr_path_dir(p.path)
+            ORDER BY p.id
+            """)
+        try db.execute(sql: "DROP TABLE paths")
+    }
+
+    static let pathDirFunction = DatabaseFunction("prunr_path_dir", argumentCount: 1, pure: true) { values in
+        guard let path = String.fromDatabaseValue(values[0]) else { return nil }
+        return DatabaseManager.splitPath(path).dir
+    }
+
+    static func splitPath(_ path: String) -> (dir: String, name: String) {
+        let scalars = path.unicodeScalars
+        guard let slash = scalars.lastIndex(of: "/") else { return ("", path) }
+        let nameStart = scalars.index(after: slash)
+        return (String(scalars[..<nameStart]), String(scalars[nameStart...]))
+    }
+
+    static let pathIdSQL = """
+        SELECT p.id
+        FROM dirs d
+        CROSS JOIN paths p ON p.dirId = d.id AND p.name = ?
+        WHERE d.path = ?
+        """
+
+    static func pathIdArguments(_ path: String) -> StatementArguments {
+        let parts = splitPath(path)
+        return [parts.name, parts.dir]
+    }
+
+    static func pathId(_ path: String, db: Database) throws -> Int64? {
+        try Int64.fetchOne(db.cachedStatement(sql: pathIdSQL), arguments: pathIdArguments(path))
+    }
+
+    @discardableResult
+    static func insertPath(_ path: String, id: Int64? = nil, db: Database) throws -> Int64? {
+        let parts = splitPath(path)
+        try db.cachedStatement(sql: "INSERT OR IGNORE INTO dirs (path) VALUES (?)")
+            .execute(arguments: [parts.dir])
+        try db.cachedStatement(sql: """
+            INSERT OR IGNORE INTO paths (id, dirId, name)
+            SELECT ?, id, ? FROM dirs WHERE path = ?
+            """)
+            .execute(arguments: [id, parts.name, parts.dir])
+        return try pathId(path, db: db)
+    }
+
+    static func pathValuesSQL(count: Int) -> String {
+        "WITH input(dir, name) AS (VALUES " + Array(repeating: "(?, ?)", count: count).joined(separator: ", ") + ")"
+    }
+
+    static func pathValueArguments(_ paths: [String]) -> [String] {
+        var arguments: [String] = []
+        arguments.reserveCapacity(paths.count * 2)
+        for path in paths {
+            let parts = splitPath(path)
+            arguments.append(parts.dir)
+            arguments.append(parts.name)
+        }
+        return arguments
+    }
+
+    static let subtreePathsSQL = """
+        SELECT p.id AS id, d.path || p.name AS path
+        FROM dirs d
+        CROSS JOIN paths p ON p.dirId = d.id
+        WHERE d.path >= ? AND d.path < ?
+        UNION ALL
+        SELECT p.id, d.path || p.name
+        FROM dirs d
+        CROSS JOIN paths p ON p.dirId = d.id AND p.name = ?
+        WHERE d.path = ?
+        """
+
+    static func subtreeArguments(root normalizedRoot: String) -> StatementArguments {
+        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
+        let parts = splitPath(normalizedRoot)
+        return [rootPrefix, pathPrefixUpperBound(rootPrefix), parts.name, parts.dir]
+    }
+
+    static func keysetLowerDir(rootPrefix: String, afterPath: String?) -> (lowerDir: String, afterDir: String, afterName: String) {
+        guard let afterPath else { return (rootPrefix, "", "") }
+        let parts = splitPath(afterPath)
+        let lowerDir = parts.dir.unicodeScalars.count >= rootPrefix.unicodeScalars.count ? parts.dir : rootPrefix
+        return (lowerDir, parts.dir, parts.name)
     }
 
     static func workingSetKey(trackedPathId: String, db: Database) throws -> Int64 {

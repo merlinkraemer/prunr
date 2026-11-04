@@ -55,7 +55,7 @@ final class PrunrSmokeTests: XCTestCase {
                 sql: """
                     SELECT p.path AS path, wse.sizeBytes AS sizeBytes, wse.pathId AS pathId
                     FROM workingSetEntry wse
-                    JOIN paths p ON p.id = wse.pathId
+                    JOIN pathText p ON p.id = wse.pathId
                     """
             )
 
@@ -1192,7 +1192,7 @@ final class PrunrSmokeTests: XCTestCase {
     private func storedPaths() async throws -> [String] {
         let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
         return try await dbPool.read { db in
-            try String.fetchAll(db, sql: "SELECT path FROM paths ORDER BY path")
+            try String.fetchAll(db, sql: "SELECT path FROM pathText ORDER BY path")
         }
     }
 
@@ -1307,7 +1307,7 @@ final class PrunrSmokeTests: XCTestCase {
             try await dbPool.write { db in
                 for path in [workingSetOnly, unreferenced] {
                     let pathId = try XCTUnwrap(
-                        Int64.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [path])
+                        DatabaseManager.pathId(path, db: db)
                     )
                     try db.execute(
                         sql: "DELETE FROM snapshotEntry WHERE snapshotId = ? AND pathId = ?",
@@ -1463,7 +1463,7 @@ final class PrunrSmokeTests: XCTestCase {
                     sql: """
                         SELECT p.path
                         FROM workingSetEntry wse
-                        JOIN paths p ON p.id = wse.pathId
+                        JOIN pathText p ON p.id = wse.pathId
                         ORDER BY p.path ASC
                         """
                 )

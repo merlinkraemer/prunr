@@ -763,7 +763,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
                 sql: """
                     SELECT p.path
                     FROM workingSetEntry w
-                    JOIN paths p ON p.id = w.pathId
+                    JOIN pathText p ON p.id = w.pathId
                     WHERE w.trackedPathKey = \(DatabaseManager.workingSetKeySQL)
                     ORDER BY p.path
                     """,
@@ -783,10 +783,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
         let trackedPathIdText = trackedPathId.uuidString
         try await dbPool.write { db in
-            try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [path])
-            let pathId = try XCTUnwrap(
-                Int64.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [path])
-            )
+            let pathId = try XCTUnwrap(DatabaseManager.insertPath(path, db: db))
             let workingSetKey = try DatabaseManager.workingSetKey(trackedPathId: trackedPathIdText, db: db)
             try db.execute(
                 sql: "INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes) VALUES (?, ?, 1)",
