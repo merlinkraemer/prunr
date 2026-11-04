@@ -308,3 +308,4 @@
 2026-11-04 00:05 orchestrator O43 Mac green: be8745c, 536 tests 0 failures; v30 6.7 s, wse+indexes 96 MB (was 891), file 2.23 GB, checksum match, subtree 508 ms, drilldown 9.6 ms; unlanded (schema)
 2026-11-04 00:10 orchestrator O44 spawn: path-store slice S4 paths as dir+name (v31) on drain/O44-2026-11-04 from O43 be8745c, unlanded (opus, seat worktree)
 2026-11-04 00:50 orchestrator O44 on branch: 5791274, v31 dirs+paths(dirId,name)+pathText view, FKs off via disablingDeferredForeignKeyChecks (DROP paths would cascade), Swift dir fn; py sim 1M checksums+counts match, all SEARCH; job queued
+2026-11-04 02:25 orchestrator O44 failed: 5791274 1/536 red (DrilldownOnDemand sole-item lookup nil); real DB: paths checksum + counts match, v31 22.3 s, file 1.19 GB (was 3.47), path store 545 MB, lookup 10 ms, subtree 544 ms; checkpoint 4 s + prune 70 ms to explain; worker fixing
