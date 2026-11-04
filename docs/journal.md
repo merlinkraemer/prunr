@@ -329,3 +329,4 @@
 2026-11-04 15:30 orchestrator O50 A/B (same Mac session): shrink stack equal to baseline on feed, place, prune, drilldown rebuild, traversal (all within 3%); only scan.addEntriesWithWorkingSet slower: 10k 146 -> 184 ms (+26%), again 132 -> 148 ms (+12%), about +7-17 s writes on a full 4.4M scan; earlier 1.2-1.6x was Mac load
 2026-11-04 15:35 orchestrator O51 spawn: win back +12-26% scan path-insert cost of the shrink stack (per-batch dir cache etc.) on drain/O51-2026-11-04 from 06dabf4 (opus, seat worktree)
 2026-11-04 17:05 orchestrator O51 on branch: aa52407, fetchPathIds per-chunk dirId map + plain paths insert + index-keyed id select; py sim 160 -> 145 ms (base 140); job queued
+2026-11-04 17:30 orchestrator O51 Mac green aa52407 but no real gain: addEntries.10k 184 -> 183 ms, again 148 -> 143 ms (base 146/132); the Python win did not carry over; dropped, branch kept for reference; scan-write cost of the shrink stays at about +10 s per full scan, accepted
