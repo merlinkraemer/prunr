@@ -324,3 +324,4 @@
 2026-11-04 09:10 orchestrator O49 spawn: O28c option 1 per rec, existing menu bar activity pulse while the DB opens, no new copy; branch unlanded for Merlin (sonnet, seat worktree, base b692cd8)
 2026-11-04 13:10 orchestrator O49 on branch: 06dabf4, isDatabaseOpening joins shouldPulseActivity, setDatabaseOpening re-evaluates the pulse, 2 tests; status item built in MenuBarManager.init (O48) so pulse starts at once; job queued
 2026-11-04 13:30 orchestrator O49 Mac green: 06dabf4, 543 tests 0 failures; unlanded (UI), on top of O47
+2026-11-04 13:40 orchestrator hands-on plan: test branch now drain/O49-2026-11-04 (hands-on-2 + shrink + pulse), added step 0 (upgrade pulse) and 11 (DB size), backup note for v32
