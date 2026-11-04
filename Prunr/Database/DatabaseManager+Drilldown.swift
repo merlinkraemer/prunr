@@ -1235,17 +1235,14 @@ extension DatabaseManager {
         trackedPathId: String,
         db: Database
     ) throws -> [PlaceChildKey: DrilldownIndexBuilder.Totals] {
-        let rootPrefix = root.hasSuffix("/") ? root : root + "/"
         let cursor = try Row.fetchCursor(
             db,
             sql: """
-                SELECT d.path || p.name AS path, wse.sizeBytes AS sizeBytes
-                FROM dirs d
-                CROSS JOIN paths p ON p.dirId = d.id
-                CROSS JOIN workingSetEntry wse ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = p.id
-                WHERE d.path >= ? AND d.path < ?
+                SELECT s.path AS path, wse.sizeBytes AS sizeBytes
+                FROM (\(subtreePathsSQL)) s
+                CROSS JOIN workingSetEntry wse ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = s.id
                 """,
-            arguments: [trackedPathId, rootPrefix, pathPrefixUpperBound(rootPrefix)]
+            arguments: subtreeArguments(root: normalizePath(root)) + [trackedPathId]
         )
         var children: [PlaceChildKey: DrilldownIndexBuilder.Totals] = [:]
         while let row = try cursor.next() {

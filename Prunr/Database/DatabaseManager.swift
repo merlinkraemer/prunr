@@ -2651,7 +2651,7 @@ extension DatabaseManager {
 
     /// Normalizes a file path for consistent storage
     /// - Removes trailing slash (unless it's just "/")
-    /// - Case is preserved for display. `paths.path` uses UNIQUE COLLATE NOCASE, so
+    /// - Case is preserved for display. `dirs.path` and `paths.name` use COLLATE NOCASE, so
     ///   SQLite matches case-insensitively; Swift dictionary lookups must key by the
     ///   requested spelling (see `fetchPathIds`) rather than assuming stored case matches.
     static func normalizePath(_ path: String) -> String {

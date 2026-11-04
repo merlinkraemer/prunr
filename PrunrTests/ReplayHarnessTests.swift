@@ -693,7 +693,11 @@ final class ReplayHarnessTests: PrunrTestCase {
             emitRealDB("paths.checksumMatch", checksumMatch ? 1 : 0)
             emitRealDB("v31.countsMatch", pathStoreBefore.counts != nil && pathStoreBefore.counts == after.counts ? 1 : 0)
         }
+        emitRealDB("o44.wal.beforeMigrateClose", fileBytes(path + "-wal"))
+        let closeStarted = nowMs()
         try queue.close()
+        emitPerf("migrateClose", nowMs() - closeStarted)
+        emitRealDB("o44.wal.afterMigrateClose", fileBytes(path + "-wal"))
     }
 
     func testBusiestFolderPicksTheMostCommonPrefixAtDepth() {
@@ -753,6 +757,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         started = Self.nowMs()
         try DatabaseManager.shared.initialize(at: copy)
         Self.emitPerf("migrate", Self.nowMs() - started)
+        Self.emitRealDB("o44.wal.afterInitialize", Self.fileBytes(copy + "-wal"))
 
         let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
         let versionAfter = try await dbPool.read { db in try DatabaseManager.makeMigrator().appliedIdentifiers(db).count }
@@ -765,6 +770,7 @@ final class ReplayHarnessTests: PrunrTestCase {
         Self.emitPerf("prune", Self.nowMs() - started)
 
         started = Self.nowMs()
+        Self.emitRealDB("o44.wal.beforeCheckpoint", Self.fileBytes(copy + "-wal"))
         try await DatabaseManager.shared.checkpointWalTruncate()
         Self.emitPerf("checkpoint", Self.nowMs() - started)
 
