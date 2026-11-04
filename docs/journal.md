@@ -307,3 +307,4 @@
 2026-11-03 23:25 orchestrator O43 failed: a7253c9 2/536 red (real-snapshot fixture DB has no workingSetEntry, v30 SELECT fails); real DB numbers good: wse 891 -> 96 MB, v30 6.4 s, file 2.23 GB, checksums match, no SCAN; worker fixing
 2026-11-04 00:05 orchestrator O43 Mac green: be8745c, 536 tests 0 failures; v30 6.7 s, wse+indexes 96 MB (was 891), file 2.23 GB, checksum match, subtree 508 ms, drilldown 9.6 ms; unlanded (schema)
 2026-11-04 00:10 orchestrator O44 spawn: path-store slice S4 paths as dir+name (v31) on drain/O44-2026-11-04 from O43 be8745c, unlanded (opus, seat worktree)
+2026-11-04 00:50 orchestrator O44 on branch: 5791274, v31 dirs+paths(dirId,name)+pathText view, FKs off via disablingDeferredForeignKeyChecks (DROP paths would cascade), Swift dir fn; py sim 1M checksums+counts match, all SEARCH; job queued
