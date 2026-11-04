@@ -321,3 +321,4 @@
 2026-11-04 08:30 orchestrator O47 Mac green: b692cd8, 541 tests 0 failures; all checksums match, live 1.04 GB, v30 7.4 s + v31 23.2 s + v32 4.1 s + v28 1.7 s, checkpoints truncate in ms; suite back to 370 s; item 11 rewritten, reviewable branch drain/O47-2026-11-04
 2026-11-04 08:35 orchestrator O48 spawn: O28c, check whether the ~37 s one-time upgrade blocks main thread/launch, move off main if so, no new UI (opus, seat worktree, base O47 b692cd8)
 2026-11-04 09:00 orchestrator O48 result: no change needed, initialize runs in Task.detached since 51cad7e (PrunrMenuBar.swift:38-67), entry points gated by isDatabaseOpening; UX gap: ~37 s of silently ignored clicks on first post-upgrade launch, rec activity pulse (UI = Merlin), recorded under O28c
+2026-11-04 09:10 orchestrator O49 spawn: O28c option 1 per rec, existing menu bar activity pulse while the DB opens, no new copy; branch unlanded for Merlin (sonnet, seat worktree, base b692cd8)
