@@ -315,3 +315,5 @@
 2026-11-04 06:00 orchestrator O45 on branch: 910d68b, v32 classificationName lookup + int codes, .immediate (nothing references pathClassification), legacy names kept; py sim totals+groups match; job queued
 2026-11-04 06:40 orchestrator O45 Mac green: 910d68b, 537 tests 0 failures; classification 133 MB (was 322), totals/drilldown/rows match, v32 4.2 s, live 1.04 GB (from 3.47); test-only drilldown check costs 2x125 s of suite time (trim before landing)
 2026-11-04 06:45 orchestrator O46 spawn: read-only adversarial review of the full path-store stack O42-O45 (910d68b), focus v30-v32 (opus, seat, no worktree)
+2026-11-04 07:20 orchestrator O46 review: verdict safe after fixes; 0 blockers, 2 medium (#1 fetchWorkingSetSizes keyed by stored NOCASE spelling, #2 no disk headroom check before v30-v32), 3 low (FK default flip guard, root / double row, per-row classification subqueries) + trim 250 s test; real DB caseVariantDirs was 0 (O44)
+2026-11-04 07:20 orchestrator O47 spawn: fix O46 findings 1-5 + trim test, on drain/O47-2026-11-04 from 910d68b, no UI/copy (opus, seat worktree)
