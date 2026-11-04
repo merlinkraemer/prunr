@@ -325,3 +325,4 @@
 2026-11-04 13:10 orchestrator O49 on branch: 06dabf4, isDatabaseOpening joins shouldPulseActivity, setDatabaseOpening re-evaluates the pulse, 2 tests; status item built in MenuBarManager.init (O48) so pulse starts at once; job queued
 2026-11-04 13:30 orchestrator O49 Mac green: 06dabf4, 543 tests 0 failures; unlanded (UI), on top of O47
 2026-11-04 13:40 orchestrator hands-on plan: test branch now drain/O49-2026-11-04 (hands-on-2 + shrink + pulse), added step 0 (upgrade pulse) and 11 (DB size), backup note for v32
+2026-11-04 13:50 orchestrator O50 spawn: A/B perf, baseline d4b06ab vs shrink stack 06dabf4 back to back on the Mac; synthetic scan/feed looked 1.2-1.6x slower on a slow run (suite 517 s), check if real
