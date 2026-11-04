@@ -326,3 +326,4 @@
 2026-11-04 13:30 orchestrator O49 Mac green: 06dabf4, 543 tests 0 failures; unlanded (UI), on top of O47
 2026-11-04 13:40 orchestrator hands-on plan: test branch now drain/O49-2026-11-04 (hands-on-2 + shrink + pulse), added step 0 (upgrade pulse) and 11 (DB size), backup note for v32
 2026-11-04 13:50 orchestrator O50 spawn: A/B perf, baseline d4b06ab vs shrink stack 06dabf4 back to back on the Mac; synthetic scan/feed looked 1.2-1.6x slower on a slow run (suite 517 s), check if real
+2026-11-04 15:30 orchestrator O50 A/B (same Mac session): shrink stack equal to baseline on feed, place, prune, drilldown rebuild, traversal (all within 3%); only scan.addEntriesWithWorkingSet slower: 10k 146 -> 184 ms (+26%), again 132 -> 148 ms (+12%), about +7-17 s writes on a full 4.4M scan; earlier 1.2-1.6x was Mac load
