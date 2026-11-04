@@ -323,3 +323,4 @@
 2026-11-04 09:00 orchestrator O48 result: no change needed, initialize runs in Task.detached since 51cad7e (PrunrMenuBar.swift:38-67), entry points gated by isDatabaseOpening; UX gap: ~37 s of silently ignored clicks on first post-upgrade launch, rec activity pulse (UI = Merlin), recorded under O28c
 2026-11-04 09:10 orchestrator O49 spawn: O28c option 1 per rec, existing menu bar activity pulse while the DB opens, no new copy; branch unlanded for Merlin (sonnet, seat worktree, base b692cd8)
 2026-11-04 13:10 orchestrator O49 on branch: 06dabf4, isDatabaseOpening joins shouldPulseActivity, setDatabaseOpening re-evaluates the pulse, 2 tests; status item built in MenuBarManager.init (O48) so pulse starts at once; job queued
+2026-11-04 13:30 orchestrator O49 Mac green: 06dabf4, 543 tests 0 failures; unlanded (UI), on top of O47
