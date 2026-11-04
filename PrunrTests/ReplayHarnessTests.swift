@@ -393,6 +393,43 @@ final class ReplayHarnessTests: PrunrTestCase {
         return PathStoreCheck(checksum: checksum, counts: counts)
     }
 
+    private static func emitCheckpointDiagnostics(_ dbPool: DatabasePool, path: String) async {
+        do {
+            let pragmas = try await dbPool.read { db in
+                try ["synchronous", "fullfsync", "checkpoint_fullfsync", "busy_timeout", "wal_autocheckpoint"].map {
+                    ($0, try Int.fetchOne(db, sql: "PRAGMA \($0)") ?? -1)
+                }
+            }
+            for (name, value) in pragmas {
+                emitRealDB("o44.pragma.\(name)", value)
+            }
+        } catch {
+            emitRealDBError("o44.pragma", "\(type(of: error))")
+        }
+        var started = nowMs()
+        let fd = Darwin.open(path, O_RDWR)
+        let syncResult = fd >= 0 ? fcntl(fd, F_FULLFSYNC) : -2
+        if fd >= 0 { Darwin.close(fd) }
+        emitPerf("o44.fullFsyncProbe", nowMs() - started)
+        emitRealDB("o44.fullFsyncProbe.result", Int(syncResult))
+        do {
+            started = nowMs()
+            let passive = try await dbPool.writeWithoutTransaction { db -> [Int] in
+                let row = try Row.fetchOne(db, sql: "PRAGMA wal_checkpoint(PASSIVE)")
+                let busy: Int = row?[0] ?? -1
+                let log: Int = row?[1] ?? -1
+                let checkpointed: Int = row?[2] ?? -1
+                return [busy, log, checkpointed]
+            }
+            emitPerf("o44.passiveCheckpoint", nowMs() - started)
+            emitRealDB("o44.passiveCheckpoint.busy", passive[0])
+            emitRealDB("o44.passiveCheckpoint.log", passive[1])
+            emitRealDB("o44.passiveCheckpoint.checkpointed", passive[2])
+        } catch {
+            emitRealDBError("o44.passiveCheckpoint", "\(type(of: error))")
+        }
+    }
+
     private static func emitRealDBError(_ name: String, _ detail: String) {
         let line = "REALDB \(name).error \(detail)"
         print(line)
@@ -766,13 +803,28 @@ final class ReplayHarnessTests: PrunrTestCase {
         XCTAssertEqual(versionAfter, total)
 
         started = Self.nowMs()
+        try await dbPool.writeWithoutTransaction { _ in }
+        Self.emitPerf("o44.writerWait", Self.nowMs() - started)
+
+        started = Self.nowMs()
         await GrowthJournalService.shared.prune(retentionDays: GrowthJournalService.historyWindowDays)
         Self.emitPerf("prune", Self.nowMs() - started)
 
         started = Self.nowMs()
+        await GrowthJournalService.shared.prune(retentionDays: GrowthJournalService.historyWindowDays)
+        Self.emitPerf("o44.pruneAgain", Self.nowMs() - started)
+
         Self.emitRealDB("o44.wal.beforeCheckpoint", Self.fileBytes(copy + "-wal"))
-        try await DatabaseManager.shared.checkpointWalTruncate()
+        await Self.emitCheckpointDiagnostics(dbPool, path: copy)
+
+        started = Self.nowMs()
+        let checkpointDone = try await DatabaseManager.shared.checkpointWalTruncate()
         Self.emitPerf("checkpoint", Self.nowMs() - started)
+        Self.emitRealDB("o44.checkpoint.done", checkpointDone ? 1 : 0)
+
+        started = Self.nowMs()
+        _ = try await DatabaseManager.shared.checkpointWalTruncate()
+        Self.emitPerf("o44.checkpointAgain", Self.nowMs() - started)
 
         await Self.runStorageSlices(copy: copy)
 
