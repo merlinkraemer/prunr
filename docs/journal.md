@@ -319,3 +319,4 @@
 2026-11-04 07:20 orchestrator O47 spawn: fix O46 findings 1-5 + trim test, on drain/O47-2026-11-04 from 910d68b, no UI/copy (opus, seat worktree)
 2026-11-04 08:30 orchestrator O47 on branch: b692cd8, all 5 O46 findings fixed + test trimmed (deep check behind PRUNR_REALDB_DEEP); low disk shows existing 'could not start' alert with new technical text (copy = Merlin, alert's 'delete folder' advice wrong for low disk); job queued
 2026-11-04 08:30 orchestrator O47 Mac green: b692cd8, 541 tests 0 failures; all checksums match, live 1.04 GB, v30 7.4 s + v31 23.2 s + v32 4.1 s + v28 1.7 s, checkpoints truncate in ms; suite back to 370 s; item 11 rewritten, reviewable branch drain/O47-2026-11-04
+2026-11-04 08:35 orchestrator O48 spawn: O28c, check whether the ~37 s one-time upgrade blocks main thread/launch, move off main if so, no new UI (opus, seat worktree, base O47 b692cd8)
