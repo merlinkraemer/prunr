@@ -558,12 +558,13 @@ extension DatabaseManager {
 
     static func drilldownIndexBuilder(fromWorkingSetOf trackedPathId: String, db: Database) throws -> DrilldownIndexBuilder {
         var builder = DrilldownIndexBuilder()
+        let cache = classificationNameCache
+        var names = try cache.names(db)
         let cursor = try Row.fetchCursor(
             db,
             sql: """
                 SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes,
-                       \(Self.classificationNameSQL("pc.category")) AS category,
-                       \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
+                       pc.category AS category, pc.subcategory AS subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
                 JOIN pathText p ON p.id = wse.pathId
@@ -572,9 +573,9 @@ extension DatabaseManager {
             arguments: [trackedPathId]
         )
         while let row = try cursor.next() {
-            guard let rawCategory: String = row["category"],
+            guard let rawCategory = try cache.name(code: row["category"], names: &names, db: db),
                   let category = GrowthCategory(rawValue: rawCategory) else { continue }
-            let rawSubcategory: String = row["subcategory"] ?? ""
+            let rawSubcategory = try cache.name(code: row["subcategory"], names: &names, db: db) ?? ""
             builder.add(
                 path: row["path"] ?? "",
                 pathId: row["pathId"],
@@ -1266,13 +1267,15 @@ extension DatabaseManager {
         guard !trackedPathIds.isEmpty else { return DrilldownCategoryContents(rows: [], files: []) }
 
         return try await dbPool.read { db in
+            let cache = Self.classificationNameCache
+            var names = try cache.names(db)
             var groups: [String: DrilldownIndexBuilder.GroupAccumulator] = [:]
             for trackedPathId in trackedPathIds {
                 let cursor = try Row.fetchCursor(
                     db,
                     sql: """
                         SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes,
-                               \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
+                               pc.subcategory AS subcategory
                         FROM pathClassification pc
                         CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                         JOIN pathText p ON p.id = wse.pathId
@@ -1282,7 +1285,7 @@ extension DatabaseManager {
                 )
                 while let row = try cursor.next() {
                     let path: String = row["path"] ?? ""
-                    let rawSubcategory: String = row["subcategory"] ?? ""
+                    let rawSubcategory = try cache.name(code: row["subcategory"], names: &names, db: db) ?? ""
                     let groupKey = DrilldownGroupKey.make(
                         category: category,
                         subcategory: GrowthSubcategory(rawValue: rawSubcategory),

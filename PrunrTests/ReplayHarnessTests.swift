@@ -220,20 +220,19 @@ final class ReplayHarnessTests: PrunrTestCase {
         let key = DatabaseManager.workingSetKeySQL
         let code = DatabaseManager.classificationCodeSQL
         let category = DatabaseManager.classificationNameSQL("pc.category")
-        let subcategory = DatabaseManager.classificationNameSQL("pc.subcategory")
         let subtree = DatabaseManager.subtreePathsSQL
         let subtreeArguments = DatabaseManager.subtreeArguments(root: "/a")
         let samplePaths = StatementArguments(DatabaseManager.pathValueArguments(["/a/x", "/b/y"]))
         let plans: [(String, String, StatementArguments)] = [
             ("fileState", """
-                SELECT wse.sizeBytes, \(category), \(subcategory)
+                SELECT wse.sizeBytes, pc.category, pc.subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
                 WHERE wse.trackedPathKey = \(key) AND wse.pathId = ?
                 """, [trackedPathId, 1]),
             ("pathLookup", DatabaseManager.pathIdSQL, DatabaseManager.pathIdArguments("/a/b")),
             ("subtreeRows", """
-                SELECT s.id, s.path, wse.sizeBytes, \(category), \(subcategory)
+                SELECT s.id, s.path, wse.sizeBytes, pc.category, pc.subcategory
                 FROM (\(subtree)) s
                 CROSS JOIN workingSetEntry wse ON wse.trackedPathKey = \(key) AND wse.pathId = s.id
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
@@ -253,7 +252,7 @@ final class ReplayHarnessTests: PrunrTestCase {
                 """, samplePaths),
             ("scanSelectIds", """
                 \(DatabaseManager.pathValuesSQL(count: 2))
-                SELECT p.id AS id, d.path || p.name AS path
+                SELECT p.id AS id, input.dir || input.name AS path
                 FROM input
                 CROSS JOIN dirs d ON d.path = input.dir
                 CROSS JOIN paths p ON p.dirId = d.id AND p.name = input.name
@@ -267,7 +266,7 @@ final class ReplayHarnessTests: PrunrTestCase {
                 GROUP BY p.id
                 """, ["session"]),
             ("indexBuilder", """
-                SELECT wse.pathId, p.path, wse.sizeBytes, \(category), \(subcategory)
+                SELECT wse.pathId, p.path, wse.sizeBytes, pc.category, pc.subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
                 JOIN pathText p ON p.id = wse.pathId
@@ -283,7 +282,7 @@ final class ReplayHarnessTests: PrunrTestCase {
                 LIMIT ? OFFSET ?
                 """, [trackedPathId, "developer", "nodeModules", 50, 0]),
             ("categoryFiles", """
-                SELECT wse.pathId, p.path, wse.sizeBytes, \(subcategory)
+                SELECT wse.pathId, p.path, wse.sizeBytes, pc.subcategory
                 FROM pathClassification pc
                 CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
                 JOIN pathText p ON p.id = wse.pathId
@@ -421,10 +420,19 @@ final class ReplayHarnessTests: PrunrTestCase {
 
     private struct ClassificationCheck: Equatable {
         let rows: Int
+        let rowsChecksum: Int
         let storedTotals: Int
+        let deep: DeepClassificationCheck?
+    }
+
+    private struct DeepClassificationCheck: Equatable {
         let recomputedTotals: Int
         let drilldownGroups: Int
         let drilldownChecksum: Int
+    }
+
+    private static var deepRealDBChecks: Bool {
+        ProcessInfo.processInfo.environment["PRUNR_REALDB_DEEP"] == "1"
     }
 
     private static func fnv(_ hash: inout UInt64, _ text: String) {
@@ -475,57 +483,92 @@ final class ReplayHarnessTests: PrunrTestCase {
         return builder
     }
 
+    private static func classificationRowsChecksum(_ db: Database, coded: Bool) throws -> (rows: Int, checksum: Int) {
+        let sql = coded
+            ? """
+                SELECT pc.pathId, c.name, s.name
+                FROM pathClassification pc
+                JOIN classificationName c ON c.code = pc.category
+                JOIN classificationName s ON s.code = pc.subcategory
+                ORDER BY pc.pathId
+                """
+            : """
+                SELECT pc.pathId, pc.category, pc.subcategory
+                FROM pathClassification pc
+                WHERE EXISTS (SELECT 1 FROM paths p WHERE p.id = pc.pathId)
+                ORDER BY pc.pathId
+                """
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        var rows = 0
+        let cursor = try Row.fetchCursor(db, sql: sql)
+        while let row = try cursor.next() {
+            let pathId: Int64 = row[0]
+            let category: String = row[1] ?? ""
+            let subcategory: String = row[2] ?? ""
+            fnv(&hash, "\(pathId)|\(category)|\(subcategory)")
+            rows += 1
+        }
+        return (rows, Int(Int64(bitPattern: hash)))
+    }
+
     private static func classificationCheck(_ queue: DatabaseQueue, coded: Bool) throws -> ClassificationCheck {
         try queue.read { db in
-            let rows = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM pathClassification") ?? 0
+            let checksum = try classificationRowsChecksum(db, coded: coded)
             let storedTotals = try rowsChecksum(db, sql: """
                 SELECT trackedPathId, category, totalBytes FROM workingSetCategoryTotal ORDER BY trackedPathId, category
                 """)
-            let categoryColumn = coded ? DatabaseManager.classificationNameSQL("pc.category") : "pc.category"
-            let recomputedTotals = try rowsChecksum(db, sql: """
-                SELECT t.trackedPathId AS trackedPathId, \(categoryColumn) AS category, SUM(w.sizeBytes) AS totalBytes
-                FROM workingSetEntry w
-                JOIN workingSetTrackedPath t ON t.key = w.trackedPathKey
-                JOIN pathClassification pc ON pc.pathId = w.pathId
-                GROUP BY t.trackedPathId, pc.category
-                ORDER BY trackedPathId, category
-                """)
-            var hash: UInt64 = 14_695_981_039_346_656_037
-            var groupCount = 0
-            let trackedPathIds = try String.fetchAll(db, sql: "SELECT trackedPathId FROM workingSetTrackedPath ORDER BY trackedPathId")
-            for trackedPathId in trackedPathIds {
-                let builder: DrilldownIndexBuilder
-                if coded {
-                    builder = try DatabaseManager.drilldownIndexBuilder(fromWorkingSetOf: trackedPathId, db: db)
-                } else {
-                    builder = try legacyDrilldownBuilder(trackedPathId: trackedPathId, db: db)
-                }
-                let ids = builder.groups.keys.sorted {
-                    ($0.category.rawValue, $0.groupKey) < ($1.category.rawValue, $1.groupKey)
-                }
-                for id in ids {
-                    let group = builder.groups[id]
-                    let topBytes = builder.topFiles(of: id).reduce(Int64(0)) { $0 + $1.sizeBytes }
-                    let line = [
-                        trackedPathId,
-                        id.category.rawValue,
-                        id.groupKey,
-                        String(group?.totalBytes ?? -1),
-                        String(group?.fileCount ?? -1),
-                        String(topBytes)
-                    ].joined(separator: "|")
-                    fnv(&hash, line)
-                }
-                groupCount += ids.count
-            }
             return ClassificationCheck(
-                rows: rows,
+                rows: checksum.rows,
+                rowsChecksum: checksum.checksum,
                 storedTotals: storedTotals,
-                recomputedTotals: recomputedTotals,
-                drilldownGroups: groupCount,
-                drilldownChecksum: Int(Int64(bitPattern: hash))
+                deep: deepRealDBChecks ? try deepClassificationCheck(db, coded: coded) : nil
             )
         }
+    }
+
+    private static func deepClassificationCheck(_ db: Database, coded: Bool) throws -> DeepClassificationCheck {
+        let categoryColumn = coded ? DatabaseManager.classificationNameSQL("pc.category") : "pc.category"
+        let recomputedTotals = try rowsChecksum(db, sql: """
+            SELECT t.trackedPathId AS trackedPathId, \(categoryColumn) AS category, SUM(w.sizeBytes) AS totalBytes
+            FROM workingSetEntry w
+            JOIN workingSetTrackedPath t ON t.key = w.trackedPathKey
+            JOIN pathClassification pc ON pc.pathId = w.pathId
+            GROUP BY t.trackedPathId, pc.category
+            ORDER BY trackedPathId, category
+            """)
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        var groupCount = 0
+        let trackedPathIds = try String.fetchAll(db, sql: "SELECT trackedPathId FROM workingSetTrackedPath ORDER BY trackedPathId")
+        for trackedPathId in trackedPathIds {
+            let builder: DrilldownIndexBuilder
+            if coded {
+                builder = try DatabaseManager.drilldownIndexBuilder(fromWorkingSetOf: trackedPathId, db: db)
+            } else {
+                builder = try legacyDrilldownBuilder(trackedPathId: trackedPathId, db: db)
+            }
+            let ids = builder.groups.keys.sorted {
+                ($0.category.rawValue, $0.groupKey) < ($1.category.rawValue, $1.groupKey)
+            }
+            for id in ids {
+                let group = builder.groups[id]
+                let topBytes = builder.topFiles(of: id).reduce(Int64(0)) { $0 + $1.sizeBytes }
+                let line = [
+                    trackedPathId,
+                    id.category.rawValue,
+                    id.groupKey,
+                    String(group?.totalBytes ?? -1),
+                    String(group?.fileCount ?? -1),
+                    String(topBytes)
+                ].joined(separator: "|")
+                fnv(&hash, line)
+            }
+            groupCount += ids.count
+        }
+        return DeepClassificationCheck(
+            recomputedTotals: recomputedTotals,
+            drilldownGroups: groupCount,
+            drilldownChecksum: Int(Int64(bitPattern: hash))
+        )
     }
 
     private static func emitClassificationCheck(_ queue: DatabaseQueue, stage: String, coded: Bool) -> ClassificationCheck? {
@@ -542,10 +585,13 @@ final class ReplayHarnessTests: PrunrTestCase {
             let value = try classificationCheck(queue, coded: coded)
             emitPerf("o45.classificationCheck.\(stage)", nowMs() - started)
             emitRealDB("classification.rows.\(stage)", value.rows)
+            emitRealDB("classification.rowsChecksum.\(stage)", value.rowsChecksum)
             emitRealDB("classification.storedTotals.\(stage)", value.storedTotals)
-            emitRealDB("classification.totalsChecksum.\(stage)", value.recomputedTotals)
-            emitRealDB("classification.drilldownGroups.\(stage)", value.drilldownGroups)
-            emitRealDB("classification.drilldownChecksum.\(stage)", value.drilldownChecksum)
+            if let deep = value.deep {
+                emitRealDB("classification.totalsChecksum.\(stage)", deep.recomputedTotals)
+                emitRealDB("classification.drilldownGroups.\(stage)", deep.drilldownGroups)
+                emitRealDB("classification.drilldownChecksum.\(stage)", deep.drilldownChecksum)
+            }
             check = value
         }
         return check
@@ -911,18 +957,30 @@ final class ReplayHarnessTests: PrunrTestCase {
             let started = nowMs()
             try migrator.migrate(queue, upTo: identifier)
             emitPerf("migrate.\(identifier)", nowMs() - started)
+            if DatabaseManager.heavyMigrationIdentifiers.contains(identifier) {
+                emitRealDB("o47.wal.beforeCheckpoint.\(identifier)", fileBytes(path + "-wal"))
+                let checkpointStarted = nowMs()
+                let truncated = try DatabaseManager.checkpointAfterMigration(queue)
+                emitPerf("migrate.checkpoint.\(identifier)", nowMs() - checkpointStarted)
+                emitRealDB("o47.checkpoint.truncated.\(identifier)", truncated ? 1 : 0)
+            }
         }
         if classificationMigrated {
             let after = emitClassificationCheck(queue, stage: "after", coded: true)
-            let totalsMatch = classificationBefore != nil
+            let found = classificationBefore != nil && after != nil
+            let deep = deepRealDBChecks
+            emitRealDB("classification.deep", deep ? 1 : 0)
+            let checksumMatch = found && classificationBefore?.rowsChecksum == after?.rowsChecksum
+            emitRealDB("classification.checksumMatch", checksumMatch ? 1 : 0)
+            let totalsMatch = found
                 && classificationBefore?.storedTotals == after?.storedTotals
-                && classificationBefore?.recomputedTotals == after?.recomputedTotals
+                && (deep ? classificationBefore?.deep?.recomputedTotals == after?.deep?.recomputedTotals : checksumMatch)
             emitRealDB("classification.totalsMatch", totalsMatch ? 1 : 0)
-            let rowsMatch = classificationBefore != nil && classificationBefore?.rows == after?.rows
+            let rowsMatch = found && classificationBefore?.rows == after?.rows
             emitRealDB("classification.rowsMatch", rowsMatch ? 1 : 0)
-            let drilldownMatch = classificationBefore != nil
-                && classificationBefore?.drilldownGroups == after?.drilldownGroups
-                && classificationBefore?.drilldownChecksum == after?.drilldownChecksum
+            let drilldownMatch = found && (deep
+                ? classificationBefore?.deep != nil && classificationBefore?.deep == after?.deep
+                : checksumMatch)
             emitRealDB("classification.drilldownMatch", drilldownMatch ? 1 : 0)
         }
         if let pathStoreBefore {

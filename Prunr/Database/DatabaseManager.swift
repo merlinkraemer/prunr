@@ -117,9 +117,45 @@ final class DatabaseManager {
             throw DatabaseError.notInitialized
         }
 
-        try Self.makeMigrator().migrate(dbPool)
+        let migrator = Self.makeMigrator()
+        let applied = try dbPool.read { db in try migrator.appliedIdentifiers(db) }
+        let pendingHeavy = Self.heavyMigrationIdentifiers.filter { !applied.contains($0) }
+        if !applied.isEmpty, !pendingHeavy.isEmpty, let databasePath {
+            try Self.ensureMigrationHeadroom(databasePath: databasePath)
+        }
+        for identifier in pendingHeavy {
+            try migrator.migrate(dbPool, upTo: identifier)
+            try Self.checkpointAfterMigration(dbPool)
+        }
+        try migrator.migrate(dbPool)
         try dbPool.write { db in
             try Self.insertClassificationNames(db)
+        }
+    }
+
+    static let migrationHeadroomCapBytes: Int64 = 8 * 1024 * 1024 * 1024
+
+    static func migrationHeadroomRequirement(databaseBytes: Int64) -> Int64 {
+        min(databaseBytes + databaseBytes / 2, migrationHeadroomCapBytes)
+    }
+
+    static func ensureMigrationHeadroom(databasePath: String) throws {
+        let databaseURL = URL(fileURLWithPath: databasePath)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: databasePath)
+        let databaseBytes = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        let required = migrationHeadroomRequirement(databaseBytes: databaseBytes)
+        let values = try? databaseURL.deletingLastPathComponent()
+            .resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        guard let available = values?.volumeAvailableCapacity.map({ Int64($0) }) else { return }
+        guard available >= required else {
+            throw DatabaseError.insufficientDiskForMigration(required: required, available: available)
+        }
+    }
+
+    @discardableResult
+    static func checkpointAfterMigration(_ writer: any DatabaseWriter) throws -> Bool {
+        try writer.writeWithoutTransaction { db in
+            try Int.fetchOne(db, sql: "PRAGMA wal_checkpoint(TRUNCATE)") == 0
         }
     }
 
@@ -976,7 +1012,7 @@ extension DatabaseManager {
                     LIMIT ?
                     """,
                 arguments: [
-                    root.name, snapshotId, root.dir, afterPath == nil,
+                    root.name, snapshotId, root.dir, afterPath == nil && normalizedRoot != "/",
                     snapshotId, keyset.lowerDir, rootPrefixUpperBound, keyset.afterDir, keyset.afterName,
                     limit
                 ]
@@ -1586,9 +1622,7 @@ extension DatabaseManager {
         guard let row = try Row.fetchOne(
             db,
             sql: """
-                SELECT wse.sizeBytes AS sizeBytes,
-                       \(Self.classificationNameSQL("pc.category")) AS category,
-                       \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
+                SELECT wse.sizeBytes AS sizeBytes, pc.category AS category, pc.subcategory AS subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
                 WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = ?
@@ -1597,7 +1631,29 @@ extension DatabaseManager {
         ) else {
             return nil
         }
-        return workingSetFileState(category: row["category"], subcategory: row["subcategory"], sizeBytes: row["sizeBytes"])
+        var names = try classificationNameCache.names(db)
+        return try workingSetFileState(
+            categoryCode: row["category"],
+            subcategoryCode: row["subcategory"],
+            sizeBytes: row["sizeBytes"],
+            names: &names,
+            db: db
+        )
+    }
+
+    private static func workingSetFileState(
+        categoryCode: Int64?,
+        subcategoryCode: Int64?,
+        sizeBytes: Int64?,
+        names: inout ClassificationNames,
+        db: Database
+    ) throws -> WorkingSetFileState? {
+        let cache = classificationNameCache
+        return workingSetFileState(
+            category: try cache.name(code: categoryCode, names: &names, db: db),
+            subcategory: try cache.name(code: subcategoryCode, names: &names, db: db),
+            sizeBytes: sizeBytes
+        )
     }
 
     private static func workingSetFileState(
@@ -1708,8 +1764,8 @@ extension DatabaseManager {
                     s.id AS pathId,
                     s.path AS path,
                     wse.sizeBytes AS sizeBytes,
-                    \(Self.classificationNameSQL("pc.category")) AS category,
-                    \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
+                    pc.category AS category,
+                    pc.subcategory AS subcategory
                 FROM (\(Self.subtreePathsSQL)) s
                 CROSS JOIN workingSetEntry wse
                     ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = s.id
@@ -1718,18 +1774,23 @@ extension DatabaseManager {
             arguments: subtreeArguments + [trackedPathIdString]
         )
 
-        let changes = oldRows.compactMap { row -> WorkingSetFileChange? in
-            guard let pathId: Int64 = row["pathId"], let path: String = row["path"] else { return nil }
-            return WorkingSetFileChange(
+        var names = try classificationNameCache.names(db)
+        var changes: [WorkingSetFileChange] = []
+        changes.reserveCapacity(oldRows.count)
+        for row in oldRows {
+            guard let pathId: Int64 = row["pathId"], let path: String = row["path"] else { continue }
+            changes.append(WorkingSetFileChange(
                 pathId: pathId,
                 path: path,
-                old: Self.workingSetFileState(
-                    category: row["category"],
-                    subcategory: row["subcategory"],
-                    sizeBytes: row["sizeBytes"]
+                old: try Self.workingSetFileState(
+                    categoryCode: row["category"],
+                    subcategoryCode: row["subcategory"],
+                    sizeBytes: row["sizeBytes"],
+                    names: &names,
+                    db: db
                 ),
                 new: nil
-            )
+            ))
         }
 
         try db.execute(
@@ -1767,7 +1828,7 @@ extension DatabaseManager {
                     db,
                     sql: """
                         \(Self.pathValuesSQL(count: chunk.count))
-                        SELECT d.path || p.name AS path, wse.sizeBytes AS sizeBytes
+                        SELECT input.dir || input.name AS path, wse.sizeBytes AS sizeBytes
                         FROM input
                         CROSS JOIN dirs d ON d.path = input.dir
                         CROSS JOIN paths p ON p.dirId = d.id AND p.name = input.name
@@ -1825,7 +1886,7 @@ extension DatabaseManager {
                     LIMIT ?
                     """,
                 arguments: [
-                    root.name, trackedPathIdString, root.dir, afterPath == nil,
+                    root.name, trackedPathIdString, root.dir, afterPath == nil && normalizedRoot != "/",
                     trackedPathIdString, keyset.lowerDir, rootPrefixUpperBound, keyset.afterDir, keyset.afterName,
                     limit
                 ]
@@ -2687,7 +2748,8 @@ extension DatabaseManager {
     ) throws {
         guard !pathIdByPath.isEmpty else { return }
 
-        let codes = try Self.classificationCodes(db)
+        let cache = Self.classificationNameCache
+        var names = try cache.names(db)
         var rows: [(pathId: Int64, category: Int64, subcategory: Int64)] = []
         rows.reserveCapacity(pathIdByPath.count)
         for (path, pathId) in pathIdByPath {
@@ -2698,12 +2760,8 @@ extension DatabaseManager {
                 )
             let categoryName = resolved.category.rawValue
             let subcategoryName = resolved.subcategory?.rawValue ?? ""
-            guard let category = codes[categoryName] else {
-                throw DatabaseError.classificationNameMissing(categoryName)
-            }
-            guard let subcategory = codes[subcategoryName] else {
-                throw DatabaseError.classificationNameMissing(subcategoryName)
-            }
+            let category = try cache.code(name: categoryName, names: &names, db: db)
+            let subcategory = try cache.code(name: subcategoryName, names: &names, db: db)
             rows.append((pathId: pathId, category: category, subcategory: subcategory))
         }
 
@@ -2746,19 +2804,18 @@ extension DatabaseManager {
     ) throws -> [String: Int64] {
         guard !paths.isEmpty else { return [:] }
 
-        // normalizePath is idempotent; dedup via Set (case-sensitive — callers may
-        // request both casings; NOCASE UNIQUE collapses them in SQLite).
-        let normalizedPaths = Array(Set(paths.map { Self.normalizePath($0) }))
+        let normalizedPaths = Set(paths.map { Self.normalizePath($0) }).sorted()
         let pathChunkSize = 500
 
-        var idsByLowercasedPath: [String: Int64] = [:]
-        idsByLowercasedPath.reserveCapacity(normalizedPaths.count)
+        var result: [String: Int64] = [:]
+        result.reserveCapacity(normalizedPaths.count)
 
         for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
             let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
             let chunk = Array(normalizedPaths[startIndex..<endIndex])
             let pathValues = StatementArguments(Self.pathValueArguments(chunk))
-            let dirs = Array(Set(chunk.map { Self.splitPath($0).dir }))
+            var seenDirs = Set<String>()
+            let dirs = chunk.map { Self.splitPath($0).dir }.filter { seenDirs.insert($0).inserted }
             try db.execute(
                 sql: "INSERT OR IGNORE INTO dirs (path) VALUES \(Array(repeating: "(?)", count: dirs.count).joined(separator: ", "))",
                 arguments: StatementArguments(dirs)
@@ -2777,7 +2834,7 @@ extension DatabaseManager {
                 db,
                 sql: """
                     \(Self.pathValuesSQL(count: chunk.count))
-                    SELECT p.id AS id, d.path || p.name AS path
+                    SELECT p.id AS id, input.dir || input.name AS path
                     FROM input
                     CROSS JOIN dirs d ON d.path = input.dir
                     CROSS JOIN paths p ON p.dirId = d.id AND p.name = input.name
@@ -2787,20 +2844,12 @@ extension DatabaseManager {
 
             for row in rows {
                 guard
-                    let storedPath: String = row["path"],
+                    let requestedPath: String = row["path"],
                     let pathId: Int64 = row["id"]
                 else {
                     continue
                 }
-                idsByLowercasedPath[storedPath.lowercased()] = pathId
-            }
-        }
-
-        var result: [String: Int64] = [:]
-        result.reserveCapacity(normalizedPaths.count)
-        for path in normalizedPaths {
-            if let pathId = idsByLowercasedPath[path.lowercased()] {
-                result[path] = pathId
+                result[requestedPath] = pathId
             }
         }
 
@@ -2917,6 +2966,7 @@ extension DatabaseManager {
         case snapshotVanished(Int64)
         case workingSetKeyMissing(String)
         case classificationNameMissing(String)
+        case insufficientDiskForMigration(required: Int64, available: Int64)
 
         var errorDescription: String? {
             switch self {
@@ -2932,6 +2982,8 @@ extension DatabaseManager {
                 return "No working-set key for tracked path \(trackedPathId)"
             case .classificationNameMissing(let name):
                 return "No classification code for \(name)"
+            case .insufficientDiskForMigration(let required, let available):
+                return "Not enough free disk space to upgrade the database: needs \(required) bytes, \(available) available"
             }
         }
     }

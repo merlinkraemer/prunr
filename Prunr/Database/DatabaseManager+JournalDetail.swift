@@ -6,6 +6,62 @@ struct ChangeFeedInput: Sendable {
     let carries: [String: PlaceCount]
 }
 
+struct ClassificationNames: Sendable {
+    let nameByCode: [Int64: String]
+    let codeByName: [String: Int64]
+}
+
+final class ClassificationNameCache: @unchecked Sendable {
+    private final class Entry {
+        let names: ClassificationNames
+        init(_ names: ClassificationNames) { self.names = names }
+    }
+
+    private let lock = NSLock()
+    private let entriesByConnection = NSMapTable<Database, Entry>.weakToStrongObjects()
+
+    func names(_ db: Database) throws -> ClassificationNames {
+        lock.lock()
+        let cached = entriesByConnection.object(forKey: db)?.names
+        lock.unlock()
+        if let cached { return cached }
+        return try reload(db)
+    }
+
+    @discardableResult
+    func reload(_ db: Database) throws -> ClassificationNames {
+        var nameByCode: [Int64: String] = [:]
+        var codeByName: [String: Int64] = [:]
+        for row in try Row.fetchAll(db, sql: "SELECT name, code FROM classificationName") {
+            let name: String = row["name"]
+            let code: Int64 = row["code"]
+            nameByCode[code] = name
+            codeByName[name] = code
+        }
+        let names = ClassificationNames(nameByCode: nameByCode, codeByName: codeByName)
+        lock.lock()
+        entriesByConnection.setObject(Entry(names), forKey: db)
+        lock.unlock()
+        return names
+    }
+
+    func name(code: Int64?, names: inout ClassificationNames, db: Database) throws -> String? {
+        guard let code else { return nil }
+        if let name = names.nameByCode[code] { return name }
+        names = try reload(db)
+        return names.nameByCode[code]
+    }
+
+    func code(name: String, names: inout ClassificationNames, db: Database) throws -> Int64 {
+        if let code = names.codeByName[name] { return code }
+        names = try reload(db)
+        guard let code = names.codeByName[name] else {
+            throw DatabaseManager.DatabaseError.classificationNameMissing(name)
+        }
+        return code
+    }
+}
+
 extension DatabaseManager {
     static let journalDetailMigrationIdentifier = "v26_journal_detail"
     static let journalCheckpointMigrationIdentifier = "v27_journal_checkpoint"
@@ -15,6 +71,12 @@ extension DatabaseManager {
     static let pathDirsMigrationIdentifier = "v31_path_dirs"
     static let classificationCodesMigrationIdentifier = "v32_classification_codes"
     static let workingSetKeySQL = "(SELECT key FROM workingSetTrackedPath WHERE trackedPathId = ?)"
+    static let heavyMigrationIdentifiers = [
+        slimWorkingSetEntryMigrationIdentifier,
+        pathDirsMigrationIdentifier,
+        classificationCodesMigrationIdentifier
+    ]
+    static let classificationNameCache = ClassificationNameCache()
 
     static func registerJournalDetailMigration(in migrator: inout DatabaseMigrator) {
         // Migration v26: per-child detail of the growth journal (PRD L1). No
@@ -232,22 +294,13 @@ extension DatabaseManager {
         for name in classificationNames {
             try insert.execute(arguments: [name])
         }
+        try classificationNameCache.reload(db)
     }
 
     static let classificationCodeSQL = "(SELECT code FROM classificationName WHERE name = ?)"
 
     static func classificationNameSQL(_ codeColumn: String) -> String {
         "(SELECT name FROM classificationName WHERE code = \(codeColumn))"
-    }
-
-    static func classificationCodes(_ db: Database) throws -> [String: Int64] {
-        var codes: [String: Int64] = [:]
-        for row in try Row.fetchAll(db, sql: "SELECT name, code FROM classificationName") {
-            let name: String = row["name"]
-            let code: Int64 = row["code"]
-            codes[name] = code
-        }
-        return codes
     }
 
     private static func copyLegacyPaths(_ db: Database) throws {
@@ -330,13 +383,13 @@ extension DatabaseManager {
         SELECT p.id, d.path || p.name
         FROM dirs d
         CROSS JOIN paths p ON p.dirId = d.id AND p.name = ?
-        WHERE d.path = ?
+        WHERE d.path = ? AND ?
         """
 
     static func subtreeArguments(root normalizedRoot: String) -> StatementArguments {
         let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
         let parts = splitPath(normalizedRoot)
-        return [rootPrefix, pathPrefixUpperBound(rootPrefix), parts.name, parts.dir]
+        return [rootPrefix, pathPrefixUpperBound(rootPrefix), parts.name, parts.dir, normalizedRoot != "/"]
     }
 
     static func keysetLowerDir(rootPrefix: String, afterPath: String?) -> (lowerDir: String, afterDir: String, afterName: String) {
