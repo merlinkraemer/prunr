@@ -317,3 +317,4 @@
 2026-11-04 06:45 orchestrator O46 spawn: read-only adversarial review of the full path-store stack O42-O45 (910d68b), focus v30-v32 (opus, seat, no worktree)
 2026-11-04 07:20 orchestrator O46 review: verdict safe after fixes; 0 blockers, 2 medium (#1 fetchWorkingSetSizes keyed by stored NOCASE spelling, #2 no disk headroom check before v30-v32), 3 low (FK default flip guard, root / double row, per-row classification subqueries) + trim 250 s test; real DB caseVariantDirs was 0 (O44)
 2026-11-04 07:20 orchestrator O47 spawn: fix O46 findings 1-5 + trim test, on drain/O47-2026-11-04 from 910d68b, no UI/copy (opus, seat worktree)
+2026-11-04 08:30 orchestrator O47 on branch: b692cd8, all 5 O46 findings fixed + test trimmed (deep check behind PRUNR_REALDB_DEEP); low disk shows existing 'could not start' alert with new technical text (copy = Merlin, alert's 'delete folder' advice wrong for low disk); job queued
