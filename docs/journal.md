@@ -334,3 +334,4 @@
 2026-11-06 orchestrator feedback check: still 1 item (10-28, positive, new); nothing new
 2026-11-06 05:30 orchestrator item9 installed: drain/O49 06dabf4 on Merlin's Mac (his go 'install latest now'), data backed up to ~/prunr-backup-2026-11-06 (3.4 GB), hands-on session started
 2026-11-06 09:10 orchestrator item9 upgrade done on Merlin's Mac: DB 3.56 GB -> 1.25 GB (v32), app up 3h18m at 0% CPU; panel did not open during the upgrade (Merlin 'panel doesnt open at all now'), upgrade took >1 min on battery vs 37 s measured; no com.prunr log lines in the window; Mac was offline ~13:50-17:00 WITA
+2026-11-06 22:00 orchestrator item9 diag: only report from the upgrade is a macOS disk-writes notice (2.1 GB in 77 s during v31 path dirs, off main thread, action none); no crash or hang report; app up 8h at 0% CPU; waiting on Merlin whether the panel opens now
