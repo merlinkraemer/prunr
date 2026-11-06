@@ -332,3 +332,4 @@
 2026-11-04 17:30 orchestrator O51 Mac green aa52407 but no real gain: addEntries.10k 184 -> 183 ms, again 148 -> 143 ms (base 146/132); the Python win did not carry over; dropped, branch kept for reference; scan-write cost of the shrink stays at about +10 s per full scan, accepted
 2026-11-06 orchestrator housekeeping: removed 19 finished clean worktrees (plain remove, no force; branches kept), worktrees 2.0 GB -> 809 MB; kept O49 (review branch), Q10 (687 MB DB copy, waiting on Merlin), Q6/Q9 (locked by an old agent pid)
 2026-11-06 orchestrator feedback check: still 1 item (10-28, positive, new); nothing new
+2026-11-06 05:30 orchestrator item9 installed: drain/O49 06dabf4 on Merlin's Mac (his go 'install latest now'), data backed up to ~/prunr-backup-2026-11-06 (3.4 GB), hands-on session started
