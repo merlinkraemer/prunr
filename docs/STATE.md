@@ -1,6 +1,6 @@
 # Prunr — state
 
-_Updated: 2026-11-02 by orchestrator (on dev). Live state only, max ~80 lines. History → docs/journal.md, facts → memory, long-term → docs/product-roadmap-2026-09-07.md._
+_Updated: 2026-11-13 by orchestrator (on dev). Live state only, max ~80 lines. History → docs/journal.md, facts → memory, long-term → docs/product-roadmap-2026-09-07.md._
 
 ## Direction
 Compass: not iced, design mode, alongside Pad/Bounce. Infrastructure is done (notarized DMG, Sparkle, signup). The core screen is unsettled: answer "where did my storage go" at once, without over-detail. Lens to test: growth as a sentence ("Since last week, 14 GB appeared: 9 in Xcode caches…"). Core screen settled 2026-10-11; build per docs/core-screen-episodes-prd-2026-10-11.md. Loose end: fix #35 when a morning opens. Parked: website DMG vs App Store, price (~€5.99 one-time).
@@ -9,10 +9,10 @@ Compass: not iced, design mode, alongside Pad/Bounce. Infrastructure is done (no
 A stranger downloads the alpha from the website and gets a one-glance answer to "what grew". Done for the current queue: code runs from dev with a green Mac test run, and #35 status is known.
 
 ## Rulebook
-AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, nothing user-visible lands.
+AGENTS.md ## Unattended. Holiday ended 2026-11-13 (Merlin: "holiday mode is over now"); UI/schema still lands only on his ok.
 
 ## Waiting on Merlin
-1. Tester feedback on alpha.24: still 1 item (checked 11-06), positive (found a 25 GB app install via the change list); no bugs reported — rec: recheck weekly — branch: none
+1. Tester feedback on alpha.24: still 1 item (checked 11-13), positive (found a 25 GB app install via the change list); no bugs reported — rec: recheck weekly — branch: none
 4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
 5. Close obsolete GitHub issues #29 #32 #34 #18 #11 (+ #26 by design) — rec: yes, I close them with a short note — branch: none
 6. [accepted 2026-10-31 per rec: variant A, building as Q16 on drain/Q16-2026-10-31] Category groups net unrelated places ("Developer +9.9 GB" = +44 up, -34 down) and header vs rows don't reconcile — rec: per-place rows inside groups with up/down split + a "smaller changes" row; mockups first — branch: none
@@ -25,10 +25,10 @@ AGENTS.md ## Unattended. Thread-specific limits: holiday 2026-10-30 → 11-16, n
 
 
 ## Run
-status: running · since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land green non-UI work on local main; never push, no beta/release)
+status: stopped 2026-11-13 (holiday over) · ran since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land green non-UI work on local main; never push, no beta/release)
 targets: hardening, real-data usefulness, perf, bug/code review (Merlin 11-02), then own prios; keep working until Merlin says stop
 mac-queue: LAB2_HOST=dev; Mac go given 11-02, orchestrator drains (MAC_QUEUE_IGNORE_BATTERY=1)
-mac batch pending: Q9 2h idle soak + hands-on session (item 9), both on the next visible Mac go via Grok
+hands-on build drain/O49 installed on Merlin's Mac 11-06 (backup ~/prunr-backup-2026-11-06): DB 3.56 -> 1.3 GB, 7 days up at 0% CPU (covers Q9 soak); panel ignored clicks during the >77 s upgrade; steps 1-9 not yet done
 data: Merlin's DB may be copied to dev (scratch, gitignored); committed fixtures synthetic only
 review: https://dev.tail87069a.ts.net:4181 (mockups/category-groups.html, app/ snapshots)
 
