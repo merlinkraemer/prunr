@@ -46,4 +46,5 @@ Done: O1-O22 (journal); reviews docs/perf-app-review-2026-11-02.md, docs/code-re
 - known doubts: O27a more watcher churn from browser WAL (check in soak); O28c clicks ignored during the one-time upgrade: O48 traced it, the DB opens off the main thread since 51cad7e so macOS stays responsive, but the panel/Settings/Feedback silently ignore clicks with no sign of work for ~37 s on the first launch after the shrink update (Quit + updates work); [option 1 built per rec as O49: existing menu bar pulse runs while the DB opens, no new copy; Mac green 06dabf4 (543 tests), branch drain/O49-2026-11-04 on top of O47; look at it in the hands-on session] alternatives: 2 panel shows an "Upgrading database" state (new copy); 3 leave it
 
 ## Rundown
-- 11-02: Mac go; all review fixes green on branches; combined hands-on-2 build green; second review round fixing 3 interaction bugs. Nothing pushed.
+- 10-30..11-13 holiday run stopped. Landed on local main (not pushed, 224 commits): tests, docs, 5 small background fixes. Everything user-visible/schema on drain/O49: new screen, review fixes, DB shrink, pulse.
+- drain/O49 on Merlin's Mac 7 days, stable, 0% CPU, DB 1.3 GB. Next: hands-on steps 1-9, then land on ok.
