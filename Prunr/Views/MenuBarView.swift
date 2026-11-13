@@ -155,7 +155,7 @@ struct MenuBarView: View {
 
     private var scanFileCountLabel: String? {
         guard manager.filesScanned > 0 else { return nil }
-        return "\(manager.filesScanned.formatted()) files scanned"
+        return "\(manager.filesScanned.formatted(.number.locale(Locale(identifier: "en_US")))) files scanned"
     }
 
     private var scanPathLabel: String {

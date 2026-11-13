@@ -49,7 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let failure {
                 let alert = NSAlert()
                 alert.messageText = "Prunr could not start"
-                alert.informativeText = "The database failed to initialize: \(failure.localizedDescription)\n\nTry relaunching the app. If the problem persists, delete ~/Library/Application Support/Prunr and relaunch."
+                if case DatabaseError.insufficientDiskForMigration(let required, _) = failure {
+                    alert.informativeText = "Prunr needs about \(formattedBytes(required)) of free disk space to update its data. Free up some space and open Prunr again. Your history is kept."
+                } else {
+                    alert.informativeText = "The database failed to initialize: \(failure.localizedDescription)\n\nTry relaunching the app. If the problem persists, delete ~/Library/Application Support/Prunr and relaunch."
+                }
                 alert.alertStyle = .critical
                 alert.addButton(withTitle: "Quit")
                 alert.runModal()

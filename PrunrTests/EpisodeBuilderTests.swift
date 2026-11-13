@@ -878,7 +878,7 @@ final class EpisodeBuilderTests: XCTestCase {
         let utc = calendar()
         let at = date(2026, 10, 5, 14, 5, in: utc)
         let scanned = episode("a", .developer, Self.gb, at: at, detail: "ignored", calendar: utc, approximate: true)
-        XCTAssertEqual(EpisodeBuilder.timeCaption(for: scanned, calendar: utc), "found by scan")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: scanned, calendar: utc))
 
         let slow = episode("b", .mediaAndDocuments, Self.gb, at: at, calendar: utc,
                            buildingSince: date(2026, 10, 2, 0, 0, in: utc))
@@ -888,7 +888,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(EpisodeBuilder.timeCaption(for: moved, calendar: utc), "14:05")
     }
 
-    func testRowsFoundByScanReadFoundByScan() throws {
+    func testRowsFoundByScanHaveNoCaption() throws {
         let utc = calendar()
         let now = date(2026, 10, 11, 15, 0, in: utc)
         let found = date(2026, 10, 11, 3, 0, in: utc)
@@ -897,10 +897,10 @@ final class EpisodeBuilderTests: XCTestCase {
         ], now: now, calendar: utc)
         let row = try XCTUnwrap(feed.episodes.first)
         XCTAssertEqual(row.scanWindowStart, date(2026, 10, 10, 3, 0, in: utc))
-        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "found by scan")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: row, calendar: utc))
     }
 
-    func testCatchUpScanRowNamesTheWindowStart() throws {
+    func testCatchUpScanRowHasNoCaption() throws {
         let utc = calendar()
         let now = date(2026, 10, 26, 15, 0, in: utc)
         let feed = build([
@@ -909,10 +909,10 @@ final class EpisodeBuilderTests: XCTestCase {
         ], now: now, calendar: utc)
         let row = try XCTUnwrap(feed.episodes.first)
         XCTAssertTrue(row.isApproximateTime)
-        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "found by scan \u{00B7} since Sun 18 Oct")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: row, calendar: utc))
     }
 
-    func testScanRowWithoutWindowReadsFoundByScan() throws {
+    func testScanRowWithoutWindowHasNoCaption() throws {
         let utc = calendar()
         let now = date(2026, 10, 11, 15, 0, in: utc)
         let feed = build([
@@ -920,7 +920,7 @@ final class EpisodeBuilderTests: XCTestCase {
         ], now: now, calendar: utc)
         let row = try XCTUnwrap(feed.episodes.first)
         XCTAssertNil(row.scanWindowStart)
-        XCTAssertEqual(EpisodeBuilder.timeCaption(for: row, calendar: utc), "found by scan")
+        XCTAssertNil(EpisodeBuilder.timeCaption(for: row, calendar: utc))
     }
 
     func testWatcherRowKeepsItsClockTimeAndNoScanWindow() throws {
@@ -1369,7 +1369,7 @@ final class EpisodeBuilderTests: XCTestCase {
         XCTAssertEqual(group.growthBytes, 44_300 * Self.mb)
         XCTAssertEqual(group.shrinkBytes, -34_500 * Self.mb)
         XCTAssertEqual(group.growthBytes + group.shrinkBytes, group.netBytes)
-        XCTAssertEqual(group.splitText, "up +44.3 \u{B7} down -34.5 GB")
+        XCTAssertEqual(group.splitText, "+44.3 / -34.5 GB")
     }
 
     func testGroupSplitIsNilWhenEveryPlaceWentOneWay() {
@@ -1395,7 +1395,7 @@ final class EpisodeBuilderTests: XCTestCase {
             episode("b", .developer, -500 * Self.mb, at: day, calendar: utc)
         ])
 
-        XCTAssertEqual(group.splitText, "up +2.0 GB \u{B7} down -500 MB")
+        XCTAssertEqual(group.splitText, "+2.0 GB / -500 MB")
     }
 
     func testGroupPlacesAreMixedBySize() {

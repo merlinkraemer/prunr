@@ -410,7 +410,7 @@ struct CategoryGrowthListView: View {
                             .pathContextMenu(file.path, onShowInFinder: onTapItem)
                     }
                     if remainingCount > 0, let group {
-                        ShowMoreRow(title: "Show more (\(remainingCount.formatted()))", isEnabled: !isLoadingMoreFiles) {
+                        ShowMoreRow(title: "Show more (\(remainingCount.formatted(.number.locale(Locale(identifier: "en_US")))))", isEnabled: !isLoadingMoreFiles) {
                             loadMoreFiles(of: group)
                         }
                     }
@@ -668,7 +668,7 @@ enum CategorySizes {
     }
 
     static func fileCountText(_ count: Int) -> String {
-        count == 1 ? "1 file" : "\(count.formatted()) files"
+        count == 1 ? "1 file" : "\(count.formatted(.number.locale(Locale(identifier: "en_US")))) files"
     }
 
     static func groupsStatus(isEmpty: Bool, isPending: Bool, readFailed: Bool) -> InlineStatus? {

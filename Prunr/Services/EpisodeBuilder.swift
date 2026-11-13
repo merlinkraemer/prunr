@@ -52,7 +52,7 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// The caption then reads "a little each day since Fri 2 Oct".
     var buildingSince: Date?
     /// Set for a row only a scan found: when the window the scan reconciled
-    /// began. The caption then reads "found by scan · since Sun 18 Oct".
+    /// began.
     var scanWindowStart: Date?
 
     /// Where the place's own icon comes from.
@@ -181,7 +181,7 @@ struct ChangeGroup: Identifiable, Equatable, Sendable {
         let upUnit = up.split(separator: " ").last.map(String.init) ?? ""
         let downUnit = down.split(separator: " ").last.map(String.init) ?? ""
         let upText = upUnit == downUnit ? String(up.dropLast(upUnit.count + 1)) : up
-        return "up +\(upText) \u{B7} down -\(down)"
+        return "+\(upText) / -\(down)"
     }
 }
 
@@ -427,7 +427,7 @@ struct PlaceFold: Sendable {
 ///   A change that came and went within one day therefore has no row.
 /// - Caption: the clock time when the count started that day or more than half
 ///   of it moved in one slot that day; otherwise "a little each day since
-///   <start day>". A daily-scan slot with an old window reads "found by scan".
+///   <start day>". A row only a scan found has no caption.
 /// - Trash growth is a move and never counts; the Trash only counts shrinks,
 ///   which read "Trash emptied".
 ///
@@ -438,8 +438,7 @@ struct PlaceFold: Sendable {
 enum EpisodeBuilder {
     /// The one row line: 1 GB, decimal like every amount in the app.
     static let rowThresholdBytes: Int64 = 1_000_000_000
-    /// Growth from this size on is orange; smaller growth stays primary and
-    /// shrinks are grey.
+    /// Growth from this size on counts as large.
     static let largeGrowthBytes: Int64 = 5_000_000_000
 
     static func isLargeGrowth(_ netBytes: Int64) -> Bool {
@@ -449,8 +448,6 @@ enum EpisodeBuilder {
     /// A scan residual whose window started more than this before the scan
     /// cannot say when the change happened.
     static let approximateAfter: TimeInterval = 60 * 60
-    /// A scan window longer than this is named in the caption.
-    static let longScanWindow: TimeInterval = 36 * 60 * 60
     /// The source counts as moved to the Trash when the Trash grew by at least
     /// this share (percent) of the shrink in the same slots.
     static let trashMovePercent: Int64 = 90
@@ -662,19 +659,10 @@ enum EpisodeBuilder {
         return "~" + path.dropFirst(home.count)
     }
 
-    /// "14:20" when the clock time of the change is known; "found by scan"
-    /// when a scan found it, plus "since Sun 18 Oct" when its window was long;
-    /// nil when it built up over several days.
+    /// "14:20" when the clock time of the change is known; nil when a scan
+    /// found it or it built up over several days.
     static func timeCaption(for episode: ChangeEpisode, calendar: Calendar) -> String? {
-        if episode.isApproximateTime {
-            var caption = "found by scan"
-            if let start = episode.scanWindowStart,
-               episode.time.timeIntervalSince(start) > longScanWindow {
-                caption += " \u{00B7} since \(dayLabel(for: start, calendar: calendar))"
-            }
-            return caption
-        }
-        guard episode.buildingSince == nil else { return nil }
+        guard !episode.isApproximateTime, episode.buildingSince == nil else { return nil }
         return formatter("HH:mm", calendar: calendar).string(from: episode.time)
     }
 
