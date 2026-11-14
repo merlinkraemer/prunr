@@ -136,7 +136,7 @@ final class DrilldownNavigationTests: XCTestCase {
         )
         XCTAssertEqual(CategorySizes.remainingFileCount(capped), 0)
         XCTAssertEqual(CategorySizes.fileCountText(1), "1 file")
-        XCTAssertEqual(CategorySizes.fileCountText(212_880), "\(212_880.formatted()) files")
+        XCTAssertEqual(CategorySizes.fileCountText(212_880), "212,880 files")
     }
 
     func testFrozenPaneKeepsItsContentWhenSourceDataChanges() {
