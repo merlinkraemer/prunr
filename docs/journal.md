@@ -339,3 +339,4 @@
 2026-11-13 orchestrator item5 done: closed #29 #32 #34 #18 #11 #26 with notes (Merlin yes)
 2026-11-13 orchestrator Q10 cleanup: removed worktree with the 687 MB real-DB copy (Merlin yes), branch kept, disk 85%
 2026-11-13 orchestrator item11 decided per rec (Merlin '3 your recs'): (a) keep old spelling on case-only rename, (b) low-disk alert copy to 'free up space and relaunch' as O52, (c) accept older since dates
+2026-11-15 orchestrator review-11-13: drain/review-2026-11-13 420ea14 (on O49) Mac green 543 tests, installed on Merlin's Mac; per Merlin: no scan caption, white/grey amounts (no orange), split '+x / -y', en_US counts, low-disk alert keeps history (O52); kept as is: free space in menu bar icon, hover actions, Build files per day, footer fade, chevrons
