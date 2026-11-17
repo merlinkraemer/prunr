@@ -38,6 +38,20 @@
     box-shadow: var(--shadow-hairline); transition: opacity 0.15s;
   }
   .build { margin-top: 14px; font-size: 13px; opacity: 0.38; }
+  .brew { margin-top: 28px; max-width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .brew-label { font-size: 13px; opacity: 0.55; }
+  .brew-cmd {
+    display: inline-flex; align-items: center; gap: 10px; max-width: 100%;
+    padding: 10px 16px; border: 0; border-radius: var(--radius-pill);
+    background: var(--card); color: var(--body-color); box-shadow: var(--shadow-hairline);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+    cursor: pointer; overflow-x: auto; white-space: nowrap;
+  }
+  .brew-copied { font-family: var(--font-body); font-size: 12px; opacity: 0.55; }
+  @media (max-width: 420px) {
+    .brew-cmd { font-size: 11.5px; padding: 10px 14px; }
+    .brew-copied { display: none; }
+  }
 
   /* Footer — mirrors the landing page. */
   .site-footer {
@@ -62,6 +76,13 @@
   </div>
   <a id="dl" class="btn" href="https://prunr-web.vercel.app/api/download?src=site">Download Prunr</a>
   <p id="build" class="build" hidden></p>
+  <div id="brew" class="brew">
+    <span class="brew-label">or with Homebrew</span>
+    <button id="brew-cmd" class="brew-cmd" type="button" title="Copy">
+      <code>brew install --cask merlinkraemer/prunr/prunr</code>
+      <span id="brew-copied" class="brew-copied">copy</span>
+    </button>
+  </div>
 </main>
 <footer class="site-footer">
   <a class="footer-link" href="https://github.com/merlinkraemer/prunr" target="_blank" rel="noopener noreferrer">
@@ -78,6 +99,16 @@
   var DOWNLOAD_ENDPOINT = "https://prunr-web.vercel.app/api/download";
   var dl = document.getElementById("dl");
   var build = document.getElementById("build");
+  var brewCmd = document.getElementById("brew-cmd");
+  var brewCopied = document.getElementById("brew-copied");
+
+  brewCmd.addEventListener("click", function () {
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(brewCmd.querySelector("code").textContent).then(function () {
+      brewCopied.textContent = "copied";
+      setTimeout(function () { brewCopied.textContent = "copy"; }, 1500);
+    }).catch(function () {});
+  });
 
   var src = new URLSearchParams(location.search).get("src");
   dl.href = DOWNLOAD_ENDPOINT + "?src=" + encodeURIComponent(src && /^[a-z0-9_-]{1,32}$/i.test(src) ? src : "site");
