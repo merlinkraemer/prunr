@@ -191,7 +191,7 @@
             style={{ color: ERR, opacity: hasError ? 1 : 0 }}>
             {error || " "}
           </span>
-          <span className="download-caption" style={{ opacity: hasError ? 0 : undefined }}>free beta · macOS 14+ · <a href="download.html#brew" style={{ color: "inherit" }}>Homebrew</a></span>
+          <span className="download-caption" style={{ opacity: hasError ? 0 : undefined }}>free beta · macOS 14+</span>
         </div>
       </div>
     );
