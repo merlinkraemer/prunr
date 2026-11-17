@@ -38,7 +38,7 @@
     box-shadow: var(--shadow-hairline); transition: opacity 0.15s;
   }
   .build { margin-top: 14px; font-size: 13px; opacity: 0.38; }
-  .brew { margin-top: 28px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .brew { margin-top: 28px; max-width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; }
   .brew-label { font-size: 13px; opacity: 0.55; }
   .brew-cmd {
     display: inline-flex; align-items: center; gap: 10px; max-width: 100%;
@@ -48,6 +48,10 @@
     cursor: pointer; overflow-x: auto; white-space: nowrap;
   }
   .brew-copied { font-family: var(--font-body); font-size: 12px; opacity: 0.55; }
+  @media (max-width: 420px) {
+    .brew-cmd { font-size: 11.5px; padding: 10px 14px; }
+    .brew-copied { display: none; }
+  }
 
   /* Footer — mirrors the landing page. */
   .site-footer {
