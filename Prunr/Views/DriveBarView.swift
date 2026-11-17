@@ -372,7 +372,7 @@ private struct DriveBarSegmentHelpModifier: ViewModifier {
             usedBytes: 450_000_000_000,
             freeBytes: 50_000_000_000,
             categorySegments: [
-                DriveBarSegment(id: "dev", bytes: 120_000_000_000, color: .yellow),
+                DriveBarSegment(id: "dev", bytes: 120_000_000_000, color: .green),
                 DriveBarSegment(id: "apps", bytes: 90_000_000_000, color: .indigo),
                 DriveBarSegment(id: "media", bytes: 80_000_000_000, color: .pink),
                 DriveBarSegment(id: "downloads", bytes: 40_000_000_000, color: .blue)
