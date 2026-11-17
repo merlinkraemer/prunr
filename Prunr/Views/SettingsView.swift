@@ -369,7 +369,7 @@ private struct FolderSettingsTab: View {
 
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.yellow)
 
                         Text(isScanInProgress
                              ? "Apply is available when the current scan finishes."
@@ -387,7 +387,7 @@ private struct FolderSettingsTab: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(Color.orange.opacity(0.08))
+                    .background(Color.yellow.opacity(0.08))
                 }
 
                 if showingAppliedNotice {

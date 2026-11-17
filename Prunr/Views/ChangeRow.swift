@@ -33,7 +33,7 @@ struct ChangeRow: View {
             if showsDirection {
                 Image(systemName: episode.netBytes < 0 ? "arrowtriangle.down.fill" : "arrowtriangle.up.fill")
                     .font(.system(size: 8))
-                    .foregroundStyle(episode.netBytes < 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                    .foregroundStyle(episode.netBytes < 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
                     .frame(width: 18)
                     .accessibilityHidden(true)
             } else {
@@ -122,7 +122,7 @@ func changeAmountStyle(_ netBytes: Int64, isEstimated: Bool = false) -> AnyShape
     if isEstimated {
         return AnyShapeStyle(.secondary)
     }
-    return netBytes < 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary)
+    return netBytes < 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange)
 }
 
 func signedBytes(_ bytes: Int64) -> String {

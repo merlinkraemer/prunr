@@ -210,7 +210,6 @@ final class GrowthJournalDetailTests: PrunrTestCase {
             XCTAssertEqual(children.map(\.name), ["Big", PlacePageNotes.otherChangesTitle])
             XCTAssertEqual(children.last?.deltaBytes, 3_000)
             XCTAssertNil(children.last?.path)
-            XCTAssertNil(children.last.flatMap(PlacePageNotes.currentText))
         }
     }
 
@@ -252,7 +251,7 @@ final class GrowthJournalDetailTests: PrunrTestCase {
         let shrank = PlaceChangeSpan(episode: episode(netBytes: -7_300_000_000, day: date(26, 0)), calendar: calendar)
         let detail = PlaceChanges(children: [], currentBytes: 400 * gb)
 
-        XCTAssertEqual(PlacePageNotes.lines(span: grew, changes: detail, calendar: calendar), ["Changes on Thu 29 Oct"])
+        XCTAssertEqual(PlacePageNotes.lines(span: grew, changes: detail, calendar: calendar), [])
         XCTAssertEqual(
             PlacePageNotes.lines(span: grew, changes: PlaceChanges(children: nil, currentBytes: 400 * gb), calendar: calendar),
             ["Now \(formattedBytes(400 * gb)) \u{00B7} grew \(formattedBytes(27 * gb)) on Thu 29 Oct", "Size now"]

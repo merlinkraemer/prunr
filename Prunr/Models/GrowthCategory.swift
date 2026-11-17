@@ -104,7 +104,7 @@ enum GrowthCategory: String, CaseIterable, Codable, Identifiable {
     /// Accent color for category
     var color: Color {
         switch self {
-        case .developer: return .orange
+        case .developer: return .yellow
         case .audioProduction: return .purple
         case .applications: return .indigo
         case .mediaAndDocuments: return .pink

@@ -134,7 +134,7 @@ struct PlaceContentsRows: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let caption {
+            if let caption, changes == nil {
                 Text(caption)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -284,10 +284,6 @@ struct PlaceChangeRow: View {
         return change.isFolder ? "folder" : "doc"
     }
 
-    private var secondaryText: String? {
-        PlacePageNotes.currentText(change)
-    }
-
     private func content(opens: Bool) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
@@ -295,20 +291,12 @@ struct PlaceChangeRow: View {
                 .foregroundStyle(change.isFolder && change.currentBytes != nil ? AnyShapeStyle(category.color) : AnyShapeStyle(.secondary))
                 .frame(width: 18, height: 18)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(change.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(change.currentBytes == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let secondaryText {
-                    Text(secondaryText)
-                        .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(change.name)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(change.currentBytes == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(signedBytes(change.deltaBytes))
                 .font(.system(size: 13).monospacedDigit())
@@ -317,11 +305,11 @@ struct PlaceChangeRow: View {
                 .fixedSize()
         }
         .padding(.horizontal, 12)
-        .frame(height: secondaryText == nil ? 34 : 44)
+        .frame(height: 34)
         .background(ListRowHoverBackground(isHovering: opens && isHovering))
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([change.name, secondaryText, spokenChangeAmount(change.deltaBytes)].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel([change.name, change.path != nil && change.currentBytes == nil ? PlacePageNotes.goneText : nil, spokenChangeAmount(change.deltaBytes)].compactMap { $0 }.joined(separator: ", "))
     }
 }

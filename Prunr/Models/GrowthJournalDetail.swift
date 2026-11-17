@@ -122,10 +122,10 @@ enum PlacePageNotes {
     static let goneText = "Gone"
 
     static func lines(span: PlaceChangeSpan, changes: PlaceChanges, calendar: Calendar) -> [String] {
-        let days = span.daysText(calendar: calendar)
         if changes.children != nil {
-            return ["Changes \(days)"]
+            return []
         }
+        let days = span.daysText(calendar: calendar)
         let amount = formattedBytes(abs(span.netBytes))
         let moved = span.netBytes < 0 ? "shrank \(amount)" : "grew \(amount)"
         guard changes.currentBytes > 0 else {
@@ -135,12 +135,5 @@ enum PlacePageNotes {
             return ["\(goneText) now \u{00B7} \(moved) \(days)"]
         }
         return ["Now \(formattedBytes(changes.currentBytes)) \u{00B7} \(moved) \(days)", "Size now"]
-    }
-
-    /// The line under a child's name: its size now, or that it is gone.
-    static func currentText(_ change: PlaceChildChange) -> String? {
-        guard change.path != nil else { return nil }
-        guard let current = change.currentBytes else { return goneText }
-        return "Now \(formattedBytes(current))"
     }
 }

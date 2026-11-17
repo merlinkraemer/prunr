@@ -68,7 +68,7 @@ struct ChangeEpisode: Identifiable, Equatable, Sendable {
     /// The owner as the list shows it, set by `resolvingOwner(with:)`.
     var resolvedOwner: ResolvedOwner?
 
-    /// Orange in the list: growth of at least `largeGrowthBytes`.
+    /// Growth of at least `largeGrowthBytes`.
     var isLargeGrowth: Bool { EpisodeBuilder.isLargeGrowth(netBytes) }
 
     var owner: ResolvedOwner {
@@ -159,7 +159,7 @@ struct ChangeGroup: Identifiable, Equatable, Sendable {
 
     var netBytes: Int64 { episodes.reduce(Int64(0)) { $0 + $1.netBytes } }
 
-    /// Orange in the list: growth of at least `largeGrowthBytes`.
+    /// Growth of at least `largeGrowthBytes`.
     var isLargeGrowth: Bool { EpisodeBuilder.isLargeGrowth(netBytes) }
 
     var growthBytes: Int64 { episodes.filter { $0.netBytes > 0 }.reduce(Int64(0)) { $0 + $1.netBytes } }
