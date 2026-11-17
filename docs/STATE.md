@@ -15,7 +15,7 @@ AGENTS.md ## Unattended. Holiday ended 2026-11-13 (Merlin: "holiday mode is over
 1. Tester feedback on alpha.24: still 1 item (checked 11-13), positive (found a 25 GB app install via the change list); no bugs reported — rec: recheck weekly — branch: none
 4. Background reconciliation + watcher pre-arm still gated on Full Disk Access; access loss after a scan would show skipped folders as a big shrink — rec: decide after beta feedback — branch: none
 5. [done 2026-11-13, Merlin yes] Closed #29 #32 #34 #18 #11 #26 with notes
-9. [landed 2026-11-17 on local main efef1b5, Merlin "Yes, land it"] Review build: new core screen, review fixes, DB shrink (items 3, 6, 7, 8, 10, 11 folded in), pulse; Mac green 543 tests; not pushed - next: alpha.25 on your go - branch: none
+9. [landed 2026-11-17 on local main efef1b5, Merlin "Yes, land it"] Review build: new core screen, review fixes, DB shrink (items 3, 6, 7, 8, 10, 11 folded in), pulse; Mac green 543 tests; not pushed - shipped as alpha.25 build 26 on 11-17 - branch: none
 12. [done 2026-11-17] Homebrew: tap live (merlinkraemer/homebrew-prunr, CI green), brew line live on the download page (3c127f6) - cask auto-bumps hourly from the latest release (tap bump.yml) - branch: none
 
 
@@ -42,4 +42,4 @@ Done: O1-O22 (journal); reviews docs/perf-app-review-2026-11-02.md, docs/code-re
 
 ## Rundown
 - 11-17: review build landed on local main efef1b5 (Mac green), not pushed; Homebrew tap live, auto-bumps hourly; brew line on the download page.
-- Next: alpha.25 (release needs your go).
+- 11-17: alpha.25 build 26 shipped (Sparkle + brew). Next: watch tester feedback.
