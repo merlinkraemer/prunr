@@ -1655,7 +1655,7 @@ struct MenuBarView: View {
         VStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 24))
-                .foregroundStyle(.yellow)
+                .foregroundStyle(.orange)
             Text(error)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1881,7 +1881,7 @@ struct MenuBarView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 9))
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(.orange)
                     Text(status.text())
                         .foregroundStyle(.secondary)
                 }

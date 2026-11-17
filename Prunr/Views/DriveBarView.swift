@@ -174,7 +174,7 @@ struct DriveBarView: View {
         if percentage < 70 {
             return .green
         } else if percentage < 90 {
-            return .yellow
+            return .orange
         } else {
             return .red
         }
