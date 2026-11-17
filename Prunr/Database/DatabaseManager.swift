@@ -50,6 +50,10 @@ final class DatabaseManager {
 
         databasePath = dbURL.path
 
+        if !fileManager.fileExists(atPath: dbURL.path) {
+            try Self.createIncrementalAutoVacuumFile(at: dbURL.path)
+        }
+
         var config = Configuration()
         config.busyMode = .timeout(10)
         config.prepareDatabase { db in
@@ -91,6 +95,15 @@ final class DatabaseManager {
         }
     }
 
+    private static func createIncrementalAutoVacuumFile(at path: String) throws {
+        let queue = try DatabaseQueue(path: path)
+        try queue.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA auto_vacuum = INCREMENTAL")
+            try db.execute(sql: "VACUUM")
+        }
+        try queue.close()
+    }
+
     /// `prunr_unit(path)`: the persisted unit key for a path (`UnitResolver`).
     /// Pure, so SQLite may cache results within a statement.
     static let unitKeyFunction = DatabaseFunction("prunr_unit", argumentCount: 1, pure: true) { values in
@@ -104,7 +117,46 @@ final class DatabaseManager {
             throw DatabaseError.notInitialized
         }
 
-        try Self.makeMigrator().migrate(dbPool)
+        let migrator = Self.makeMigrator()
+        let applied = try dbPool.read { db in try migrator.appliedIdentifiers(db) }
+        let pendingHeavy = Self.heavyMigrationIdentifiers.filter { !applied.contains($0) }
+        if !applied.isEmpty, !pendingHeavy.isEmpty, let databasePath {
+            try Self.ensureMigrationHeadroom(databasePath: databasePath)
+        }
+        for identifier in pendingHeavy {
+            try migrator.migrate(dbPool, upTo: identifier)
+            try Self.checkpointAfterMigration(dbPool)
+        }
+        try migrator.migrate(dbPool)
+        try dbPool.write { db in
+            try Self.insertClassificationNames(db)
+        }
+    }
+
+    static let migrationHeadroomCapBytes: Int64 = 8 * 1024 * 1024 * 1024
+
+    static func migrationHeadroomRequirement(databaseBytes: Int64) -> Int64 {
+        min(databaseBytes + databaseBytes / 2, migrationHeadroomCapBytes)
+    }
+
+    static func ensureMigrationHeadroom(databasePath: String) throws {
+        let databaseURL = URL(fileURLWithPath: databasePath)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: databasePath)
+        let databaseBytes = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        let required = migrationHeadroomRequirement(databaseBytes: databaseBytes)
+        let values = try? databaseURL.deletingLastPathComponent()
+            .resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        guard let available = values?.volumeAvailableCapacity.map({ Int64($0) }) else { return }
+        guard available >= required else {
+            throw DatabaseError.insufficientDiskForMigration(required: required, available: available)
+        }
+    }
+
+    @discardableResult
+    static func checkpointAfterMigration(_ writer: any DatabaseWriter) throws -> Bool {
+        try writer.writeWithoutTransaction { db in
+            try Int.fetchOne(db, sql: "PRAGMA wal_checkpoint(TRUNCATE)") == 0
+        }
     }
 
     /// The full migration list. Exposed so tests can migrate a fixture database
@@ -551,6 +603,13 @@ final class DatabaseManager {
         registerDrilldownIndexMigration(in: &migrator)
         registerOwnerUnitsMigration(in: &migrator)
         registerOwnerGroupsMigration(in: &migrator)
+        registerJournalDetailMigration(in: &migrator)
+        registerJournalCheckpointMigration(in: &migrator)
+        registerDropPrefixIndexesMigration(in: &migrator)
+        registerSnapshotEntryCountMigration(in: &migrator)
+        registerSlimWorkingSetEntryMigration(in: &migrator)
+        registerPathDirsMigration(in: &migrator)
+        registerClassificationCodesMigration(in: &migrator)
 
         return migrator
     }
@@ -594,15 +653,15 @@ extension DatabaseManager {
     }
 
     /// Publishes a staged snapshot after all scan payloads and summaries exist.
-    func markSnapshotComplete(id: Int64) async throws {
+    func markSnapshotComplete(id: Int64, entryCount: Int) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
         try await dbPool.write { db in
             try db.execute(
-                sql: "UPDATE snapshot SET lifecycle = ? WHERE id = ?",
-                arguments: [Snapshot.Lifecycle.complete.rawValue, id]
+                sql: "UPDATE snapshot SET lifecycle = ?, entryCount = ? WHERE id = ?",
+                arguments: [Snapshot.Lifecycle.complete.rawValue, entryCount, id]
             )
             guard db.changesCount == 1 else {
                 throw DatabaseError.snapshotVanished(id)
@@ -633,7 +692,7 @@ extension DatabaseManager {
             try db.execute(
                 sql: """
                     INSERT INTO snapshotEntry (snapshotId, pathId, sizeBytes)
-                    SELECT ?, pathId, sizeBytes FROM workingSetEntry WHERE trackedPathId = ?
+                    SELECT ?, pathId, sizeBytes FROM workingSetEntry WHERE trackedPathKey = \(Self.workingSetKeySQL)
                     """,
                 arguments: [newSnapshotId, trackedPathId.uuidString]
             )
@@ -655,10 +714,12 @@ extension DatabaseManager {
         }
 
         try await dbPool.write { db in
+            try Self.deleteJournalCheckpoints(trackedPathId: trackedPathId.uuidString, db: db)
             try db.execute(
                 sql: "DELETE FROM growthJournalBucket WHERE trackedPathId = ?",
                 arguments: [trackedPathId.uuidString]
             )
+            try Self.deleteJournalDetail(trackedPathId: trackedPathId.uuidString, db: db)
         }
     }
 
@@ -669,6 +730,8 @@ extension DatabaseManager {
 
         try await dbPool.write { db in
             try db.execute(sql: "DELETE FROM growthJournalBucket")
+            try Self.deleteJournalDetail(trackedPathId: nil, db: db)
+            try Self.deleteJournalCheckpoints(db: db)
         }
     }
 
@@ -739,9 +802,6 @@ extension DatabaseManager {
             throw DatabaseError.notInitialized
         }
 
-        // Inner SQL chunk: 500 rows per multi-row VALUES statement.
-        // Each snapshotEntry row has 3 params (500×3=1500) and workingSetEntry has 4 (500×4=2000),
-        // both well within SQLite's SQLITE_LIMIT_VARIABLE_NUMBER default of 32766 on macOS.
         let sqlChunkSize = 500
 
         let trackedPathIdString = trackedPathId?.uuidString
@@ -804,23 +864,23 @@ extension DatabaseManager {
 
                 // Optionally also write to workingSetEntry in the same transaction
                 if let trackedPathIdString, let updatedAt {
-                    let wsPlaceholders = Array(repeating: "(?,?,?,?)", count: snapshotRows.count).joined(separator: ",")
+                    let workingSetKey = try Self.workingSetKey(trackedPathId: trackedPathIdString, db: db)
+                    let wsPlaceholders = Array(repeating: "(?,?,?)", count: snapshotRows.count).joined(separator: ",")
                     let wsSQL = """
-                        INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
+                        INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes)
                         VALUES \(wsPlaceholders)
-                        ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
-                            sizeBytes = excluded.sizeBytes,
-                            updatedAt = excluded.updatedAt
+                        ON CONFLICT(trackedPathKey, pathId) DO UPDATE SET
+                            sizeBytes = excluded.sizeBytes
                         """
                     var wsArgs: [DatabaseValueConvertible?] = []
-                    wsArgs.reserveCapacity(snapshotRows.count * 4)
+                    wsArgs.reserveCapacity(snapshotRows.count * 3)
                     for row in snapshotRows {
-                        wsArgs.append(trackedPathIdString)
+                        wsArgs.append(workingSetKey)
                         wsArgs.append(row.pathId)
                         wsArgs.append(row.sizeBytes)
-                        wsArgs.append(updatedAt)
                     }
                     try db.execute(sql: wsSQL, arguments: StatementArguments(wsArgs))
+                    try Self.touchWorkingSet(key: workingSetKey, updatedAt: updatedAt, db: db)
                 }
             }
 
@@ -830,7 +890,7 @@ extension DatabaseManager {
         }
     }
 
-    /// Fetches all snapshots ordered by creation date (newest first)
+    /// Fetches all snapshots ordered by insertion (newest first)
     /// - Parameter trackedPathId: Optional filter to only fetch snapshots for a specific path
     /// - Returns: Array of snapshots
     func fetchAllSnapshots(trackedPathId: UUID? = nil) async throws -> [Snapshot] {
@@ -840,7 +900,7 @@ extension DatabaseManager {
 
         return try await dbPool.read { db in
             var request = Snapshot.all()
-                .order(Snapshot.Columns.createdAt.desc, Snapshot.Columns.id.desc)
+                .order(Snapshot.Columns.id.desc)
                 .filter(Snapshot.Columns.lifecycle == Snapshot.Lifecycle.complete.rawValue)
 
             // Filter by trackedPathId if provided
@@ -857,7 +917,7 @@ extension DatabaseManager {
         }
     }
 
-    /// Fetches the most recent snapshots ordered by creation date (newest first).
+    /// Fetches the most recent snapshots ordered by insertion (newest first).
     /// - Parameters:
     ///   - trackedPathId: Optional filter to only fetch snapshots for a specific path
     ///   - limit: Maximum number of snapshots to return
@@ -870,7 +930,7 @@ extension DatabaseManager {
 
         return try await dbPool.read { db in
             var request = Snapshot.all()
-                .order(Snapshot.Columns.createdAt.desc, Snapshot.Columns.id.desc)
+                .order(Snapshot.Columns.id.desc)
                 .limit(limit)
                 .filter(Snapshot.Columns.lifecycle == Snapshot.Lifecycle.complete.rawValue)
 
@@ -907,10 +967,56 @@ extension DatabaseManager {
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 ORDER BY p.path ASC
                 """, arguments: [snapshotId])
+        }
+    }
+
+    func fetchEntries(
+        for snapshotId: Int64,
+        atOrBelow rootPath: String,
+        afterPath: String?,
+        limit: Int
+    ) async throws -> [(path: String, sizeBytes: Int64)] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let normalizedRoot = Self.normalizePath(rootPath)
+        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
+        let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
+        let root = Self.splitPath(normalizedRoot)
+        let keyset = Self.keysetLowerDir(rootPrefix: rootPrefix, afterPath: afterPath)
+
+        return try await dbPool.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT d.path || p.name AS path, se.sizeBytes AS sizeBytes, d.path AS dir, p.name AS name
+                    FROM dirs d
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = ?
+                    CROSS JOIN snapshotEntry se INDEXED BY idx_snapshotEntry_snapshotId_pathId
+                        ON se.pathId = p.id AND se.snapshotId = ?
+                    WHERE d.path = ? AND ?
+                    UNION ALL
+                    SELECT d.path || p.name, se.sizeBytes, d.path, p.name
+                    FROM dirs d
+                    CROSS JOIN paths p ON p.dirId = d.id
+                    CROSS JOIN snapshotEntry se INDEXED BY idx_snapshotEntry_snapshotId_pathId
+                        ON se.pathId = p.id AND se.snapshotId = ?
+                    WHERE d.path >= ? AND d.path < ?
+                      AND (d.path > ? OR p.name > ?)
+                    ORDER BY dir, name
+                    LIMIT ?
+                    """,
+                arguments: [
+                    root.name, snapshotId, root.dir, afterPath == nil && normalizedRoot != "/",
+                    snapshotId, keyset.lowerDir, rootPrefixUpperBound, keyset.afterDir, keyset.afterName,
+                    limit
+                ]
+            ).map { (path: $0["path"] as String? ?? "", sizeBytes: $0["sizeBytes"] as Int64? ?? 0) }
         }
     }
 
@@ -939,6 +1045,25 @@ extension DatabaseManager {
         }
     }
 
+    func fetchComparableEntryCount(for snapshotId: Int64) async throws -> Int {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try Int.fetchOne(
+                db,
+                sql: """
+                    SELECT COALESCE(
+                        (SELECT entryCount FROM snapshot WHERE id = ?),
+                        (SELECT COUNT(*) FROM snapshotEntry WHERE snapshotId = ?)
+                    )
+                    """,
+                arguments: [snapshotId, snapshotId]
+            ) ?? 0
+        }
+    }
+
     /// Fetches the top N largest entries for a snapshot, ordered by size descending.
     /// This is much faster than fetchEntries for large snapshots when you only need big files.
     /// - Parameters:
@@ -954,7 +1079,7 @@ extension DatabaseManager {
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 ORDER BY se.sizeBytes DESC, p.path ASC
                 LIMIT ?
@@ -977,7 +1102,7 @@ extension DatabaseManager {
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 ORDER BY se.sizeBytes DESC, p.path ASC
                 LIMIT ? OFFSET ?
@@ -1001,7 +1126,7 @@ extension DatabaseManager {
             try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 LIMIT ? OFFSET ?
                 """, arguments: [snapshotId, limit, offset])
@@ -1024,7 +1149,7 @@ extension DatabaseManager {
                 return try SnapshotEntryWithPath.fetchAll(db, sql: """
                     SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                     FROM snapshotEntry se
-                    JOIN paths p ON p.id = se.pathId
+                    JOIN pathText p ON p.id = se.pathId
                     WHERE se.snapshotId = ? AND se.id > ?
                     ORDER BY se.id
                     LIMIT ?
@@ -1034,7 +1159,7 @@ extension DatabaseManager {
             return try SnapshotEntryWithPath.fetchAll(db, sql: """
                 SELECT se.id, se.snapshotId, p.path AS path, se.sizeBytes
                 FROM snapshotEntry se
-                JOIN paths p ON p.id = se.pathId
+                JOIN pathText p ON p.id = se.pathId
                 WHERE se.snapshotId = ?
                 ORDER BY se.id
                 LIMIT ?
@@ -1057,14 +1182,52 @@ extension DatabaseManager {
         }
     }
 
-    /// Truncates the SQLite WAL file to reclaim space.
-    func checkpointWalTruncate() async throws {
+    static let incrementalAutoVacuumMode = 2
+
+    func autoVacuumMode() async throws -> Int {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.read { db in
+            try Int.fetchOne(db, sql: "PRAGMA auto_vacuum") ?? 0
+        }
+    }
+
+    func vacuumIntoIncrementalAutoVacuum() async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
         try await dbPool.writeWithoutTransaction { db in
-            try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+            try db.execute(sql: "PRAGMA auto_vacuum = INCREMENTAL")
+            try db.execute(sql: "VACUUM")
+        }
+    }
+
+    func incrementalVacuum(pages: Int) async throws -> Int64 {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let pageLimit = max(1, pages)
+        return try await dbPool.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA incremental_vacuum(\(pageLimit))")
+            return try Int64.fetchOne(db, sql: "PRAGMA freelist_count") ?? 0
+        }
+    }
+
+    /// Truncates the SQLite WAL file to reclaim space.
+    /// - Returns: false when a reader kept the checkpoint from finishing (SQLite reports busy without throwing).
+    @discardableResult
+    func checkpointWalTruncate() async throws -> Bool {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        return try await dbPool.writeWithoutTransaction { db in
+            let busy = try Int.fetchOne(db, sql: "PRAGMA wal_checkpoint(TRUNCATE)") ?? 1
+            return busy == 0
         }
     }
 
@@ -1221,20 +1384,21 @@ extension DatabaseManager {
         let trackedPathIdString = trackedPathId.uuidString
 
         try await dbPool.write { db in
-            try db.execute(
-                sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
-                arguments: [trackedPathIdString]
-            )
+            try Self.clearWorkingSetRows(trackedPathId: trackedPathIdString, db: db)
 
+            let workingSetKey = try Self.workingSetKey(trackedPathId: trackedPathIdString, db: db)
             try db.execute(
                 sql: """
-                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
-                    SELECT ?, pathId, sizeBytes, ?
+                    INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes)
+                    SELECT ?, pathId, sizeBytes
                     FROM snapshotEntry
                     WHERE snapshotId = ?
                     """,
-                arguments: [trackedPathIdString, updatedAt, snapshotId]
+                arguments: [workingSetKey, snapshotId]
             )
+            if db.changesCount > 0 {
+                try Self.touchWorkingSet(key: workingSetKey, updatedAt: updatedAt, db: db)
+            }
 
             try db.execute(
                 sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
@@ -1246,7 +1410,7 @@ extension DatabaseManager {
                     INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
                     SELECT
                         ?,
-                        pc.category,
+                        \(Self.classificationNameSQL("pc.category")),
                         COALESCE(SUM(se.sizeBytes), 0),
                         ?
                     FROM snapshotEntry se
@@ -1277,10 +1441,7 @@ extension DatabaseManager {
 
         let trackedPathIdString = trackedPathId.uuidString
         try await dbPool.write { db in
-            try db.execute(
-                sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
-                arguments: [trackedPathIdString]
-            )
+            try Self.clearWorkingSetRows(trackedPathId: trackedPathIdString, db: db)
             try db.execute(
                 sql: "DELETE FROM workingSetCategoryTotal WHERE trackedPathId = ?",
                 arguments: [trackedPathIdString]
@@ -1390,6 +1551,23 @@ extension DatabaseManager {
         }
 
         let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.write { db in
+            try Self.replaceWorkingSetFileRows(
+                trackedPathId: trackedPathIdString,
+                entry: entry,
+                updatedAt: updatedAt,
+                db: db
+            )
+        }
+    }
+
+    private static func replaceWorkingSetFileRows(
+        trackedPathId trackedPathIdString: String,
+        entry: ScanResult,
+        updatedAt: Date,
+        db: Database
+    ) throws -> [JournalDeltaKey: Int64] {
         let normalizedPath = Self.normalizePath(entry.path)
         let newState = WorkingSetFileState(
             category: entry.category,
@@ -1397,51 +1575,41 @@ extension DatabaseManager {
             sizeBytes: entry.sizeBytes
         )
 
-        return try await dbPool.write { db in
-            try db.execute(
-                sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)",
-                arguments: [normalizedPath]
-            )
-
-            guard let pathId: Int64 = try Int64.fetchOne(
-                db,
-                sql: "SELECT id FROM paths WHERE path = ?",
-                arguments: [normalizedPath]
-            ) else {
-                return [:]
-            }
-
-            let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
-
-            try db.execute(
-                sql: """
-                    INSERT INTO pathClassification (pathId, category, subcategory)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(pathId) DO UPDATE SET
-                        category = excluded.category,
-                        subcategory = excluded.subcategory
-                    """,
-                arguments: [pathId, newState.category.rawValue, newState.subcategory?.rawValue ?? ""]
-            )
-
-            try db.execute(
-                sql: """
-                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
-                        sizeBytes = excluded.sizeBytes,
-                        updatedAt = excluded.updatedAt
-                    """,
-                arguments: [trackedPathIdString, pathId, newState.sizeBytes, updatedAt]
-            )
-
-            return try Self.applyWorkingSetChanges(
-                [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: newState)],
-                trackedPathId: trackedPathIdString,
-                updatedAt: updatedAt,
-                db: db
-            )
+        guard let pathId = try Self.insertPath(normalizedPath, db: db) else {
+            return [:]
         }
+
+        let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
+
+        try db.execute(
+            sql: """
+                INSERT INTO pathClassification (pathId, category, subcategory)
+                VALUES (?, \(Self.classificationCodeSQL), \(Self.classificationCodeSQL))
+                ON CONFLICT(pathId) DO UPDATE SET
+                    category = excluded.category,
+                    subcategory = excluded.subcategory
+                """,
+            arguments: [pathId, newState.category.rawValue, newState.subcategory?.rawValue ?? ""]
+        )
+
+        let workingSetKey = try Self.workingSetKey(trackedPathId: trackedPathIdString, db: db)
+        try db.execute(
+            sql: """
+                INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes)
+                VALUES (?, ?, ?)
+                ON CONFLICT(trackedPathKey, pathId) DO UPDATE SET
+                    sizeBytes = excluded.sizeBytes
+                """,
+            arguments: [workingSetKey, pathId, newState.sizeBytes]
+        )
+        try Self.touchWorkingSet(key: workingSetKey, updatedAt: updatedAt, db: db)
+
+        return try Self.applyWorkingSetChanges(
+            [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: newState)],
+            trackedPathId: trackedPathIdString,
+            updatedAt: updatedAt,
+            db: db
+        )
     }
 
     /// The working-set state of one file; nil when it is not in the working
@@ -1454,18 +1622,38 @@ extension DatabaseManager {
         guard let row = try Row.fetchOne(
             db,
             sql: """
-                SELECT wse.sizeBytes AS sizeBytes,
-                       pc.category AS category,
-                       pc.subcategory AS subcategory
+                SELECT wse.sizeBytes AS sizeBytes, pc.category AS category, pc.subcategory AS subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
-                WHERE wse.trackedPathId = ? AND wse.pathId = ?
+                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = ?
                 """,
             arguments: [trackedPathId, pathId]
         ) else {
             return nil
         }
-        return workingSetFileState(category: row["category"], subcategory: row["subcategory"], sizeBytes: row["sizeBytes"])
+        var names = try classificationNameCache.names(db)
+        return try workingSetFileState(
+            categoryCode: row["category"],
+            subcategoryCode: row["subcategory"],
+            sizeBytes: row["sizeBytes"],
+            names: &names,
+            db: db
+        )
+    }
+
+    private static func workingSetFileState(
+        categoryCode: Int64?,
+        subcategoryCode: Int64?,
+        sizeBytes: Int64?,
+        names: inout ClassificationNames,
+        db: Database
+    ) throws -> WorkingSetFileState? {
+        let cache = classificationNameCache
+        return workingSetFileState(
+            category: try cache.name(code: categoryCode, names: &names, db: db),
+            subcategory: try cache.name(code: subcategoryCode, names: &names, db: db),
+            sizeBytes: sizeBytes
+        )
     }
 
     private static func workingSetFileState(
@@ -1514,35 +1702,296 @@ extension DatabaseManager {
         }
 
         let trackedPathIdString = trackedPathId.uuidString
-        let normalizedPath = Self.normalizePath(path)
 
         return try await dbPool.write { db in
-            guard let pathId = try Int64.fetchOne(
-                db,
-                sql: """
-                    SELECT p.id
-                    FROM paths p
-                    JOIN workingSetEntry wse ON wse.pathId = p.id
-                    WHERE wse.trackedPathId = ? AND p.path = ?
-                    """,
-                arguments: [trackedPathIdString, normalizedPath]
-            ) else {
-                return nil
-            }
-
-            let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
-
-            try db.execute(
-                sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ? AND pathId = ?",
-                arguments: [trackedPathIdString, pathId]
-            )
-
-            return try Self.applyWorkingSetChanges(
-                [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: nil)],
+            try Self.removeWorkingSetFileRowsIfPresent(
                 trackedPathId: trackedPathIdString,
+                path: path,
                 updatedAt: updatedAt,
                 db: db
             )
+        }
+    }
+
+    private static func removeWorkingSetFileRowsIfPresent(
+        trackedPathId trackedPathIdString: String,
+        path: String,
+        updatedAt: Date,
+        db: Database
+    ) throws -> [JournalDeltaKey: Int64]? {
+        let normalizedPath = Self.normalizePath(path)
+
+        guard let pathId = try Int64.fetchOne(
+            db,
+            sql: """
+                SELECT wse.pathId
+                FROM workingSetEntry wse
+                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
+                  AND wse.pathId = (\(Self.pathIdSQL))
+                """,
+            arguments: [trackedPathIdString] + Self.pathIdArguments(normalizedPath)
+        ) else {
+            return nil
+        }
+
+        let oldState = try Self.fetchWorkingSetFileState(trackedPathId: trackedPathIdString, pathId: pathId, db: db)
+
+        try db.execute(
+            sql: "DELETE FROM workingSetEntry WHERE trackedPathKey = \(Self.workingSetKeySQL) AND pathId = ?",
+            arguments: [trackedPathIdString, pathId]
+        )
+
+        return try Self.applyWorkingSetChanges(
+            [WorkingSetFileChange(pathId: pathId, path: normalizedPath, old: oldState, new: nil)],
+            trackedPathId: trackedPathIdString,
+            updatedAt: updatedAt,
+            db: db
+        )
+    }
+
+    private static func removeWorkingSetSubtreeRows(
+        trackedPathId trackedPathIdString: String,
+        rootPath: String,
+        updatedAt: Date,
+        db: Database
+    ) throws -> [JournalDeltaKey: Int64] {
+        let subtreeArguments = Self.subtreeArguments(root: Self.normalizePath(rootPath))
+
+        let oldRows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT
+                    s.id AS pathId,
+                    s.path AS path,
+                    wse.sizeBytes AS sizeBytes,
+                    pc.category AS category,
+                    pc.subcategory AS subcategory
+                FROM (\(Self.subtreePathsSQL)) s
+                CROSS JOIN workingSetEntry wse
+                    ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = s.id
+                JOIN pathClassification pc ON pc.pathId = wse.pathId
+                """,
+            arguments: subtreeArguments + [trackedPathIdString]
+        )
+
+        var names = try classificationNameCache.names(db)
+        var changes: [WorkingSetFileChange] = []
+        changes.reserveCapacity(oldRows.count)
+        for row in oldRows {
+            guard let pathId: Int64 = row["pathId"], let path: String = row["path"] else { continue }
+            changes.append(WorkingSetFileChange(
+                pathId: pathId,
+                path: path,
+                old: try Self.workingSetFileState(
+                    categoryCode: row["category"],
+                    subcategoryCode: row["subcategory"],
+                    sizeBytes: row["sizeBytes"],
+                    names: &names,
+                    db: db
+                ),
+                new: nil
+            ))
+        }
+
+        try db.execute(
+            sql: """
+                DELETE FROM workingSetEntry
+                WHERE trackedPathKey = \(Self.workingSetKeySQL)
+                  AND pathId IN (SELECT id FROM (\(Self.subtreePathsSQL)))
+                """,
+            arguments: [trackedPathIdString] + subtreeArguments
+        )
+
+        return try Self.applyWorkingSetChanges(
+            changes,
+            trackedPathId: trackedPathIdString,
+            updatedAt: updatedAt,
+            db: db
+        )
+    }
+
+    func fetchWorkingSetSizes(trackedPathId: UUID, paths: [String]) async throws -> [String: Int64] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+        guard !paths.isEmpty else { return [:] }
+
+        let trackedPathIdString = trackedPathId.uuidString
+        let normalizedPaths = paths.map { Self.normalizePath($0) }
+        let chunkSize = 500
+
+        return try await dbPool.read { db in
+            var sizes: [String: Int64] = [:]
+            for startIndex in stride(from: 0, to: normalizedPaths.count, by: chunkSize) {
+                let chunk = Array(normalizedPaths[startIndex..<min(startIndex + chunkSize, normalizedPaths.count)])
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                        \(Self.pathValuesSQL(count: chunk.count))
+                        SELECT input.dir || input.name AS path, wse.sizeBytes AS sizeBytes
+                        FROM input
+                        CROSS JOIN dirs d ON d.path = input.dir
+                        CROSS JOIN paths p ON p.dirId = d.id AND p.name = input.name
+                        CROSS JOIN workingSetEntry wse
+                            ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = p.id
+                        """,
+                    arguments: StatementArguments(Self.pathValueArguments(chunk) + [trackedPathIdString])
+                )
+                for row in rows {
+                    if let path: String = row["path"], let sizeBytes: Int64 = row["sizeBytes"] {
+                        sizes[path] = sizeBytes
+                    }
+                }
+            }
+            return sizes
+        }
+    }
+
+    func fetchWorkingSetEntries(
+        trackedPathId: UUID,
+        atOrBelow rootPath: String,
+        afterPath: String?,
+        limit: Int
+    ) async throws -> [ScanResult] {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+        let normalizedRoot = Self.normalizePath(rootPath)
+        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
+        let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
+        let root = Self.splitPath(normalizedRoot)
+        let keyset = Self.keysetLowerDir(rootPrefix: rootPrefix, afterPath: afterPath)
+
+        return try await dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT d.path || p.name AS path, wse.sizeBytes AS sizeBytes, d.path AS dir, p.name AS name
+                    FROM dirs d
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = ?
+                    CROSS JOIN workingSetEntry wse
+                        ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = p.id
+                    WHERE d.path = ? AND ?
+                    UNION ALL
+                    SELECT d.path || p.name, wse.sizeBytes, d.path, p.name
+                    FROM dirs d
+                    CROSS JOIN paths p ON p.dirId = d.id
+                    CROSS JOIN workingSetEntry wse
+                        ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = p.id
+                    WHERE d.path >= ? AND d.path < ?
+                      AND (d.path > ? OR p.name > ?)
+                    ORDER BY dir, name
+                    LIMIT ?
+                    """,
+                arguments: [
+                    root.name, trackedPathIdString, root.dir, afterPath == nil && normalizedRoot != "/",
+                    trackedPathIdString, keyset.lowerDir, rootPrefixUpperBound, keyset.afterDir, keyset.afterName,
+                    limit
+                ]
+            )
+            return rows.compactMap { row in
+                guard let path: String = row["path"], let sizeBytes: Int64 = row["sizeBytes"] else { return nil }
+                return ScanResult(path: path, sizeBytes: sizeBytes)
+            }
+        }
+    }
+
+    enum WorkingSetPointChange: Sendable {
+        case file(ScanResult)
+        case removal(String)
+
+        var rootPath: String {
+            switch self {
+            case .file(let result): result.path
+            case .removal(let path): path
+            }
+        }
+    }
+
+    struct WorkingSetPointFailure: Sendable {
+        let rootPath: String
+        let message: String
+    }
+
+    struct WorkingSetPointBatchResult: Sendable {
+        let deltas: [JournalDeltaKey: Int64]
+        let failures: [WorkingSetPointFailure]
+    }
+
+    /// Applies file replacements and removals in one write transaction, each in
+    /// its own savepoint so a failing change rolls back alone. The merged
+    /// deltas plus `extraDeltas` are journalled in the same transaction.
+    func applyWorkingSetPointChanges(
+        trackedPathId: UUID,
+        changes: [WorkingSetPointChange],
+        extraDeltas: [JournalDeltaKey: Int64],
+        journalBucketStart: Date,
+        updatedAt: Date
+    ) async throws -> WorkingSetPointBatchResult {
+        guard let dbPool = dbPool else {
+            throw DatabaseError.notInitialized
+        }
+
+        let trackedPathIdString = trackedPathId.uuidString
+
+        return try await dbPool.write { db in
+            var mergedDeltas = extraDeltas
+            var failures: [WorkingSetPointFailure] = []
+
+            for change in changes {
+                do {
+                    var deltas: [JournalDeltaKey: Int64] = [:]
+                    try db.inSavepoint {
+                        switch change {
+                        case .file(let entry):
+                            deltas = try Self.replaceWorkingSetFileRows(
+                                trackedPathId: trackedPathIdString,
+                                entry: entry,
+                                updatedAt: updatedAt,
+                                db: db
+                            )
+                        case .removal(let path):
+                            if let exact = try Self.removeWorkingSetFileRowsIfPresent(
+                                trackedPathId: trackedPathIdString,
+                                path: path,
+                                updatedAt: updatedAt,
+                                db: db
+                            ) {
+                                deltas = exact
+                            } else {
+                                deltas = try Self.removeWorkingSetSubtreeRows(
+                                    trackedPathId: trackedPathIdString,
+                                    rootPath: path,
+                                    updatedAt: updatedAt,
+                                    db: db
+                                )
+                            }
+                        }
+                        return .commit
+                    }
+                    for (key, delta) in deltas where delta != 0 {
+                        mergedDeltas[key, default: 0] += delta
+                    }
+                } catch {
+                    failures.append(WorkingSetPointFailure(
+                        rootPath: change.rootPath,
+                        message: error.localizedDescription
+                    ))
+                }
+            }
+
+            mergedDeltas = mergedDeltas.filter { $0.value != 0 }
+            try Self.upsertGrowthJournalBucketRows(
+                trackedPathId: trackedPathIdString,
+                deltasByBucketStart: [journalBucketStart: mergedDeltas],
+                source: .watch,
+                observedSince: nil,
+                db: db
+            )
+
+            return WorkingSetPointBatchResult(deltas: mergedDeltas, failures: failures)
         }
     }
 
@@ -1564,28 +2013,29 @@ extension DatabaseManager {
                 let batch = entries[startIndex..<endIndex]
                 let normalizedBatch = batch.map {
                     (
-                        path: Self.normalizePath($0.path),
+                        parts: Self.splitPath(Self.normalizePath($0.path)),
                         sizeBytes: $0.sizeBytes,
                         category: $0.category.rawValue,
                         subcategory: $0.subcategory?.rawValue ?? ""
                     )
                 }
 
-                let placeholders = Array(repeating: "(?,?,?,?,?)", count: normalizedBatch.count).joined(separator: ",")
+                let placeholders = Array(repeating: "(?,?,?,?,?,?)", count: normalizedBatch.count).joined(separator: ",")
                 let sql = """
-                    INSERT INTO workingSetRefreshStaging (sessionId, path, sizeBytes, category, subcategory)
+                    INSERT INTO workingSetRefreshStaging (sessionId, dir, name, sizeBytes, category, subcategory)
                     VALUES \(placeholders)
-                    ON CONFLICT(sessionId, path) DO UPDATE SET
+                    ON CONFLICT(sessionId, dir, name) DO UPDATE SET
                         sizeBytes = excluded.sizeBytes,
                         category = excluded.category,
                         subcategory = excluded.subcategory
                     """
 
                 var arguments: [DatabaseValueConvertible?] = []
-                arguments.reserveCapacity(normalizedBatch.count * 5)
+                arguments.reserveCapacity(normalizedBatch.count * 6)
                 for entry in normalizedBatch {
                     arguments.append(sessionId)
-                    arguments.append(entry.path)
+                    arguments.append(entry.parts.dir)
+                    arguments.append(entry.parts.name)
                     arguments.append(entry.sizeBytes)
                     arguments.append(entry.category)
                     arguments.append(entry.subcategory)
@@ -1628,17 +2078,25 @@ extension DatabaseManager {
         }
 
         let trackedPathIdString = trackedPathId.uuidString
-        let normalizedRoot = Self.normalizePath(rootPath)
-        let rootPrefix = normalizedRoot == "/" ? "/" : normalizedRoot + "/"
-        let rootPrefixUpperBound = Self.pathPrefixUpperBound(rootPrefix)
+        let subtreeArguments = Self.subtreeArguments(root: Self.normalizePath(rootPath))
 
         return try await dbPool.write { db in
             try db.execute(
                 sql: """
-                    INSERT OR IGNORE INTO paths (path)
-                    SELECT path
+                    INSERT OR IGNORE INTO dirs (path)
+                    SELECT dir
                     FROM workingSetRefreshStaging
                     WHERE sessionId = ?
+                    """,
+                arguments: [stagingSessionId]
+            )
+            try db.execute(
+                sql: """
+                    INSERT OR IGNORE INTO paths (dirId, name)
+                    SELECT d.id, s.name
+                    FROM workingSetRefreshStaging s
+                    CROSS JOIN dirs d ON d.path = s.dir
+                    WHERE s.sessionId = ?
                     """,
                 arguments: [stagingSessionId]
             )
@@ -1650,29 +2108,26 @@ extension DatabaseManager {
                 sql: """
                     WITH oldRows AS (
                         SELECT
-                            p.id AS pathId,
-                            p.path AS path,
+                            sub.id AS pathId,
+                            sub.path AS path,
                             wse.sizeBytes AS sizeBytes,
-                            pc.category AS category,
-                            pc.subcategory AS subcategory
-                        FROM paths p
-                        CROSS JOIN workingSetEntry wse ON wse.pathId = p.id
+                            \(Self.classificationNameSQL("pc.category")) AS category,
+                            \(Self.classificationNameSQL("pc.subcategory")) AS subcategory
+                        FROM (\(Self.subtreePathsSQL)) sub
+                        CROSS JOIN workingSetEntry wse
+                            ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = sub.id
                         JOIN pathClassification pc ON pc.pathId = wse.pathId
-                        WHERE wse.trackedPathId = ?
-                          AND (
-                              p.path = ?
-                              OR (p.path >= ? AND p.path < ?)
-                          )
                     ),
                     newRows AS (
                         SELECT
                             p.id AS pathId,
-                            p.path AS path,
+                            d.path || p.name AS path,
                             MAX(s.sizeBytes) AS sizeBytes,
                             s.category AS category,
                             s.subcategory AS subcategory
                         FROM workingSetRefreshStaging s
-                        JOIN paths p ON p.path = s.path
+                        CROSS JOIN dirs d ON d.path = s.dir
+                        CROSS JOIN paths p ON p.dirId = d.id AND p.name = s.name
                         WHERE s.sessionId = ?
                         GROUP BY p.id
                     )
@@ -1695,13 +2150,7 @@ extension DatabaseManager {
                     LEFT JOIN oldRows o ON o.pathId = n.pathId
                     WHERE o.pathId IS NULL
                     """,
-                arguments: [
-                    trackedPathIdString,
-                    normalizedRoot,
-                    rootPrefix,
-                    rootPrefixUpperBound,
-                    stagingSessionId
-                ]
+                arguments: subtreeArguments + [trackedPathIdString, stagingSessionId]
             )
 
             let changes = changeRows.compactMap { row -> WorkingSetFileChange? in
@@ -1725,9 +2174,12 @@ extension DatabaseManager {
             try db.execute(
                 sql: """
                     INSERT INTO pathClassification (pathId, category, subcategory)
-                    SELECT p.id, s.category, s.subcategory
+                    SELECT p.id,
+                           (SELECT code FROM classificationName WHERE name = s.category),
+                           (SELECT code FROM classificationName WHERE name = s.subcategory)
                     FROM workingSetRefreshStaging s
-                    JOIN paths p ON p.path = s.path
+                    CROSS JOIN dirs d ON d.path = s.dir
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = s.name
                     WHERE s.sessionId = ?
                     ON CONFLICT(pathId) DO UPDATE SET
                         category = excluded.category,
@@ -1739,36 +2191,30 @@ extension DatabaseManager {
             try db.execute(
                 sql: """
                     DELETE FROM workingSetEntry
-                    WHERE trackedPathId = ?
-                      AND pathId IN (
-                        SELECT p.id
-                        FROM paths p
-                        WHERE p.path = ?
-                           OR (p.path >= ? AND p.path < ?)
-                      )
+                    WHERE trackedPathKey = \(Self.workingSetKeySQL)
+                      AND pathId IN (SELECT id FROM (\(Self.subtreePathsSQL)))
                     """,
-                arguments: [
-                    trackedPathIdString,
-                    normalizedRoot,
-                    rootPrefix,
-                    rootPrefixUpperBound
-                ]
+                arguments: [trackedPathIdString] + subtreeArguments
             )
 
+            let workingSetKey = try Self.workingSetKey(trackedPathId: trackedPathIdString, db: db)
             try db.execute(
                 sql: """
-                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt)
-                    SELECT ?, p.id, MAX(s.sizeBytes), ?
+                    INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes)
+                    SELECT ?, p.id, MAX(s.sizeBytes)
                     FROM workingSetRefreshStaging s
-                    JOIN paths p ON p.path = s.path
+                    CROSS JOIN dirs d ON d.path = s.dir
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = s.name
                     WHERE s.sessionId = ?
                     GROUP BY p.id
-                    ON CONFLICT(trackedPathId, pathId) DO UPDATE SET
-                        sizeBytes = excluded.sizeBytes,
-                        updatedAt = excluded.updatedAt
+                    ON CONFLICT(trackedPathKey, pathId) DO UPDATE SET
+                        sizeBytes = excluded.sizeBytes
                     """,
-                arguments: [trackedPathIdString, updatedAt, stagingSessionId]
+                arguments: [workingSetKey, stagingSessionId]
             )
+            if db.changesCount > 0 {
+                try Self.touchWorkingSet(key: workingSetKey, updatedAt: updatedAt, db: db)
+            }
 
             let deltas = try Self.applyWorkingSetChanges(
                 changes,
@@ -1817,31 +2263,47 @@ extension DatabaseManager {
         let trackedPathIdString = trackedPathId.uuidString
 
         try await dbPool.write { db in
-            let statement = try db.makeStatement(
-                sql: """
-                    INSERT INTO growthJournalBucket
-                        (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, observedSince, unitKey)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(trackedPathId, bucketStart, category, subcategory, source, unitKey)
-                    DO UPDATE SET
-                        deltaBytes = deltaBytes + excluded.deltaBytes,
-                        observedSince = COALESCE(observedSince, excluded.observedSince)
-                    """
+            try Self.upsertGrowthJournalBucketRows(
+                trackedPathId: trackedPathIdString,
+                deltasByBucketStart: deltasByBucketStart,
+                source: source,
+                observedSince: observedSince,
+                db: db
             )
+        }
+    }
 
-            for (bucketStart, deltas) in deltasByBucketStart {
-                for (key, deltaBytes) in deltas where deltaBytes != 0 {
-                    try statement.execute(arguments: [
-                        trackedPathIdString,
-                        bucketStart,
-                        key.category.rawValue,
-                        key.subcategory?.rawValue ?? "",
-                        deltaBytes,
-                        source.rawValue,
-                        observedSince,
-                        key.unitKey
-                    ])
-                }
+    private static func upsertGrowthJournalBucketRows(
+        trackedPathId trackedPathIdString: String,
+        deltasByBucketStart: [Date: [JournalDeltaKey: Int64]],
+        source: GrowthJournalBucket.Source,
+        observedSince: Date?,
+        db: Database
+    ) throws {
+        let statement = try db.makeStatement(
+            sql: """
+                INSERT INTO growthJournalBucket
+                    (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, observedSince, unitKey)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(trackedPathId, bucketStart, category, subcategory, source, unitKey)
+                DO UPDATE SET
+                    deltaBytes = deltaBytes + excluded.deltaBytes,
+                    observedSince = COALESCE(observedSince, excluded.observedSince)
+                """
+        )
+
+        for (bucketStart, deltas) in deltasByBucketStart {
+            for (key, deltaBytes) in deltas where deltaBytes != 0 {
+                try statement.execute(arguments: [
+                    trackedPathIdString,
+                    bucketStart,
+                    key.category.rawValue,
+                    key.subcategory?.rawValue ?? "",
+                    deltaBytes,
+                    source.rawValue,
+                    observedSince,
+                    key.unitKey
+                ])
             }
         }
     }
@@ -1953,7 +2415,29 @@ extension DatabaseManager {
         let placeholders = Array(repeating: "?", count: trackedPathIds.count).joined(separator: ",")
         var arguments: [DatabaseValueConvertible?] = trackedPathIds.map { $0.uuidString }
         arguments.append(since)
+        return try journalSlots(
+            db: db,
+            condition: "trackedPathId IN (\(placeholders)) AND bucketStart >= ?",
+            arguments: StatementArguments(arguments)
+        )
+    }
 
+    /// Slots of every tracked path before `cutoff`: what a prune folds into the
+    /// checkpoints before it deletes them.
+    static func fetchJournalSlots(db: Database, before cutoff: Date) throws -> [JournalSlot] {
+        try journalSlots(db: db, condition: "bucketStart < ?", arguments: [cutoff])
+    }
+
+    /// Slots of every tracked path in `[start, end)`.
+    static func fetchJournalSlots(db: Database, from start: Date, before end: Date) throws -> [JournalSlot] {
+        try journalSlots(db: db, condition: "bucketStart >= ? AND bucketStart < ?", arguments: [start, end])
+    }
+
+    private static func journalSlots(
+        db: Database,
+        condition: String,
+        arguments: StatementArguments
+    ) throws -> [JournalSlot] {
         let rows = try Row.fetchAll(
             db,
             sql: """
@@ -1968,10 +2452,10 @@ extension DatabaseManager {
                     MIN(bucketStart) AS firstAt,
                     MIN(observedSince) AS observedSince
                 FROM growthJournalBucket
-                WHERE trackedPathId IN (\(placeholders)) AND bucketStart >= ?
+                WHERE \(condition)
                 GROUP BY unitKey, category, subcategory, source, slot
                 """,
-            arguments: StatementArguments(arguments)
+            arguments: arguments
         )
 
         return rows.compactMap { row -> JournalSlot? in
@@ -2073,18 +2557,129 @@ extension DatabaseManager {
         }
     }
 
-    func pruneGrowthJournalBuckets(olderThan cutoff: Date) async throws {
+    /// Deletes the journal before `cutoff`. Every place's count is folded over
+    /// those buckets and saved as its checkpoint, so the change list counts on
+    /// from where the deleted history left off. A run that crosses the cutoff
+    /// stays whole in the journal until a later prune, so it counts on the day
+    /// it started like in the full history.
+    ///
+    /// The range goes in one-day transactions, oldest first, each folding and
+    /// deleting its day together. A run that crosses a day edge is held with
+    /// the rest of its start day and folds whole in the next transaction.
+    func pruneGrowthJournalBuckets(olderThan cutoff: Date, calendar: Calendar = .current) async throws {
         guard let dbPool = dbPool else {
             throw DatabaseError.notInitialized
         }
 
+        let oldest = try await dbPool.read { db in
+            try Date.fetchOne(db, sql: "SELECT MIN(bucketStart) FROM growthJournalBucket")
+        }
+        var edges: [Date] = []
+        if let oldest {
+            var edge = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: oldest))
+            while let next = edge, next < cutoff {
+                edges.append(next)
+                edge = calendar.date(byAdding: .day, value: 1, to: next)
+            }
+        }
+
+        for edge in edges {
+            try await dbPool.write { db in
+                try Self.pruneJournalRange(db: db, before: edge, finalCutoff: nil, calendar: calendar)
+            }
+        }
         try await dbPool.write { db in
-            try db.execute(
-                sql: "DELETE FROM growthJournalBucket WHERE bucketStart < ?",
-                arguments: [cutoff]
-            )
+            try Self.pruneJournalRange(db: db, before: cutoff, finalCutoff: cutoff, calendar: calendar)
         }
     }
+
+    private static func pruneJournalRange(
+        db: Database,
+        before edge: Date,
+        finalCutoff: Date?,
+        calendar: Calendar
+    ) throws {
+        let saved = try Self.fetchJournalCheckpoints(db: db)
+        let carries = Dictionary(uniqueKeysWithValues: saved.map { ($0.unitKey, $0.state) })
+        let before = try Self.fetchJournalSlots(db: db, before: edge)
+        let following = try Self.fetchJournalSlots(
+            db: db,
+            from: edge,
+            before: edge.addingTimeInterval(Self.pruneRunLookahead)
+        )
+        let held = EpisodeBuilder.heldRunStarts(
+            before: before,
+            following: following,
+            wholeDayIn: finalCutoff == nil ? calendar : nil
+        )
+        let foldable = before.filter { slot in held[slot.unitKey].map { slot.firstAt < $0 } ?? true }
+        let counts = EpisodeBuilder.foldedCounts(slots: foldable, carries: carries, calendar: calendar)
+        let expiry = finalCutoff.map {
+            calendar.date(byAdding: .day, value: -EpisodeBuilder.checkpointExpiryDays, to: $0) ?? $0
+        }
+        let checkpoints = counts.compactMap { unitKey, state -> JournalCheckpoint? in
+            guard let checkpoint = JournalCheckpoint(unitKey: unitKey, asOf: edge, state: state),
+                  expiry.map({ checkpoint.lastActiveDay >= $0 }) ?? true else { return nil }
+            return checkpoint
+        }
+        if finalCutoff != nil {
+            try Self.replaceJournalCheckpoints(checkpoints, db: db)
+        } else {
+            let savedByKey = Dictionary(uniqueKeysWithValues: saved.map { ($0.unitKey, $0) })
+            let keptKeys = Set(checkpoints.map(\.unitKey))
+            for unitKey in savedByKey.keys where !keptKeys.contains(unitKey) {
+                try db.execute(sql: "DELETE FROM growthJournalCheckpoint WHERE unitKey = ?", arguments: [unitKey])
+            }
+            let changed = checkpoints.filter { savedByKey[$0.unitKey]?.state != $0.state }
+            if !changed.isEmpty {
+                let statement = try db.makeStatement(sql: """
+                    INSERT OR REPLACE INTO growthJournalCheckpoint
+                        (unitKey, asOf, countBytes, grossBytes, countStartDay, lastActiveDay)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """)
+                for checkpoint in changed {
+                    try statement.execute(arguments: [
+                        checkpoint.unitKey,
+                        checkpoint.asOf,
+                        checkpoint.countBytes,
+                        checkpoint.grossBytes,
+                        checkpoint.countStartDay,
+                        checkpoint.lastActiveDay
+                    ])
+                }
+            }
+        }
+        try db.execute(sql: """
+            CREATE TEMP TABLE IF NOT EXISTS pruneHold (
+                unitKey TEXT PRIMARY KEY,
+                holdFrom DATETIME NOT NULL
+            ) WITHOUT ROWID
+            """)
+        try db.execute(sql: "DELETE FROM pruneHold")
+        for (unitKey, start) in held {
+            try db.execute(
+                sql: "INSERT INTO pruneHold (unitKey, holdFrom) VALUES (?, ?)",
+                arguments: [unitKey, start]
+            )
+        }
+        try db.execute(
+            sql: """
+                DELETE FROM growthJournalBucket
+                WHERE bucketStart < COALESCE(
+                    (SELECT holdFrom FROM pruneHold WHERE pruneHold.unitKey = growthJournalBucket.unitKey),
+                    ?
+                )
+                """,
+            arguments: [edge]
+        )
+        try db.execute(sql: "DELETE FROM pruneHold")
+        try db.execute(
+            sql: "DELETE FROM growthJournalDetail WHERE bucketStart < ?",
+            arguments: [edge]
+        )
+    }
+
+    private static let pruneRunLookahead: TimeInterval = 2 * 60 * 60
 
     func clearRealtimeData(trackedPathId: UUID? = nil) async throws {
         guard let dbPool = dbPool else {
@@ -2095,8 +2690,10 @@ extension DatabaseManager {
 
         try await dbPool.write { db in
             if let trackedPathIdString {
+                try Self.deleteJournalCheckpoints(trackedPathId: trackedPathIdString, db: db)
+                try Self.clearWorkingSetRows(trackedPathId: trackedPathIdString, db: db)
                 try db.execute(
-                    sql: "DELETE FROM workingSetEntry WHERE trackedPathId = ?",
+                    sql: "DELETE FROM workingSetTrackedPath WHERE trackedPathId = ?",
                     arguments: [trackedPathIdString]
                 )
                 try db.execute(
@@ -2109,16 +2706,19 @@ extension DatabaseManager {
                 )
             } else {
                 try db.execute(sql: "DELETE FROM workingSetEntry")
+                try db.execute(sql: "DELETE FROM workingSetTrackedPath")
                 try db.execute(sql: "DELETE FROM workingSetCategoryTotal")
                 try db.execute(sql: "DELETE FROM growthJournalBucket")
+                try Self.deleteJournalCheckpoints(db: db)
             }
+            try Self.deleteJournalDetail(trackedPathId: trackedPathIdString, db: db)
             try Self.clearDrilldownIndex(trackedPathId: trackedPathIdString, db: db)
         }
     }
 
     /// Normalizes a file path for consistent storage
     /// - Removes trailing slash (unless it's just "/")
-    /// - Case is preserved for display. `paths.path` uses UNIQUE COLLATE NOCASE, so
+    /// - Case is preserved for display. `dirs.path` and `paths.name` use COLLATE NOCASE, so
     ///   SQLite matches case-insensitively; Swift dictionary lookups must key by the
     ///   requested spelling (see `fetchPathIds`) rather than assuming stored case matches.
     static func normalizePath(_ path: String) -> String {
@@ -2148,8 +2748,9 @@ extension DatabaseManager {
     ) throws {
         guard !pathIdByPath.isEmpty else { return }
 
-        // Build flat array of (pathId, category, subcategory) tuples for chunked multi-row INSERT
-        var rows: [(pathId: Int64, category: String, subcategory: String)] = []
+        let cache = Self.classificationNameCache
+        var names = try cache.names(db)
+        var rows: [(pathId: Int64, category: Int64, subcategory: Int64)] = []
         rows.reserveCapacity(pathIdByPath.count)
         for (path, pathId) in pathIdByPath {
             let resolved = classificationsByPath?[path]
@@ -2157,14 +2758,13 @@ extension DatabaseManager {
                     category: GrowthCategory.categorize(path: path),
                     subcategory: GrowthCategory.subcategorize(path: path)
                 )
-            rows.append((
-                pathId: pathId,
-                category: resolved.category.rawValue,
-                subcategory: resolved.subcategory?.rawValue ?? ""
-            ))
+            let categoryName = resolved.category.rawValue
+            let subcategoryName = resolved.subcategory?.rawValue ?? ""
+            let category = try cache.code(name: categoryName, names: &names, db: db)
+            let subcategory = try cache.code(name: subcategoryName, names: &names, db: db)
+            rows.append((pathId: pathId, category: category, subcategory: subcategory))
         }
 
-        // Insert in chunks of 500 rows using multi-row VALUES — ~500x fewer round-trips
         let chunkSize = 500
         for startIndex in stride(from: 0, to: rows.count, by: chunkSize) {
             let endIndex = min(startIndex + chunkSize, rows.count)
@@ -2190,11 +2790,7 @@ extension DatabaseManager {
 
     private func getOrCreatePathId(path: String, db: Database) throws -> Int64 {
         let normalizedPath = Self.normalizePath(path)
-        try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [normalizedPath])
-        // Column collation is NOCASE: a prior row with different casing still matches.
-        // INSERT OR IGNORE leaves the stored spelling unchanged when that happens.
-        if let row = try Row.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [normalizedPath]),
-           let id: Int64 = row["id"] {
+        if let id = try Self.insertPath(normalizedPath, db: db) {
             try upsertPathClassifications(pathIdByPath: [normalizedPath: id], db: db)
             return id
         }
@@ -2208,53 +2804,52 @@ extension DatabaseManager {
     ) throws -> [String: Int64] {
         guard !paths.isEmpty else { return [:] }
 
-        // normalizePath is idempotent; dedup via Set (case-sensitive — callers may
-        // request both casings; NOCASE UNIQUE collapses them in SQLite).
-        let normalizedPaths = Array(Set(paths.map { Self.normalizePath($0) }))
+        let normalizedPaths = Set(paths.map { Self.normalizePath($0) }).sorted()
         let pathChunkSize = 500
 
-        // Bulk-insert any new paths. COLLATE NOCASE UNIQUE + INSERT OR IGNORE means a
-        // case-only rename leaves the existing row (old spelling) in place.
+        var result: [String: Int64] = [:]
+        result.reserveCapacity(normalizedPaths.count)
+
         for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
             let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
             let chunk = Array(normalizedPaths[startIndex..<endIndex])
-            let values = Array(repeating: "(?)", count: chunk.count).joined(separator: ", ")
+            let pathValues = StatementArguments(Self.pathValueArguments(chunk))
+            var seenDirs = Set<String>()
+            let dirs = chunk.map { Self.splitPath($0).dir }.filter { seenDirs.insert($0).inserted }
             try db.execute(
-                sql: "INSERT OR IGNORE INTO paths (path) VALUES \(values)",
-                arguments: StatementArguments(chunk)
+                sql: "INSERT OR IGNORE INTO dirs (path) VALUES \(Array(repeating: "(?)", count: dirs.count).joined(separator: ", "))",
+                arguments: StatementArguments(dirs)
             )
-        }
-
-        var idsByLowercasedPath: [String: Int64] = [:]
-        idsByLowercasedPath.reserveCapacity(normalizedPaths.count)
-
-        // SELECT uses NOCASE collation via the column definition, so IN matches
-        // regardless of stored vs requested casing. Key the Swift map by lowercased
-        // stored path, then remap onto each *requested* normalized spelling so
-        // callers (addEntriesCore) can look up scanResult.path without pathLookupFailed.
-        for startIndex in stride(from: 0, to: normalizedPaths.count, by: pathChunkSize) {
-            let endIndex = min(startIndex + pathChunkSize, normalizedPaths.count)
-            let chunk = Array(normalizedPaths[startIndex..<endIndex])
-            let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
-            let sql = "SELECT id, path FROM paths WHERE path IN (\(placeholders))"
-            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(chunk))
+            try db.execute(
+                sql: """
+                    \(Self.pathValuesSQL(count: chunk.count))
+                    INSERT OR IGNORE INTO paths (dirId, name)
+                    SELECT d.id, input.name
+                    FROM input
+                    CROSS JOIN dirs d ON d.path = input.dir
+                    """,
+                arguments: pathValues
+            )
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    \(Self.pathValuesSQL(count: chunk.count))
+                    SELECT p.id AS id, input.dir || input.name AS path
+                    FROM input
+                    CROSS JOIN dirs d ON d.path = input.dir
+                    CROSS JOIN paths p ON p.dirId = d.id AND p.name = input.name
+                    """,
+                arguments: pathValues
+            )
 
             for row in rows {
                 guard
-                    let storedPath: String = row["path"],
+                    let requestedPath: String = row["path"],
                     let pathId: Int64 = row["id"]
                 else {
                     continue
                 }
-                idsByLowercasedPath[storedPath.lowercased()] = pathId
-            }
-        }
-
-        var result: [String: Int64] = [:]
-        result.reserveCapacity(normalizedPaths.count)
-        for path in normalizedPaths {
-            if let pathId = idsByLowercasedPath[path.lowercased()] {
-                result[path] = pathId
+                result[requestedPath] = pathId
             }
         }
 
@@ -2325,16 +2920,15 @@ extension DatabaseManager {
             let query = """
             WITH combined AS (
                 SELECT
-                    COALESCE(pAfter.path, pBefore.path) as path,
+                    pBefore.path as path,
                     beforeEntry.sizeBytes as oldSizeBytes,
                     afterEntry.sizeBytes as newSizeBytes,
                     COALESCE(afterEntry.sizeBytes, 0) - COALESCE(beforeEntry.sizeBytes, 0) as changeBytes
                 FROM snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
-                JOIN paths pBefore ON pBefore.id = beforeEntry.pathId
+                JOIN pathText pBefore ON pBefore.id = beforeEntry.pathId
                 LEFT JOIN snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
                     ON beforeEntry.pathId = afterEntry.pathId
                     AND afterEntry.snapshotId = ?
-                LEFT JOIN paths pAfter ON pAfter.id = afterEntry.pathId
                 WHERE beforeEntry.snapshotId = ?
                 UNION ALL
                 SELECT
@@ -2343,7 +2937,7 @@ extension DatabaseManager {
                     afterEntry.sizeBytes as newSizeBytes,
                     COALESCE(afterEntry.sizeBytes, 0) - COALESCE(beforeEntry.sizeBytes, 0) as changeBytes
                 FROM snapshotEntry AS afterEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
-                JOIN paths pAfter ON pAfter.id = afterEntry.pathId
+                JOIN pathText pAfter ON pAfter.id = afterEntry.pathId
                 LEFT JOIN snapshotEntry AS beforeEntry INDEXED BY idx_snapshotEntry_snapshotId_pathId
                     ON afterEntry.pathId = beforeEntry.pathId
                     AND beforeEntry.snapshotId = ?
@@ -2370,6 +2964,9 @@ extension DatabaseManager {
         case notInitialized
         case pathLookupFailed(String)
         case snapshotVanished(Int64)
+        case workingSetKeyMissing(String)
+        case classificationNameMissing(String)
+        case insufficientDiskForMigration(required: Int64, available: Int64)
 
         var errorDescription: String? {
             switch self {
@@ -2381,6 +2978,12 @@ extension DatabaseManager {
                 return "Failed to resolve path ID for: \(path)"
             case .snapshotVanished(let id):
                 return "Snapshot \(id) vanished before it could be published"
+            case .workingSetKeyMissing(let trackedPathId):
+                return "No working-set key for tracked path \(trackedPathId)"
+            case .classificationNameMissing(let name):
+                return "No classification code for \(name)"
+            case .insufficientDiskForMigration(let required, let available):
+                return "Not enough free disk space to upgrade the database: needs \(required) bytes, \(available) available"
             }
         }
     }

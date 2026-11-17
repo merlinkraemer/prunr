@@ -7,10 +7,24 @@ enum DrilldownListLevel: Int, Sendable {
     case files
 }
 
+struct DrilldownPaneContent: Equatable {
+    let groups: [SubcategoryGroup]
+    let fileGroup: SubcategoryGroup?
+    let isGroupsPending: Bool
+    let groupsReadFailed: Bool
+    let filesReadFailed: Bool
+    let isFilesLoaded: Bool
+}
+
 struct DrilldownListPane: Equatable {
     let level: DrilldownListLevel
     let category: CategoryInventoryItem?
     let subcategory: SubcategoryGroup?
+    var content: DrilldownPaneContent?
+
+    func frozen(with content: DrilldownPaneContent) -> DrilldownListPane {
+        DrilldownListPane(level: level, category: category, subcategory: subcategory, content: content)
+    }
 
     static let main = DrilldownListPane(level: .main, category: nil, subcategory: nil)
 

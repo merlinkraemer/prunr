@@ -19,6 +19,7 @@ final class DrilldownStore {
     @ObservationIgnored private var storedFilesByGroupID: [String: [GrowthItem]] = [:]
     @ObservationIgnored private var ownerFileCounts: [String: Int] = [:]
     @ObservationIgnored private var generation: UInt64 = 0
+    @ObservationIgnored private var appliedSnapshot: DrilldownGroupsSnapshot?
     @ObservationIgnored private let db = DatabaseManager.shared
     @ObservationIgnored private let logger = Logger(subsystem: "com.prunr.app", category: "Drilldown")
 
@@ -26,6 +27,7 @@ final class DrilldownStore {
 
     func clear() {
         generation &+= 1
+        appliedSnapshot = nil
         groupsByCategory = [:]
         isBuilding = false
         loadingFileCategories = []
@@ -38,6 +40,7 @@ final class DrilldownStore {
     /// Re-reads every group. Categories whose files were loaded are re-read too,
     /// keeping as many files per group as were shown.
     func reload(trackedPathIds: [UUID]) async {
+        let previousGeneration = generation
         generation &+= 1
         let requestGeneration = generation
         let snapshot: DrilldownGroupsSnapshot
@@ -46,37 +49,46 @@ final class DrilldownStore {
         } catch {
             logger.error("Drilldown groups read failed: \(error.localizedDescription, privacy: .public)")
             if requestGeneration == generation {
-                groupsReadFailed = true
+                if !groupsReadFailed { groupsReadFailed = true }
+                appliedSnapshot = nil
             }
             return
         }
+        if snapshot == appliedSnapshot, !isBuilding, !groupsReadFailed, failedFileCategories.isEmpty, requestGeneration == generation {
+            generation = previousGeneration
+            return
+        }
+        let builtGroups = snapshot.buildingTrackedPathIds.isEmpty ? await makeGroups(snapshot.rows) : [:]
         guard requestGeneration == generation else { return }
-        groupsReadFailed = false
+        if groupsReadFailed { groupsReadFailed = false }
 
         let shownCounts = groupsByCategory.values.joined().reduce(into: [String: Int]()) {
             $0[$1.id] = $1.topFiles.count
         }
         let reloadCategories = loadedFileCategories
-        isBuilding = !snapshot.buildingTrackedPathIds.isEmpty
+        let nowBuilding = !snapshot.buildingTrackedPathIds.isEmpty
+        if isBuilding != nowBuilding { isBuilding = nowBuilding }
         if isBuilding {
-            groupsByCategory = groupsByCategory.filter { reloadCategories.contains($0.key) }
+            let kept = groupsByCategory.filter { reloadCategories.contains($0.key) }
+            if kept != groupsByCategory { groupsByCategory = kept }
         } else {
             ownerFileCounts = Dictionary(
                 snapshot.rows.filter { DrilldownGroupKey.isOwnerGroupKey($0.groupKey) }.map { ($0.groupKey, $0.fileCount) },
                 uniquingKeysWith: +
             )
-            groupsByCategory = makeGroups(snapshot.rows)
+            if builtGroups != groupsByCategory { groupsByCategory = builtGroups }
         }
+        appliedSnapshot = snapshot
 
-        loadedFileCategories = []
-        failedFileCategories = []
+        if !loadedFileCategories.isEmpty { loadedFileCategories = [] }
+        if !failedFileCategories.isEmpty { failedFileCategories = [] }
         storedFilesByGroupID = [:]
         for category in reloadCategories where isBuilding || groupsByCategory[category] != nil {
             await loadFiles(for: category, trackedPathIds: trackedPathIds, shownCounts: shownCounts)
         }
     }
 
-    private func makeGroups(_ rows: [DrilldownGroupRow]) -> [GrowthCategory: [SubcategoryGroup]] {
+    private func makeGroups(_ rows: [DrilldownGroupRow]) async -> [GrowthCategory: [SubcategoryGroup]] {
         var groups: [GrowthCategory: [SubcategoryGroup]] = [:]
         var ownerRows: [GrowthCategory: [DrilldownGroupRow]] = [:]
         for row in rows where row.totalBytes > 0 {
@@ -91,7 +103,7 @@ final class DrilldownStore {
                 guard case .app(let id)? = DrilldownGroupKey.owner(of: row.groupKey) else { return nil }
                 return id
             }
-            let catalog = AppCatalogProvider.shared.catalog(resolving: Array(Set(identifiers)).sorted())
+            let catalog = await AppCatalogProvider.shared.catalog(resolving: Array(Set(identifiers)).sorted())
             for (category, rows) in ownerRows {
                 groups[category, default: []] += Self.ownerGroups(rows, catalog: catalog)
             }
@@ -136,11 +148,16 @@ final class DrilldownStore {
             return
         }
         guard requestGeneration == generation else { return }
+        var computedGroups: [GrowthCategory: [SubcategoryGroup]]?
+        if let computedGroupRows {
+            computedGroups = await makeGroups(computedGroupRows)
+        }
+        guard requestGeneration == generation else { return }
         if let computedGroupRows {
             for row in computedGroupRows where DrilldownGroupKey.isOwnerGroupKey(row.groupKey) {
                 ownerFileCounts[row.groupKey] = row.fileCount
             }
-            groupsByCategory[category] = makeGroups(computedGroupRows)[category] ?? []
+            groupsByCategory[category] = computedGroups?[category] ?? []
         }
         guard var groups = groupsByCategory[category] else { return }
         failedFileCategories.remove(category)
@@ -197,6 +214,10 @@ final class DrilldownStore {
 
     func placeContents(unitRoot: String, trackedPathIds: [UUID], offset: Int = 0) async throws -> PlaceContentsPage {
         try await db.fetchPlaceContents(unitRoot: unitRoot, trackedPathIds: trackedPathIds, offset: offset)
+    }
+
+    func placeChanges(unitRoot: String, trackedPathIds: [UUID], span: PlaceChangeSpan) async throws -> PlaceChanges {
+        try await db.fetchPlaceChanges(unitRoot: unitRoot, trackedPathIds: trackedPathIds, from: span.start, to: span.end)
     }
 
     /// Owner groups the categories view shows at most before the rest fold

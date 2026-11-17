@@ -77,6 +77,16 @@ struct ChangeFeedRows: View {
 
     private let calendar = Calendar.current
 
+    private var smallerChanges: SmallerChanges? {
+        feed.smallerChanges(now: now, calendar: calendar)
+    }
+
+    private var smallerChangesDay: Date? {
+        let weekStart = GrowthJournalService.weekStart(now: now, calendar: calendar)
+        let listed = feed.hasEstimatedRows ? feed.measuredDays : feed.days
+        return listed.last { $0.day >= weekStart }?.day
+    }
+
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             if feed.hasEstimatedRows {
@@ -94,11 +104,15 @@ struct ChangeFeedRows: View {
                     .id(Self.quietLineID)
             }
 
+            if let smallerChanges, smallerChangesDay == nil {
+                SmallerChangesRow(changes: smallerChanges)
+            }
+
             if feed.hasEstimatedRows {
                 let measuredDays = feed.measuredDays
                 let measuredDates = Set(measuredDays.map(\.day))
                 ForEach(measuredDays) { day in
-                    daySection(day)
+                    daySection(day, carriesSmallerChanges: true)
                         .id(day.id)
                 }
 
@@ -113,7 +127,7 @@ struct ChangeFeedRows: View {
                 }
             } else {
                 ForEach(feed.days) { day in
-                    daySection(day)
+                    daySection(day, carriesSmallerChanges: true)
                         .id(day.id)
                 }
             }
@@ -131,7 +145,7 @@ struct ChangeFeedRows: View {
         .padding(.bottom, 6)
     }
 
-    private func daySection(_ day: ChangeFeedDay) -> some View {
+    private func daySection(_ day: ChangeFeedDay, carriesSmallerChanges: Bool = false) -> some View {
         let groups = day.groups
         let isCollapsed = groups.count > Self.collapsedGroupLimit && !expandedDays.contains(day.day)
         let shown = isCollapsed ? Array(groups.prefix(Self.collapsedGroupLimit)) : groups
@@ -162,7 +176,36 @@ struct ChangeFeedRows: View {
                     }
                 }
             }
+
+            if carriesSmallerChanges, day.day == smallerChangesDay, let smallerChanges {
+                SmallerChangesRow(changes: smallerChanges)
+            }
         }
+    }
+}
+
+struct SmallerChangesRow: View {
+    let changes: SmallerChanges
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(changes.label)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(signedBytes(changes.netBytes))
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .padding(.leading, 40)
+        .padding(.trailing, 12)
+        .frame(minHeight: 30)
+        .padding(.horizontal, 6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(changes.label), \(spokenChangeAmount(changes.netBytes))")
     }
 }
 
@@ -188,8 +231,8 @@ struct ChangeGroupRows: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(group.episodes) { episode in
-                ChangeRow(episode: episode, onOpen: onOpenPlace, onReveal: onReveal)
+            ForEach(group.episodesBySize) { episode in
+                ChangeRow(episode: episode, onOpen: onOpenPlace, onReveal: onReveal, showsDirection: true)
             }
         }
         .padding(.top, 6)

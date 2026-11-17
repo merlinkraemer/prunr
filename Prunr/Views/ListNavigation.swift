@@ -165,6 +165,7 @@ struct PushPager<Page: Identifiable & Equatable, Content: View>: View {
     @State private var forward = true
     @State private var progress: CGFloat = 1
     @State private var slideTask: Task<Void, Never>?
+    @State private var slideGeneration = 0
 
     private var mountedPages: [Page] {
         PushSlide.mountedPages(retained: retained, outgoing: outgoing, shown: shown ?? page)
@@ -213,6 +214,8 @@ struct PushPager<Page: Identifiable & Equatable, Content: View>: View {
 
     private func slide(from old: Page, to new: Page) {
         slideTask?.cancel()
+        slideGeneration += 1
+        let generation = slideGeneration
         withoutAnimation {
             outgoing = old
             shown = new
@@ -224,19 +227,22 @@ struct PushPager<Page: Identifiable & Equatable, Content: View>: View {
                 RunLoop.main.perform { continuation.resume() }
             }
             guard !Task.isCancelled else { return }
-            withAnimation(DrilldownTransitionCoordinator.slideAnimation) {
+            withAnimation(DrilldownTransitionCoordinator.slideAnimation, completionCriteria: .logicallyComplete) {
                 progress = 1
-            }
-            try? await Task.sleep(for: .milliseconds(Int(DrilldownTransitionCoordinator.slideMilliseconds)))
-            guard !Task.isCancelled else { return }
-            withoutAnimation {
-                outgoing = nil
+            } completion: {
+                Task { @MainActor in
+                    guard generation == slideGeneration else { return }
+                    withoutAnimation {
+                        outgoing = nil
+                    }
+                }
             }
         }
     }
 
     private func settle() {
         slideTask?.cancel()
+        slideGeneration += 1
         withoutAnimation {
             outgoing = nil
             shown = nil

@@ -46,7 +46,7 @@ actor GrowthJournalService {
         source: GrowthJournalBucket.Source = .watch,
         observedSince: Date? = nil
     ) async throws {
-        let bucketStart = floorToMinute(date)
+        let bucketStart = Self.bucketStart(for: date)
         try await db.upsertGrowthJournalBuckets(
             trackedPathId: trackedPath.id,
             bucketStart: bucketStart,
@@ -86,15 +86,21 @@ actor GrowthJournalService {
         watchingSince: Date? = nil
     ) async throws -> ChangeFeed {
         let ids = trackedPaths.map(\.id)
-        let since = EpisodeBuilder.windowStart(now: now, calendar: calendar)
-        let slots = try await db.fetchJournalSlots(trackedPathIds: ids, since: since)
+        let input = try await db.fetchChangeFeedInput(trackedPathIds: ids)
         let start: Date?
         if let watchingSince {
             start = watchingSince
         } else {
             start = try await db.fetchOldestCompleteSnapshotDate(trackedPathIds: ids)
         }
-        return EpisodeBuilder.build(slots: slots, now: now, calendar: calendar, home: home, watchingSince: start)
+        return EpisodeBuilder.build(
+            slots: input.slots,
+            now: now,
+            calendar: calendar,
+            home: home,
+            watchingSince: start,
+            carries: input.carries
+        )
     }
 
     /// The free space every kept snapshot of this path recorded, for the
@@ -135,7 +141,7 @@ actor GrowthJournalService {
         let cutoff = calendar.date(byAdding: .day, value: -(clampedDays - 1), to: today) ?? today
 
         do {
-            try await db.pruneGrowthJournalBuckets(olderThan: cutoff)
+            try await db.pruneGrowthJournalBuckets(olderThan: cutoff, calendar: calendar)
         } catch {
             logger.error("Failed to prune growth journal: \(error.localizedDescription, privacy: .public)")
         }
@@ -179,7 +185,8 @@ actor GrowthJournalService {
         return result
     }
 
-    private func floorToMinute(_ date: Date) -> Date {
+    /// The journal bucket a change at `date` lands in: its minute.
+    static func bucketStart(for date: Date) -> Date {
         let timeInterval = date.timeIntervalSinceReferenceDate
         let floored = floor(timeInterval / 60.0) * 60.0
         return Date(timeIntervalSinceReferenceDate: floored)

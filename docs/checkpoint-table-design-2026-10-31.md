@@ -66,7 +66,7 @@ The cutoff stays a local midnight (`max(retentionDays, 30)` days back). A run th
 ### Prune the checkpoint
 
 - Drop a row when `asOf - lastActiveDay > 90 days`: a place quiet for a quarter starts from zero. Bounds growth from places that no longer exist. Cost: a woken place's next row can be up to 1 GB later.
-- Every path that clears the journal clears checkpoints in the same transaction: `deleteGrowthJournalBuckets(trackedPathId:)`, `deleteAllGrowthJournalBuckets`, `clearRealtimeData`, and any future migration that runs `DELETE FROM growthJournalBucket`. Add it next to `deleteJournalDetail`. The per-path clear removes all checkpoints (keys are not per path); other paths' rows may shift once. Rare, acceptable.
+- Every path that clears the journal clears checkpoints in the same transaction: `deleteGrowthJournalBuckets(trackedPathId:)`, `deleteAllGrowthJournalBuckets`, `clearRealtimeData`, and any future migration that runs `DELETE FROM growthJournalBucket`. Add it next to `deleteJournalDetail`. The per-path clear deletes only the checkpoints whose unit keys appear in that path's buckets (read before the bucket delete); other paths keep theirs.
 
 ### Read: in EpisodeBuilder
 

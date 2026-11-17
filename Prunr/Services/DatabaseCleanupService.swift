@@ -19,14 +19,11 @@ actor DatabaseCleanupService {
 
     // MARK: - Constants
 
-    /// Keep the latest two full snapshot payloads for each path so that historical
-    /// comparison in the main window can still compute deltas after auto-cleanup.
-    private static let maxSnapshotEntryPayloadsPerPath = 2
+    private static let maxSnapshotEntryPayloadsPerPath = 1
     /// Keep the latest two snapshots available for history/reconciliation lookups.
     private static let recentHistorySnapshotsPerPath = 2
     /// Bound retained summary snapshots so scan-heavy same-day sessions don't grow history indefinitely.
     private static let maxCategoryHistorySnapshotsPerPath = 500
-    private static let vacuumInterval: TimeInterval = 12 * 60 * 60
     private static let vacuumTimestampKey = "databaseLastVacuumAt"
     private static let checkpointInterval: TimeInterval = 60
     private static let checkpointTimestampKey = "databaseLastCheckpointAt"
@@ -41,8 +38,16 @@ actor DatabaseCleanupService {
     static let abandonedScanGracePeriod: TimeInterval = 15 * 60
     private static let compactIdleMaxWait: TimeInterval = 10
     private static let compactIdlePollInterval: TimeInterval = 0.5
-    private static let minimumVacuumReclaimBytes: Int64 = 96 * 1024 * 1024
-    private static let minimumVacuumReclaimRatio = 0.18
+    private static let minimumReclaimFreeBytes: Int64 = 64 * 1024 * 1024
+    private static let incrementalVacuumChunkBytes: Int64 = 64 * 1024 * 1024
+    private static let incrementalConversionDiskFactor: Int64 = 2
+    private static let reclaimHeadroomDivisor: Int64 = 3
+    private static let conversionFailedAtKey = "databaseConversionFailedAt"
+    private static let conversionFailureCountKey = "databaseConversionFailureCount"
+    private static let firstFailureBackoff: TimeInterval = 24 * 60 * 60
+    private static let repeatFailureBackoff: TimeInterval = 7 * 24 * 60 * 60
+    private static let checkpointRetryAttempts = 5
+    private static let checkpointRetryDelay: Duration = .milliseconds(300)
 
     /// Default retention period for category history (30 days)
     private static let defaultCategoryHistoryRetentionDays = 30
@@ -69,9 +74,8 @@ actor DatabaseCleanupService {
             freelistCount * pageSize
         }
 
-        var freelistRatio: Double {
-            guard pageCount > 0 else { return 0 }
-            return Double(freelistCount) / Double(pageCount)
+        var reclaimableFreelistBytes: Int64 {
+            DatabaseCleanupService.reclaimablePages(pageCount: pageCount, freelistCount: freelistCount) * pageSize
         }
     }
 
@@ -81,25 +85,22 @@ actor DatabaseCleanupService {
     /// Keeps only the latest full raw snapshot payload per tracked path.
     func performAutoCleanup() async {
         do {
-            // First pass: aggregate category totals for snapshots about to lose their entries
             try await aggregateCategoryTotalsForOldSnapshots()
 
-            // Second pass: delete snapshotEntry rows for old snapshots (keep snapshot metadata)
             let entriesDeleted = try await cleanupOldSnapshotEntries()
 
-            // Remove paths that are no longer referenced by snapshotEntry rows
             let pathsDeleted = try await cleanupOrphanedPaths()
 
-            // Third pass: delete old snapshot rows entirely (and cascading categorySnapshot rows)
             let snapshotsDeleted = try await cleanupOldCategoryHistory()
+
+            await convertToIncrementalAutoVacuumIfNeeded()
 
             let reclaimedRows = entriesDeleted > 0 || pathsDeleted > 0 || snapshotsDeleted > 0
             let storageAfterCleanup = await databaseStorageStats()
-            if reclaimedRows && shouldVacuumNow(storageAfterCleanup) {
+            if reclaimedRows && Self.freePagesWorthReclaiming(freelistBytes: storageAfterCleanup.reclaimableFreelistBytes) {
+                _ = try await reclaimFreePages()
                 try await db.checkpointWalTruncate()
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
-                try await vacuumDatabase()
-                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.vacuumTimestampKey)
             } else if shouldCheckpointNow() {
                 try await db.checkpointWalTruncate()
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
@@ -112,44 +113,137 @@ actor DatabaseCleanupService {
     struct StartupMaintenancePlan: Equatable, Sendable {
         let runCleanup: Bool
         let checkpoint: Bool
-        let vacuum: Bool
+        let reclaimFreePages: Bool
+    }
+
+    enum AutoVacuumConversion: Equatable, Sendable {
+        case alreadyIncremental
+        case converted
+        case skippedLowDisk
+        case skippedBusy
+        case skippedBackoff
+        case failed
     }
 
     static func startupMaintenancePlan(
         versionChanged: Bool,
         walBytes: Int64,
         freelistBytes: Int64,
-        freelistRatio: Double,
         lastCleanupAt: TimeInterval,
         lastCheckpointAt: TimeInterval,
-        lastVacuumAt: TimeInterval,
         now: TimeInterval
     ) -> StartupMaintenancePlan {
         let cleanupDue = lastCleanupAt == 0 || now - lastCleanupAt >= startupCleanupInterval
         let largeWal = walBytes >= startupAggressiveWalSizeBytes
-        let vacuum = vacuumWorthwhile(
-            freelistBytes: freelistBytes,
-            freelistRatio: freelistRatio,
-            lastVacuumAt: lastVacuumAt,
-            now: now
-        )
+        let reclaim = freePagesWorthReclaiming(freelistBytes: freelistBytes)
         let checkpointDue = lastCheckpointAt == 0 || now - lastCheckpointAt >= checkpointInterval
         return StartupMaintenancePlan(
             runCleanup: cleanupDue || versionChanged || largeWal,
-            checkpoint: vacuum || versionChanged || largeWal || checkpointDue,
-            vacuum: vacuum
+            checkpoint: reclaim || versionChanged || largeWal || checkpointDue,
+            reclaimFreePages: reclaim
         )
     }
 
-    static func vacuumWorthwhile(
-        freelistBytes: Int64,
-        freelistRatio: Double,
-        lastVacuumAt: TimeInterval,
-        now: TimeInterval
-    ) -> Bool {
-        guard lastVacuumAt == 0 || now - lastVacuumAt >= vacuumInterval else { return false }
-        return freelistRatio >= minimumVacuumReclaimRatio
-            && freelistBytes >= minimumVacuumReclaimBytes
+    static func freePagesWorthReclaiming(freelistBytes: Int64) -> Bool {
+        freelistBytes >= minimumReclaimFreeBytes
+    }
+
+    static func rewriteDiskRequirement(pageCount: Int64, freelistCount: Int64, pageSize: Int64, walBytes: Int64) -> Int64 {
+        max(0, pageCount - freelistCount) * pageSize * incrementalConversionDiskFactor + walBytes
+    }
+
+    static func hasDiskForRewrite(requiredBytes: Int64, availableBytes: Int64?) -> Bool {
+        guard let availableBytes else { return false }
+        return availableBytes >= requiredBytes
+    }
+
+    static func reclaimablePages(pageCount: Int64, freelistCount: Int64) -> Int64 {
+        let headroom = max(0, pageCount - freelistCount) / reclaimHeadroomDivisor
+        return max(0, freelistCount - headroom)
+    }
+
+    static func conversionBackoff(failureCount: Int) -> TimeInterval {
+        failureCount <= 1 ? firstFailureBackoff : repeatFailureBackoff
+    }
+
+    static func conversionBackoffActive(failedAt: TimeInterval, failureCount: Int, now: TimeInterval) -> Bool {
+        guard failedAt > 0, failureCount > 0 else { return false }
+        return now - failedAt < conversionBackoff(failureCount: failureCount)
+    }
+
+    static func incrementalVacuumPagesPerStep(pageSize: Int64) -> Int {
+        guard pageSize > 0 else { return 1 }
+        return Int(max(1, incrementalVacuumChunkBytes / pageSize))
+    }
+
+    /// One-time switch of an existing database to `auto_vacuum = INCREMENTAL`.
+    /// SQLite only changes that mode through a full VACUUM outside a
+    /// transaction, so this cannot be a migration.
+    @discardableResult
+    func convertToIncrementalAutoVacuumIfNeeded(busyCheck: (@Sendable () async -> Bool)? = nil) async -> AutoVacuumConversion {
+        do {
+            guard try await db.autoVacuumMode() != DatabaseManager.incrementalAutoVacuumMode else {
+                return .alreadyIncremental
+            }
+        } catch {
+            logger.error("Auto-vacuum mode check failed: \(error.localizedDescription, privacy: .public)")
+            return .failed
+        }
+
+        let defaults = UserDefaults.standard
+        guard !Self.conversionBackoffActive(
+            failedAt: defaults.double(forKey: Self.conversionFailedAtKey),
+            failureCount: defaults.integer(forKey: Self.conversionFailureCountKey),
+            now: Date().timeIntervalSince1970
+        ) else {
+            return .skippedBackoff
+        }
+
+        guard await hasDiskForRewrite() else {
+            logger.notice("Incremental auto-vacuum switch skipped: low disk space")
+            return .skippedLowDisk
+        }
+        let busy: Bool
+        if let busyCheck {
+            busy = await busyCheck()
+        } else {
+            busy = await isAppBusy()
+        }
+        guard !busy else { return .skippedBusy }
+
+        do {
+            try await checkpointWalTruncateRetrying()
+            try await vacuumDatabase()
+            try await checkpointWalTruncateRetrying()
+            let now = Date().timeIntervalSince1970
+            defaults.set(now, forKey: Self.vacuumTimestampKey)
+            defaults.set(now, forKey: Self.checkpointTimestampKey)
+            defaults.removeObject(forKey: Self.conversionFailedAtKey)
+            defaults.removeObject(forKey: Self.conversionFailureCountKey)
+            return .converted
+        } catch {
+            logger.error("Incremental auto-vacuum switch failed: \(error.localizedDescription, privacy: .public)")
+            defaults.set(Date().timeIntervalSince1970, forKey: Self.conversionFailedAtKey)
+            defaults.set(defaults.integer(forKey: Self.conversionFailureCountKey) + 1, forKey: Self.conversionFailureCountKey)
+            return .failed
+        }
+    }
+
+    @discardableResult
+    func reclaimFreePages() async throws -> Int64 {
+        guard try await db.autoVacuumMode() == DatabaseManager.incrementalAutoVacuumMode else { return 0 }
+
+        let stats = await databaseStorageStats()
+        let pagesPerStep = Self.incrementalVacuumPagesPerStep(pageSize: stats.pageSize)
+        let headroomPages = stats.freelistCount - Self.reclaimablePages(pageCount: stats.pageCount, freelistCount: stats.freelistCount)
+        var remaining = stats.freelistCount
+        while remaining > headroomPages {
+            let step = min(Int64(pagesPerStep), remaining - headroomPages)
+            let next = try await db.incrementalVacuum(pages: Int(step))
+            guard next < remaining else { break }
+            remaining = next
+        }
+        return (stats.freelistCount - remaining) * stats.pageSize
     }
 
     func performStartupMaintenance() async {
@@ -157,7 +251,6 @@ actor DatabaseCleanupService {
         isStartupMaintenanceRunning = true
         defer { isStartupMaintenanceRunning = false }
 
-        // Give initial autoscan/watcher setup time to settle before maintenance can claim the writer.
         try? await Task.sleep(for: .milliseconds(Int(Self.startupInitialDelay * 1000)))
 
         let becameIdle = await waitForAppToBeIdle(
@@ -169,13 +262,13 @@ actor DatabaseCleanupService {
         }
 
         _ = try? await cleanupAbandonedSnapshots()
-        // Journal pruning otherwise runs only after a full scan; at startup it
-        // keeps the history at its window even when no scan has run for days.
         await pruneGrowthJournal()
 
         let appVersion = currentAppVersion()
         let lastVersion = UserDefaults.standard.string(forKey: Self.appVersionKey)
         let versionChanged = lastVersion != appVersion
+
+        await convertToIncrementalAutoVacuumIfNeeded()
 
         let initialPlan = await currentStartupPlan(versionChanged: versionChanged)
         guard initialPlan.runCleanup else { return }
@@ -185,13 +278,12 @@ actor DatabaseCleanupService {
 
         let plan = await currentStartupPlan(versionChanged: versionChanged)
         do {
+            if plan.reclaimFreePages, await !isAppBusy() {
+                _ = try await reclaimFreePages()
+            }
             if plan.checkpoint {
                 try await db.checkpointWalTruncate()
                 UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.checkpointTimestampKey)
-            }
-            if plan.vacuum, await !isAppBusy() {
-                try await vacuumDatabase()
-                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.vacuumTimestampKey)
             }
         } catch {
             logger.error("Startup maintenance failed: \(error.localizedDescription, privacy: .public)")
@@ -228,17 +320,27 @@ actor DatabaseCleanupService {
                     SELECT s.id
                     FROM snapshot s
                     LEFT JOIN (
-                        SELECT trackedPathId, MAX(updatedAt) AS latestWorkingSetUpdate
-                        FROM workingSetEntry
-                        GROUP BY trackedPathId
+                        SELECT trackedPathId, updatedAt AS latestWorkingSetUpdate
+                        FROM workingSetTrackedPath
                     ) ws ON ws.trackedPathId = s.trackedPathId
                     WHERE (s.lifecycle != ? AND s.createdAt < ?)
                        OR (s.lifecycle = ?
                            AND s.trackedPathId != ''
                            AND ws.latestWorkingSetUpdate IS NOT NULL
-                           AND s.createdAt > ws.latestWorkingSetUpdate)
+                           AND s.id > (
+                               SELECT MAX(source.id)
+                               FROM snapshot source
+                               WHERE source.trackedPathId = s.trackedPathId
+                                 AND source.lifecycle = ?
+                                 AND source.createdAt <= ws.latestWorkingSetUpdate
+                           ))
                     """,
-                    arguments: [Snapshot.Lifecycle.complete.rawValue, staleBefore, Snapshot.Lifecycle.complete.rawValue]
+                    arguments: [
+                        Snapshot.Lifecycle.complete.rawValue,
+                        staleBefore,
+                        Snapshot.Lifecycle.complete.rawValue,
+                        Snapshot.Lifecycle.complete.rawValue
+                    ]
                 )
 
             guard !snapshotIDs.isEmpty else { return 0 }
@@ -279,8 +381,13 @@ actor DatabaseCleanupService {
         let pathsDeleted = try await cleanupOrphanedPaths()
         let snapshotsDeleted = try await cleanupOldCategoryHistory()
 
-        try await db.checkpointWalTruncate()
+        guard await hasDiskForRewrite() else {
+            throw CleanupError.lowDisk
+        }
+
+        try await checkpointWalTruncateRetrying()
         try await vacuumDatabase()
+        try await checkpointWalTruncateRetrying()
         let after = databaseFileSizes()
 
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.vacuumTimestampKey)
@@ -298,26 +405,15 @@ actor DatabaseCleanupService {
         )
     }
 
-    private func shouldVacuumNow(_ stats: StorageStats) -> Bool {
-        Self.vacuumWorthwhile(
-            freelistBytes: stats.freelistBytes,
-            freelistRatio: stats.freelistRatio,
-            lastVacuumAt: UserDefaults.standard.double(forKey: Self.vacuumTimestampKey),
-            now: Date().timeIntervalSince1970
-        )
-    }
-
     private func currentStartupPlan(versionChanged: Bool) async -> StartupMaintenancePlan {
         let stats = await databaseStorageStats()
         let defaults = UserDefaults.standard
         return Self.startupMaintenancePlan(
             versionChanged: versionChanged,
             walBytes: stats.walBytes,
-            freelistBytes: stats.freelistBytes,
-            freelistRatio: stats.freelistRatio,
+            freelistBytes: stats.reclaimableFreelistBytes,
             lastCleanupAt: defaults.double(forKey: Self.startupCleanupTimestampKey),
             lastCheckpointAt: defaults.double(forKey: Self.checkpointTimestampKey),
-            lastVacuumAt: defaults.double(forKey: Self.vacuumTimestampKey),
             now: Date().timeIntervalSince1970
         )
     }
@@ -380,6 +476,38 @@ actor DatabaseCleanupService {
                 freelistCount: 0
             )
         }
+    }
+
+    private func availableDiskBytes() -> Int64? {
+        guard let dbPath = db.databasePath else { return nil }
+        let directory = URL(fileURLWithPath: dbPath).deletingLastPathComponent()
+        let values = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        return values?.volumeAvailableCapacity.map { Int64($0) }
+    }
+
+    private func hasDiskForRewrite() async -> Bool {
+        let stats = await databaseStorageStats()
+        let required = Self.rewriteDiskRequirement(
+            pageCount: stats.pageCount,
+            freelistCount: stats.freelistCount,
+            pageSize: stats.pageSize,
+            walBytes: stats.walBytes
+        )
+        return Self.hasDiskForRewrite(requiredBytes: required, availableBytes: availableDiskBytes())
+    }
+
+    @discardableResult
+    private func checkpointWalTruncateRetrying() async throws -> Bool {
+        for attempt in 1...Self.checkpointRetryAttempts {
+            if try await db.checkpointWalTruncate() {
+                return true
+            }
+            if attempt < Self.checkpointRetryAttempts {
+                try? await Task.sleep(for: Self.checkpointRetryDelay)
+            }
+        }
+        logger.notice("WAL checkpoint stayed busy after \(Self.checkpointRetryAttempts) attempts")
+        return false
     }
 
     private func fileSizeBytes(atPath path: String) -> Int64 {
@@ -467,7 +595,7 @@ actor DatabaseCleanupService {
                         SELECT id
                         FROM snapshot
                         WHERE trackedPathId = ?
-                        ORDER BY createdAt DESC
+                        ORDER BY id DESC
                         LIMIT ?
                         """,
                     arguments: [trackedPathId, Self.recentHistorySnapshotsPerPath]
@@ -481,7 +609,7 @@ actor DatabaseCleanupService {
                     SELECT id
                     FROM snapshot
                     WHERE trackedPathId = '' OR trackedPathId IS NULL
-                    ORDER BY createdAt DESC
+                    ORDER BY id DESC
                     LIMIT ?
                     """,
                 arguments: [Self.recentHistorySnapshotsPerPath]
@@ -498,7 +626,6 @@ actor DatabaseCleanupService {
         guard let dbPool = db.dbPool else { return }
 
         let snapshotIdsToAggregate = try await dbPool.read { db -> [Int64] in
-            // Get all tracked path IDs that have snapshots
             let pathIds = try String.fetchAll(
                 db,
                 sql: "SELECT DISTINCT trackedPathId FROM snapshot WHERE trackedPathId != '' ORDER BY trackedPathId"
@@ -507,18 +634,16 @@ actor DatabaseCleanupService {
             var snapshotIdsToAggregate: [Int64] = []
 
             for pathId in pathIds {
-                // Get snapshots for this path, ordered by newest first
                 let snapshots = try Snapshot.fetchAll(
                     db,
                     sql: """
                     SELECT * FROM snapshot
-                    WHERE trackedPathId = ?
-                    ORDER BY createdAt DESC
+                    WHERE trackedPathId = ? AND lifecycle = ?
+                    ORDER BY id DESC
                     """,
-                    arguments: [pathId]
+                    arguments: [pathId, Snapshot.Lifecycle.complete.rawValue]
                 )
 
-                // Find snapshots beyond the retention limit that still have entries
                 let toAggregate = snapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
                 for snapshot in toAggregate {
                     if let snapshotId = snapshot.id {
@@ -527,14 +652,14 @@ actor DatabaseCleanupService {
                 }
             }
 
-            // Also handle orphaned snapshots
             let orphanedSnapshots = try Snapshot.fetchAll(
                 db,
                 sql: """
                 SELECT * FROM snapshot
-                WHERE trackedPathId = '' OR trackedPathId IS NULL
-                ORDER BY createdAt DESC
-                """
+                WHERE (trackedPathId = '' OR trackedPathId IS NULL) AND lifecycle = ?
+                ORDER BY id DESC
+                """,
+                arguments: [Snapshot.Lifecycle.complete.rawValue]
             )
             let orphanedToAggregate = orphanedSnapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
             for snapshot in orphanedToAggregate {
@@ -604,77 +729,70 @@ actor DatabaseCleanupService {
     /// Deletes snapshotEntry rows for old snapshots, keeping only the latest full payload per tracked path
     /// Snapshot metadata (and categorySnapshot rows) are preserved for historical trend analysis
     /// - Returns: Number of snapshots that had their entries deleted
-    private func cleanupOldSnapshotEntries() async throws -> Int {
+    func cleanupOldSnapshotEntries() async throws -> Int {
         guard let dbPool = db.dbPool else { return 0 }
 
         return try await dbPool.write { db in
             var totalProcessed = 0
 
-            // Get all tracked path IDs that have snapshots
             let pathIds = try String.fetchAll(
                 db,
                 sql: "SELECT DISTINCT trackedPathId FROM snapshot WHERE trackedPathId != '' ORDER BY trackedPathId"
             )
 
             for pathId in pathIds {
-                // Get snapshots for this path, ordered by newest first
                 let snapshots = try Snapshot.fetchAll(
                     db,
                     sql: """
                     SELECT * FROM snapshot
-                    WHERE trackedPathId = ?
-                    ORDER BY createdAt DESC
+                    WHERE trackedPathId = ? AND lifecycle = ?
+                    ORDER BY id DESC
                     """,
-                    arguments: [pathId]
+                    arguments: [pathId, Snapshot.Lifecycle.complete.rawValue]
                 )
 
-                // Delete entries for snapshots beyond the retention limit
                 let toDelete = snapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
                 for snapshot in toDelete {
-                    if let snapshotId = snapshot.id {
-                        // Check if entries still exist before deleting
-                        let entryCount = try Int.fetchOne(
-                            db,
-                            sql: "SELECT COUNT(*) FROM snapshotEntry WHERE snapshotId = ?",
-                            arguments: [snapshotId]
-                        ) ?? 0
-
-                        if entryCount > 0 {
-                            // Delete entries only (keep snapshot row and categorySnapshot)
-                            try db.execute(sql: "DELETE FROM snapshotEntry WHERE snapshotId = ?", arguments: [snapshotId])
-                            totalProcessed += 1
-                        }
-                    }
-                }
-            }
-
-            // Also clean up orphaned snapshots
-            let orphanedSnapshots = try Snapshot.fetchAll(
-                db,
-                sql: """
-                SELECT * FROM snapshot
-                WHERE trackedPathId = '' OR trackedPathId IS NULL
-                ORDER BY createdAt DESC
-                """
-            )
-            let orphanedToDelete = orphanedSnapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
-            for snapshot in orphanedToDelete {
-                if let snapshotId = snapshot.id {
-                    let entryCount = try Int.fetchOne(
-                        db,
-                        sql: "SELECT COUNT(*) FROM snapshotEntry WHERE snapshotId = ?",
-                        arguments: [snapshotId]
-                    ) ?? 0
-
-                    if entryCount > 0 {
-                        try db.execute(sql: "DELETE FROM snapshotEntry WHERE snapshotId = ?", arguments: [snapshotId])
+                    if let snapshotId = snapshot.id, try Self.trimPayload(of: snapshotId, db: db) {
                         totalProcessed += 1
                     }
                 }
             }
 
+            let orphanedSnapshots = try Snapshot.fetchAll(
+                db,
+                sql: """
+                SELECT * FROM snapshot
+                WHERE (trackedPathId = '' OR trackedPathId IS NULL) AND lifecycle = ?
+                ORDER BY id DESC
+                """,
+                arguments: [Snapshot.Lifecycle.complete.rawValue]
+            )
+            let orphanedToDelete = orphanedSnapshots.dropFirst(Self.maxSnapshotEntryPayloadsPerPath)
+            for snapshot in orphanedToDelete {
+                if let snapshotId = snapshot.id, try Self.trimPayload(of: snapshotId, db: db) {
+                    totalProcessed += 1
+                }
+            }
+
             return totalProcessed
         }
+    }
+
+    private static func trimPayload(of snapshotId: Int64, db: Database) throws -> Bool {
+        let entryCount = try Int.fetchOne(
+            db,
+            sql: "SELECT COUNT(*) FROM snapshotEntry WHERE snapshotId = ?",
+            arguments: [snapshotId]
+        ) ?? 0
+        guard entryCount > 0 else { return false }
+
+        try db.execute(
+            sql: "UPDATE snapshot SET entryCount = ? WHERE id = ? AND entryCount IS NULL",
+            arguments: [entryCount, snapshotId]
+        )
+        try db.execute(sql: "DELETE FROM snapshotEntry WHERE snapshotId = ?", arguments: [snapshotId])
+        return true
     }
 
     /// Deletes snapshot rows (and cascading categorySnapshot rows) older than the retention period
@@ -706,7 +824,7 @@ actor DatabaseCleanupService {
                         SELECT id
                         FROM snapshot
                         WHERE trackedPathId = ?
-                        ORDER BY createdAt DESC, id DESC
+                        ORDER BY id DESC
                         LIMIT -1 OFFSET ?
                         """,
                     arguments: [trackedPathId, Self.maxCategoryHistorySnapshotsPerPath]
@@ -720,12 +838,32 @@ actor DatabaseCleanupService {
                     SELECT id
                     FROM snapshot
                     WHERE trackedPathId = '' OR trackedPathId IS NULL
-                    ORDER BY createdAt DESC, id DESC
+                    ORDER BY id DESC
                     LIMIT -1 OFFSET ?
                     """,
                 arguments: [Self.maxCategoryHistorySnapshotsPerPath]
             )
             snapshotIDsToDelete.formUnion(orphanOverflowIDs)
+
+            let newestCompleteIDs = try Int64.fetchAll(
+                db,
+                sql: """
+                    SELECT s.id
+                    FROM snapshot s
+                    WHERE s.trackedPathId != ''
+                      AND s.lifecycle = ?
+                      AND s.id = (
+                          SELECT newest.id
+                          FROM snapshot newest
+                          WHERE newest.trackedPathId = s.trackedPathId
+                            AND newest.lifecycle = ?
+                          ORDER BY newest.id DESC
+                          LIMIT 1
+                      )
+                    """,
+                arguments: [Snapshot.Lifecycle.complete.rawValue, Snapshot.Lifecycle.complete.rawValue]
+            )
+            snapshotIDsToDelete.subtract(newestCompleteIDs)
 
             guard !snapshotIDsToDelete.isEmpty else { return 0 }
 
@@ -772,24 +910,31 @@ actor DatabaseCleanupService {
                 )
                 """
             )
-            return try Int.fetchOne(db, sql: "SELECT changes()") ?? 0
+            let deletedPaths = db.changesCount
+            try db.execute(sql: """
+                DELETE FROM dirs
+                WHERE NOT EXISTS (SELECT 1 FROM paths WHERE paths.dirId = dirs.id)
+                """)
+            return deletedPaths
         }
     }
 
-    /// Vacuums the database to reclaim space
     private func vacuumDatabase() async throws {
-        guard let dbPool = db.dbPool else { return }
+        guard db.dbPool != nil else { return }
 
-        try await dbPool.vacuum()
+        try await db.vacuumIntoIncrementalAutoVacuum()
     }
 }
 
 extension DatabaseCleanupService {
     enum CleanupError: Error, LocalizedError {
         case appBusy
+        case lowDisk
 
         var errorDescription: String? {
             switch self {
+            case .lowDisk:
+                return "Not enough free disk space to compact safely. Free up space and try again."
             case .appBusy:
                 return "Cannot compact while a scan or refresh is running. Try again when Prunr is idle."
             }

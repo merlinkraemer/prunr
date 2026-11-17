@@ -7,7 +7,6 @@ final class PerfBaselineTests: PrunrTestCase {
     private static let bigPlace = "/Data/Big"
     private static let bigPlaceChildCount = 20_000
 
-
     private func emit(_ name: String, _ milliseconds: Double) {
         let line = String(format: "PERF %@ %.2f", name, milliseconds)
         print(line)
@@ -59,6 +58,19 @@ final class PerfBaselineTests: PrunrTestCase {
         )
     }
 
+    private func seedDetail(trackedPathId: UUID, now: Date, days: Int) async throws {
+        var buckets: [Date: [PlaceChildKey: Int64]] = [:]
+        for slot in 0..<(days * 48) {
+            let at = GrowthJournalService.bucketStart(for: now.addingTimeInterval(-TimeInterval(slot * 30 * 60)))
+            var deltas: [PlaceChildKey: Int64] = [:]
+            for child in 0..<GrowthJournalDetail.topChildren {
+                deltas[PlaceChildKey(unitRoot: Self.bigPlace, name: "f\(child).bin", isFolder: false)] =
+                    Int64((slot + child) % 7 + 1) * 1_000_000
+            }
+            buckets[at] = deltas
+        }
+        try await db.upsertJournalDetail(trackedPathId: trackedPathId, deltasByBucketStart: buckets, source: .watch)
+    }
 
     @MainActor
     func testPerfFeedRebuildOnFixture() async throws {
@@ -112,12 +124,12 @@ final class PerfBaselineTests: PrunrTestCase {
             }
         }
 
-        var slotList: [JournalSlot] = []
+        var input = ChangeFeedInput(slots: [], carries: [:])
         try await time("feed.200k.sqlSlots", runs: 3) {
-            slotList = try await self.db.fetchJournalSlots(trackedPathIds: ids, since: since)
+            input = try await self.db.fetchChangeFeedInput(trackedPathIds: ids)
         }
         try await time("feed.200k.episodeBuild", runs: 3) {
-            _ = EpisodeBuilder.build(slots: slotList, now: now, calendar: calendar)
+            _ = EpisodeBuilder.build(slots: input.slots, now: now, calendar: calendar, carries: input.carries)
         }
         let paths = ids.map { self.trackedPath($0, home: "/Users/tester") }
         var rows = 0
@@ -129,11 +141,78 @@ final class PerfBaselineTests: PrunrTestCase {
         XCTAssertGreaterThan(rows, 0)
     }
 
+    func testPerfFirstPruneAfterUpgrade() async throws {
+        try await withEmptyTemporaryDatabase { id in
+            let now = Date()
+            let calendar = Calendar.current
+            let cutoff = EpisodeBuilder.windowStart(now: now, calendar: calendar)
+            let days = 59
+            let places = 900
+            let bucketsPerDay = 2
+            let dbPool = try XCTUnwrap(self.db.dbPool)
+            try await self.once("prune.first.seed60dx900places") {
+                try await dbPool.write { db in
+                    let statement = try db.makeStatement(sql: """
+                        INSERT INTO growthJournalBucket
+                            (trackedPathId, bucketStart, category, subcategory, deltaBytes, source, unitKey)
+                        VALUES (?, ?, 'developer', '', ?, 'watch', ?)
+                        """)
+                    let firstDay = now.addingTimeInterval(-60 * 24 * 3_600)
+                    for place in 0..<places {
+                        let unitKey = "place|/Users/tester/projects/p\(place)"
+                        for day in 0..<days {
+                            for index in 0..<bucketsPerDay {
+                                let seconds = day * 24 * 3_600 + (place % 40) * 1_800 + index * 6 * 3_600
+                                let delta = Int64((index + day + place) % 5 + 1) * 40_000_000
+                                try statement.execute(arguments: [
+                                    id.uuidString,
+                                    firstDay.addingTimeInterval(TimeInterval(seconds)),
+                                    delta,
+                                    unitKey
+                                ])
+                            }
+                        }
+                    }
+                }
+            }
+            let paths = [self.trackedPath(id, home: "/Users/tester")]
+            var rows = 0
+            try await self.time("prune.first.changeFeedFullJournal", runs: 3) {
+                rows = try await GrowthJournalService.shared.changeFeed(
+                    trackedPaths: paths, now: now, calendar: calendar, home: "/Users/tester"
+                ).episodes.count
+            }
+            XCTAssertGreaterThan(rows, 0)
+            let writerProbe = Task.detached { () -> Double in
+                var longest = 0.0
+                while !Task.isCancelled {
+                    let started = DispatchTime.now().uptimeNanoseconds
+                    try? await dbPool.write { db in try db.execute(sql: "SELECT 1") }
+                    longest = max(longest, Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000)
+                    try? await Task.sleep(nanoseconds: 1_000_000)
+                }
+                return longest
+            }
+            try await self.once("prune.first.pruneGrowthJournalBuckets") {
+                try await self.db.pruneGrowthJournalBuckets(olderThan: cutoff, calendar: calendar)
+            }
+            writerProbe.cancel()
+            self.emit("prune.first.longestWriterWait", await writerProbe.value)
+            let checkpoints = try await self.db.fetchJournalCheckpoints()
+            self.emit("prune.first.checkpoints", Double(checkpoints.count))
+            try await self.time("prune.first.changeFeedAfterPrune", runs: 3) {
+                _ = try await GrowthJournalService.shared.changeFeed(
+                    trackedPaths: paths, now: now, calendar: calendar, home: "/Users/tester"
+                )
+            }
+        }
+    }
 
     func testPerfPlacePageQueries() async throws {
         try await withEmptyTemporaryDatabase { id in
             let now = Date()
             try await self.once("place.seed.workingSet20k") { try await self.seedBigPlace(trackedPathId: id, now: now) }
+            try await self.once("place.seed.detail30d") { try await self.seedDetail(trackedPathId: id, now: now, days: 30) }
             try await self.db.optimizeQueryPlanner()
 
             var children = 0
@@ -148,14 +227,47 @@ final class PerfBaselineTests: PrunrTestCase {
                 _ = try await self.db.fetchPlaceContents(unitRoot: Self.bigPlace, trackedPathIds: [id, UUID()])
             }
 
+            var listed = 0
+            try await self.time("place.fetchPlaceChanges.1day") {
+                let page = try await self.db.fetchPlaceChanges(
+                    unitRoot: Self.bigPlace,
+                    trackedPathIds: [id],
+                    from: now.addingTimeInterval(-24 * 3_600),
+                    to: now
+                )
+                listed = page.children?.count ?? 0
+            }
+            XCTAssertGreaterThan(listed, 0)
+            try await self.time("place.fetchPlaceChanges.7days") {
+                _ = try await self.db.fetchPlaceChanges(
+                    unitRoot: Self.bigPlace,
+                    trackedPathIds: [id],
+                    from: now.addingTimeInterval(-7 * 24 * 3_600),
+                    to: now
+                )
+            }
+            try await self.time("place.fetchPlaceChanges.beforeDetail") {
+                _ = try await self.db.fetchPlaceChanges(
+                    unitRoot: Self.bigPlace,
+                    trackedPathIds: [id],
+                    from: now.addingTimeInterval(-60 * 24 * 3_600),
+                    to: now
+                )
+            }
+            try await self.time("place.fetchJournalDetailTotals.7days") {
+                _ = try await self.db.fetchJournalDetailTotals(
+                    trackedPathId: id,
+                    from: now.addingTimeInterval(-7 * 24 * 3_600),
+                    to: now
+                )
+            }
             try await self.time("place.pruneJournal.30d", runs: 1) {
                 await GrowthJournalService.shared.prune(retentionDays: 30, now: now.addingTimeInterval(24 * 3_600))
             }
         }
     }
 
-
-    func testPerfWatcherBurst() async throws {
+    func testPerfWatcherBurstWithDetail() async throws {
         try await withEmptyTemporaryDatabase { id in
             let now = Date()
             try await self.seedBigPlace(trackedPathId: id, now: now)
@@ -165,18 +277,21 @@ final class PerfBaselineTests: PrunrTestCase {
             var round = 0
             let total = try await self.time("watcher.burst200.singleFileEvents", runs: 3) {
                 round += 1
-                for index in 0..<events {
-                    _ = try await self.db.replaceWorkingSetFile(
-                        trackedPathId: id,
-                        entry: ScanResult(
-                            path: Self.bigPlace + "/f\(index).bin",
-                            sizeBytes: Int64(5_000_000 + round * 1_000 + index),
-                            category: .other,
-                            subcategory: nil
-                        ),
-                        updatedAt: now.addingTimeInterval(TimeInterval(round * 60 + index))
-                    )
+                let changes = (0..<events).map { index in
+                    DatabaseManager.WorkingSetPointChange.file(ScanResult(
+                        path: Self.bigPlace + "/f\(index).bin",
+                        sizeBytes: Int64(5_000_000 + round * 1_000 + index),
+                        category: .other,
+                        subcategory: nil
+                    ))
                 }
+                _ = try await self.db.applyWorkingSetPointChanges(
+                    trackedPathId: id,
+                    changes: changes,
+                    extraDeltas: [:],
+                    journalBucketStart: now,
+                    updatedAt: now.addingTimeInterval(TimeInterval(round * 60))
+                )
             }
             self.emit("watcher.burst200.perEvent", total / Double(events))
 
@@ -197,7 +312,6 @@ final class PerfBaselineTests: PrunrTestCase {
             }
         }
     }
-
 
     func testPerfScanPersistenceBatch() async throws {
         try await withEmptyTemporaryDatabase { id in
@@ -227,6 +341,27 @@ final class PerfBaselineTests: PrunrTestCase {
         }
     }
 
+    func testPerfScanTraversalSynthetic() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PrunrPerfTraversal-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for dir in 0..<50 {
+            let directory = root.appendingPathComponent("dir\(dir)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            for file in 0..<200 {
+                try Data().write(to: directory.appendingPathComponent("f\(file)"))
+            }
+        }
+        let scanner = FileScanner()
+        try await self.time("scan.traversal.10k", runs: 3) {
+            let gate = ScanBackpressureGate(maxOutstanding: 20_000)
+            var scanned = 0
+            for try await _ in scanner.scan(root, ignoredNames: [], backpressure: gate) {
+                scanned += 1
+            }
+            XCTAssertEqual(scanned, 10_000)
+        }
+    }
 
     func testPerfStartupOnEmptyDatabase() throws {
         let directory = try createTrackedPathDirectory(named: "PrunrPerfStartup")
@@ -238,7 +373,6 @@ final class PerfBaselineTests: PrunrTestCase {
         try DatabaseManager.shared.initialize(at: directory.appendingPathComponent("prunr.sqlite").path)
         emit("startup.initialize.emptyDatabase", nowMs() - started)
     }
-
 
     @MainActor
     func testPerfRealSnapshot() async throws {
@@ -274,12 +408,12 @@ final class PerfBaselineTests: PrunrTestCase {
         emit("real.feed.rows", Double(feed?.episodes.count ?? 0))
         emit("real.feed.places", Double(roots.count))
 
-        let since = EpisodeBuilder.windowStart(now: now, calendar: .current)
         try await time("real.feed.sqlSlots", runs: 5) {
-            _ = try await self.db.fetchJournalSlots(trackedPathIds: ids, since: since)
+            _ = try await self.db.fetchChangeFeedInput(trackedPathIds: ids)
         }
 
         var slowestContents = 0.0
+        var slowestChanges = 0.0
         try await once("real.places.contentsAllRows") {
             for root in roots {
                 let began = self.nowMs()
@@ -287,7 +421,17 @@ final class PerfBaselineTests: PrunrTestCase {
                 slowestContents = max(slowestContents, self.nowMs() - began)
             }
         }
+        try await once("real.places.changesAllRows") {
+            for root in roots {
+                let began = self.nowMs()
+                _ = try await self.db.fetchPlaceChanges(
+                    unitRoot: root, trackedPathIds: ids, from: now.addingTimeInterval(-7 * 24 * 3_600), to: now
+                )
+                slowestChanges = max(slowestChanges, self.nowMs() - began)
+            }
+        }
         emit("real.places.contents.slowestRow", slowestContents)
+        emit("real.places.changes.slowestRow", slowestChanges)
 
         let dbPool = try XCTUnwrap(db.dbPool)
         let biggest: (root: String, children: Int)? = try await dbPool.read { db in
@@ -305,6 +449,11 @@ final class PerfBaselineTests: PrunrTestCase {
             emit("real.biggestPlace.children", Double(children))
             try await time("real.biggestPlace.fetchPlaceContents") {
                 _ = try await self.db.fetchPlaceContents(unitRoot: root, trackedPathIds: ids)
+            }
+            try await time("real.biggestPlace.fetchPlaceChanges") {
+                _ = try await self.db.fetchPlaceChanges(
+                    unitRoot: root, trackedPathIds: ids, from: now.addingTimeInterval(-7 * 24 * 3_600), to: now
+                )
             }
         }
     }

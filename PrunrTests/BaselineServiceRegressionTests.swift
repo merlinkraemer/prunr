@@ -239,7 +239,7 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
                 let journalCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM growthJournalBucket") ?? 0
                 let workingSetCount = try Int.fetchOne(
                     db,
-                    sql: "SELECT COUNT(*) FROM workingSetEntry WHERE trackedPathId = ?",
+                    sql: "SELECT COUNT(*) FROM workingSetEntry WHERE trackedPathKey = \(DatabaseManager.workingSetKeySQL)",
                     arguments: [trackedPathId.uuidString]
                 ) ?? 0
                 return (journalCount, workingSetCount)
@@ -538,6 +538,152 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
+    func testDeniedFolderCarriesForwardWithoutShrinkOrLaterGrowth() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrDeniedCarry")
+            let locked = tempDirectory.appendingPathComponent("locked", isDirectory: true)
+            defer {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+                try? FileManager.default.removeItem(at: tempDirectory)
+            }
+            let readable = tempDirectory.appendingPathComponent("open/notes.txt")
+            let secret = locked.appendingPathComponent("deep/secret.mov")
+            for (url, bytes) in [(readable, 8_192), (secret, 65_536)] {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(repeating: 0x5A, count: bytes).write(to: url)
+                try self.dateBeforeHistory(url)
+            }
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+            let secretBytes = try self.diskUsageBytes(at: secret)
+            let readableBytes = try self.diskUsageBytes(at: readable)
+
+            let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath, ignoredNames: [])
+            try await self.backdateSnapshot(s0, to: Self.wholeSecondNow().addingTimeInterval(-7_200))
+
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+            let skipLog = ScanSkipLog()
+            let s1 = try await BaselineService.shared.createBaseline(
+                trackedPath: trackedPath,
+                ignoredNames: [],
+                skipLog: skipLog
+            )
+            XCTAssertEqual(s1.lifecycle, .complete)
+            XCTAssertEqual(skipLog.locationLabels, ["locked"])
+
+            let afterDenied = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertTrue(afterDenied.filter { $0.source == .scan }.isEmpty, "a denied folder must not be journaled as a shrink")
+            let pathsWhileDenied = try await self.workingSetPaths(trackedPathId: trackedPathId)
+            XCTAssertTrue(pathsWhileDenied.contains { $0.hasSuffix("/locked/deep/secret.mov") }, "the working set keeps the denied folder")
+            let entryCount = try await DatabaseManager.shared.fetchEntryCount(for: try XCTUnwrap(s1.id))
+            XCTAssertEqual(entryCount, 2)
+            let totals = try await DatabaseManager.shared.fetchWorkingSetCategoryTotals(for: trackedPathId)
+            XCTAssertEqual(totals.reduce(Int64(0)) { $0 + $1.currentSizeBytes }, secretBytes + readableBytes)
+
+            try await self.backdateSnapshot(s1, to: Self.wholeSecondNow().addingTimeInterval(-3_600))
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+            let s2 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath, ignoredNames: [])
+
+            let afterRestored = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertTrue(afterRestored.filter { $0.source == .scan }.isEmpty, "regained access must not be journaled as growth")
+            let restoredCount = try await DatabaseManager.shared.fetchEntryCount(for: try XCTUnwrap(s2.id))
+            XCTAssertEqual(restoredCount, 2)
+            let pathsRestored = try await self.workingSetPaths(trackedPathId: trackedPathId)
+            XCTAssertTrue(pathsRestored.contains { $0.hasSuffix("/locked/deep/secret.mov") })
+        }
+    }
+
+    func testOutermostPathsDropsNestedAndDuplicatePaths() {
+        XCTAssertEqual(
+            ScanService.outermostPaths(["/a/b/c", "/a/b", "/a/b-old", "/a/b/", "/x"]),
+            ["/a/b", "/a/b-old", "/x"]
+        )
+    }
+
+    func testAgeCleanupKeepsNewestCompleteSnapshotAndItsEntries() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let entries = [ScanResult(path: "/Users/tester/dev/app/a.bin", sizeBytes: 1_000)]
+            let now = Date()
+            var completeIds: [Int64] = []
+            for daysAgo in [90, 60, 45] {
+                let id = try await self.insertSnapshotRow(
+                    trackedPathId: trackedPathId,
+                    createdAt: now.addingTimeInterval(TimeInterval(-daysAgo * 24 * 3_600)),
+                    lifecycle: .complete
+                )
+                try await DatabaseManager.shared.addEntries(to: id, entries: entries)
+                completeIds.append(id)
+            }
+            for minutesAgo in [2, 1] {
+                let id = try await self.insertSnapshotRow(
+                    trackedPathId: trackedPathId,
+                    createdAt: now.addingTimeInterval(TimeInterval(-minutesAgo * 60)),
+                    lifecycle: .scanning
+                )
+                try await DatabaseManager.shared.addEntries(to: id, entries: entries)
+            }
+
+            let previous = await MainActor.run { SettingsStore.shared.categoryHistoryRetentionDays }
+            await MainActor.run { SettingsStore.shared.categoryHistoryRetentionDays = 30 }
+            await DatabaseCleanupService.shared.performAutoCleanup()
+            await MainActor.run { SettingsStore.shared.categoryHistoryRetentionDays = previous }
+
+            let kept = try await DatabaseManager.shared.fetchAllSnapshots(trackedPathId: trackedPathId)
+            XCTAssertEqual(kept.map(\.id), [completeIds.last], "the newest complete snapshot survives the age cutoff")
+            let keptEntries = try await DatabaseManager.shared.fetchEntryCount(for: try XCTUnwrap(completeIds.last))
+            XCTAssertEqual(keptEntries, 1, "scanning rows must not push the newest complete payload out")
+            let hasBaseline = await BaselineService.shared.hasBaseline()
+            XCTAssertTrue(hasBaseline)
+        }
+    }
+
+    /// A failure after the working set is rebuilt must leave the new snapshot
+    /// unpublished, so the retry still diffs against the previous baseline.
+    func testFailureBeforePublishKeepsPreviousBaselineAndJournalsWindowOnRetry() async throws {
+        try await withEmptyTemporaryDatabase { trackedPathId in
+            let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrPublishLast")
+            defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+            let file = tempDirectory.appendingPathComponent("blob.bin")
+            try Data(repeating: 0xAB, count: 4_096).write(to: file)
+            try self.dateBeforeHistory(file)
+            let trackedPath = TrackedPath(id: trackedPathId, url: tempDirectory, displayName: "Temp")
+
+            let s0 = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+            try await self.backdateSnapshot(s0, to: Self.wholeSecondNow().addingTimeInterval(-7_200))
+            try Data(repeating: 0xAB, count: 4_096 + Int(3 * Self.mb)).write(to: file)
+
+            let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
+            try await dbPool.write { db in
+                try db.execute(sql: """
+                    CREATE TRIGGER failJournalInsert BEFORE INSERT ON growthJournalBucket
+                    BEGIN SELECT RAISE(ABORT, 'injected failure'); END
+                    """)
+            }
+            do {
+                _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+                XCTFail("the injected journal failure must surface")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("injected failure"))
+            }
+
+            try await dbPool.write { db in
+                try db.execute(sql: "DROP TRIGGER failJournalInsert")
+            }
+
+            let snapshots = try await dbPool.read { db in
+                try Row.fetchAll(db, sql: "SELECT id, lifecycle FROM snapshot WHERE trackedPathId = ?", arguments: [trackedPathId.uuidString])
+                    .map { (id: $0["id"] as Int64, lifecycle: $0["lifecycle"] as String) }
+            }
+            XCTAssertEqual(snapshots.map(\.id), [try XCTUnwrap(s0.id)])
+            XCTAssertEqual(snapshots.map(\.lifecycle), [Snapshot.Lifecycle.complete.rawValue])
+
+            _ = try await BaselineService.shared.createBaseline(trackedPath: trackedPath)
+
+            let buckets = try await DatabaseManager.shared.fetchGrowthJournalBuckets(trackedPathId: trackedPathId)
+            XCTAssertEqual(buckets.filter { $0.source == .scan }.reduce(Int64(0)) { $0 + $1.deltaBytes }, 3 * Self.mb)
+        }
+    }
+
     func testDiskUsageOfSparseFileIsAllocatedBytesNotLogicalSize() throws {
         let tempDirectory = try self.createTrackedPathDirectory(named: "PrunrSparse")
         defer { try? FileManager.default.removeItem(at: tempDirectory) }
@@ -617,8 +763,8 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
                 sql: """
                     SELECT p.path
                     FROM workingSetEntry w
-                    JOIN paths p ON p.id = w.pathId
-                    WHERE w.trackedPathId = ?
+                    JOIN pathText p ON p.id = w.pathId
+                    WHERE w.trackedPathKey = \(DatabaseManager.workingSetKeySQL)
                     ORDER BY p.path
                     """,
                 arguments: [trackedPathIdText]
@@ -637,14 +783,13 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         let dbPool = try XCTUnwrap(DatabaseManager.shared.dbPool)
         let trackedPathIdText = trackedPathId.uuidString
         try await dbPool.write { db in
-            try db.execute(sql: "INSERT OR IGNORE INTO paths (path) VALUES (?)", arguments: [path])
-            let pathId = try XCTUnwrap(
-                Int64.fetchOne(db, sql: "SELECT id FROM paths WHERE path = ?", arguments: [path])
-            )
+            let pathId = try XCTUnwrap(DatabaseManager.insertPath(path, db: db))
+            let workingSetKey = try DatabaseManager.workingSetKey(trackedPathId: trackedPathIdText, db: db)
             try db.execute(
-                sql: "INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt) VALUES (?, ?, 1, ?)",
-                arguments: [trackedPathIdText, pathId, Date()]
+                sql: "INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes) VALUES (?, ?, 1)",
+                arguments: [workingSetKey, pathId]
             )
+            try DatabaseManager.touchWorkingSet(key: workingSetKey, updatedAt: Date(), db: db)
         }
     }
 
@@ -693,6 +838,32 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
             XCTAssertEqual(accounting.currentFreeSpace, 90 * Self.mb)
             XCTAssertEqual(accounting.freeSpaceDelta, -10 * Self.mb)
             XCTAssertEqual(accounting.unexplainedDelta, 6 * Self.mb)
+        }
+    }
+
+    func testDiskAccountingUsesOnlyTheTwoNewestSnapshots() async throws {
+        try await withTemporaryDatabase { trackedPathId, oldestId in
+            let trackedPath = self.makeTrackedPath(trackedPathId)
+            try await DatabaseManager.shared.replaceCategorySnapshots(
+                snapshotId: oldestId,
+                totals: [.developer: 100 * Self.mb]
+            )
+
+            var previousTotal = 8 * Self.mb
+            for total in [8 * Self.mb, 11 * Self.mb] {
+                previousTotal = total
+                let snapshot = try await DatabaseManager.shared.createSnapshot(trackedPathId: trackedPathId)
+                let snapshotId = try XCTUnwrap(snapshot.id)
+                try await DatabaseManager.shared.replaceCategorySnapshots(
+                    snapshotId: snapshotId,
+                    totals: [.developer: total]
+                )
+            }
+
+            let accounting = try await BaselineService.shared.getDiskAccounting(trackedPath: trackedPath)
+
+            XCTAssertEqual(previousTotal, 11 * Self.mb)
+            XCTAssertEqual(accounting.explainedDelta, 3 * Self.mb)
         }
     }
 
@@ -995,12 +1166,16 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
         }
     }
 
-    private func seedJournalBuckets(trackedPathId: UUID, at dates: [Date]) async throws {
+    private func seedJournalBuckets(
+        trackedPathId: UUID,
+        at dates: [Date],
+        unitKey: String = "place|/Users/tester/dev"
+    ) async throws {
         for date in dates {
             try await DatabaseManager.shared.upsertGrowthJournalBuckets(
                 trackedPathId: trackedPathId,
                 bucketStart: date,
-                deltas: [.init(category: .developer, subcategory: nil, unitKey: "place|/Users/tester/dev"): 1_000]
+                deltas: [.init(category: .developer, subcategory: nil, unitKey: unitKey): 1_000]
             )
         }
     }
@@ -1025,7 +1200,12 @@ final class BaselineServiceRegressionTests: PrunrTestCase {
 
             try await self.seedJournalBuckets(
                 trackedPathId: trackedPathId,
-                at: [justBefore, fixture.cutoff, fixture.now]
+                at: [justBefore],
+                unitKey: "place|/Users/tester/other"
+            )
+            try await self.seedJournalBuckets(
+                trackedPathId: trackedPathId,
+                at: [fixture.cutoff, fixture.now]
             )
 
             await GrowthJournalService.shared.prune(

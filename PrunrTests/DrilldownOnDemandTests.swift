@@ -126,6 +126,37 @@ final class DrilldownOnDemandTests: PrunrTestCase {
             XCTAssertFalse(store.isBuilding)
             XCTAssertEqual(store.groupsByCategory[.developer]?.map(\.totalBytes), indexedDeveloper.map(\.totalBytes))
             XCTAssertEqual(store.groupsByCategory[.cachesAndSystem]?.map(\.id), indexedCaches.map(\.id))
+
+            await store.loadFiles(for: .developer, trackedPathIds: [id])
+            let loadedGroups = store.groupsByCategory
+            await store.reload(trackedPathIds: [id])
+            XCTAssertTrue(store.isFilesLoaded(for: .developer))
+            XCTAssertEqual(store.groupsByCategory, loadedGroups)
+        }
+    }
+
+    @MainActor
+    func testSameSizeRenameReloadsExpandedFiles() async throws {
+        try await withEmptyTemporaryDatabase { [self] id in
+            func scan(_ name: String) -> [ScanResult] {
+                [
+                    ScanResult(path: "/Data/Tree/big/\(name)", sizeBytes: 500, category: .developer, subcategory: .nodeModules),
+                    ScanResult(path: "/Data/Tree/big/other.js", sizeBytes: 400, category: .developer, subcategory: .nodeModules)
+                ]
+            }
+            _ = try await db.replaceWorkingSetSubtree(trackedPathId: id, rootPath: "/Data/Tree", entries: scan("before.js"))
+
+            let store = DrilldownStore()
+            await store.reload(trackedPathIds: [id])
+            await store.loadFiles(for: .developer, trackedPathIds: [id])
+            let beforePaths = store.groupsByCategory[.developer]?.flatMap(\.topFiles).map(\.path) ?? []
+            XCTAssertTrue(beforePaths.contains("/Data/Tree/big/before.js"))
+
+            _ = try await db.replaceWorkingSetSubtree(trackedPathId: id, rootPath: "/Data/Tree", entries: scan("after.js"))
+            await store.reload(trackedPathIds: [id])
+            let afterPaths = store.groupsByCategory[.developer]?.flatMap(\.topFiles).map(\.path) ?? []
+            XCTAssertTrue(afterPaths.contains("/Data/Tree/big/after.js"))
+            XCTAssertFalse(afterPaths.contains("/Data/Tree/big/before.js"))
         }
     }
 }

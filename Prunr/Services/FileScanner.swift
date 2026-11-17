@@ -44,40 +44,54 @@ final class ScanSkipLog: @unchecked Sendable {
 
 final class ScanTraversalState: @unchecked Sendable {
     struct Snapshot {
-        let lastProgressAt: Date
+        let lastProgressAt: TimeInterval
         let currentPath: String
         let isFinished: Bool
-        let consumerWaitStartedAt: Date?
+        let consumerWaitStartedAt: TimeInterval?
     }
 
     private struct State {
-        var lastProgressAt: Date
+        var lastProgressAt: TimeInterval
         var currentPath: String
         var isFinished = false
-        var consumerWaitStartedAt: Date?
+        var consumerWaitStartedAt: TimeInterval?
     }
 
-    private let state: OSAllocatedUnfairLock<State>
+    static let sleepExcludingUptime: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
-    init(rootPath: String) {
-        state = OSAllocatedUnfairLock(initialState: State(lastProgressAt: Date(), currentPath: rootPath))
+    private let state: OSAllocatedUnfairLock<State>
+    private let uptime: @Sendable () -> TimeInterval
+
+    init(rootPath: String, uptime: @escaping @Sendable () -> TimeInterval = ScanTraversalState.sleepExcludingUptime) {
+        self.uptime = uptime
+        state = OSAllocatedUnfairLock(initialState: State(lastProgressAt: uptime(), currentPath: rootPath))
+    }
+
+    func now() -> TimeInterval {
+        uptime()
     }
 
     func markProgress(path: String) {
+        markProgress(path: path, at: uptime())
+    }
+
+    func markProgress(path: String, at current: TimeInterval) {
         state.withLock {
-            $0.lastProgressAt = Date()
+            $0.lastProgressAt = current
             $0.currentPath = path
         }
     }
 
     func beginConsumerWait() {
-        state.withLock { $0.consumerWaitStartedAt = Date() }
+        let current = uptime()
+        state.withLock { $0.consumerWaitStartedAt = current }
     }
 
     func endConsumerWait() {
+        let current = uptime()
         state.withLock {
             $0.consumerWaitStartedAt = nil
-            $0.lastProgressAt = Date()
+            $0.lastProgressAt = current
         }
     }
 
@@ -102,7 +116,7 @@ final class ScanTraversalState: @unchecked Sendable {
 actor ScanBackpressureGate {
     private let maxOutstanding: Int
     private var outstanding = 0
-    private var waiters: [CheckedContinuation<Bool, Never>] = []
+    private var waiters: [(count: Int, continuation: CheckedContinuation<Int, Never>)] = []
     private var isClosed = false
 
     init(maxOutstanding: Int = 20_000) {
@@ -113,17 +127,26 @@ actor ScanBackpressureGate {
     /// Returns `false` after `close()` so cancellation cannot deadlock or yield
     /// another result after the consumer has stopped.
     func waitToProduce() async -> Bool {
-        guard !isClosed else { return false }
+        await waitToProduce(upTo: 1) > 0
+    }
+
+    /// Wait until there is capacity, then reserve between 1 and `count` slots
+    /// (as many as are free right now, never beyond `maxOutstanding`).
+    /// Returns the number reserved, or 0 after `close()`.
+    func waitToProduce(upTo count: Int) async -> Int {
+        let requested = max(1, count)
+        guard !isClosed else { return 0 }
         if outstanding < maxOutstanding {
-            outstanding += 1
-            return true
+            let granted = min(requested, maxOutstanding - outstanding)
+            outstanding += granted
+            return granted
         }
 
-        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Int, Never>) in
             if isClosed {
-                continuation.resume(returning: false)
+                continuation.resume(returning: 0)
             } else {
-                waiters.append(continuation)
+                waiters.append((requested, continuation))
             }
         }
     }
@@ -142,14 +165,16 @@ actor ScanBackpressureGate {
         let pending = waiters
         waiters.removeAll(keepingCapacity: false)
         for waiter in pending {
-            waiter.resume(returning: false)
+            waiter.continuation.resume(returning: 0)
         }
     }
 
     private func resumeWaitersIfNeeded() {
         while outstanding < maxOutstanding, !waiters.isEmpty {
-            outstanding += 1
-            waiters.removeFirst().resume(returning: true)
+            let waiter = waiters.removeFirst()
+            let granted = min(waiter.count, maxOutstanding - outstanding)
+            outstanding += granted
+            waiter.continuation.resume(returning: granted)
         }
     }
 }
@@ -158,6 +183,11 @@ actor ScanBackpressureGate {
 ///
 /// Optimized for speed: low-level FTS traversal avoids Foundation URL/resourceValues
 /// overhead on every filesystem entry.
+struct LinkedFileIdentity: Hashable {
+    let device: dev_t
+    let inode: ino_t
+}
+
 final class FileScanner {
 
     // MARK: - Properties
@@ -166,6 +196,9 @@ final class FileScanner {
     static let defaultTraversalStallTimeout: TimeInterval = 30
     static let defaultConsumerStallTimeout: TimeInterval = 900
     static let defaultWatchdogInterval: TimeInterval = 5
+    static let producerReservationChunk = 256
+    static let progressMarkInterval: TimeInterval = 0.25
+    static let progressMarkEntryInterval = 512
 
     private let traversalStallTimeout: TimeInterval
     private let consumerStallTimeout: TimeInterval
@@ -186,33 +219,37 @@ final class FileScanner {
     /// against the much longer consumer timeout.
     static func stalledDuration(
         _ snapshot: ScanTraversalState.Snapshot,
-        now: Date,
+        now: TimeInterval,
         traversalStallTimeout: TimeInterval,
         consumerStallTimeout: TimeInterval
     ) -> TimeInterval? {
         if let waitStartedAt = snapshot.consumerWaitStartedAt {
-            let waited = now.timeIntervalSince(waitStartedAt)
+            let waited = now - waitStartedAt
             return waited >= consumerStallTimeout ? waited : nil
         }
-        let stalledFor = now.timeIntervalSince(snapshot.lastProgressAt)
+        let stalledFor = now - snapshot.lastProgressAt
         return stalledFor >= traversalStallTimeout ? stalledFor : nil
     }
 
-    /// Dev-only build-output fragments excluded as a defense in depth. Prunr's
-    /// real operational state is sourced from `PrunrInternalPaths`.
-    private let internalPathFragments: [String] = [
-        "/.build/derivedData/"
-    ]
-
-    /// iCloud paths that can hang when accessed
-    private let iCloudPathFragments: [String] = [
-        "/Library/Mobile Documents/",
-        "/.icloud/",
-        "/com~apple~"
-    ]
+    static func shouldMarkProgress(now: TimeInterval, lastMarkedAt: TimeInterval, entriesSinceMark: Int) -> Bool {
+        entriesSinceMark >= progressMarkEntryInterval || now - lastMarkedAt >= progressMarkInterval
+    }
 
     static func diskUsageBytes(for fileStat: stat) -> Int64 {
         Int64(fileStat.st_blocks) * Int64(DEV_BSIZE)
+    }
+
+    static func countedBytes(for fileStat: stat, seenLinks: inout Set<LinkedFileIdentity>) -> Int64 {
+        if fileStat.st_nlink > 1 {
+            let identity = LinkedFileIdentity(device: fileStat.st_dev, inode: fileStat.st_ino)
+            guard seenLinks.insert(identity).inserted else { return 0 }
+        }
+        return diskUsageBytes(for: fileStat)
+    }
+
+    static func linkedFileBytes(linkedDiskBytes: Int64, existingBytes: Int64?) -> Int64 {
+        guard let existingBytes, existingBytes > 0 else { return 0 }
+        return linkedDiskBytes
     }
 
     // MARK: - Public API
@@ -248,7 +285,7 @@ final class FileScanner {
 
                     guard let stalledFor = Self.stalledDuration(
                         snapshot,
-                        now: Date(),
+                        now: traversalState.now(),
                         traversalStallTimeout: traversalStallTimeout,
                         consumerStallTimeout: consumerStallTimeout
                     ) else { continue }
@@ -291,10 +328,22 @@ final class FileScanner {
                     return
                 }
 
+                var rootStat = stat()
+                guard stat(rootURL.path, &rootStat) == 0 else {
+                    await backpressure?.close()
+                    continuation.finish(throwing: ScanError.invalidPath)
+                    return
+                }
+                let rootDevice = rootStat.st_dev
+
                 var count = 0
+                var reservedSlots = 0
+                var lastProgressMarkAt = traversalState.now()
+                var entriesSinceProgressMark = 0
                 var lastLogCount = 0
+                var seenLinks = Set<LinkedFileIdentity>()
                 let logInterval = 5000
-                let normalizedIgnoredNames = Set(ignoredNames.map { $0.lowercased() })
+                let normalizedIgnoredNames = ScanSkipRules.normalizedIgnoredNames(ignoredNames)
                 let options = FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV
                 let rootPath = rootURL.path
                 let duplicatedRoot = strdup(rootPath)
@@ -334,12 +383,24 @@ final class FileScanner {
                     let info = Int32(entry.pointee.fts_info)
                     let level = Int(entry.pointee.fts_level)
                     let path = String(cString: entry.pointee.fts_path)
-                    traversalState.markProgress(path: path)
+                    entriesSinceProgressMark += 1
+                    let clock = traversalState.now()
+                    if Self.shouldMarkProgress(
+                        now: clock,
+                        lastMarkedAt: lastProgressMarkAt,
+                        entriesSinceMark: entriesSinceProgressMark
+                    ) {
+                        traversalState.markProgress(path: path, at: clock)
+                        lastProgressMarkAt = clock
+                        entriesSinceProgressMark = 0
+                    }
 
                     switch info {
                     case FTS_D:
-                        let directoryName = (path as NSString).lastPathComponent
-                        if level > 0 && self.shouldSkipDirectory(path: path, name: directoryName, ignoredNames: normalizedIgnoredNames) {
+                        if level > 0 && ScanSkipRules.shouldSkipDirectory(
+                            path: URL(fileURLWithPath: path).standardizedFileURL.path,
+                            ignoredNames: normalizedIgnoredNames
+                        ) {
                             fts_set(tree, entry, FTS_SKIP)
                         }
 
@@ -347,25 +408,30 @@ final class FileScanner {
                         guard !PrunrInternalPaths.isInternalPath(path) else { continue }
                         guard let statPointer = entry.pointee.fts_statp else { continue }
                         let stat = statPointer.pointee
-                        let sizeBytes = Self.diskUsageBytes(for: stat)
+                        let sizeBytes = Self.countedBytes(for: stat, seenLinks: &seenLinks)
                         let (category, subcategory) = GrowthCategory.classify(path: path)
                         let result = ScanResult(
                             path: path,
                             sizeBytes: sizeBytes,
                             category: category,
                             subcategory: subcategory,
-                            fileDates: FileDates(stat)
+                            fileDates: FileDates(stat),
+                            linkedDiskBytes: stat.st_nlink > 1 ? Self.diskUsageBytes(for: stat) : nil
                         )
                         if let backpressure {
-                            traversalState.beginConsumerWait()
-                            let granted = await backpressure.waitToProduce()
-                            traversalState.endConsumerWait()
-                            guard granted else {
-                                break scanLoop
+                            if reservedSlots == 0 {
+                                traversalState.beginConsumerWait()
+                                reservedSlots = await backpressure.waitToProduce(upTo: Self.producerReservationChunk)
+                                traversalState.endConsumerWait()
+                                lastProgressMarkAt = traversalState.now()
+                                guard reservedSlots > 0 else {
+                                    break scanLoop
+                                }
+                                if Task.isCancelled || cancellationToken?.isCancelled == true {
+                                    break scanLoop
+                                }
                             }
-                            if Task.isCancelled || cancellationToken?.isCancelled == true {
-                                break scanLoop
-                            }
+                            reservedSlots -= 1
                         }
                         continuation.yield(result)
                         count += 1
@@ -389,7 +455,7 @@ final class FileScanner {
                             continue
                         }
 
-                        if let abortError = Self.abortError(forFTSErrno: entryErrno, path: path) {
+                        if let abortError = Self.abortError(forFTSErrno: entryErrno, path: path, level: level) {
                             await backpressure?.close()
                             continuation.finish(throwing: abortError)
                             return
@@ -402,6 +468,14 @@ final class FileScanner {
                     default:
                         continue
                     }
+                }
+
+                if !Task.isCancelled, cancellationToken?.isCancelled != true,
+                   !Self.rootIsUnchanged(path: rootPath, device: rootDevice) {
+                    Self.logger.error("Scan root vanished or changed device during scan: \(rootPath, privacy: .public)")
+                    await backpressure?.close()
+                    continuation.finish(throwing: ScanError.invalidPath)
+                    return
                 }
 
                 Self.logger.debug("Scan complete: \(count) files total")
@@ -428,12 +502,12 @@ final class FileScanner {
         level > 0 && (entryErrno == EACCES || entryErrno == EPERM)
     }
 
-    /// Transient per-entry failures (vanished/stale nodes) continue the scan.
-    /// An unreadable scan root and other systematic errors abort so inventories stay trustworthy.
-    static func abortError(forFTSErrno entryErrno: Int32, path: String) -> ScanError? {
+    /// Transient failures (vanished/stale nodes) below the root continue the scan.
+    /// A failing scan root and other systematic errors abort so inventories stay trustworthy.
+    static func abortError(forFTSErrno entryErrno: Int32, path: String, level: Int) -> ScanError? {
         switch entryErrno {
         case ENOENT, ESTALE:
-            return nil
+            return level == 0 ? .invalidPath : nil
         case EACCES, EPERM:
             return .permissionDenied(path)
         default:
@@ -441,11 +515,29 @@ final class FileScanner {
         }
     }
 
-    // MARK: - Private Helpers
+    static func rootIsUnchanged(path: String, device: dev_t) -> Bool {
+        var current = stat()
+        return stat(path, &current) == 0 && current.st_dev == device
+    }
+}
 
-    private func shouldSkipDirectory(path: String, name: String, ignoredNames: Set<String>) -> Bool {
-        let lowercasedName = name.lowercased()
-        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+enum ScanSkipRules {
+    private static let internalPathFragments: [String] = [
+        "/.build/derivedData/"
+    ]
+
+    private static let iCloudPathFragments: [String] = [
+        "/Library/Mobile Documents/",
+        "/.icloud/",
+        "/com~apple~"
+    ]
+
+    static func normalizedIgnoredNames(_ names: Set<String>) -> Set<String> {
+        Set(names.map { $0.lowercased() })
+    }
+
+    static func shouldSkipDirectory(path standardizedPath: String, ignoredNames: Set<String>) -> Bool {
+        let lowercasedName = (standardizedPath as NSString).lastPathComponent.lowercased()
 
         if ignoredNames.contains(lowercasedName) {
             return true
@@ -459,21 +551,43 @@ final class FileScanner {
             return true
         }
 
-        // Skip iCloud directories that can hang
         for fragment in iCloudPathFragments where standardizedPath.contains(fragment) {
             return true
         }
 
-        // Skip known problematic paths that cause FTS stalls
-        if shouldSkipProblematicDirectory(path: standardizedPath, lowercasedName: lowercasedName) {
-            Self.logger.debug("Skipping problematic directory: \(path, privacy: .public)")
+        return shouldSkipProblematicDirectory(path: standardizedPath, lowercasedName: lowercasedName)
+    }
+
+    static func shouldSkip(
+        path standardizedPath: String,
+        isDirectory: Bool,
+        belowRoot standardizedRoot: String,
+        ignoredNames: Set<String>
+    ) -> Bool {
+        if PrunrInternalPaths.isInternalPath(standardizedPath) {
+            return true
+        }
+        for fragment in internalPathFragments where standardizedPath.contains(fragment) {
             return true
         }
 
+        let rootPrefix = standardizedRoot.hasSuffix("/") ? standardizedRoot : standardizedRoot + "/"
+        guard standardizedPath.hasPrefix(rootPrefix) else { return false }
+
+        let components = standardizedPath.dropFirst(rootPrefix.count).split(separator: "/")
+        var current = String(rootPrefix.dropLast())
+        for (index, component) in components.enumerated() {
+            current += "/" + component
+            let isLeaf = index == components.count - 1
+            if isLeaf && !isDirectory { break }
+            if shouldSkipDirectory(path: current, ignoredNames: ignoredNames) {
+                return true
+            }
+        }
         return false
     }
 
-    private func shouldSkipProblematicDirectory(path: String, lowercasedName: String) -> Bool {
+    private static func shouldSkipProblematicDirectory(path: String, lowercasedName: String) -> Bool {
         if lowercasedName.hasSuffix(".photolibrary") || lowercasedName.hasSuffix(".photoslibrary") {
             return true
         }

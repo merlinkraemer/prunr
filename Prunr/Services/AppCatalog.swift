@@ -28,9 +28,9 @@ struct ResolvedOwner: Sendable, Hashable {
     var isCategory: Bool { key.hasPrefix(UnitOwner.categoryKeyPrefix) }
 }
 
-/// A snapshot of the installed apps, by bundle id and by name. Built on the
-/// main actor by `AppCatalogProvider`, passed around as a value; tests build
-/// one from fake entries.
+/// A snapshot of the installed apps, by bundle id and by name. Built by
+/// `AppCatalogProvider`, passed around as a value; tests build one from fake
+/// entries.
 struct AppCatalog: Sendable {
     static let empty = AppCatalog(entries: [])
 
@@ -133,6 +133,8 @@ final class AppCatalogProvider {
     static let shared = AppCatalogProvider()
 
     private var scanned: [AppCatalogEntry]?
+    private var scanTask: Task<[AppCatalogEntry], Never>?
+    private var rescanQueued = false
     private var located: [String: AppCatalogEntry] = [:]
     private var unlocated: Set<String> = []
     private var launchObserver: NSObjectProtocol?
@@ -142,16 +144,29 @@ final class AppCatalogProvider {
             forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.scanned = nil
-                self?.unlocated = []
+                self?.appLaunched()
             }
         }
     }
 
     /// The installed apps, plus the apps behind `identifiers` that live
-    /// outside the scanned folders.
-    func catalog(resolving identifiers: [String] = []) -> AppCatalog {
-        let entries = scannedEntries()
+    /// outside the scanned folders. Waits for a running scan; never reads
+    /// the folders on the main thread.
+    func catalog(resolving identifiers: [String] = []) async -> AppCatalog {
+        let entries = await scannedEntries()
+        return catalog(entries: entries, resolving: identifiers)
+    }
+
+    /// Synchronous variant for icon lookups: uses the scanned apps when
+    /// there are any, and only scans on the calling thread before the first
+    /// scan has finished.
+    func catalog() -> AppCatalog {
+        let entries = scanned ?? Self.scanInstalledApps()
+        scanned = entries
+        return catalog(entries: entries, resolving: [])
+    }
+
+    private func catalog(entries: [AppCatalogEntry], resolving identifiers: [String]) -> AppCatalog {
         let known = Set(entries.map { $0.bundleIdentifier.lowercased() })
         for identifier in identifiers where !known.contains(identifier.lowercased()) {
             locate(identifier)
@@ -159,13 +174,45 @@ final class AppCatalogProvider {
         return AppCatalog(entries: entries + located.values)
     }
 
-    private func scannedEntries() -> [AppCatalogEntry] {
+    private func appLaunched() {
+        unlocated = []
+        if scanTask != nil {
+            rescanQueued = true
+        } else if scanned != nil {
+            startScan()
+        }
+    }
+
+    private func scannedEntries() async -> [AppCatalogEntry] {
+        if let scanTask { return await scanTask.value }
         if let scanned { return scanned }
+        return await startScan().value
+    }
+
+    @discardableResult
+    private func startScan() -> Task<[AppCatalogEntry], Never> {
+        let task = Task { [weak self] () -> [AppCatalogEntry] in
+            let entries = await Task.detached(priority: .utility) { Self.scanInstalledApps() }.value
+            self?.finishScan(entries)
+            return entries
+        }
+        scanTask = task
+        return task
+    }
+
+    private func finishScan(_ entries: [AppCatalogEntry]) {
+        scanned = entries
+        scanTask = nil
+        if rescanQueued {
+            rescanQueued = false
+            startScan()
+        }
+    }
+
+    private nonisolated static func scanInstalledApps() -> [AppCatalogEntry] {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let roots = ["/Applications", home + "/Applications", "/System/Applications"]
-        let entries = roots.flatMap { Self.apps(in: $0, depth: 2) }
-        scanned = entries
-        return entries
+        return roots.flatMap { apps(in: $0, depth: 2) }
     }
 
     private func locate(_ identifier: String) {
@@ -179,7 +226,7 @@ final class AppCatalogProvider {
         located[key] = entry
     }
 
-    private static func apps(in folder: String, depth: Int) -> [AppCatalogEntry] {
+    private nonisolated static func apps(in folder: String, depth: Int) -> [AppCatalogEntry] {
         guard depth > 0, let items = try? FileManager.default.contentsOfDirectory(atPath: folder) else { return [] }
         return items.flatMap { item -> [AppCatalogEntry] in
             let path = folder + "/" + item
@@ -193,7 +240,7 @@ final class AppCatalogProvider {
         }
     }
 
-    private static func entry(at url: URL) -> AppCatalogEntry? {
+    private nonisolated static func entry(at url: URL) -> AppCatalogEntry? {
         let plistURL = url.appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: plistURL),
               let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],

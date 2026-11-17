@@ -3,6 +3,76 @@ import XCTest
 
 @MainActor
 final class MenuBarManagerRegressionTests: PrunrTestCase {
+
+    func testDatabaseOpeningDrivesActivityPulse() {
+        let manager = MenuBarManager()
+        XCTAssertFalse(manager.isActivityPulseActive)
+
+        manager.setDatabaseOpening(true)
+        XCTAssertTrue(manager.isActivityPulseActive)
+
+        manager.setDatabaseOpening(false)
+        XCTAssertFalse(manager.isActivityPulseActive)
+    }
+
+    func testActivityPulseFollowsScanStateAfterDatabaseOpens() {
+        let manager = MenuBarManager()
+        manager.isAutoScanning = true
+        manager.setDatabaseOpening(true)
+        manager.setDatabaseOpening(false)
+        XCTAssertTrue(manager.isActivityPulseActive)
+
+        manager.isAutoScanning = false
+        XCTAssertFalse(manager.isActivityPulseActive)
+    }
+
+    func testAutoScanIgnoresOnlyTheAppBundleNotItsParentFolder() {
+        let bundle = URL(fileURLWithPath: "/Users/test/Downloads/Prunr.app")
+        let roots = MenuBarManager.autoScanIgnoredRoots(bundleURL: bundle)
+
+        XCTAssertTrue(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/Prunr.app", ignoredRoots: roots))
+        XCTAssertTrue(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/Prunr.app/Contents/Info.plist", ignoredRoots: roots))
+        XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/other.zip", ignoredRoots: roots))
+        XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads/Prunr.app-old/a", ignoredRoots: roots))
+    }
+    func testAutoScanDoesNotIgnoreSiblingFolderWithSharedPrefix() {
+        let bundle = URL(fileURLWithPath: "/Users/test/Downloads/Prunr.app")
+        let roots = MenuBarManager.autoScanIgnoredRoots(bundleURL: bundle)
+
+        XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads-old/a.zip", ignoredRoots: roots))
+        XCTAssertFalse(MenuBarManager.isIgnoredByAutoScan(path: "/Users/test/Downloads", ignoredRoots: roots))
+    }
+
+    func testScopeChangeWaitsForInFlightScanAndBlocksNewScans() async {
+        let manager = MenuBarManager()
+        manager.isLoading = true
+
+        let release = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            manager.isLoading = false
+        }
+        await manager.quiesceScansForScopeChange()
+        await release.value
+
+        XCTAssertFalse(manager.isLoading)
+        XCTAssertTrue(manager.isScopeChangeInProgress)
+        let started = await manager.loadInventory(isAutomatic: true)
+        XCTAssertFalse(started)
+        XCTAssertFalse(manager.isLoading)
+    }
+
+    func testScopeChangeQuiesceTimesOutWhenScanNeverStops() async {
+        let manager = MenuBarManager()
+        manager.isLoading = true
+
+        let quiesced = await manager.quiesceScansForScopeChange(timeout: .milliseconds(200))
+
+        XCTAssertFalse(quiesced)
+        XCTAssertTrue(manager.isLoading)
+        XCTAssertTrue(manager.isScopeChangeInProgress)
+        manager.isLoading = false
+    }
+
     func testFooterActivityShowsReliableFullScanPercentage() {
         let manager = MenuBarManager()
         manager.isAutoScanning = true
@@ -154,14 +224,26 @@ final class MenuBarManagerRegressionTests: PrunrTestCase {
     }
 
     func testDiagnosticsRedactsLegacyUserAndVolumePaths() {
-        let text = "scope: /Users/jane/Work/AcmeCorp and /Volumes/Archive/Private\n"
+        let text = "scope: /Users/jane/Work/AcmeCorp\nand /Volumes/Archive/Private\n"
 
         let redacted = DiagnosticsReporter.redactingFilesystemPaths(in: text)
 
-        XCTAssertEqual(redacted, "scope: <redacted-path> and <redacted-path>\n")
+        XCTAssertEqual(redacted, "scope: <redacted-path>\nand <redacted-path>\n")
         XCTAssertFalse(redacted.contains("jane"))
         XCTAssertFalse(redacted.contains("AcmeCorp"))
         XCTAssertFalse(redacted.contains("Archive"))
+    }
+
+    func testDiagnosticsRedactsPathsWithSpacesAndUnicode() {
+        let text = "opened ~/Client Name/Verträge 2024/Müller Ünïcode 日本語.pdf\nnext /Users/jane/My Documents/résumé final.pdf\n"
+
+        let redacted = DiagnosticsReporter.redactingFilesystemPaths(in: text)
+
+        XCTAssertEqual(redacted, "opened <redacted-path>\nnext <redacted-path>\n")
+        XCTAssertFalse(redacted.contains("Name"))
+        XCTAssertFalse(redacted.contains("Verträge"))
+        XCTAssertFalse(redacted.contains("Müller"))
+        XCTAssertFalse(redacted.contains("résumé"))
     }
 
     func testDiagnosticsRedactsTildePaths() {

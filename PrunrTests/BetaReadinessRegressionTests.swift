@@ -44,8 +44,8 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
                     sql: """
                         SELECT p.path AS path, wse.sizeBytes AS sizeBytes
                         FROM workingSetEntry wse
-                        JOIN paths p ON p.id = wse.pathId
-                        WHERE wse.trackedPathId = ?
+                        JOIN pathText p ON p.id = wse.pathId
+                        WHERE wse.trackedPathKey = \(DatabaseManager.workingSetKeySQL)
                         ORDER BY p.path
                         """,
                     arguments: [trackedPathId.uuidString]
@@ -86,7 +86,7 @@ final class BetaReadinessRegressionTests: PrunrTestCase {
             let count = try await dbPool.read { db in
                 try Int.fetchOne(
                     db,
-                    sql: "SELECT COUNT(*) FROM workingSetEntry WHERE trackedPathId = ?",
+                    sql: "SELECT COUNT(*) FROM workingSetEntry WHERE trackedPathKey = \(DatabaseManager.workingSetKeySQL)",
                     arguments: [trackedPathId.uuidString]
                 ) ?? 0
             }

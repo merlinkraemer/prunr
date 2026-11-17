@@ -33,7 +33,7 @@ final class DrilldownIndexTests: PrunrTestCase {
                 db,
                 sql: """
                     SELECT p.path AS path, t.sizeBytes AS sizeBytes
-                    FROM workingSetTopEntry t JOIN paths p ON p.id = t.pathId
+                    FROM workingSetTopEntry t JOIN pathText p ON p.id = t.pathId
                     WHERE t.trackedPathId = ? AND t.category = ? AND t.groupKey = ?
                     ORDER BY t.sizeBytes DESC
                     """,
@@ -486,10 +486,13 @@ final class DrilldownIndexTests: PrunrTestCase {
             let dbPool = try XCTUnwrap(db.dbPool)
             let seeded = Date()
             try await dbPool.write { db in
-                let insertPath = try db.makeStatement(sql: "INSERT INTO paths (id, path) VALUES (?, ?)")
-                let insertClass = try db.makeStatement(sql: "INSERT INTO pathClassification (pathId, category, subcategory) VALUES (?, ?, ?)")
+                let insertClass = try db.makeStatement(sql: """
+                    INSERT INTO pathClassification (pathId, category, subcategory)
+                    VALUES (?, \(DatabaseManager.classificationCodeSQL), \(DatabaseManager.classificationCodeSQL))
+                    """)
+                let workingSetKey = try DatabaseManager.workingSetKey(trackedPathId: id.uuidString, db: db)
                 let insertLive = try db.makeStatement(sql: """
-                    INSERT INTO workingSetEntry (trackedPathId, pathId, sizeBytes, updatedAt) VALUES (?, ?, ?, ?)
+                    INSERT INTO workingSetEntry (trackedPathKey, pathId, sizeBytes) VALUES (?, ?, ?)
                     """)
                 let now = Date()
                 for index in 1...rowCount {
@@ -513,16 +516,16 @@ final class DrilldownIndexTests: PrunrTestCase {
                         path = "/Users/tester/Misc/m\(index % 100)/f-\(index)"
                         (category, subcategory) = (.other, nil)
                     }
-                    try insertPath.execute(arguments: [index, path])
+                    try DatabaseManager.insertPath(path, id: Int64(index), db: db)
                     try insertClass.execute(arguments: [index, category.rawValue, subcategory?.rawValue ?? ""])
-                    try insertLive.execute(arguments: [id.uuidString, index, Int64((index * 7_919) % 1_000_003), now])
+                    try insertLive.execute(arguments: [workingSetKey, index, Int64((index * 7_919) % 1_000_003)])
                 }
                 try db.execute(
                     sql: """
                         INSERT INTO workingSetCategoryTotal (trackedPathId, category, totalBytes, updatedAt)
-                        SELECT ?, pc.category, SUM(wse.sizeBytes), ?
+                        SELECT ?, \(DatabaseManager.classificationNameSQL("pc.category")), SUM(wse.sizeBytes), ?
                         FROM workingSetEntry wse JOIN pathClassification pc ON pc.pathId = wse.pathId
-                        WHERE wse.trackedPathId = ?
+                        WHERE wse.trackedPathKey = \(DatabaseManager.workingSetKeySQL)
                         GROUP BY pc.category
                         """,
                     arguments: [id.uuidString, now, id.uuidString]
@@ -707,6 +710,45 @@ final class DrilldownIndexTests: PrunrTestCase {
 
             let hasStatistics = try await self.hasPlannerStatistics(for: "pathClassification")
             XCTAssertTrue(hasStatistics)
+        }
+    }
+
+    private func indexNames(_ table: String) async throws -> Set<String> {
+        let dbPool = try XCTUnwrap(db.dbPool)
+        return try await dbPool.read { db in
+            Set(try String.fetchAll(
+                db,
+                sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?",
+                arguments: [table]
+            ))
+        }
+    }
+
+    private func queryPlan(_ sql: String) async throws -> String {
+        let dbPool = try XCTUnwrap(db.dbPool)
+        return try await dbPool.read { db in
+            try Row.fetchAll(db, sql: "EXPLAIN QUERY PLAN " + sql, arguments: [1])
+                .map { $0["detail"] as String? ?? "" }
+                .joined(separator: "\n")
+        }
+    }
+
+    func testPrefixIndexesAreDroppedAndCoveringOnesRemain() async throws {
+        try await withEmptyTemporaryDatabase { [self] _ in
+            let snapshotIndexes = try await self.indexNames("snapshotEntry")
+            XCTAssertFalse(snapshotIndexes.contains("idx_snapshotEntry_snapshotId"))
+            XCTAssertTrue(snapshotIndexes.contains("idx_snapshotEntry_snapshotId_pathId"))
+            let workingSetIndexes = try await self.indexNames("workingSetEntry")
+            XCTAssertEqual(workingSetIndexes, ["idx_workingSetEntry_pathId"])
+        }
+    }
+
+    func testLookupsByLeadingColumnStillUseAnIndex() async throws {
+        try await withEmptyTemporaryDatabase { [self] _ in
+            let snapshotPlan = try await self.queryPlan("SELECT sizeBytes FROM snapshotEntry WHERE snapshotId = ?")
+            XCTAssertTrue(snapshotPlan.contains("USING"), snapshotPlan)
+            let workingSetPlan = try await self.queryPlan("SELECT sizeBytes FROM workingSetEntry WHERE trackedPathKey = ?")
+            XCTAssertTrue(workingSetPlan.contains("USING PRIMARY KEY"), workingSetPlan)
         }
     }
 }

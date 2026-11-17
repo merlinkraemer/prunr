@@ -14,6 +14,7 @@ LARGE_GROWTH = 5_000_000_000
 HISTORY_DAYS = 30
 WEEK_DAYS = 7
 MAX_RUN_SLOT_STEP = 2
+MAX_RUN_SLOTS = 48
 TRASH_MOVE_PERCENT = 90
 APPROX_AFTER = 3600
 
@@ -320,31 +321,129 @@ def resolve_owner(owner):
     return f"category:{owner[1]}", CATEGORY_NAMES[owner[1]]
 
 
-# EpisodeBuilder.build (EpisodeBuilder.swift:345)
+# EpisodeBuilder.build (EpisodeBuilder.swift)
 def local_day(moment, tz):
     return moment.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def group_by_run_start_day(slots, tz):
+def split_runs(slots):
     ordered = sorted(slots, key=lambda s: (s["slot"], s["first"]))
-    result, run = defaultdict(list), []
+    runs = []
+    for s in ordered:
+        if (
+            runs
+            and s["slot"] - runs[-1][-1]["slot"] <= MAX_RUN_SLOT_STEP
+            and s["slot"] - runs[-1][0]["slot"] < MAX_RUN_SLOTS
+        ):
+            runs[-1].append(s)
+        else:
+            runs.append([s])
+    return runs
 
-    def close():
-        if not run:
-            return
+
+def group_by_run_start_day(slots, tz):
+    result = defaultdict(list)
+    for run in split_runs(slots):
         start = min(s["first"] for s in run)
         result[local_day(start, tz)].extend(run)
-        run.clear()
-
-    for s in ordered:
-        if run and s["slot"] - run[-1]["slot"] > MAX_RUN_SLOT_STEP:
-            close()
-        run.append(s)
-    close()
     return result
 
 
-def build_feed(slots, now, home, tz, categories):
+EXPIRY_DAYS = 90
+
+
+def new_count():
+    return dict(count=0, gross=0, start=None, last=None)
+
+
+# EpisodeBuilder.fold (EpisodeBuilder.swift)
+def fold(carry, days, is_trash):
+    st = dict(carry) if carry else new_count()
+    crossings, pending = [], []
+    for day, dslots in sorted(days.items(), key=lambda kv: kv[0]):
+        day_net = sum(s["net"] for s in dslots)
+        counted = sum(min(s["net"], 0) for s in dslots) if is_trash else day_net
+        if counted == 0:
+            continue
+        if st["start"] is None:
+            st["start"] = day
+        st["count"] += counted
+        st["gross"] += sum(s["gross"] for s in dslots)
+        st["last"] = day
+        pending.append(day)
+        if st["count"] == 0:
+            st["start"], st["gross"] = None, 0
+            continue
+        if abs(st["count"]) < ROW_THRESHOLD:
+            continue
+        crossings.append((day, dslots, st["count"], st["gross"], st["start"]))
+        pending = []
+        st["count"] = st["gross"] = 0
+        st["start"] = None
+    return st, crossings, pending
+
+
+# EpisodeBuilder.foldedCounts + DatabaseManager.pruneGrowthJournalBuckets
+def folded_counts(slots, carries, tz):
+    counts = dict(carries)
+    by_unit = defaultdict(list)
+    for s in slots:
+        by_unit[s["unit"]].append(s)
+    for unit, uslots in by_unit.items():
+        is_trash = split_unit_key(unit)[0] == "trash"
+        counts[unit] = fold(carries.get(unit), group_by_run_start_day(uslots, tz), is_trash)[0]
+    return counts
+
+
+FOLLOWING_WINDOW = timedelta(hours=2)
+
+
+# EpisodeBuilder.heldRunStarts
+def held_run_starts(before, following):
+    next_slot = {}
+    for s in following:
+        next_slot[s["unit"]] = min(next_slot.get(s["unit"], s["slot"]), s["slot"])
+    by_unit = defaultdict(list)
+    for s in before:
+        by_unit[s["unit"]].append(s)
+    held = {}
+    for unit, uslots in by_unit.items():
+        if unit not in next_slot:
+            continue
+        run = split_runs(uslots)[-1]
+        if (
+            next_slot[unit] - run[-1]["slot"] > MAX_RUN_SLOT_STEP
+            or next_slot[unit] - run[0]["slot"] >= MAX_RUN_SLOTS
+        ):
+            continue
+        start = min(s["first"] for s in run)
+        held[unit] = start
+    return held
+
+
+def prune_step(carries, before, following, cutoff, tz):
+    held = held_run_starts(before, following)
+    foldable = [s for s in before if s["unit"] not in held or s["first"] < held[s["unit"]]]
+    counts = folded_counts(foldable, carries, tz)
+    expiry = cutoff - timedelta(days=EXPIRY_DAYS)
+    return {u: st for u, st in counts.items() if st["count"] != 0 and st["last"] >= expiry}, held
+
+
+def prune_carries(carries, slots_before_cutoff, cutoff, tz, following=()):
+    return prune_step(carries, slots_before_cutoff, list(following), cutoff, tz)[0]
+
+
+# DatabaseManager.pruneGrowthJournalBuckets on a list of slots
+def prune_journal(journal, carries, cutoff, tz):
+    before = [s for s in journal if s["first"] < cutoff]
+    following = [s for s in journal if cutoff <= s["first"] < cutoff + FOLLOWING_WINDOW]
+    carries, held = prune_step(carries, before, following, cutoff, tz)
+    remaining = [s for s in journal if s["first"] >= held.get(s["unit"], cutoff)]
+    return remaining, carries
+
+
+def build_feed(slots, now, home, tz, categories, carries=None):
+    carries = carries or {}
     today = local_day(now, tz)
     oldest = today - timedelta(days=HISTORY_DAYS - 1)
     week_start = today - timedelta(days=WEEK_DAYS - 1)
@@ -362,30 +461,56 @@ def build_feed(slots, now, home, tz, categories):
     episodes = []
     for unit, uslots in by_unit.items():
         is_trash = split_unit_key(unit)[0] == "trash"
-        count = gross = 0
-        count_start = None
-        days = sorted((d, v) for d, v in group_by_run_start_day(uslots, tz).items() if d >= oldest)
-        for day, dslots in days:
-            day_net = sum(s["net"] for s in dslots)
+        days = group_by_run_start_day(uslots, tz)
+        for day, dslots in days.items():
             if day >= week_start:
-                week_net += day_net
-            counted = sum(min(s["net"], 0) for s in dslots) if is_trash else day_net
-            if counted == 0:
-                continue
-            if count_start is None:
-                count_start = day
-            count += counted
-            gross += sum(s["gross"] for s in dslots)
-            if count == 0:
-                count_start, gross = None, 0
-                continue
-            if abs(count) < ROW_THRESHOLD:
-                continue
-            episodes.append(make_episode(unit, day, dslots, count, gross, count_start, is_trash,
-                                         trash_growth, home, categories))
-            count = gross = 0
-            count_start = None
+                week_net += sum(s["net"] for s in dslots)
+        _, crossings, _ = fold(carries.get(unit), days, is_trash)
+        for day, dslots, count, gross, start in crossings:
+            if day >= oldest:
+                episodes.append(make_episode(unit, day, dslots, count, gross, start, is_trash,
+                                             trash_growth, home, categories))
     return episodes, week_net
+
+
+def row_key(e):
+    return (e["unit"], e["day"], e["net"], e["gross"], e["building_since"])
+
+
+# docs/checkpoint-table-design-2026-10-31.md: replay the window sliding day by day
+def slide_check(slots, first_now, last_now, home, tz, categories, with_checkpoints):
+    carries, journal = {}, list(slots)
+    previous = None
+    changed_units, changes = set(), 0
+    now = first_now
+    while now <= last_now:
+        today = local_day(now, tz)
+        oldest = today - timedelta(days=HISTORY_DAYS - 1)
+        if with_checkpoints:
+            journal, carries = prune_journal(journal, carries, oldest, tz)
+            visible = [s for s in journal if s["first"] < now + timedelta(days=1)]
+        else:
+            visible = [s for s in slots if oldest <= s["first"] < now + timedelta(days=1)]
+        episodes, _ = build_feed(visible, now, home, tz, categories, carries if with_checkpoints else None)
+        rows = {row_key(e) for e in episodes}
+        if previous is not None:
+            prev_rows, prev_today = previous
+            lo, hi = oldest, prev_today
+            before = {r for r in prev_rows if lo <= r[1] <= hi}
+            after = {r for r in rows if lo <= r[1] <= hi}
+            diff = before ^ after
+            changes += len(diff)
+            changed_units |= {r[0] for r in diff}
+        previous = (rows, today)
+        now += timedelta(days=1)
+    return changes, changed_units
+
+
+def full_history_rows(slots, now, home, tz, categories):
+    today = local_day(now, tz)
+    oldest = today - timedelta(days=HISTORY_DAYS - 1)
+    episodes, _ = build_feed([s for s in slots if s["first"] < now + timedelta(days=1)], now, home, tz, categories)
+    return {row_key(e) for e in episodes if e["day"] >= oldest}
 
 
 def make_episode(unit, day, dslots, net, gross, count_start, is_trash, trash_growth, home, categories):
@@ -462,3 +587,31 @@ def unit_categories(conn):
         if u not in best or w > best[u][1]:
             best[u] = (c, w)
     return {u: c for u, (c, _) in best.items()}
+
+
+if __name__ == "__main__":
+    import sys
+
+    db_path = sys.argv[1]
+    conn = connect(db_path)
+    slots = fetch_slots(conn)
+    home = detect_home(conn)
+    categories = unit_categories(conn)
+    tz = timezone.utc
+    first_now = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
+    last_now = datetime(2026, 11, 29, 12, 0, tzinfo=timezone.utc)
+    for label, flag in (("without checkpoints", False), ("with checkpoints", True)):
+        changes, units = slide_check(slots, first_now, last_now, home, tz, categories, flag)
+        print(f"{label}: {changes} in-window row changes across {len(units)} places")
+    now = first_now
+    mismatches = 0
+    carries, journal = {}, list(slots)
+    while now <= last_now:
+        oldest = local_day(now, tz) - timedelta(days=HISTORY_DAYS - 1)
+        journal, carries = prune_journal(journal, carries, oldest, tz)
+        visible = [s for s in journal if s["first"] < now + timedelta(days=1)]
+        episodes, _ = build_feed(visible, now, home, tz, categories, carries)
+        mine = {row_key(e) for e in episodes}
+        mismatches += len(mine ^ full_history_rows(slots, now, home, tz, categories))
+        now += timedelta(days=1)
+    print(f"checkpointed feed vs full-history feed: {mismatches} differing rows")

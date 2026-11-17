@@ -23,7 +23,16 @@ struct ChangeGroupRow: View {
                         .estimatedLook(group.isEstimated)
                 }
 
-                FittingTitle(title: group.rowTitle, shortTitle: group.rowShortTitle, font: .system(size: 13, weight: .semibold), isDimmed: group.isEstimated)
+                VStack(alignment: .leading, spacing: 1) {
+                    FittingTitle(title: group.rowTitle, shortTitle: group.rowShortTitle, font: .system(size: 13, weight: .semibold), isDimmed: group.isEstimated)
+                    if let splitText {
+                        Text(splitText)
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(signedBytes(group.netBytes))
                     .font(.system(size: 13).monospacedDigit())
@@ -54,6 +63,10 @@ struct ChangeGroupRow: View {
         .task(id: group) {
             resolvedSoleItemPath = await soleItemPath?()
         }
+    }
+
+    private var splitText: String? {
+        FeedPage.soloPlace(of: group) == nil ? group.splitText : nil
     }
 
     private var accessibilityHint: String {

@@ -281,9 +281,8 @@ private enum E2ETestRunner {
             let hasNewFile = try await dbPool.read { db in
                 try Int.fetchOne(db, sql: """
                     SELECT COUNT(*) FROM workingSetEntry wse
-                    JOIN paths p ON p.id = wse.pathId
-                    WHERE p.path = ?
-                    """, arguments: [addedFileURL.path]) ?? 0
+                    WHERE wse.pathId = (\(DatabaseManager.pathIdSQL))
+                    """, arguments: DatabaseManager.pathIdArguments(addedFileURL.path)) ?? 0
             }
             guard hasNewFile == 1 else {
                 throw E2EError("new file not found in working set after incremental refresh")

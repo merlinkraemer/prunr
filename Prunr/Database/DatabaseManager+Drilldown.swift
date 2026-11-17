@@ -30,6 +30,16 @@ struct DrilldownGroupsSnapshot: Sendable, Equatable {
     let rows: [DrilldownGroupRow]
     /// Tracked paths whose index has not been built yet (first launch after the upgrade).
     let buildingTrackedPathIds: Set<UUID>
+    var topEntrySignatures: [TopEntrySignature] = []
+}
+
+struct TopEntrySignature: Sendable, Equatable {
+    let trackedPathId: String
+    let category: String
+    let groupKey: String
+    let entryCount: Int
+    let pathIdSum: Int64
+    let pathIdMax: Int64
 }
 
 struct DrilldownFileEntry: Sendable, Equatable {
@@ -237,8 +247,9 @@ extension DatabaseManager {
 
     /// Applies file changes to every working-set derived table (category totals,
     /// drilldown groups, top files, place children) inside the caller's write
-    /// transaction, after `workingSetEntry` itself was updated. Returns the
-    /// journal deltas per (category, subcategory, unit).
+    /// transaction, after `workingSetEntry` itself was updated, and records the
+    /// per-child journal detail of the watcher's bucket at `updatedAt`. Returns
+    /// the journal deltas per (category, subcategory, unit).
     static func applyWorkingSetChanges(
         _ changes: [WorkingSetFileChange],
         trackedPathId: String,
@@ -296,6 +307,13 @@ extension DatabaseManager {
         try applyGroupDeltas(groupDeltas, trackedPathId: trackedPathId, db: db)
         try applyTopEntryChanges(resolved, trackedPathId: trackedPathId, db: db)
         try applyPlaceChildDeltas(placeDeltas, trackedPathId: trackedPathId, db: db)
+        try writeJournalDetail(
+            placeDeltas.mapValues(\.totalBytes),
+            trackedPathId: trackedPathId,
+            bucketStart: GrowthJournalService.bucketStart(for: updatedAt),
+            source: .watch,
+            db: db
+        )
 
         return journal.filter { $0.value != 0 }
     }
@@ -506,7 +524,7 @@ extension DatabaseManager {
             INSERT OR REPLACE INTO workingSetTopEntry (trackedPathId, pathId, category, groupKey, sizeBytes)
             VALUES (?, ?, ?, ?, ?)
             """)
-        let pathIdStatement = try db.cachedStatement(sql: "SELECT id FROM paths WHERE path = ?")
+        let pathIdStatement = try db.cachedStatement(sql: pathIdSQL)
 
         for (id, group) in builder.groups {
             var stored = 0
@@ -515,7 +533,7 @@ extension DatabaseManager {
                 if let knownId = file.pathId {
                     pathId = knownId
                 } else {
-                    pathId = try Int64.fetchOne(pathIdStatement, arguments: [file.path])
+                    pathId = try Int64.fetchOne(pathIdStatement, arguments: pathIdArguments(file.path))
                 }
                 guard let pathId else { continue }
                 try insertTop.execute(arguments: [trackedPathId, pathId, id.category.rawValue, id.groupKey, file.sizeBytes])
@@ -540,6 +558,8 @@ extension DatabaseManager {
 
     static func drilldownIndexBuilder(fromWorkingSetOf trackedPathId: String, db: Database) throws -> DrilldownIndexBuilder {
         var builder = DrilldownIndexBuilder()
+        let cache = classificationNameCache
+        var names = try cache.names(db)
         let cursor = try Row.fetchCursor(
             db,
             sql: """
@@ -547,15 +567,15 @@ extension DatabaseManager {
                        pc.category AS category, pc.subcategory AS subcategory
                 FROM workingSetEntry wse
                 JOIN pathClassification pc ON pc.pathId = wse.pathId
-                JOIN paths p ON p.id = wse.pathId
-                WHERE wse.trackedPathId = ?
+                JOIN pathText p ON p.id = wse.pathId
+                WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
                 """,
             arguments: [trackedPathId]
         )
         while let row = try cursor.next() {
-            guard let rawCategory: String = row["category"],
+            guard let rawCategory = try cache.name(code: row["category"], names: &names, db: db),
                   let category = GrowthCategory(rawValue: rawCategory) else { continue }
-            let rawSubcategory: String = row["subcategory"] ?? ""
+            let rawSubcategory = try cache.name(code: row["subcategory"], names: &names, db: db) ?? ""
             builder.add(
                 path: row["path"] ?? "",
                 pathId: row["pathId"],
@@ -707,8 +727,8 @@ extension DatabaseManager {
                     SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes
                     FROM pathClassification pc
                     CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-                    JOIN paths p ON p.id = wse.pathId
-                    WHERE wse.trackedPathId = ? AND pc.category = ?
+                    JOIN pathText p ON p.id = wse.pathId
+                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = \(Self.classificationCodeSQL)
                       AND prunr_owner_group(p.path) IN (\(placeholders))
                     ORDER BY wse.sizeBytes DESC, p.path ASC
                     LIMIT ? OFFSET ?
@@ -723,8 +743,10 @@ extension DatabaseManager {
                     SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes
                     FROM pathClassification pc
                     CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-                    JOIN paths p ON p.id = wse.pathId
-                    WHERE wse.trackedPathId = ? AND pc.category = ? AND pc.subcategory = ?
+                    JOIN pathText p ON p.id = wse.pathId
+                    WHERE wse.trackedPathKey = \(Self.workingSetKeySQL)
+                      AND pc.category = \(Self.classificationCodeSQL)
+                      AND pc.subcategory = \(Self.classificationCodeSQL)
                     ORDER BY wse.sizeBytes DESC, p.path ASC
                     LIMIT ? OFFSET ?
                     """,
@@ -779,11 +801,33 @@ extension DatabaseManager {
                 arguments: buildingArguments
             )
 
+            let signatures = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT trackedPathId, category, groupKey, COUNT(*) AS entryCount, SUM(pathId) AS pathIdSum, MAX(pathId) AS pathIdMax
+                    FROM workingSetTopEntry
+                    WHERE trackedPathId IN (\(placeholders))
+                    GROUP BY trackedPathId, category, groupKey
+                    ORDER BY trackedPathId, category, groupKey
+                    """,
+                arguments: StatementArguments(ids)
+            ).map { row in
+                TopEntrySignature(
+                    trackedPathId: row["trackedPathId"] ?? "",
+                    category: row["category"] ?? "",
+                    groupKey: row["groupKey"] ?? "",
+                    entryCount: row["entryCount"] ?? 0,
+                    pathIdSum: row["pathIdSum"] ?? 0,
+                    pathIdMax: row["pathIdMax"] ?? 0
+                )
+            }
+
             return DrilldownGroupsSnapshot(
                 rows: merged.values.sorted {
                     $0.totalBytes == $1.totalBytes ? $0.groupKey < $1.groupKey : $0.totalBytes > $1.totalBytes
                 },
-                buildingTrackedPathIds: Set(building.compactMap(UUID.init(uuidString:)))
+                buildingTrackedPathIds: Set(building.compactMap(UUID.init(uuidString:))),
+                topEntrySignatures: signatures
             )
         }
     }
@@ -813,7 +857,7 @@ extension DatabaseManager {
                     sql: """
                         SELECT t.groupKey AS groupKey, p.path AS path, t.sizeBytes AS sizeBytes
                         FROM workingSetTopEntry t
-                        JOIN paths p ON p.id = t.pathId
+                        JOIN pathText p ON p.id = t.pathId
                         WHERE t.trackedPathId = ? AND t.category = ? \(groupFilter)
                         """,
                     arguments: arguments
@@ -951,6 +995,173 @@ extension DatabaseManager {
         return PlaceContentsPage(children: Array(children), hasMore: rows.count > limit)
     }
 
+    /// Children of a place a row's page lists at most; smaller changes fold
+    /// into the remainder row.
+    static let placeChangeLimit = 50
+
+    /// What each direct child of a place changed in `[from, to)`, from the
+    /// journal detail, with its size now. `children` is nil when the detail
+    /// does not cover the span: it started recording after `from`, or holds
+    /// nothing for this place in it.
+    func fetchPlaceChanges(
+        unitRoot: String,
+        trackedPathIds: [UUID],
+        from: Date,
+        to: Date
+    ) async throws -> PlaceChanges {
+        guard let dbPool else { throw DatabaseError.notInitialized }
+        guard !trackedPathIds.isEmpty else { return PlaceChanges(children: nil, currentBytes: 0) }
+        let root = Self.normalizePath(unitRoot)
+        let ids = trackedPathIds.map(\.uuidString)
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+
+        let read: (current: [PlaceChildRow], currentBytes: Int64, deltas: [PlaceDeltaRow]?) = try await dbPool.read { db in
+            let building = try Self.buildingTrackedPathIds(ids, db: db)
+
+            let recordingSince = try Date.fetchOne(
+                db,
+                sql: "SELECT MIN(bucketStart) FROM growthJournalDetail WHERE trackedPathId IN (\(placeholders))",
+                arguments: StatementArguments(ids)
+            )
+            var deltas: [PlaceDeltaRow]?
+            if let recordingSince, recordingSince <= from {
+                var arguments = StatementArguments(ids)
+                arguments += [root, from, to]
+                deltas = try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT name, MAX(isFolder) AS isFolder, SUM(deltaBytes) AS deltaBytes
+                        FROM growthJournalDetail
+                        WHERE trackedPathId IN (\(placeholders)) AND unitRoot = ? AND bucketStart >= ? AND bucketStart < ?
+                        GROUP BY name
+                        HAVING SUM(deltaBytes) != 0
+                        """,
+                    arguments: arguments
+                ).map { row in
+                    PlaceDeltaRow(name: row["name"] ?? "", isFolder: row["isFolder"] ?? false, deltaBytes: row["deltaBytes"] ?? 0)
+                }
+            }
+
+            guard building.isEmpty else {
+                let all = try Self.mergedPlaceChildren(root: root, trackedPathIds: ids, building: building, db: db)
+                return (current: all, currentBytes: all.reduce(Int64(0)) { $0 + $1.totalBytes }, deltas: deltas)
+            }
+            var sumArguments = StatementArguments(ids)
+            sumArguments += [root]
+            let currentBytes = try Int64.fetchOne(
+                db,
+                sql: """
+                    SELECT COALESCE(SUM(totalBytes), 0) FROM workingSetPlaceChild
+                    WHERE trackedPathId IN (\(placeholders)) AND unitRoot = ?
+                    """,
+                arguments: sumArguments
+            ) ?? 0
+            let changed = (deltas ?? []).map(\.name).filter { $0 != GrowthJournalDetail.otherName }
+            let current = try Self.placeChildren(named: changed, root: root, trackedPathIds: ids, db: db)
+            return (current: current, currentBytes: currentBytes, deltas: deltas)
+        }
+
+        guard let deltas = read.deltas, !deltas.isEmpty else {
+            return PlaceChanges(children: nil, currentBytes: read.currentBytes)
+        }
+        return PlaceChanges(
+            children: Self.placeChanges(root: root, deltas: deltas, current: read.current),
+            currentBytes: read.currentBytes
+        )
+    }
+
+    /// The listed children of a place with their size now, merged across
+    /// tracked paths. A place can hold tens of thousands of children, so the
+    /// rows are looked up by name instead of read whole.
+    private static func placeChildren(
+        named names: [String],
+        root: String,
+        trackedPathIds: [String],
+        db: Database
+    ) throws -> [PlaceChildRow] {
+        guard !names.isEmpty, !trackedPathIds.isEmpty else { return [] }
+        var merged: [String: PlaceChildRow] = [:]
+        let idPlaceholders = Array(repeating: "?", count: trackedPathIds.count).joined(separator: ",")
+        let chunkSize = 400
+        for start in stride(from: 0, to: names.count, by: chunkSize) {
+            let chunk = Array(names[start..<min(start + chunkSize, names.count)])
+            let namePlaceholders = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            var arguments = StatementArguments(trackedPathIds)
+            arguments += [root]
+            arguments += StatementArguments(chunk)
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT name, isFolder, totalBytes, fileCount FROM workingSetPlaceChild
+                    WHERE trackedPathId IN (\(idPlaceholders)) AND unitRoot = ? AND name IN (\(namePlaceholders))
+                    """,
+                arguments: arguments
+            )
+            for row in rows.map({ PlaceChildRow($0) }) {
+                let key = row.name.lowercased()
+                if var existing = merged[key] {
+                    existing.isFolder = existing.isFolder || row.isFolder
+                    existing.totalBytes += row.totalBytes
+                    existing.fileCount += row.fileCount
+                    merged[key] = existing
+                } else {
+                    merged[key] = row
+                }
+            }
+        }
+        return Array(merged.values)
+    }
+
+    private struct PlaceDeltaRow: Sendable {
+        let name: String
+        let isFolder: Bool
+        let deltaBytes: Int64
+    }
+
+    private static func placeChanges(root: String, deltas: [PlaceDeltaRow], current: [PlaceChildRow]) -> [PlaceChildChange] {
+        let currentByName = Dictionary(current.map { ($0.name.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+        let rootName = (root as NSString).lastPathComponent
+        var remainder: Int64 = 0
+        var named: [PlaceDeltaRow] = []
+        for row in deltas {
+            if row.name == GrowthJournalDetail.otherName {
+                remainder += row.deltaBytes
+            } else {
+                named.append(row)
+            }
+        }
+        named.sort {
+            abs($0.deltaBytes) != abs($1.deltaBytes)
+                ? abs($0.deltaBytes) > abs($1.deltaBytes)
+                : $0.name.caseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        var children: [PlaceChildChange] = []
+        for (index, row) in named.enumerated() {
+            guard index < placeChangeLimit, abs(row.deltaBytes) >= GrowthJournalService.presentationFloorBytes else {
+                remainder += row.deltaBytes
+                continue
+            }
+            let now = currentByName[row.name.lowercased()]
+            children.append(PlaceChildChange(
+                name: row.name.isEmpty ? rootName : (now?.name ?? row.name),
+                path: row.name.isEmpty ? root : (root == "/" ? "/" + row.name : root + "/" + row.name),
+                isFolder: now?.isFolder ?? row.isFolder,
+                deltaBytes: row.deltaBytes,
+                currentBytes: now.map(\.totalBytes)
+            ))
+        }
+        if remainder != 0 {
+            children.append(PlaceChildChange(
+                name: PlacePageNotes.otherChangesTitle,
+                path: nil,
+                isFolder: false,
+                deltaBytes: remainder,
+                currentBytes: nil
+            ))
+        }
+        return children
+    }
+
     private struct PlaceChildRow: Sendable {
         var name: String
         var isFolder: Bool
@@ -1031,12 +1242,11 @@ extension DatabaseManager {
         let cursor = try Row.fetchCursor(
             db,
             sql: """
-                SELECT p.path AS path, wse.sizeBytes AS sizeBytes
-                FROM paths p
-                CROSS JOIN workingSetEntry wse ON wse.trackedPathId = ? AND wse.pathId = p.id
-                WHERE p.path >= ? AND p.path < ?
+                SELECT s.path AS path, wse.sizeBytes AS sizeBytes
+                FROM (\(subtreePathsSQL)) s
+                CROSS JOIN workingSetEntry wse ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = s.id
                 """,
-            arguments: [trackedPathId, root, pathPrefixUpperBound(root)]
+            arguments: subtreeArguments(root: normalizePath(root)) + [trackedPathId]
         )
         var children: [PlaceChildKey: DrilldownIndexBuilder.Totals] = [:]
         while let row = try cursor.next() {
@@ -1057,22 +1267,25 @@ extension DatabaseManager {
         guard !trackedPathIds.isEmpty else { return DrilldownCategoryContents(rows: [], files: []) }
 
         return try await dbPool.read { db in
+            let cache = Self.classificationNameCache
+            var names = try cache.names(db)
             var groups: [String: DrilldownIndexBuilder.GroupAccumulator] = [:]
             for trackedPathId in trackedPathIds {
                 let cursor = try Row.fetchCursor(
                     db,
                     sql: """
-                        SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes, pc.subcategory AS subcategory
+                        SELECT wse.pathId AS pathId, p.path AS path, wse.sizeBytes AS sizeBytes,
+                               pc.subcategory AS subcategory
                         FROM pathClassification pc
                         CROSS JOIN workingSetEntry wse ON wse.pathId = pc.pathId
-                        JOIN paths p ON p.id = wse.pathId
-                        WHERE wse.trackedPathId = ? AND pc.category = ?
+                        JOIN pathText p ON p.id = wse.pathId
+                        WHERE wse.trackedPathKey = \(Self.workingSetKeySQL) AND pc.category = \(Self.classificationCodeSQL)
                         """,
                     arguments: [trackedPathId.uuidString, category.rawValue]
                 )
                 while let row = try cursor.next() {
                     let path: String = row["path"] ?? ""
-                    let rawSubcategory: String = row["subcategory"] ?? ""
+                    let rawSubcategory = try cache.name(code: row["subcategory"], names: &names, db: db) ?? ""
                     let groupKey = DrilldownGroupKey.make(
                         category: category,
                         subcategory: GrowthSubcategory(rawValue: rawSubcategory),
@@ -1151,10 +1364,10 @@ extension DatabaseManager {
                     sql: """
                         SELECT t.pathId AS pathId, t.sizeBytes AS sizeBytes, wse.sizeBytes AS liveSize
                         FROM workingSetTopEntry t
-                        LEFT JOIN workingSetEntry wse ON wse.trackedPathId = t.trackedPathId AND wse.pathId = t.pathId
+                        LEFT JOIN workingSetEntry wse ON wse.trackedPathKey = \(Self.workingSetKeySQL) AND wse.pathId = t.pathId
                         WHERE t.trackedPathId = ? AND t.category = ? AND t.groupKey = ?
                         """,
-                    arguments: [id, groupId.category.rawValue, groupId.groupKey]
+                    arguments: [id, id, groupId.category.rawValue, groupId.groupKey]
                 )
                 let topIds = Set(top.compactMap { $0["pathId"] as Int64? })
                 if top.contains(where: { ($0["liveSize"] as Int64?) != ($0["sizeBytes"] as Int64?) }) {

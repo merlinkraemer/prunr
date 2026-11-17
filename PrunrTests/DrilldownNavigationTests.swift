@@ -136,6 +136,31 @@ final class DrilldownNavigationTests: XCTestCase {
         )
         XCTAssertEqual(CategorySizes.remainingFileCount(capped), 0)
         XCTAssertEqual(CategorySizes.fileCountText(1), "1 file")
-        XCTAssertEqual(CategorySizes.fileCountText(212_880), "\(212_880.formatted()) files")
+        XCTAssertEqual(CategorySizes.fileCountText(212_880), "212,880 files")
+    }
+
+    func testFrozenPaneKeepsItsContentWhenSourceDataChanges() {
+        let item = CategoryInventoryItem(category: .developer, currentSizeBytes: 100, recentGrowthStory: nil)
+        var groups = [SubcategoryGroup(subcategory: nil, displayName: "Xcode", totalBytes: 48, fileCount: 1, growthBytes: nil, topFiles: [])]
+        var isPending = true
+
+        func content() -> DrilldownPaneContent {
+            DrilldownPaneContent(
+                groups: groups, fileGroup: groups.first, isGroupsPending: isPending,
+                groupsReadFailed: false, filesReadFailed: false, isFilesLoaded: !isPending
+            )
+        }
+
+        let live = DrilldownListPane(level: .subcategories, category: item, subcategory: nil)
+        XCTAssertNil(live.content)
+        let frozen = live.frozen(with: content())
+
+        groups = [SubcategoryGroup(subcategory: nil, displayName: "Docker", totalBytes: 64, fileCount: 2, growthBytes: nil, topFiles: [])]
+        isPending = false
+
+        XCTAssertEqual(frozen.content?.groups.map(\.displayName), ["Xcode"])
+        XCTAssertEqual(frozen.content?.isGroupsPending, true)
+        XCTAssertNotEqual(frozen.content, content())
+        XCTAssertEqual(frozen, live)
     }
 }

@@ -41,6 +41,7 @@ struct MenuBarView: View {
     @State private var activeHeaderTransition: ActiveHeaderTransition? = nil
     @State private var headerWidth: CGFloat = 0
     @State private var onboardingTransitionTask: Task<Void, Never>? = nil
+    @State private var onboardingTransitionGeneration = 0
     @State private var scanAccessRefreshTask: Task<Void, Never>? = nil
     @State private var onboardingTransitionDirection: OnboardingNavigationDirection = .forward
     @State private var selectedOnboardingPage = OnboardingPage.folder
@@ -107,6 +108,7 @@ struct MenuBarView: View {
         let level: HeaderLevel
         let category: CategoryInventoryItem?
         let subcategory: SubcategoryGroup?
+        var frozenBackReturnsToSubcategories: Bool?
 
         static let feed = HeaderScreen(level: .feed, category: nil, subcategory: nil)
         static let overview = HeaderScreen(level: .overview, category: nil, subcategory: nil)
@@ -129,16 +131,21 @@ struct MenuBarView: View {
         }
     }
 
+    private func frozenBackReturns(_ pane: DrilldownListPane) -> Bool? {
+        guard let content = pane.content, let category = pane.category?.category else { return nil }
+        return MenuBarManager.filesBackReturnsToSubcategories(for: category, groups: content.groups)
+    }
+
     private func headerScreen(for pane: DrilldownListPane) -> HeaderScreen {
         switch pane.level {
         case .main:
             return .overview
         case .subcategories:
             guard let category = pane.category else { return .overview }
-            return HeaderScreen(level: .category, category: category, subcategory: nil)
+            return HeaderScreen(level: .category, category: category, subcategory: nil, frozenBackReturnsToSubcategories: frozenBackReturns(pane))
         case .files:
             guard let category = pane.category else { return .overview }
-            return HeaderScreen(level: .files, category: category, subcategory: pane.subcategory)
+            return HeaderScreen(level: .files, category: category, subcategory: pane.subcategory, frozenBackReturnsToSubcategories: frozenBackReturns(pane))
         }
     }
 
@@ -148,7 +155,7 @@ struct MenuBarView: View {
 
     private var scanFileCountLabel: String? {
         guard manager.filesScanned > 0 else { return nil }
-        return "\(manager.filesScanned.formatted()) files scanned"
+        return "\(manager.filesScanned.formatted(.number.locale(Locale(identifier: "en_US")))) files scanned"
     }
 
     private var scanPathLabel: String {
@@ -348,7 +355,7 @@ struct MenuBarView: View {
         .onDisappear {
             scanAccessRefreshTask?.cancel()
             folderValidationTask?.cancel()
-            onboardingTransitionTask?.cancel()
+            cancelOnboardingTransition()
             drillTransitionCoordinator.cancelAndReset()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -374,9 +381,8 @@ struct MenuBarView: View {
         }
         .onChange(of: manager.isPopoverShown) { _, isShown in
             guard isShown else { return }
-            synchronizeVisibleHeaderToCurrent()
             synchronizeVisibleOnboardingToCurrent()
-            Task { await manager.refreshChangeFeed() }
+            Task { await manager.refreshPresentationOnOpen() }
         }
         .task {
             if manager.hasDisplayableInventory {
@@ -401,7 +407,6 @@ struct MenuBarView: View {
             // Phase 2: Background — enrich with growth stories, trends, disk accounting
             await manager.checkBaseline()
             manager.updateFreeSpaceIfNeeded()
-            await manager.updatePathSize()
 
             if !manager.noBaseline {
                 await manager.loadInventoryFromLatestSnapshotIfStale()
@@ -605,7 +610,7 @@ struct MenuBarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDisappear {
-            onboardingTransitionTask?.cancel()
+            cancelOnboardingTransition()
             synchronizeVisibleOnboardingToCurrent()
         }
     }
@@ -1046,8 +1051,14 @@ struct MenuBarView: View {
         }
     }
 
-    private func startOnboardingTransition(from previousPage: OnboardingPage, to newPage: OnboardingPage, width: CGFloat) {
+    private func cancelOnboardingTransition() {
         onboardingTransitionTask?.cancel()
+        onboardingTransitionGeneration += 1
+    }
+
+    private func startOnboardingTransition(from previousPage: OnboardingPage, to newPage: OnboardingPage, width: CGFloat) {
+        cancelOnboardingTransition()
+        let generation = onboardingTransitionGeneration
         stabilizeInFlightOnboardingTransitionIfNeeded()
 
         guard width > 0 else {
@@ -1078,35 +1089,36 @@ struct MenuBarView: View {
             }
             guard !Task.isCancelled else { return }
 
-            withAnimation(.snappy(duration: 0.28, extraBounce: 0)) {
+            withAnimation(.snappy(duration: 0.28, extraBounce: 0), completionCriteria: .logicallyComplete) {
                 onboardingOffset = targetOffset
+            } completion: {
+                Task { @MainActor in
+                    guard generation == onboardingTransitionGeneration else { return }
+
+                    var cleanupTransaction = Transaction()
+                    cleanupTransaction.disablesAnimations = true
+                    withTransaction(cleanupTransaction) {
+                        displayedOnboardingPage = newPage
+                        outgoingOnboardingPage = nil
+                        onboardingOffset = 0
+                    }
+
+                    guard let pendingOnboardingTransition else { return }
+                    self.pendingOnboardingTransition = nil
+                    guard pendingOnboardingTransition.to != displayedOnboardingPage else { return }
+                    onboardingTransitionDirection = pendingOnboardingTransition.direction
+                    startOnboardingTransition(
+                        from: displayedOnboardingPage,
+                        to: pendingOnboardingTransition.to,
+                        width: max(onboardingWidth, width)
+                    )
+                }
             }
-
-            try? await Task.sleep(for: .milliseconds(280))
-            guard !Task.isCancelled else { return }
-
-            var cleanupTransaction = Transaction()
-            cleanupTransaction.disablesAnimations = true
-            withTransaction(cleanupTransaction) {
-                displayedOnboardingPage = newPage
-                outgoingOnboardingPage = nil
-                onboardingOffset = 0
-            }
-
-            guard let pendingOnboardingTransition else { return }
-            self.pendingOnboardingTransition = nil
-            guard pendingOnboardingTransition.to != displayedOnboardingPage else { return }
-            onboardingTransitionDirection = pendingOnboardingTransition.direction
-            startOnboardingTransition(
-                from: displayedOnboardingPage,
-                to: pendingOnboardingTransition.to,
-                width: max(onboardingWidth, width)
-            )
         }
     }
 
     private func synchronizeVisibleOnboardingToCurrent() {
-        onboardingTransitionTask?.cancel()
+        cancelOnboardingTransition()
 
         var transaction = Transaction()
         transaction.disablesAnimations = true
@@ -1368,13 +1380,16 @@ struct MenuBarView: View {
     @ViewBuilder
     private func feedPageView(for page: FeedPage) -> some View {
         if let place = shownPlace(for: page), let unitRoot = place.rootPath {
+            let span = PlaceChangeSpan(episode: place, calendar: .current)
             PlaceContentsView(
                 category: place.category,
                 caption: shownGroup(for: page).flatMap {
                     EpisodeBuilder.contentsCaption(for: place, headerTitle: $0.headerTitle(for: place))
                 },
                 onReveal: revealPlace,
-                loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) }
+                loader: { offset in try await manager.loadPlaceContents(unitRoot: unitRoot, offset: offset) },
+                changesLoader: { try await manager.loadPlaceChanges(unitRoot: unitRoot, span: span) },
+                notes: { PlacePageNotes.lines(span: span, changes: $0, calendar: .current) }
             )
         } else if let group = shownGroup(for: page) {
             ChangeGroupView(group: group, onOpenPlace: openPlace, onReveal: revealPlace)
@@ -1438,7 +1453,10 @@ struct MenuBarView: View {
             categoriesHeader
                 .transition(.identity)
         case .category, .files:
-            if let category = resolvedHeaderCategory(for: screen) {
+            if let frozenBackReturns = screen.frozenBackReturnsToSubcategories, let category = screen.category {
+                drillDownHeader(category: category, subcategory: frozenBackReturns ? screen.subcategory : nil)
+                    .transition(.identity)
+            } else if let category = resolvedHeaderCategory(for: screen) {
                 drillDownHeader(category: category, subcategory: headerSubcategory(for: screen, in: category))
                     .transition(.identity)
             } else {
@@ -1502,6 +1520,7 @@ struct MenuBarView: View {
 
     private func headerPage(for screen: HeaderScreen, width: CGFloat) -> some View {
         headerView(for: screen)
+            .id(screen.id)
             .frame(width: width, height: HeaderRowMetrics.height, alignment: .center)
     }
 
@@ -2068,7 +2087,7 @@ struct MenuBarView: View {
     }
 
     private func navigateFromDriveBar(segmentID: String) {
-        guard !manager.isDrillDownTransitionAnimating else { return }
+        guard manager.canStartDrilldownTransition else { return }
         guard segmentID != outsideScopeSegmentID, segmentID != "other-used" else { return }
         guard let category = GrowthCategory(rawValue: segmentID) else { return }
         guard let item = manager.sortedCategories

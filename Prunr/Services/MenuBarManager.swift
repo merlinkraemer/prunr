@@ -130,6 +130,9 @@ final class MenuBarManager: NSObject {
     private var statusItem: NSStatusItem?
     var panel: DropdownPanel?
     var isPopoverShown = false
+    private(set) var presentationStale = false
+    private(set) var inventoryReloadCount = 0
+    private(set) var changeFeedRefreshCount = 0
     var usePanel = true // Use panel instead of popover for native dropdown look
 
     // For debugging menubar click reliability (ISS-013)
@@ -223,6 +226,10 @@ final class MenuBarManager: NSObject {
 
     /// While true, `reconcileDrillDownSelection()` is skipped so inventory refreshes do not collapse drill-down mid-slide.
     var isDrillDownTransitionAnimating: Bool = false
+    var hasQueuedDrilldownTransition: Bool = false
+    var canStartDrilldownTransition: Bool {
+        !isDrillDownTransitionAnimating && !hasQueuedDrilldownTransition
+    }
     /// Gate for full traversals that touch protected folders.
     var isPermissionConfirmedForProtectedTraversal = false
     /// Most recent paths that failed with permission errors during runtime operations.
@@ -564,6 +571,7 @@ final class MenuBarManager: NSObject {
     }
     var errorMessage: String?
     var noBaseline = false
+    @ObservationIgnored private(set) var isDatabaseOpening = false
 
     var scanProgress: String = ""
     var scanCurrentPath: String = ""
@@ -594,9 +602,6 @@ final class MenuBarManager: NSObject {
     var totalBytes: Int64 = 0
     var usedBytes: Int64 = 0
     var freeBytes: Int64 = 0
-    var monitoredPathSizeBytes: Int64 = 0
-    var pathSizeBytesByID: [UUID: Int64] = [:]
-    var isCalculatingPathSize = false
 
     // Cache for disk space updates (avoid excessive disk checks)
     private var lastFreeSpaceUpdate: Date?
@@ -651,6 +656,7 @@ final class MenuBarManager: NSObject {
     /// A dirty watcher signal survives active scans and full-scan cooldowns.
     /// It is cleared only after a successful authoritative refresh begins.
     private(set) var needsAuthoritativeReconciliation = false
+    private(set) var failedScanRetryPathIDs: Set<UUID>?
     private(set) var lastFullScanCompletedAt: Date?
     private var lastFullScanAttemptAt: Date?
     private(set) var consecutiveFailedFullScans = 0
@@ -732,6 +738,7 @@ final class MenuBarManager: NSObject {
     private var lastReconciliationAttemptAt: Date?
     private var consecutiveFailedReconciliations = 0
     private(set) var isReconciling = false
+    private(set) var isScopeChangeInProgress = false
     @ObservationIgnored
     nonisolated(unsafe) private var reconciliationTask: Task<Void, Never>?
     var lastScanStatusText: String {
@@ -794,7 +801,6 @@ final class MenuBarManager: NSObject {
         totalBytes = MarketingSample.totalBytes
         freeBytes = MarketingSample.freeBytes
         usedBytes = totalBytes - freeBytes
-        monitoredPathSizeBytes = usedBytes
         growthBaselineDate = baselineDate
         noBaseline = false
         isPermissionConfirmedForProtectedTraversal = true
@@ -972,6 +978,7 @@ final class MenuBarManager: NSObject {
     }
 
     @objc func openSettings() {
+        guard !isDatabaseOpening else { return }
         // Close popover if open (keep hosting view installed across settings transitions)
         if let panel = panel, panel.isVisible {
             panel.orderOut(nil)
@@ -986,6 +993,7 @@ final class MenuBarManager: NSObject {
     }
 
     @objc private func openFeedback() {
+        guard !isDatabaseOpening else { return }
         SettingsWindowController.shared.showFeedback()
     }
 
@@ -1086,6 +1094,11 @@ final class MenuBarManager: NSObject {
 
     /// Public method to reset baseline (called by View)
     func performReset() async {
+        defer { isScopeChangeInProgress = false }
+        guard await quiesceScansForScopeChange() else {
+            Self.logger.error("Baseline reset skipped: scans did not stop in time")
+            return
+        }
         do {
             try await baselineService.resetBaseline()
             await refreshAfterBaselineReset()
@@ -1108,11 +1121,42 @@ final class MenuBarManager: NSObject {
     /// Applies scope changes that require deleting existing snapshots, then refreshes
     /// all visible menu-bar state so the popover reflects the new scope immediately.
     func applyScopeChanges() async throws {
+        defer { isScopeChangeInProgress = false }
+        guard await quiesceScansForScopeChange() else {
+            throw ScopeChangeError.scansDidNotStop
+        }
         try await baselineService.resetBaseline()
         await DatabaseCleanupService.shared.performAutoCleanup()
         await refreshAfterBaselineReset()
         configureFileWatcherIfNeeded()
-        await updatePathSize()
+    }
+
+    enum ScopeChangeError: LocalizedError {
+        case scansDidNotStop
+
+        var errorDescription: String? {
+            "Running scans did not stop in time. Try again in a moment."
+        }
+    }
+
+    static let scanQuiesceTimeout: Duration = .seconds(10)
+
+    @discardableResult
+    func quiesceScansForScopeChange(timeout: Duration = MenuBarManager.scanQuiesceTimeout) async -> Bool {
+        isScopeChangeInProgress = true
+        recentChangeTask?.cancel()
+        reconciliationTask?.cancel()
+        await ScanService.shared.cancelScan()
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while isLoading || isAutoScanning || isReconciling || isProcessingRecentChanges || isInventoryRefreshInProgress {
+            guard !Task.isCancelled else { return false }
+            guard ContinuousClock.now < deadline else {
+                Self.logger.error("Timed out waiting for scans to stop before scope change")
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return true
     }
 
     private func refreshAfterBaselineReset() async {
@@ -1121,6 +1165,7 @@ final class MenuBarManager: NSObject {
         hasPendingRecentChanges = false
         pendingRecentChangePaths.removeAll()
         pendingRecentChangeRequiresFullRefresh = false
+        failedScanRetryPathIDs = nil
         lastDetectedChangeAt = nil
         lastManualRefreshAt = nil
         lastAutomaticScanAt = nil
@@ -1163,6 +1208,7 @@ final class MenuBarManager: NSObject {
 
     private func createBaselines(
         for trackedPaths: [TrackedPath],
+        isFailedPathRetry: Bool = false,
         progressCallback: @escaping (TrackedPath, ScanService.ScanProgress) -> Void
     ) async throws -> [UUID: Snapshot] {
         // `effectiveTrackedPaths` already deduplicates nested paths, so all paths in
@@ -1190,34 +1236,72 @@ final class MenuBarManager: NSObject {
                 snapshotsByPath = snapshots
             } else {
                 // Multiple independent paths: scan concurrently via TaskGroup.
-                // Any thrown error cancels the group (and all remaining scans) immediately.
-                snapshotsByPath = try await withThrowingTaskGroup(of: (UUID, Snapshot).self) { group in
+                // Cancellation cancels the group; any other per-path failure is kept
+                // so the remaining paths still get their snapshots.
+                let outcomes = try await withThrowingTaskGroup(of: (TrackedPath, Result<Snapshot, Error>).self) { group in
                     for trackedPath in trackedPaths {
                         let capturedPath = trackedPath
                         group.addTask {
-                            let snapshot = try await self.baselineService.createBaseline(
-                                trackedPath: capturedPath,
-                                skipLog: skipLog,
-                                progress: { progress in progressCallback(capturedPath, progress) }
-                            )
-                            return (capturedPath.id, snapshot)
+                            do {
+                                let snapshot = try await self.baselineService.createBaseline(
+                                    trackedPath: capturedPath,
+                                    skipLog: skipLog,
+                                    progress: { progress in progressCallback(capturedPath, progress) }
+                                )
+                                return (capturedPath, .success(snapshot))
+                            } catch {
+                                if self.isScanCancellation(error) { throw error }
+                                return (capturedPath, .failure(error))
+                            }
                         }
                     }
 
-                    var snapshots: [UUID: Snapshot] = [:]
-                    for try await (pathId, snapshot) in group {
-                        snapshots[pathId] = snapshot
+                    var outcomes: [(TrackedPath, Result<Snapshot, Error>)] = []
+                    for try await outcome in group {
+                        outcomes.append(outcome)
                     }
-                    return snapshots
+                    return outcomes
                 }
+
+                var snapshots: [UUID: Snapshot] = [:]
+                var firstFailure: Error?
+                var failedPathIDs: Set<UUID> = []
+                for (trackedPath, outcome) in outcomes {
+                    switch outcome {
+                    case .success(let snapshot):
+                        snapshots[trackedPath.id] = snapshot
+                    case .failure(let error):
+                        firstFailure = firstFailure ?? error
+                        failedPathIDs.insert(trackedPath.id)
+                        Self.logger.error(
+                            "Scan failed for \(trackedPath.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                }
+                if snapshots.isEmpty, let firstFailure {
+                    throw firstFailure
+                }
+                if firstFailure != nil {
+                    if !pendingRecentChangeRequiresFullRefresh {
+                        failedScanRetryPathIDs = failedPathIDs
+                    }
+                    needsAuthoritativeReconciliation = true
+                    pendingRecentChangeRequiresFullRefresh = true
+                    hasPendingRecentChanges = true
+                }
+                snapshotsByPath = snapshots
             }
 
-            recordFullScanSuccess()
-            runtimeBlockedLocations = skipLog.locationLabels
+            if !isFailedPathRetry {
+                recordFullScanSuccess()
+                runtimeBlockedLocations = skipLog.locationLabels
+            }
             return snapshotsByPath
         } catch {
             if !isScanCancellation(error) {
-                recordFullScanFailure(error)
+                if !isFailedPathRetry {
+                    recordFullScanFailure(error)
+                }
             } else {
                 recordFullScanCancellation()
             }
@@ -1239,6 +1323,7 @@ final class MenuBarManager: NSObject {
             errorMessage = "No paths enabled in Settings"
             return false
         }
+        guard !isScopeChangeInProgress else { return false }
         guard beginInventoryRefresh() else { return false }
         defer { endInventoryRefresh() }
 
@@ -1266,6 +1351,7 @@ final class MenuBarManager: NSObject {
         }
         pendingRecentChangePaths.removeAll()
         pendingRecentChangeRequiresFullRefresh = false
+        failedScanRetryPathIDs = nil
         hasPendingRecentChanges = false
         scanProgress = "Scanning \(trackedPath.displayName)..."
         scanCurrentPath = trackedPath.url.path
@@ -1436,8 +1522,6 @@ final class MenuBarManager: NSObject {
             scheduleReconciliationBackstop()
         }
 
-        await updatePathSize()
-
         // Flush any FSEvents that arrived during the scan
         schedulePendingRecentChangeRefresh()
         return completedSuccessfully
@@ -1448,6 +1532,11 @@ final class MenuBarManager: NSObject {
     /// Panel-open variant: trusts already-displayable inventory so opening the
     /// popover does not re-aggregate snapshots just because time passed.
     func loadInventoryFromLatestSnapshotIfStale() async {
+        if presentationStale, !isInventoryRefreshInProgress {
+            presentationStale = false
+            await loadInventoryFromLatestSnapshot()
+            return
+        }
         if hasDisplayableInventory,
            lastInventoryFromSnapshotLoadedAt != nil,
            !currentInventorySnapshotIDsByPath.isEmpty {
@@ -1456,11 +1545,22 @@ final class MenuBarManager: NSObject {
         await loadInventoryFromLatestSnapshot()
     }
 
+    func refreshPresentationOnOpen() async {
+        guard presentationStale, !isInventoryRefreshInProgress else {
+            await refreshChangeFeed()
+            return
+        }
+        presentationStale = false
+        await loadInventoryFromLatestSnapshot(refreshedAt: Date())
+        scheduleDrilldownRefill()
+    }
+
     func loadInventoryFromLatestSnapshot(refreshedAt: Date? = nil) async {
         guard beginInventoryRefresh() else { return }
         defer {
             endInventoryRefresh()
             lastInventoryFromSnapshotLoadedAt = Date()
+            inventoryReloadCount += 1
         }
 
         let enabledPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
@@ -1590,7 +1690,7 @@ final class MenuBarManager: NSObject {
             return
         }
         guard isPermissionConfirmedForProtectedTraversal else { return }
-        guard !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else { return }
+        guard !isScopeChangeInProgress, !isReconciling, !isLoading, !isAutoScanning, !isInventoryRefreshInProgress else { return }
         isReconciling = true
         defer {
             isReconciling = false
@@ -1782,6 +1882,7 @@ final class MenuBarManager: NSObject {
     }
 
     func drillIntoCategory(_ item: CategoryInventoryItem, reveal: @escaping (String) -> Void) {
+        guard canStartDrilldownTransition else { return }
         guard drilldownStore.isGroupsPending(for: item.category) else {
             drillIntoLoadedCategory(item, reveal: reveal)
             return
@@ -1800,6 +1901,7 @@ final class MenuBarManager: NSObject {
     }
 
     func drillIntoSubcategory(_ group: SubcategoryGroup, reveal: @escaping (String) -> Void) {
+        guard canStartDrilldownTransition else { return }
         guard let category = selectedInventoryCategory?.category else { return }
         revealSoleFile(of: group, in: category, reveal: reveal) { [weak self] in
             self?.openSubcategory(group)
@@ -1912,6 +2014,15 @@ final class MenuBarManager: NSObject {
             unitRoot: unitRoot,
             trackedPathIds: enabledTrackedPathIDs(),
             offset: offset
+        )
+    }
+
+    /// What each child of a place changed in a row's span, with its size now.
+    func loadPlaceChanges(unitRoot: String, span: PlaceChangeSpan) async throws -> PlaceChanges {
+        try await drilldownStore.placeChanges(
+            unitRoot: unitRoot,
+            trackedPathIds: enabledTrackedPathIDs(),
+            span: span
         )
     }
 
@@ -2132,6 +2243,11 @@ final class MenuBarManager: NSObject {
         configureFileWatcherIfNeeded()
     }
 
+    func setDatabaseOpening(_ opening: Bool) {
+        isDatabaseOpening = opening
+        updateMenuBarActivityEffect()
+    }
+
     func configureMonitoringOnLaunch() async {
         let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         let scanRoots = trackedPaths.map(\.url.standardizedFileURL)
@@ -2200,9 +2316,9 @@ final class MenuBarManager: NSObject {
             suppressGrowthIndicators ? suppressedGrowthItem(from: $0) : $0
         }.sorted(by: Self.inventorySortsBefore)
 
-        allCategories = visibleInventory
+        if allCategories != visibleInventory { allCategories = visibleInventory }
         currentInventorySnapshotIDsByPath = snapshotIDsByPath
-        growthBaselineDate = baselineDate
+        if growthBaselineDate != baselineDate { growthBaselineDate = baselineDate }
 
         reconcileDrillDownSelection()
         // Every journal write (watcher refresh, full scan, accept) ends in an
@@ -2224,6 +2340,7 @@ final class MenuBarManager: NSObject {
     /// Reads the change list now. The value is replaced only when it differs,
     /// so an unchanged journal does not redraw the list.
     func refreshChangeFeed() async {
+        changeFeedRefreshCount += 1
         let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
         let result: ChangeFeedResult
         do {
@@ -2233,7 +2350,7 @@ final class MenuBarManager: NSObject {
                 trackedPaths: trackedPaths,
                 watchingSince: watchingSince
             )
-            let catalog = AppCatalogProvider.shared.catalog(resolving: feed.ownerAppIdentifiers)
+            let catalog = await AppCatalogProvider.shared.catalog(resolving: feed.ownerAppIdentifiers)
             result = .loaded(feed.resolvingOwners(with: catalog))
         } catch {
             Self.logger.error("Failed to read change feed: \(error.localizedDescription, privacy: .public)")
@@ -2400,6 +2517,7 @@ final class MenuBarManager: NSObject {
     // SwiftUI @State and in-memory drilldown caches survive reopen.
 
     @objc private func togglePopover() {
+        guard !isDatabaseOpening else { return }
         guard let button = statusItem?.button else {
             return
         }
@@ -2531,7 +2649,11 @@ final class MenuBarManager: NSObject {
     }
 
     private var shouldPulseActivity: Bool {
-        isLoading || isAutoScanning
+        isDatabaseOpening || isLoading || isAutoScanning
+    }
+
+    var isActivityPulseActive: Bool {
+        activityPulseTimer != nil
     }
 
     private func updateMenuBarActivityEffect() {
@@ -2594,46 +2716,6 @@ final class MenuBarManager: NSObject {
                 self?.configureFileWatcherIfNeeded()
             }
         }
-    }
-
-    /// Updates the monitored path size from the latest baseline or current state
-    func updatePathSize() async {
-        let trackedPaths = effectiveTrackedPaths(from: SettingsStore.shared.enabledTrackedPaths)
-        guard let trackedPath = primaryTrackedPath(from: trackedPaths) else {
-            self.monitoredPathSizeBytes = 0
-            self.pathSizeBytesByID = [:]
-            return
-        }
-
-        await updatePathSizesFromLatestSnapshots(for: trackedPaths, primaryPath: trackedPath)
-    }
-
-    private func updatePathSizesFromLatestSnapshots(for trackedPaths: [TrackedPath], primaryPath: TrackedPath) async {
-        isCalculatingPathSize = true
-        defer { isCalculatingPathSize = false }
-
-        var sizesByID: [UUID: Int64] = [:]
-
-        for trackedPath in trackedPaths {
-            do {
-                let snapshots = try await DatabaseManager.shared.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
-                guard let latestId = snapshots.first?.id else {
-                    sizesByID[trackedPath.id] = 0
-                    continue
-                }
-
-                sizesByID[trackedPath.id] = try await DatabaseManager.shared.sumEntrySizes(for: latestId)
-            } catch {
-                sizesByID[trackedPath.id] = 0
-            }
-        }
-
-        pathSizeBytesByID = sizesByID
-        monitoredPathSizeBytes = sizesByID[primaryPath.id] ?? 0
-    }
-
-    func pathSizeBytes(for trackedPath: TrackedPath) -> Int64 {
-        pathSizeBytesByID[trackedPath.id] ?? 0
     }
 
     func closePopover() {
@@ -2852,6 +2934,7 @@ final class MenuBarManager: NSObject {
     #endif
 
     private func configureFileWatcherIfNeeded() {
+        guard !isDatabaseOpening else { return }
         guard Self.enableAutomaticFileWatcher else {
             watchedPaths = []
             Task { @MainActor in
@@ -2973,6 +3056,7 @@ final class MenuBarManager: NSObject {
     private func markDirty(reason: String, rawEventCount: Int = 0) {
         needsAuthoritativeReconciliation = true
         pendingRecentChangeRequiresFullRefresh = true
+        failedScanRetryPathIDs = nil
         pendingDirtyReason = reason
         hasPendingRecentChanges = true
         Logger.fsEvents.notice(
@@ -3055,12 +3139,40 @@ final class MenuBarManager: NSObject {
         schedulePendingRecentChangeRefresh()
     }
 
+    func retryFailedScanPaths(_ failedPathIDs: Set<UUID>, in enabledPaths: [TrackedPath]) async -> Bool {
+        let retryPaths = enabledPaths.filter { failedPathIDs.contains($0.id) }
+        guard !retryPaths.isEmpty else {
+            failedScanRetryPathIDs = nil
+            return true
+        }
+        guard beginInventoryRefresh() else { return false }
+
+        let snapshots: [UUID: Snapshot]
+        do {
+            snapshots = try await createBaselines(for: retryPaths, isFailedPathRetry: true) { _, _ in }
+        } catch {
+            endInventoryRefresh()
+            return false
+        }
+        endInventoryRefresh()
+
+        if snapshots.count == retryPaths.count {
+            failedScanRetryPathIDs = nil
+        }
+        if isPopoverShown {
+            await loadInventoryFromLatestSnapshot(refreshedAt: Date())
+        } else {
+            presentationStale = true
+        }
+        return true
+    }
+
     func performRecentChangeRefresh(allowFullRefresh: Bool = true) async {
         guard pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty else {
             hasPendingRecentChanges = false
             return
         }
-        guard !isLoading, !isInventoryRefreshInProgress, !isAutoScanning, !isReconciling else {
+        guard !isScopeChangeInProgress, !isLoading, !isInventoryRefreshInProgress, !isAutoScanning, !isReconciling else {
             // The dirty-refresh task has already fired, so allow the pending work to
             // schedule a later retry once the full scan/reconciliation releases the DB.
             if pendingRecentChangeRequiresFullRefresh {
@@ -3074,6 +3186,7 @@ final class MenuBarManager: NSObject {
         guard !enabledPaths.isEmpty else {
             pendingRecentChangePaths.removeAll()
             pendingRecentChangeRequiresFullRefresh = false
+            failedScanRetryPathIDs = nil
             hasPendingRecentChanges = false
             return
         }
@@ -3102,7 +3215,12 @@ final class MenuBarManager: NSObject {
             }
 
             lastDetectedChangeAt = Date()
-            let succeeded = await loadInventory(isAutomatic: true)
+            let succeeded: Bool
+            if let retryPathIDs = failedScanRetryPathIDs {
+                succeeded = await retryFailedScanPaths(retryPathIDs, in: enabledPaths)
+            } else {
+                succeeded = await loadInventory(isAutomatic: true)
+            }
             if !succeeded {
                 needsAuthoritativeReconciliation = true
                 pendingRecentChangeRequiresFullRefresh = true
@@ -3171,6 +3289,7 @@ final class MenuBarManager: NSObject {
         if requiresFullRefresh {
             perfMeter.recordFullScanEscalation()
             lastDetectedChangeAt = Date()
+            failedScanRetryPathIDs = nil
             guard allowFullRefresh else {
                 pendingRecentChangeRequiresFullRefresh = true
                 hasPendingRecentChanges = true
@@ -3189,8 +3308,12 @@ final class MenuBarManager: NSObject {
             lastDetectedChangeAt = Date()
             // Reload inventory and drilldown index from DB ground truth: the
             // incremental refresh already updated every working-set table.
-            await loadInventoryFromLatestSnapshot(refreshedAt: Date())
-            scheduleDrilldownRefill()
+            if isPopoverShown {
+                await loadInventoryFromLatestSnapshot(refreshedAt: Date())
+                scheduleDrilldownRefill()
+            } else {
+                presentationStale = true
+            }
         }
 
         hasPendingRecentChanges = pendingRecentChangeRequiresFullRefresh || !pendingRecentChangePaths.isEmpty
@@ -3280,9 +3403,12 @@ final class MenuBarManager: NSObject {
         let noiseFiltered = changedPaths.filter { url in
             !FSEventsNoiseFilter.shouldIgnore(url.path)
         }
-        guard !noiseFiltered.isEmpty else { return [] }
-        guard !shouldIgnoreAutoScanChanges(noiseFiltered) else { return [] }
-        return Set(noiseFiltered.map(\.standardizedFileURL))
+        let ignoredRoots = Self.autoScanIgnoredRoots(bundleURL: Bundle.main.bundleURL)
+        return Set(
+            noiseFiltered
+                .map(\.standardizedFileURL)
+                .filter { !Self.isIgnoredByAutoScan(path: $0.path, ignoredRoots: ignoredRoots) }
+        )
     }
 
     private func recordFullScanAttempt(at date: Date = Date()) {
@@ -3359,7 +3485,7 @@ final class MenuBarManager: NSObject {
         )
     }
 
-    private func isScanCancellation(_ error: Error) -> Bool {
+    private nonisolated func isScanCancellation(_ error: Error) -> Bool {
         if let scanError = error as? ScanError, case .cancelled = scanError {
             return true
         }
@@ -3404,6 +3530,7 @@ final class MenuBarManager: NSObject {
     }
 
     private func promotePendingChangesToFullRefreshIfAllowed(reason: String) -> Bool {
+        failedScanRetryPathIDs = nil
         let now = Date()
         guard !isWithinFullRescanCooldown(at: now) else {
             let elapsed = Int(now.timeIntervalSince(lastFullScanCompletedAt ?? now))
@@ -3509,26 +3636,16 @@ final class MenuBarManager: NSObject {
         isInventoryRefreshInProgress = false
     }
 
-    private func shouldIgnoreAutoScanChanges(_ changedPaths: Set<URL>) -> Bool {
-        guard !changedPaths.isEmpty else { return true }
-
-        let ignoredRoots = autoScanIgnoredRoots()
-        let relevantChanges = changedPaths.filter { url in
-            let standardized = url.standardizedFileURL
-            return !ignoredRoots.contains(where: { standardized.path.hasPrefix($0.path) })
-        }
-
-        return relevantChanges.isEmpty
+    static func autoScanIgnoredRoots(bundleURL: URL) -> [URL] {
+        var roots = PrunrInternalPaths.directoryURLs()
+        roots.append(bundleURL.standardizedFileURL)
+        return roots
     }
 
-    private func autoScanIgnoredRoots() -> [URL] {
-        var roots = PrunrInternalPaths.directoryURLs()
-
-        let bundleURL = Bundle.main.bundleURL.standardizedFileURL
-        roots.append(bundleURL)
-        roots.append(bundleURL.deletingLastPathComponent().standardizedFileURL)
-
-        return roots
+    static func isIgnoredByAutoScan(path: String, ignoredRoots: [URL]) -> Bool {
+        ignoredRoots.contains { root in
+            path == root.path || path.hasPrefix(root.path + "/")
+        }
     }
 
     deinit {

@@ -117,6 +117,7 @@ actor BaselineService {
             ignoredNames: ignoredNames,
             alsoWriteWorkingSet: false,
             reconstructsFileHistory: previousSnapshotId == nil,
+            completesSnapshot: false,
             skipLog: skipLog,
             progress: progress
         )
@@ -131,72 +132,110 @@ actor BaselineService {
             ))
         }
 
-        try await db.rebuildWorkingSet(
-            from: snapshotId,
-            trackedPathId: trackedPath.id,
-            updatedAt: snapshot.createdAt,
-            drilldownIndex: outcome.drilldownIndex
-        )
-
-        if previousSnapshotId == nil {
-            // A first successful baseline must clear stale realtime growth left behind from pre-baseline runs.
-            try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)
-            if let fileHistory = outcome.fileHistory {
-                try await recordFileHistory(fileHistory, trackedPath: trackedPath)
-            }
-        }
-
-        // Record deltas to growth journal only when a previous snapshot exists.
-        // On first scan (previousSnapshotId == nil) this block is skipped entirely —
-        // no calculateDeltas call and no journal recording, so first-scan cost is
-        // scan + insert only, with no expensive diff computation.
-        if let previous = previousSnapshots.first, let previousSnapshotId,
-           HistoryStart.scanWindowKeepsResidual(windowStart: previous.createdAt) {
-            // The realtime watcher already recorded most of this window's changes
-            // at the time they happened. Keep those timestamps and add only the
-            // residual the watcher missed (or over-counted), so the window total
-            // still equals the authoritative snapshot delta without double-counting.
-            // The window is (previous scan start, this scan start]; watcher refreshes
-            // wait while a full scan runs, so later changes belong to the next window.
-            let deltas = try await db.calculateDeltas(beforeId: previousSnapshotId, afterId: snapshotId)
-            var authoritativeByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
-            for delta in deltas {
-                let category = GrowthCategory.categorize(path: delta.path)
-                let subcategory = GrowthCategory.subcategorize(path: delta.path)
-                let key = DatabaseManager.JournalDeltaKey(
-                    category: category,
-                    subcategory: subcategory,
-                    unitKey: UnitResolver.resolve(path: delta.path)
-                )
-                authoritativeByKey[key, default: 0] += delta.changeBytes
-            }
-
-            let recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
+        do {
+            try await db.rebuildWorkingSet(
+                from: snapshotId,
                 trackedPathId: trackedPath.id,
-                from: previous.createdAt,
-                to: snapshot.createdAt
+                updatedAt: snapshot.createdAt,
+                drilldownIndex: outcome.drilldownIndex
             )
 
-            var residualByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
-            for key in Set(authoritativeByKey.keys).union(recordedByKey.keys) {
-                let residual = (authoritativeByKey[key] ?? 0) - (recordedByKey[key] ?? 0)
-                if residual != 0 {
-                    residualByKey[key] = residual
+            if previousSnapshotId == nil {
+                // A first successful baseline must clear stale realtime growth left behind from pre-baseline runs.
+                try await db.deleteGrowthJournalBuckets(trackedPathId: trackedPath.id)
+                if let fileHistory = outcome.fileHistory {
+                    try await recordFileHistory(fileHistory, trackedPath: trackedPath)
                 }
             }
 
-            if !residualByKey.isEmpty {
-                try await growthJournalService.recordDeltas(
-                    trackedPath: trackedPath,
-                    deltas: residualByKey,
-                    at: snapshot.createdAt,
-                    source: .scan,
-                    observedSince: previous.createdAt
+            // Record deltas to growth journal only when a previous snapshot exists.
+            // On first scan (previousSnapshotId == nil) this block is skipped entirely —
+            // no calculateDeltas call and no journal recording, so first-scan cost is
+            // scan + insert only, with no expensive diff computation.
+            if let previous = previousSnapshots.first, let previousSnapshotId,
+               previous.createdAt <= snapshot.createdAt,
+               HistoryStart.scanWindowKeepsResidual(windowStart: previous.createdAt) {
+                // The realtime watcher already recorded most of this window's changes
+                // at the time they happened. Keep those timestamps and add only the
+                // residual the watcher missed (or over-counted), so the window total
+                // still equals the authoritative snapshot delta without double-counting.
+                // The window is (previous scan start, this scan start]; watcher refreshes
+                // wait while a full scan runs, so later changes belong to the next window.
+                let deltas = try await db.calculateDeltas(beforeId: previousSnapshotId, afterId: snapshotId)
+                var authoritativeByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+                var authoritativeByChild: [PlaceChildKey: Int64] = [:]
+                for delta in deltas {
+                    let category = GrowthCategory.categorize(path: delta.path)
+                    let subcategory = GrowthCategory.subcategorize(path: delta.path)
+                    let unitKey = UnitResolver.resolve(path: delta.path)
+                    let key = DatabaseManager.JournalDeltaKey(
+                        category: category,
+                        subcategory: subcategory,
+                        unitKey: unitKey
+                    )
+                    authoritativeByKey[key, default: 0] += delta.changeBytes
+                    if let child = PlaceChildKey(path: delta.path, unitKey: unitKey) {
+                        authoritativeByChild[child, default: 0] += delta.changeBytes
+                    }
+                }
+
+                let recordedByKey = try await db.fetchGrowthJournalTotalsByKey(
+                    trackedPathId: trackedPath.id,
+                    from: previous.createdAt,
+                    to: snapshot.createdAt
+                )
+
+                var residualByKey: [DatabaseManager.JournalDeltaKey: Int64] = [:]
+                for key in Set(authoritativeByKey.keys).union(recordedByKey.keys) {
+                    let residual = (authoritativeByKey[key] ?? 0) - (recordedByKey[key] ?? 0)
+                    if residual != 0 {
+                        residualByKey[key] = residual
+                    }
+                }
+
+                if !residualByKey.isEmpty {
+                    try await growthJournalService.recordDeltas(
+                        trackedPath: trackedPath,
+                        deltas: residualByKey,
+                        at: snapshot.createdAt,
+                        source: .scan,
+                        observedSince: previous.createdAt
+                    )
+                }
+
+                let recordedByChild = try await db.fetchJournalDetailTotals(
+                    trackedPathId: trackedPath.id,
+                    from: previous.createdAt,
+                    to: snapshot.createdAt
+                )
+                try await db.upsertJournalDetail(
+                    trackedPathId: trackedPath.id,
+                    deltasByBucketStart: [
+                        GrowthJournalService.bucketStart(for: snapshot.createdAt): GrowthJournalDetail.residual(
+                            authoritative: authoritativeByChild,
+                            recorded: recordedByChild
+                        )
+                    ],
+                    source: .scan
                 )
             }
+
+            try await db.markSnapshotComplete(id: snapshotId, entryCount: outcome.entryCount)
+        } catch {
+            let cleanupOutlivesTaskCancellation = Task {
+                try await self.db.deleteSnapshot(id: snapshotId)
+            }
+            do {
+                try await cleanupOutlivesTaskCancellation.value
+            } catch {
+                logger.error("Failed to delete unpublished snapshot ID \(snapshotId): \(error.localizedDescription)")
+            }
+            throw error
         }
 
-        return snapshot
+        var publishedSnapshot = snapshot
+        publishedSnapshot.lifecycle = .complete
+        return publishedSnapshot
     }
 
     /// Writes the history rebuilt from file dates. Every bucket lies before
@@ -206,6 +245,11 @@ actor BaselineService {
         try await db.upsertGrowthJournalBuckets(
             trackedPathId: trackedPath.id,
             deltasByBucketStart: history.deltasByBucketStart,
+            source: .files
+        )
+        try await db.upsertJournalDetail(
+            trackedPathId: trackedPath.id,
+            deltasByBucketStart: history.childDeltasByBucketStart,
             source: .files
         )
         let milliseconds = Int(Date().timeIntervalSince(start) * 1000)
@@ -284,7 +328,7 @@ actor BaselineService {
             return nil
         }
 
-        let latestEntryCount = try await db.fetchEntryCount(for: latestSnapshotId)
+        let latestEntryCount = try await db.fetchComparableEntryCount(for: latestSnapshotId)
         let baselineSnapshotId = try await comparableBaselineSnapshotId(
             from: snapshots,
             latestSnapshotId: latestSnapshotId,
@@ -404,7 +448,7 @@ actor BaselineService {
             guard let candidateSnapshotId = snapshot.id else { continue }
             guard candidateSnapshotId != latestSnapshotId else { continue }
 
-            let candidateEntryCount = try await db.fetchEntryCount(for: candidateSnapshotId)
+            let candidateEntryCount = try await db.fetchComparableEntryCount(for: candidateSnapshotId)
             if candidateEntryCount <= 100 {
                 continue
             }
@@ -427,7 +471,7 @@ actor BaselineService {
     /// - Returns: DiskAccountingResult with free-space tracking data
     /// - Throws: BaselineError if insufficient snapshots exist
     func getDiskAccounting(trackedPath: TrackedPath) async throws -> DiskAccountingResult {
-        let snapshots = try await db.fetchAllSnapshots(trackedPathId: trackedPath.id)
+        let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 2)
 
         guard snapshots.count >= 2 else {
             throw BaselineError.insufficientSnapshots
@@ -557,8 +601,16 @@ actor BaselineService {
     }
 
     private func loadInventoryWithTrends(trackedPath: TrackedPath) async throws -> [CategoryInventoryItem] {
+        let comparisonSnapshots = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id)
+        return try await loadInventoryWithTrends(trackedPath: trackedPath, comparisonSnapshots: comparisonSnapshots)
+    }
+
+    private func loadInventoryWithTrends(
+        trackedPath: TrackedPath,
+        comparisonSnapshots: GrowthComparisonSnapshots?
+    ) async throws -> [CategoryInventoryItem] {
         var inventory = try await loadCategoryInventory(trackedPath: trackedPath)
-        guard let comparisonSnapshots = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id) else {
+        guard let comparisonSnapshots else {
             return inventory
         }
 
@@ -594,6 +646,7 @@ actor BaselineService {
         var baselineSnapshotDate: Date?
 
         for trackedPath in trackedPaths {
+            let comparison: GrowthComparisonSnapshots?
             do {
                 let snapshots = try await db.fetchRecentSnapshots(trackedPathId: trackedPath.id, limit: 1)
                 if let latestSnapshot = snapshots.first, let latestSnapshotId = latestSnapshot.id {
@@ -603,7 +656,8 @@ actor BaselineService {
                     }
                 }
 
-                if let comparison = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id) {
+                comparison = try await resolveGrowthComparisonSnapshots(trackedPathId: trackedPath.id)
+                if let comparison {
                     latestSnapshotIdsByPath[trackedPath.id] = comparison.currentSnapshotId
                     // Use separate baseline when available, otherwise fall back to
                     // the current snapshot so that working-set changes (files added
@@ -628,7 +682,7 @@ actor BaselineService {
 
             let inventory: [CategoryInventoryItem]
             do {
-                inventory = try await loadInventoryWithTrends(trackedPath: trackedPath)
+                inventory = try await loadInventoryWithTrends(trackedPath: trackedPath, comparisonSnapshots: comparison)
             } catch {
                 logger.error("Error getting inventory for \(trackedPath.displayName, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 unavailableTrackedPathIDs.insert(trackedPath.id)
