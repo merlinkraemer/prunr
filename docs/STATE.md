@@ -18,7 +18,7 @@ AGENTS.md ## Unattended. Holiday ended 2026-11-13 (Merlin: "holiday mode is over
 9. [landed 2026-11-17 on local main efef1b5, Merlin "Yes, land it"] Review build: new core screen, review fixes, DB shrink (items 3, 6, 7, 8, 10, 11 folded in), pulse; Mac green 543 tests; not pushed - shipped as alpha.25 build 26 on 11-17 - branch: none
 12. [done 2026-11-17] Homebrew: tap live (merlinkraemer/homebrew-prunr, CI green), brew line live on the download page (3c127f6) - cask auto-bumps hourly from the latest release (tap bump.yml) - branch: none
 
-13. [done 2026-11-18, Merlin "Yes, deploy it"] Brew installs counted separately: prunr-web pinned brew redirect deployed (Vercel CLI), cask downloads through it; each tap CI run adds 1-3 brew counts - branch: none
+13. [done 2026-11-18, Merlin "Yes, deploy it"] Brew installs counted separately: prunr-web pinned brew redirect deployed (Vercel CLI), cask downloads through it; each tap CI run adds 3 brew counts, a real install about 1 - branch: none
 14. Download stats 401: DOWNLOAD_STATS_TOKEN is a Vercel "sensitive" var, so vercel env run/pull gives callers an empty token; stats were never blind (FEEDBACK_AGENT_TOKEN works: 22 downloads all time) - rec: callers use FEEDBACK_AGENT_TOKEN, no rotation; or you re-create DOWNLOAD_STATS_TOKEN as non-sensitive in the Vercel dashboard - branch: none
 
 ## Run
