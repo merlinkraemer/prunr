@@ -1,6 +1,6 @@
 # Prunr — state
 
-_Updated: 2026-11-17 by orchestrator (on dev). Live state only, max ~80 lines. History → docs/journal.md, facts → memory, long-term → docs/product-roadmap-2026-09-07.md._
+_Updated: 2026-11-18 by orchestrator (on dev). Live state only, max ~80 lines. History → docs/journal.md, facts → memory, long-term → docs/product-roadmap-2026-09-07.md._
 
 ## Direction
 Compass: not iced, design mode, alongside Pad/Bounce. Infrastructure is done (notarized DMG, Sparkle, signup). The core screen is unsettled: answer "where did my storage go" at once, without over-detail. Lens to test: growth as a sentence ("Since last week, 14 GB appeared: 9 in Xcode caches…"). Core screen settled 2026-10-11; build per docs/core-screen-episodes-prd-2026-10-11.md. Loose end: fix #35 when a morning opens. Parked: website DMG vs App Store, price (~€5.99 one-time).
@@ -18,6 +18,8 @@ AGENTS.md ## Unattended. Holiday ended 2026-11-13 (Merlin: "holiday mode is over
 9. [landed 2026-11-17 on local main efef1b5, Merlin "Yes, land it"] Review build: new core screen, review fixes, DB shrink (items 3, 6, 7, 8, 10, 11 folded in), pulse; Mac green 543 tests; not pushed - shipped as alpha.25 build 26 on 11-17 - branch: none
 12. [done 2026-11-17] Homebrew: tap live (merlinkraemer/homebrew-prunr, CI green), brew line live on the download page (3c127f6) - cask auto-bumps hourly from the latest release (tap bump.yml) - branch: none
 
+13. Brew installs counted separately (Merlin via PM 11-18) - prunr-web gets a pinned brew redirect (/api/download?src=brew&v=..&b=.., ua=brew), the cask downloads through it - rec: ok to merge feat/brew-download-redirect + push main (deploys the API), then I merge the tap branch; catch: each tap CI run also counts 1-3 brew downloads - branch: feat/brew-download-redirect (prunr), via-prunr-web (tap)
+14. Download stats 401: DOWNLOAD_STATS_TOKEN is a Vercel "sensitive" var, so vercel env run/pull gives callers an empty token; stats were never blind (FEEDBACK_AGENT_TOKEN works: 22 downloads all time) - rec: callers use FEEDBACK_AGENT_TOKEN, no rotation; or you re-create DOWNLOAD_STATS_TOKEN as non-sensitive in the Vercel dashboard - branch: none
 
 ## Run
 status: stopped 2026-11-13 (holiday over) · ran since 2026-10-30 10:15 · cap 2 workers · autonomy loose (Merlin 10-30: land green non-UI work on local main; never push, no beta/release)
