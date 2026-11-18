@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import downloadHandler, { FALLBACK_URL, resetReleaseCache, userAgentClass } from "./download.js";
+import downloadHandler, { FALLBACK_URL, pinnedDownloadUrl, resetReleaseCache, userAgentClass } from "./download.js";
 import statsHandler from "./download-stats.js";
 import { requireAgentAuth } from "./agent-feedback-auth.js";
 
@@ -192,4 +192,27 @@ test("download stats reject invalid day ranges", async () => {
   const res = response();
   await statsHandler({ method: "GET", headers: { authorization: "Bearer agent-token" }, query: { days: "0" } }, res);
   assert.equal(res.statusCode, 400);
+});
+
+test("brew downloads redirect to the pinned release and count as brew", async () => {
+  const before = githubCalls;
+  const res = response();
+  await downloadHandler(downloadRequest({
+    query: { src: "brew", v: "0.1.5-alpha.25", b: "26" },
+    headers: { "user-agent": "Homebrew/4.6.0 (Macintosh; arm64 Mac OS X 15.1) curl/8.7.1" },
+  }), res);
+  assert.equal(res.statusCode, 302);
+  assert.equal(res.headers.Location, "https://github.com/merlinkraemer/prunr/releases/download/v0.1.5-alpha.25/Prunr-0.1.5-alpha.25-build26-macos.dmg");
+  assert.equal(githubCalls, before);
+  const event = JSON.parse(events[0]);
+  assert.equal(event.src, "brew");
+  assert.equal(event.ua, "brew");
+});
+
+test("pinned downloads reject malformed versions", () => {
+  assert.equal(pinnedDownloadUrl("0.1.5-alpha.25", "26").endsWith("Prunr-0.1.5-alpha.25-build26-macos.dmg"), true);
+  assert.equal(pinnedDownloadUrl("../evil", "26"), null);
+  assert.equal(pinnedDownloadUrl("0.1.5", "26x"), null);
+  assert.equal(pinnedDownloadUrl(undefined, "26"), null);
+  assert.equal(pinnedDownloadUrl(["0.1.5"], "26"), null);
 });

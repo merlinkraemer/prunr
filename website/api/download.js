@@ -10,6 +10,9 @@ const HOSTNAME_RE = /^[a-z0-9.-]{1,253}$/;
 const BOT_RE = /bot|crawl|spider|preview|facebookexternalhit|slack|discord|telegram|whatsapp|curl|wget|python|go-http/i;
 const IOS_RE = /iPhone|iPad|iPod/;
 const MAC_RE = /Macintosh|Mac OS X/;
+const BREW_RE = /^Homebrew\//;
+const VERSION_RE = /^\d+(?:\.\d+)+(?:-[a-z]+\.\d+)?$/;
+const BUILD_RE = /^\d{1,6}$/;
 
 let cachedRelease = null;
 
@@ -20,6 +23,12 @@ export function resetReleaseCache() {
 function pickAsset(assets) {
   return assets.find((asset) => /-macos\.dmg$/i.test(asset.name))
     || assets.find((asset) => /-macos\.zip$/i.test(asset.name) && !/dsym/i.test(asset.name));
+}
+
+export function pinnedDownloadUrl(version, build) {
+  if (typeof version !== "string" || typeof build !== "string") return null;
+  if (!VERSION_RE.test(version) || !BUILD_RE.test(build)) return null;
+  return `https://github.com/${REPO}/releases/download/v${version}/Prunr-${version}-build${build}-macos.dmg`;
 }
 
 async function latestDownloadUrl() {
@@ -58,6 +67,7 @@ export function referrerHost(value) {
 
 export function userAgentClass(value) {
   if (typeof value !== "string" || value === "") return "other";
+  if (BREW_RE.test(value)) return "brew";
   if (BOT_RE.test(value)) return "bot";
   if (IOS_RE.test(value)) return "other";
   return MAC_RE.test(value) ? "mac" : "other";
@@ -69,8 +79,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  const pinned = pinnedDownloadUrl(req.query?.v, req.query?.b);
   const [target] = await Promise.all([
-    latestDownloadUrl(),
+    pinned ?? latestDownloadUrl(),
     req.method === "GET"
       ? recordDownload({
         at: new Date().toISOString(),
