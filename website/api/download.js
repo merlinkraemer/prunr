@@ -80,14 +80,16 @@ export default async function handler(req, res) {
   }
 
   const pinned = pinnedDownloadUrl(req.query?.v, req.query?.b);
+  const ua = userAgentClass(req.headers?.["user-agent"]);
+  const counts = req.method === "GET" || ua === "brew";
   const [target] = await Promise.all([
     pinned ?? latestDownloadUrl(),
-    req.method === "GET"
+    counts
       ? recordDownload({
         at: new Date().toISOString(),
         src: sourceTag(req.query?.src),
         ref: referrerHost(req.headers?.referer),
-        ua: userAgentClass(req.headers?.["user-agent"]),
+        ua,
       }).catch((error) => console.error("Download count failed", error))
       : null,
   ]);

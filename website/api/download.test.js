@@ -216,3 +216,14 @@ test("pinned downloads reject malformed versions", () => {
   assert.equal(pinnedDownloadUrl(undefined, "26"), null);
   assert.equal(pinnedDownloadUrl(["0.1.5"], "26"), null);
 });
+
+test("brew resolves the link with HEAD, which counts once", async () => {
+  const before = events.length;
+  await downloadHandler(downloadRequest({
+    method: "HEAD",
+    query: { src: "brew", v: "0.1.5-alpha.25", b: "26" },
+    headers: { "user-agent": "Homebrew/4.6.0 (Macintosh; arm64 Mac OS X 15.1) curl/8.7.1" },
+  }), response());
+  assert.equal(events.length, before + 1);
+  assert.equal(JSON.parse(events[0]).ua, "brew");
+});
