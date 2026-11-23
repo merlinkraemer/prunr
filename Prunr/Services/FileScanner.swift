@@ -203,6 +203,11 @@ final class FileScanner {
     private let traversalStallTimeout: TimeInterval
     private let consumerStallTimeout: TimeInterval
     private let watchdogInterval: TimeInterval
+    private let producerPriority = OSAllocatedUnfairLock<TaskPriority?>(initialState: nil)
+
+    var lastProducerPriority: TaskPriority? {
+        producerPriority.withLock { $0 }
+    }
 
     init(
         traversalStallTimeout: TimeInterval = FileScanner.defaultTraversalStallTimeout,
@@ -262,13 +267,15 @@ final class FileScanner {
     ///   - cancellationToken: Optional cooperative cancel signal
     ///   - backpressure: Optional gate limiting outstanding unconsumed results
     ///   - skipLog: Optional record of entries skipped for lack of access
+    ///   - priority: Priority of the traversal task; nil inherits the caller's
     /// - Returns: An AsyncThrowingStream that yields ScanResult values
     func scan(
         _ rootURL: URL,
         ignoredNames: Set<String>,
         cancellationToken: ScanCancellationToken? = nil,
         backpressure: ScanBackpressureGate? = nil,
-        skipLog: ScanSkipLog? = nil
+        skipLog: ScanSkipLog? = nil,
+        priority: TaskPriority? = nil
     ) -> AsyncThrowingStream<ScanResult, Error> {
         return AsyncThrowingStream<ScanResult, Error> { continuation in
             let traversalState = ScanTraversalState(rootPath: rootURL.path)
@@ -297,13 +304,15 @@ final class FileScanner {
                 }
             }
 
-            let producerTask = Task { [weak self] in
+            let producerTask = Task(priority: priority) { [weak self] in
                 guard let self else {
                     traversalState.markFinished()
                     await backpressure?.close()
                     continuation.finish()
                     return
                 }
+
+                self.producerPriority.withLock { $0 = Task.currentPriority }
 
                 defer {
                     traversalState.markFinished()

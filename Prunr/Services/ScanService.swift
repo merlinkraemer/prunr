@@ -145,6 +145,7 @@ actor ScanService {
         reconstructsFileHistory: Bool = false,
         completesSnapshot: Bool = true,
         skipLog: ScanSkipLog? = nil,
+        priority: TaskPriority? = nil,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> ScanOutcome {
         let scanID = UUID()
@@ -333,7 +334,8 @@ actor ScanService {
                 ignoredNames: resolvedIgnoredNames,
                 cancellationToken: cancellationToken,
                 backpressure: backpressure,
-                skipLog: deniedLog
+                skipLog: deniedLog,
+                priority: priority
             )
 
             for try await result in stream {

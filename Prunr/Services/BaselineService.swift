@@ -89,6 +89,7 @@ actor BaselineService {
         trackedPath: TrackedPath,
         ignoredNames: Set<String>? = nil,
         skipLog: ScanSkipLog? = nil,
+        priority: TaskPriority? = nil,
         progress: ((ScanService.ScanProgress) -> Void)? = nil
     ) async throws -> Snapshot {
         // Get previous snapshot for delta calculation
@@ -119,6 +120,7 @@ actor BaselineService {
             reconstructsFileHistory: previousSnapshotId == nil,
             completesSnapshot: false,
             skipLog: skipLog,
+            priority: priority,
             progress: progress
         )
         let snapshot = outcome.snapshot

@@ -170,7 +170,7 @@ actor RecentChangeService {
             batch.reserveCapacity(Self.stagingBatchSize)
 
             let skipLog = ScanSkipLog()
-            let stream = scanner.scan(root, ignoredNames: ignoredNames, skipLog: skipLog)
+            let stream = scanner.scan(root, ignoredNames: ignoredNames, skipLog: skipLog, priority: .background)
             for try await result in stream {
                 batch.append(result)
                 if batch.count >= Self.stagingBatchSize {

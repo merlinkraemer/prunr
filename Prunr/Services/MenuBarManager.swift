@@ -1209,6 +1209,7 @@ final class MenuBarManager: NSObject {
     private func createBaselines(
         for trackedPaths: [TrackedPath],
         isFailedPathRetry: Bool = false,
+        priority: TaskPriority? = nil,
         progressCallback: @escaping (TrackedPath, ScanService.ScanProgress) -> Void
     ) async throws -> [UUID: Snapshot] {
         // `effectiveTrackedPaths` already deduplicates nested paths, so all paths in
@@ -1229,6 +1230,7 @@ final class MenuBarManager: NSObject {
                     let snapshot = try await baselineService.createBaseline(
                         trackedPath: trackedPath,
                         skipLog: skipLog,
+                        priority: priority,
                         progress: { progress in progressCallback(trackedPath, progress) }
                     )
                     snapshots[trackedPath.id] = snapshot
@@ -1246,6 +1248,7 @@ final class MenuBarManager: NSObject {
                                 let snapshot = try await self.baselineService.createBaseline(
                                     trackedPath: capturedPath,
                                     skipLog: skipLog,
+                                    priority: priority,
                                     progress: { progress in progressCallback(capturedPath, progress) }
                                 )
                                 return (capturedPath, .success(snapshot))
@@ -1388,6 +1391,7 @@ final class MenuBarManager: NSObject {
             ) {
                 try await createBaselines(
                     for: enabledPaths,
+                    priority: isAutomatic ? .background : nil,
                     progressCallback: progressCallback
                 )
             }
@@ -1728,7 +1732,7 @@ final class MenuBarManager: NSObject {
 
         recordReconciliationAttempt()
         do {
-            _ = try await createBaselines(for: enabledPaths, progressCallback: progressCallback)
+            _ = try await createBaselines(for: enabledPaths, priority: .background, progressCallback: progressCallback)
         } catch {
             if !isScanCancellation(error) {
                 recordReconciliationFailure()
@@ -3149,7 +3153,7 @@ final class MenuBarManager: NSObject {
 
         let snapshots: [UUID: Snapshot]
         do {
-            snapshots = try await createBaselines(for: retryPaths, isFailedPathRetry: true) { _, _ in }
+            snapshots = try await createBaselines(for: retryPaths, isFailedPathRetry: true, priority: .background) { _, _ in }
         } catch {
             endInventoryRefresh()
             return false
