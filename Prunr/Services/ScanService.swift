@@ -196,6 +196,7 @@ actor ScanService {
                 completesSnapshot: completesSnapshot,
                 cancellationToken: cancellationToken,
                 skipLog: skipLog,
+                priority: priority,
                 progress: progress
             )
         } onCancel: {
@@ -214,6 +215,7 @@ actor ScanService {
         completesSnapshot: Bool = true,
         cancellationToken: ScanCancellationToken,
         skipLog: ScanSkipLog?,
+        priority: TaskPriority?,
         progress: ((ScanProgress) -> Void)?
     ) async throws -> ScanOutcome {
         // Capture volume free space before creating snapshot
